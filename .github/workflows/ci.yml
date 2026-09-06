@@ -1,0 +1,214 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR cancels the older, still-running check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dsp-tests:
+    name: DSP tests (JUCE-free, Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install JUCE Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            libasound2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev
+
+      - name: Configure
+        run: |
+          cmake \
+            -S . \
+            -B build-dsp \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF \
+            -DBUILD_TESTING=ON
+
+      - name: Build and test DSP engine
+        run: |
+          cmake --build build-dsp --parallel
+          ctest --test-dir build-dsp --output-on-failure
+
+      # The count is the point of the check: it is what turns "the renderer ran"
+      # into "the renderer rendered the whole set", so a take that silently
+      # stopped being written fails CI instead of leaving a stale WAV committed
+      # forever. Adding or removing a take means updating the number here in the
+      # same change.
+      - name: Render and verify demo audio
+        run: |
+          set -euo pipefail
+          cmake --build build-dsp --target YouKnowRenderDemos --parallel
+          ./build-dsp/YouKnowRenderDemos Docs/audio
+          rendered=$(find Docs/audio -maxdepth 1 -name '*.wav' | wc -l)
+          if (( rendered != 10 )); then
+            echo "error: rendered $rendered demo WAVs, expected 10" >&2
+            exit 1
+          fi
+          echo "YouKnow: rendered all $rendered demo WAVs"
+
+      - name: Configure Linux plug-in build
+        run: |
+          cmake \
+            -S . \
+            -B build-dsp \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=ON \
+            -DBUILD_TESTING=OFF
+
+      - name: Build Linux VST3 and standalone
+        run: |
+          cmake --build build-dsp --parallel \
+            --target YouKnow_VST3 YouKnow_Standalone
+
+      - name: Package Linux VST3 and standalone
+        run: |
+          set -euo pipefail
+          artefacts="build-dsp/YouKnow_artefacts/Release"
+          test -d "$artefacts/VST3/YouKnow.vst3"
+          test -x "$artefacts/Standalone/YouKnow"
+          dist="build-dsp/dist"
+          mkdir -p "$dist"
+          archive="$dist/YouKnow-Linux-x64.tar.gz"
+          # Licence and notice files ship inside the binary archive (the MIT
+          # licence requires the notice to accompany binaries).
+          contents=("VST3/YouKnow.vst3" "Standalone/YouKnow")
+          for notice in LICENSE THIRD_PARTY_NOTICES.md ThirdParty/JUCE-LICENSE.md; do
+            if [[ -f "$notice" ]]; then
+              cp "$notice" "$artefacts/$(basename "$notice")"
+              contents+=("$(basename "$notice")")
+            fi
+          done
+          tar -czf "$archive" -C "$artefacts" "${contents[@]}"
+          test -s "$archive"
+          tar -tzf "$archive" >/dev/null
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-linux
+          path: build-dsp/dist/YouKnow-Linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  plugin-macos:
+    name: Plug-in build (macOS native arch)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Clearing the committed screenshot first is what makes the check after
+      # the build meaningful: the file can only be there afterwards because this
+      # run's suite rendered it.
+      - name: Clear screenshot before rendering
+        run: rm -f Docs/screenshots/youknow-standalone.png
+
+      # Native-arch only keeps per-push CI fast; the nightly workflow builds the
+      # full arm64 + x86_64 universal binaries. Uses the same build script
+      # developers run locally, and runs the project's tests.
+      - name: Build plug-in and run tests
+        env:
+          BUILD_UNIVERSAL: "OFF"
+          YOUKNOW_EDITOR_SNAPSHOT: "${{ github.workspace }}/Docs/screenshots/youknow-standalone.png"
+        run: ./scripts/build-macos.sh
+
+      - name: Check that the editor screenshot was rendered
+        run: |
+          set -euo pipefail
+          screenshot="Docs/screenshots/youknow-standalone.png"
+          if [[ ! -s "$screenshot" ]]; then
+            echo "error: the suite did not render $screenshot" >&2
+            echo "The suite must honour YOUKNOW_EDITOR_SNAPSHOT." >&2
+            exit 1
+          fi
+          if [[ "$(head -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "89504e470d0a1a0a" ]]; then
+            echo "error: $screenshot does not carry the PNG signature" >&2
+            exit 1
+          fi
+          if [[ "$(tail -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "49454e44ae426082" ]]; then
+            echo "error: $screenshot has no terminating IEND chunk, so the write did not finish" >&2
+            exit 1
+          fi
+          echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
+
+  dsp-tests-windows:
+    name: DSP tests (JUCE-free, Windows)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure DSP tests
+        run: |
+          cmake -S . -B build-win -A x64 -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON "-DCMAKE_EXE_LINKER_FLAGS=/STACK:33554432"
+
+      - name: Build and test DSP engine
+        run: |
+          cmake --build build-win --config Release --parallel
+          ctest --test-dir build-win -C Release --output-on-failure
+
+      - name: Configure Windows plug-in build
+        run: |
+          cmake -S . -B build-win -DYOUKNOW_BUILD_PLUGIN=ON -DBUILD_TESTING=OFF
+
+      - name: Build Windows VST3 and standalone
+        run: |
+          cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_Standalone
+
+      - name: Package Windows VST3 and standalone
+        shell: pwsh
+        run: |
+          $artefacts = "build-win/YouKnow_artefacts/Release"
+          $vst3 = Join-Path $artefacts "VST3/YouKnow.vst3"
+          $standalone = Join-Path $artefacts "Standalone/YouKnow.exe"
+          if (-not (Test-Path -LiteralPath $vst3 -PathType Container)) {
+            throw "expected VST3 bundle at $vst3"
+          }
+          if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
+            throw "expected standalone executable at $standalone"
+          }
+          $dist = "build-win/dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $zip = Join-Path $dist "YouKnow-Windows-x64.zip"
+          # Licence and notice files ship inside the binary archive (the MIT
+          # licence requires the notice to accompany binaries).
+          $contents = @((Join-Path $artefacts "VST3"), (Join-Path $artefacts "Standalone"))
+          foreach ($notice in @("LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdParty/JUCE-LICENSE.md")) {
+            if (Test-Path -LiteralPath $notice -PathType Leaf) {
+              $contents += $notice
+            }
+          }
+          Compress-Archive -LiteralPath $contents -DestinationPath $zip
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf) -or
+              (Get-Item -LiteralPath $zip).Length -eq 0) {
+            throw "expected package at $zip"
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-windows
+          path: build-win/dist/YouKnow-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 7

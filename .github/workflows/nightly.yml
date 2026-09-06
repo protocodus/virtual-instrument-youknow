@@ -1,0 +1,466 @@
+name: Nightly
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily
+  workflow_dispatch: # allow manual runs from the Actions tab
+
+# Build the latest development packages as short-lived workflow artifacts.
+permissions:
+  contents: read
+
+# Never interrupt an in-progress package run; just don't run two at once.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # The committed demonstration WAVs are rendered by the JUCE-free renderer, so
+  # any model change shows up as changed bytes. Re-rendering and committing them
+  # nightly keeps the audible record in lockstep with the code; the nightly
+  # Linux toolchain is the canonical renderer, and a run on an unchanged model
+  # commits nothing because every render is deterministic.
+  refresh-audio-demos:
+    if: github.ref == 'refs/heads/main'
+    name: Re-render the committed demo audio
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The build must not inherit the write credential; the push step below
+          # supplies the token explicitly instead.
+          persist-credentials: false
+
+      # The count is what turns "the renderer ran" into "the renderer rendered
+      # the whole set", so a take that silently stopped being written fails the
+      # nightly instead of leaving a stale WAV committed forever. Adding or
+      # removing a take means updating the number here in the same change.
+      #
+      # The renderer writes its takes one after another and returns on the first
+      # bad one, so a renderer that dies half way through leaves the earlier
+      # takes freshly written and the rest as they were: a demo set no single
+      # version of the engine ever produced, and worse to publish than the
+      # untouched one. Failing here means the commit step below never runs.
+      - name: Render the demo audio
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
+          cmake --build build-dsp --parallel --target YouKnowRenderDemos
+          ./build-dsp/YouKnowRenderDemos Docs/audio
+          rendered=$(find Docs/audio -maxdepth 1 -name '*.wav' | wc -l)
+          if (( rendered != 10 )); then
+            echo "error: rendered $rendered demo WAVs, expected 10" >&2
+            exit 1
+          fi
+          echo "Rendered all $rendered demo WAVs."
+
+      - name: Commit the demo audio if it changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Stage before checking: a newly added demo is an untracked file,
+          # which git diff alone would not see. README.md is staged too because
+          # the renderer rewrites its peaks table.
+          git add -A Docs/audio README.md
+          if git diff --cached --quiet; then
+            echo "Demo audio is unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Nightly: re-render the committed demo audio"
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for _ in 1 2 3; do
+            git pull --rebase -X theirs "$REMOTE" main
+            # If render-relevant code landed on main while this job ran, these
+            # WAVs describe the older model; publishing them would be wrong, and
+            # the next nightly will render the newer tree. Docs-only churn does
+            # not invalidate a render, so it does not defer the push.
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- . ':(exclude)Docs'; then
+              echo "The engine changed upstream during the render; deferring to the next nightly."
+              exit 0
+            fi
+            if git push "$REMOTE" HEAD:main; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "error: could not push the re-rendered demo audio" >&2
+          exit 1
+
+  build-macos:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Universal build and package
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Build-time FetchContent code must not inherit the write credential.
+          persist-credentials: false
+
+      # Removing the committed image first is what makes the check after the
+      # build meaningful: the file can only be there afterwards because this
+      # run's suite rendered it, so a suite that quietly stopped writing its
+      # snapshot fails the nightly instead of republishing a stale editor.
+      - name: Clear the committed screenshot before rendering
+        run: rm -f Docs/screenshots/youknow-standalone.png
+
+      # Full arm64 + x86_64 universal build (script default) plus the project's
+      # tests. The suite renders the committed editor screenshot while it runs,
+      # so the image in the README tracks the real editor.
+      - name: Build and run tests
+        run: |
+          set -euo pipefail
+          export "YOUKNOW_EDITOR_SNAPSHOT=${GITHUB_WORKSPACE}/Docs/screenshots/youknow-standalone.png"
+          ./scripts/build-macos.sh
+
+      - name: Check that the editor screenshot was rendered
+        run: |
+          set -euo pipefail
+          screenshot="Docs/screenshots/youknow-standalone.png"
+          if [[ ! -s "$screenshot" ]]; then
+            echo "error: the suite did not render $screenshot" >&2
+            echo "The suite must honour YOUKNOW_EDITOR_SNAPSHOT." >&2
+            exit 1
+          fi
+          if [[ "$(head -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "89504e470d0a1a0a" ]]; then
+            echo "error: $screenshot does not carry the PNG signature" >&2
+            exit 1
+          fi
+          # The signature alone only proves the write started: a PNG truncated
+          # part way through still carries it. Every PNG ends with a zero-length
+          # IEND chunk and its constant CRC, so the trailer is what proves the
+          # encoder ran to completion and a whole image landed.
+          if [[ "$(tail -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "49454e44ae426082" ]]; then
+            echo "error: $screenshot has no terminating IEND chunk, so the write did not finish" >&2
+            exit 1
+          fi
+          echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
+
+      # Uploaded before packaging so that a packaging failure cannot cost the
+      # run the screenshot it has already rendered, and handed to the commit job
+      # rather than committed here.
+      #
+      # It stays gated on the suite passing, and deliberately so. The processor
+      # suite counts its failures rather than stopping at the first one, so a run
+      # whose editor assertions failed -- a blank render, buttons that overlap, a
+      # control strip that lost its buttons -- still writes the PNG before
+      # reporting the failure. Publishing that image is the one outcome worse
+      # than leaving yesterday's in place.
+      - name: Upload the rendered screenshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-screenshot
+          path: Docs/screenshots/youknow-standalone.png
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Package (ad-hoc-signed bundles)
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build-macos/CMakeCache.txt)"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "error: invalid CMake project version: ${version:-missing}" >&2
+            exit 1
+          fi
+          VERSION="$version" ./scripts/sign-and-package-macos.sh
+
+      - name: Check that both distributable packages were produced
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(
+            build-macos/dist/YouKnow-*-macOS-universal.zip
+            build-macos/dist/YouKnow-*-macOS-universal.pkg
+          )
+          if (( ${#packages[@]} != 2 )); then
+            echo "error: expected one zip and one pkg, found ${#packages[@]}" >&2
+            printf '  %s\n' "${packages[@]:-(none)}" >&2
+            exit 1
+          fi
+          printf 'Packaged %s\n' "${packages[@]}"
+
+      # Handed to the aggregate artifact job as one complete cross-platform set.
+      - name: Upload the distributable packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-packages-macos
+          path: |
+            build-macos/dist/YouKnow-*-macOS-universal.zip
+            build-macos/dist/YouKnow-*-macOS-universal.pkg
+          if-no-files-found: error
+          retention-days: 1
+
+  build-linux:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Linux build and package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install JUCE Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            libasound2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev
+
+      - name: Configure
+        run: |
+          cmake \
+            -S . \
+            -B build-linux \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=ON \
+            -DBUILD_TESTING=OFF
+
+      - name: Build VST3 and standalone
+        run: |
+          cmake --build build-linux --parallel \
+            --target YouKnow_VST3 YouKnow_Standalone
+
+      - name: Package (Linux x64 tarball)
+        run: |
+          set -euo pipefail
+          artefacts="build-linux/YouKnow_artefacts/Release"
+          test -d "$artefacts/VST3/YouKnow.vst3"
+          test -x "$artefacts/Standalone/YouKnow"
+          dist="build-linux/dist"
+          mkdir -p "$dist"
+          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build-linux/CMakeCache.txt)"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "error: invalid CMake project version: ${version:-missing}" >&2
+            exit 1
+          fi
+          archive="$dist/YouKnow-${version}-Linux-x64.tar.gz"
+          # Licence and notice files ship inside the binary archive (the MIT
+          # licence requires the notice to accompany binaries).
+          contents=("VST3/YouKnow.vst3" "Standalone/YouKnow")
+          for notice in LICENSE THIRD_PARTY_NOTICES.md ThirdParty/JUCE-LICENSE.md; do
+            if [[ -f "$notice" ]]; then
+              cp "$notice" "$artefacts/$(basename "$notice")"
+              contents+=("$(basename "$notice")")
+            fi
+          done
+          tar -czf "$archive" -C "$artefacts" "${contents[@]}"
+          test -s "$archive"
+          tar -tzf "$archive" >/dev/null
+
+      - name: Upload the distributable Linux package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-packages-linux
+          path: build-linux/dist/YouKnow-*-Linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Windows build and package
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-win -A x64 -DYOUKNOW_BUILD_PLUGIN=ON -DBUILD_TESTING=OFF
+
+      - name: Build VST3 and standalone
+        run: |
+          cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_Standalone
+
+      - name: Package (Windows x64 ZIP)
+        shell: pwsh
+        run: |
+          $artefactDir = "build-win/YouKnow_artefacts/Release"
+          $vst3 = Join-Path $artefactDir "VST3/YouKnow.vst3"
+          $standalone = Join-Path $artefactDir "Standalone/YouKnow.exe"
+          if (-not (Test-Path -LiteralPath $vst3 -PathType Container)) {
+            throw "expected VST3 bundle at $vst3"
+          }
+          if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
+            throw "expected standalone executable at $standalone"
+          }
+          $versionLines = @(Get-Content -LiteralPath "build-win/CMakeCache.txt" | Where-Object { $_ -match '^CMAKE_PROJECT_VERSION:STATIC=' })
+          if ($versionLines.Count -ne 1) {
+            throw "expected one CMAKE_PROJECT_VERSION entry, found $($versionLines.Count)"
+          }
+          $version = $versionLines[0] -replace '^CMAKE_PROJECT_VERSION:STATIC=', ''
+          if ($version -notmatch '^\d+(\.\d+){1,3}$') {
+            throw "invalid CMake project version: $version"
+          }
+          $dist = "build-win/dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $zipPath = Join-Path $dist "YouKnow-$version-Windows-x64.zip"
+          # Licence and notice files ship inside the binary archive (the MIT
+          # licence requires the notice to accompany binaries).
+          $contents = @((Join-Path $artefactDir "VST3"), (Join-Path $artefactDir "Standalone"))
+          foreach ($notice in @("LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdParty/JUCE-LICENSE.md")) {
+            if (Test-Path -LiteralPath $notice -PathType Leaf) {
+              $contents += $notice
+            }
+          }
+          Compress-Archive -LiteralPath $contents -DestinationPath $zipPath
+          if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf) -or
+              (Get-Item -LiteralPath $zipPath).Length -eq 0) {
+            throw "expected non-empty package at $zipPath"
+          }
+          Write-Host "Packaged $zipPath"
+
+      - name: Upload the distributable Windows package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-packages-win
+          path: build-win/dist/YouKnow-*-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  # The suite renders the committed editor screenshot while it runs, so the
+  # image in the README tracks the real editor.
+  commit-screenshot:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    name: Commit the regenerated editor screenshot
+    needs: build-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The push step below supplies the write credential explicitly.
+          persist-credentials: false
+
+      - name: Download the rendered screenshot
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-screenshot
+          path: rendered-screenshot
+
+      - name: Place the rendered screenshot in the tree
+        run: |
+          set -euo pipefail
+          rendered="rendered-screenshot/youknow-standalone.png"
+          if [[ ! -s "$rendered" ]]; then
+            echo "error: the build produced no screenshot to commit" >&2
+            exit 1
+          fi
+          mkdir -p Docs/screenshots
+          cp "$rendered" "Docs/screenshots/youknow-standalone.png"
+          rm -rf rendered-screenshot
+
+      - name: Commit the screenshot if it changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Stage before checking: a screenshot rendered for the first time is an
+          # untracked file, which git diff alone would not see.
+          git add -A Docs/screenshots
+          if git diff --cached --quiet; then
+            echo "The screenshot is unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Nightly: regenerate the committed editor screenshot"
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for _ in 1 2 3; do
+            git pull --rebase -X theirs "$REMOTE" main
+            # If the code moved on main while this build ran, this PNG was
+            # rendered from the older tree and replaying it onto the newer one
+            # would publish a stale editor. Skip: the next nightly builds the
+            # newer tree and refreshes it correctly. Docs-only churn (including
+            # the audio job's own commit) does not invalidate a render, so it
+            # does not defer the push.
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- . ':(exclude)Docs'; then
+              echo "The code changed upstream during the build; deferring the screenshot refresh to the next nightly."
+              exit 0
+            fi
+            if git push "$REMOTE" HEAD:main; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "error: could not push the regenerated screenshot" >&2
+          exit 1
+
+  # Keep one complete package set on the workflow run. A mutable rolling GitHub
+  # release is deliberately not used: repository release immutability protects
+  # commercial tags and assets, while development builds remain short-lived.
+  collect-packages:
+    if: github.ref == 'refs/heads/main'
+    name: Collect the nightly workflow artifact
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download every package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: nightly-packages-*
+          merge-multiple: true
+          path: dist
+
+      - name: Check the four-file manifest
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Deliberately expand this glob so the array contains every match.
+          # shellcheck disable=SC2206
+          mac_zips=(dist/YouKnow-*-macOS-universal.zip)
+          if (( ${#mac_zips[@]} != 1 )); then
+            echo "error: expected exactly one macOS zip, found ${#mac_zips[@]}" >&2
+            printf '  %s\n' "${mac_zips[@]:-(none)}" >&2
+            exit 1
+          fi
+          filename="${mac_zips[0]##*/}"
+          version="${filename#YouKnow-}"
+          version="${version%-macOS-universal.zip}"
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "error: invalid version in $filename" >&2
+            exit 1
+          fi
+          expected=(
+            "dist/YouKnow-${version}-macOS-universal.zip"
+            "dist/YouKnow-${version}-macOS-universal.pkg"
+            "dist/YouKnow-${version}-Linux-x64.tar.gz"
+            "dist/YouKnow-${version}-Windows-x64.zip"
+          )
+          for asset in "${expected[@]}"; do
+            if [[ ! -s "$asset" ]]; then
+              echo "error: missing, empty, or version-mismatched asset: $asset" >&2
+              exit 1
+            fi
+          done
+          assets=(dist/*)
+          if (( ${#assets[@]} != 4 )); then
+            echo "error: expected exactly four release assets, found ${#assets[@]}" >&2
+            printf '  %s\n' "${assets[@]:-(none)}" >&2
+            exit 1
+          fi
+          printf 'Release asset: %s\n' "${assets[@]}"
+
+      # Retained on the workflow run itself, downloadable by anyone with repo
+      # access, as one complete cross-platform set.
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: youknow-nightly-all-platforms
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
