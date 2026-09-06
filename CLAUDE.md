@@ -11,12 +11,14 @@
 
 This repository holds two kinds of prose, and no others.
 
-- **`README.md`** — the single document for YouKnow: heading, screenshot,
-  short description, audio demos, one **How it works** section covering each
-  block in detail (what is modelled, how, and with which references), a
-  **Known gaps** section for what is not modelled and what evidence would
-  close each open question, a concise **Release history** ledger, a short
-  **Build** section, and licensing.
+- **`README.md`** — the single document for YouKnow: short description,
+  screenshot, latest distribution downloads, a concise **Release history**
+  summary, audio demos, and licensing first. After a horizontal separator,
+  keep one **How it works** section covering each block in detail (what is
+  modelled, how, and with which references), **Known gaps**, the detailed
+  release notes, and a short **Build** section. Preserve the full instrument
+  history below the separator without making readers scroll past it to
+  download or try the instrument.
 - **`Docs/decisions.md`** — the by-ear decision log described below, and
   nothing else.
 
