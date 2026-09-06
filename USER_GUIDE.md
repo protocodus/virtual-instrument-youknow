@@ -5,25 +5,35 @@ oscillators, filters and stereo chorus.
 
 ## Install
 
-Requires macOS 11 or later. The universal Audio Unit (AU), VST3 and Standalone
-builds support both Apple silicon and Intel Macs.
+The macOS builds require macOS 11 or later. The universal Audio Unit (AU), VST3,
+CLAP and Standalone builds support both Apple silicon and Intel Macs.
 
 Open the supplied `.pkg` installer and follow its prompts. It installs:
 
 - Standalone: `/Applications/YouKnow.app`
 - Audio Unit: `/Library/Audio/Plug-Ins/Components/YouKnow.component`
 - VST3: `/Library/Audio/Plug-Ins/VST3/YouKnow.vst3`
+- CLAP: `/Library/Audio/Plug-Ins/CLAP/YouKnow.clap`
 - This guide and notices: `/Library/Application Support/Protocodus/YouKnow/Documentation/`
 
+If using the macOS ZIP, extract it and copy the enclosed app and plug-in bundles
+to the same locations.
+
+On Windows, extract the x64 ZIP. Copy the whole `VST3/YouKnow.vst3` folder to
+`C:\Program Files\Common Files\VST3\`, and copy `CLAP/YouKnow.clap` to
+`C:\Program Files\Common Files\CLAP\`. Create these folders if needed. The
+standalone program is `Standalone/YouKnow.exe` in the extracted archive; keep
+the guide, licences and notices from the archive with your installation.
+
 Restart your music host after installation and rescan its plug-ins if needed.
-Choose the AU or VST3 instrument format supported by your host.
+Choose the AU (macOS), VST3 or CLAP instrument format supported by your host.
 
 ## Play your first sound
 
 In a music host, insert YouKnow on an instrument track, route your MIDI keyboard
 to that track, and enable the host's input monitoring or record arm as needed.
-In Standalone, open YouKnow from Applications and choose your audio output and
-MIDI input devices in **Options**.
+In Standalone, open YouKnow from Applications on macOS or run `YouKnow.exe` on
+Windows, then choose your audio output and MIDI input devices in **Options**.
 
 Choose a preset, then play your MIDI keyboard or click the on-screen keys.
 Use **VOLUME** to set the output level. If there is no sound, check the selected

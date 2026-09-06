@@ -53,6 +53,7 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(YOUKNOW_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
+option(YOUKNOW_BUILD_CLAP "Build the CLAP plug-in alongside the JUCE formats" ON)
 set(YOUKNOW_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
 
@@ -103,6 +104,20 @@ if(YOUKNOW_BUILD_PLUGIN)
         FetchContent_MakeAvailable(JUCE)
     endif()
 
+    if(YOUKNOW_BUILD_CLAP)
+        include(FetchContent)
+        # This wrapper supports JUCE 8's headless audio processor module. Its
+        # immutable commit also pins the clap and clap-helpers submodule commits;
+        # recursive checkout must not follow their moving branches.
+        FetchContent_Declare(
+            clap_juce_extensions
+            GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+            GIT_TAG c1a5ad025f95d01e03267857fa8276ebeed16500
+            GIT_SUBMODULES clap-libs/clap clap-libs/clap-helpers
+            GIT_SUBMODULES_RECURSE TRUE)
+        FetchContent_MakeAvailable(clap_juce_extensions)
+    endif()
+
     if(APPLE)
         set(YOUKNOW_PLUGIN_FORMATS VST3 AU Standalone)
     else()
@@ -134,6 +149,12 @@ if(YOUKNOW_BUILD_PLUGIN)
         AU_SANDBOX_SAFE TRUE
         COPY_PLUGIN_AFTER_BUILD FALSE)
 
+    if(YOUKNOW_BUILD_CLAP)
+        clap_juce_extensions_plugin(TARGET YouKnow
+            CLAP_ID "cz.protocodus.youknow"
+            CLAP_FEATURES instrument synthesizer)
+    endif()
+
     # JUCE starts every wrapper from the shared BUNDLE_ID above. Give each
     # distinct macOS bundle its own identifier while keeping the shared base ID
     # in JucePlugin_CFBundleIdentifier, so AU/VST3 plug-in identity is unchanged.
@@ -158,6 +179,27 @@ if(YOUKNOW_BUILD_PLUGIN)
             cz.protocodus.youknow.au)
         youknow_set_wrapper_bundle_identifier(YouKnow_VST3
             cz.protocodus.youknow.vst3)
+
+        if(YOUKNOW_BUILD_CLAP)
+            # The CLAP wrapper supplies a CMake plist template, unlike JUCE's
+            # already-generated plists. Copy it before adding our metadata so
+            # the fetched dependency is never modified in place.
+            get_target_property(clap_info_plist YouKnow_CLAP
+                MACOSX_BUNDLE_INFO_PLIST)
+            set(youknow_clap_info_plist
+                "${CMAKE_CURRENT_BINARY_DIR}/YouKnow-CLAP-Info.plist.in")
+            configure_file("${clap_info_plist}" "${youknow_clap_info_plist}" COPYONLY)
+            execute_process(
+                COMMAND /usr/libexec/PlistBuddy -c
+                    "Add :CFBundleDisplayName string YouKnow" "${youknow_clap_info_plist}"
+                COMMAND_ERROR_IS_FATAL ANY)
+            set_target_properties(YouKnow_CLAP PROPERTIES
+                MACOSX_BUNDLE_INFO_PLIST "${youknow_clap_info_plist}"
+                MACOSX_BUNDLE_GUI_IDENTIFIER "cz.protocodus.youknow.clap"
+                MACOSX_BUNDLE_COPYRIGHT "Copyright (c) 2026 Protocodus")
+            youknow_set_wrapper_bundle_identifier(YouKnow_CLAP
+                cz.protocodus.youknow.clap)
+        endif()
     endif()
 
     juce_generate_juce_header(YouKnow)
@@ -628,6 +670,20 @@ if(BUILD_TESTING)
 
         add_test(NAME YouKnow.PluginProcessor COMMAND YouKnowPluginProcessorTests)
         set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 60)
+
+        if(YOUKNOW_BUILD_CLAP)
+            find_package(Threads REQUIRED)
+            add_executable(YouKnowCLAPBundleSmokeTests
+                Tests/CLAPBundleSmokeTests.cpp)
+            target_link_libraries(YouKnowCLAPBundleSmokeTests PRIVATE
+                clap-core Threads::Threads ${CMAKE_DL_LIBS})
+            target_compile_features(YouKnowCLAPBundleSmokeTests PRIVATE cxx_std_20)
+            add_dependencies(YouKnowCLAPBundleSmokeTests YouKnow_CLAP)
+            add_test(NAME YouKnow.CLAPBundle
+                COMMAND YouKnowCLAPBundleSmokeTests
+                        "$<TARGET_FILE:YouKnow_CLAP>" "${PROJECT_VERSION}")
+            set_tests_properties(YouKnow.CLAPBundle PROPERTIES TIMEOUT 60)
+        endif()
 
         if(APPLE)
             # Exercise the product through the same dynamically loaded VST3

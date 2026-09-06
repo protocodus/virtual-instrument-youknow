@@ -1,7 +1,8 @@
 # YouKnow
 
-A six-voice circuit-modelled DCO polysynth: VST3, Audio Unit and Standalone,
-universal `arm64`/`x86_64` on macOS 11 or later, published by
+A six-voice circuit-modelled DCO polysynth: VST3, CLAP and Standalone on
+Windows x64 and macOS, plus Audio Unit on macOS. Mac builds are universal
+`arm64`/`x86_64` for macOS 11 or later. Published by
 [Protocodus](https://protocodus.cz).
 
 ![YouKnow](Docs/screenshots/youknow-standalone.png)
@@ -1108,6 +1109,23 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ## Build
 
+Every push or merge to `main` runs the [CI workflow](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml).
+After a successful build, download `ci-macos` (universal VST3, Audio Unit,
+CLAP and Standalone, as ZIP and PKG) or `ci-windows` (x64 VST3, CLAP and
+Standalone ZIP) from the run's **Artifacts** section. Both include SHA-256
+checksums and are retained for 30 days. `ci-linux` retains the existing Linux
+VST3/Standalone tarball for seven days. These are development builds: macOS
+bundles have ad-hoc signatures and are not notarized; Windows binaries are
+unsigned.
+
+The same run renders the editor screenshot and all ten maintained audio demos,
+then commits changed previews and the README peak table back to `main` after
+all platform jobs pass. It skips that commit if newer source has landed while
+rendering. Frozen review audio in subdirectories is left untouched. The nightly
+schedule reuses this pipeline; PRs build and test without committing previews.
+The repository must allow GitHub Actions to write these generated files to
+`main` (including any applicable branch rules).
+
 The JUCE-free DSP core, tests, demo renderer and audit tools:
 
 ```bash
@@ -1124,7 +1142,8 @@ and factory-preset audits. Each takes several minutes at full length;
 `--smoke` runs the short version CI uses.
 
 The full plug-in (JUCE 8.0.14 is fetched pinned at configure time, or pass
-`-DYOUKNOW_JUCE_PATH=/path/to/JUCE`):
+`-DYOUKNOW_JUCE_PATH=/path/to/JUCE`; CLAP uses pinned `clap-juce-extensions`
+and its submodules, fetched automatically):
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -1144,6 +1163,14 @@ On macOS, `./scripts/build-macos.sh` drives the same build through Xcode as a
 universal binary. `./scripts/sign-and-package-macos.sh` packages an existing
 build with ad-hoc signatures by default for local testing. Its
 `--preflight` option checks prerequisites without building or packaging.
+
+On Windows, build and package the x64 Release binaries with:
+
+```powershell
+cmake -S . -B build-win -A x64 -DBUILD_TESTING=OFF
+cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone
+python scripts/package-windows.py --build-dir build-win
+```
 
 A production release uses `./scripts/release-macos.sh` with
 `APP_SIGN_IDENTITY`, `INSTALLER_SIGN_IDENTITY` and `NOTARY_PROFILE` set to the

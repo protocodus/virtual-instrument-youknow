@@ -42,6 +42,7 @@ cmake_args=(
     "-DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
     "-DYOUKNOW_BUILD_UNIVERSAL=${BUILD_UNIVERSAL}"
     -DYOUKNOW_BUILD_PLUGIN=ON
+    -DYOUKNOW_BUILD_CLAP=ON
     -DBUILD_TESTING=ON
 )
 
@@ -63,6 +64,7 @@ ARTIFACT_DIR="${BUILD_DIR}/YouKnow_artefacts/${CONFIG}"
 artifacts=(
     "${ARTIFACT_DIR}/VST3/YouKnow.vst3"
     "${ARTIFACT_DIR}/AU/YouKnow.component"
+    "${ARTIFACT_DIR}/CLAP/YouKnow.clap"
     "${ARTIFACT_DIR}/Standalone/YouKnow.app"
 )
 

@@ -26,6 +26,7 @@ SUPPORT_EMAIL="protocodus@proton.me"
 STANDALONE_BUNDLE_IDENTIFIER="cz.protocodus.youknow"
 AU_BUNDLE_IDENTIFIER="cz.protocodus.youknow.au"
 VST3_BUNDLE_IDENTIFIER="cz.protocodus.youknow.vst3"
+CLAP_BUNDLE_IDENTIFIER="cz.protocodus.youknow.clap"
 PACKAGE_IDENTIFIER="cz.protocodus.youknow.pkg"
 AU_TYPE="aumu"
 AU_SUBTYPE="Yk06"
@@ -80,7 +81,8 @@ done
 
 for document in "${CUSTOMER_LICENSE_FILE}" "${RELEASE_NOTES_FILE}" "${USER_GUIDE_FILE}" \
     "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
-    "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md" "${PROJECT_DIR}/PRIVACY.md"; do
+    "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md" \
+    "${PROJECT_DIR}/ThirdParty/CLAP-LICENSE.md" "${PROJECT_DIR}/PRIVACY.md"; do
     if [[ ! -s "${document}" ]]; then
         echo "error: missing or empty distribution document: ${document}" >&2
         exit 1
@@ -290,9 +292,10 @@ fi
 
 VST3="${ARTIFACT_DIR}/VST3/YouKnow.vst3"
 AU="${ARTIFACT_DIR}/AU/YouKnow.component"
+CLAP="${ARTIFACT_DIR}/CLAP/YouKnow.clap"
 APP="${ARTIFACT_DIR}/Standalone/YouKnow.app"
 
-for artifact in "${VST3}" "${AU}" "${APP}"; do
+for artifact in "${VST3}" "${AU}" "${CLAP}" "${APP}"; do
     if [[ ! -d "${artifact}" ]]; then
         echo "error: missing build artifact: ${artifact}" >&2
         echo "Run scripts/build-macos.sh first." >&2
@@ -329,12 +332,15 @@ require_value() {
 
 VST3_VERSION="$(bundle_version "${VST3}")"
 AU_VERSION="$(bundle_version "${AU}")"
+CLAP_VERSION="$(bundle_version "${CLAP}")"
 APP_VERSION="$(bundle_version "${APP}")"
 if [[ -z "${VST3_VERSION}" || "${VST3_VERSION}" != "${AU_VERSION}" \
+      || "${VST3_VERSION}" != "${CLAP_VERSION}" \
       || "${VST3_VERSION}" != "${APP_VERSION}" ]]; then
     echo "error: build artifact versions disagree" >&2
     echo "  VST3: ${VST3_VERSION:-missing}" >&2
     echo "  AU: ${AU_VERSION:-missing}" >&2
+    echo "  CLAP: ${CLAP_VERSION:-missing}" >&2
     echo "  App: ${APP_VERSION:-missing}" >&2
     exit 1
 fi
@@ -353,10 +359,12 @@ require_value "VST3 bundle identifier" "${VST3_BUNDLE_IDENTIFIER}" \
     "$(bundle_value "${VST3}" CFBundleIdentifier)"
 require_value "Audio Unit bundle identifier" "${AU_BUNDLE_IDENTIFIER}" \
     "$(bundle_value "${AU}" CFBundleIdentifier)"
+require_value "CLAP bundle identifier" "${CLAP_BUNDLE_IDENTIFIER}" \
+    "$(bundle_value "${CLAP}" CFBundleIdentifier)"
 require_value "Standalone bundle identifier" "${STANDALONE_BUNDLE_IDENTIFIER}" \
     "$(bundle_value "${APP}" CFBundleIdentifier)"
 
-for bundle in "${VST3}" "${AU}" "${APP}"; do
+for bundle in "${VST3}" "${AU}" "${CLAP}" "${APP}"; do
     require_value "$(basename "${bundle}") display name" \
         "${PRODUCT_NAME}" "$(bundle_value "${bundle}" CFBundleDisplayName)"
     require_value "$(basename "${bundle}") copyright" \
@@ -398,12 +406,15 @@ fi
 
 VST3_ARCHS="$(lipo -archs "${VST3}/Contents/MacOS/YouKnow")"
 AU_ARCHS="$(lipo -archs "${AU}/Contents/MacOS/YouKnow")"
+CLAP_ARCHS="$(lipo -archs "${CLAP}/Contents/MacOS/YouKnow")"
 APP_ARCHS="$(lipo -archs "${APP}/Contents/MacOS/YouKnow")"
 if ! [[ "${VST3_ARCHS}" == "${AU_ARCHS}" \
+        && "${VST3_ARCHS}" == "${CLAP_ARCHS}" \
         && "${VST3_ARCHS}" == "${APP_ARCHS}" ]]; then
     echo "error: build artifact architectures disagree" >&2
     echo "  VST3: ${VST3_ARCHS}" >&2
     echo "  AU: ${AU_ARCHS}" >&2
+    echo "  CLAP: ${CLAP_ARCHS}" >&2
     echo "  App: ${APP_ARCHS}" >&2
     exit 1
 fi
@@ -451,6 +462,7 @@ require_macos_target() {
 for executable in \
     "${VST3}/Contents/MacOS/YouKnow" \
     "${AU}/Contents/MacOS/YouKnow" \
+    "${CLAP}/Contents/MacOS/YouKnow" \
     "${APP}/Contents/MacOS/YouKnow"; do
     for architecture in ${APP_ARCHS}; do
         require_macos_target "${executable}" "${architecture}"
@@ -466,11 +478,13 @@ rm -rf "${PACKAGE_ROOT}"
 mkdir -p \
     "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3" \
     "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components" \
+    "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/CLAP" \
     "${PACKAGE_ROOT}/Applications" \
     "${DIST_DIR}"
 
 ditto "${VST3}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/YouKnow.vst3"
 ditto "${AU}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/YouKnow.component"
+ditto "${CLAP}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/CLAP/YouKnow.clap"
 ditto "${APP}" "${PACKAGE_ROOT}/Applications/YouKnow.app"
 
 JUCE_LICENSE_INDEX="${JUCE_SOURCE_DIR}/LICENSE.md"
@@ -492,6 +506,7 @@ REQUIRED_DOCUMENTS=(
     "${PROJECT_DIR}/LICENSE"
     "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md"
     "${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md"
+    "${PROJECT_DIR}/ThirdParty/CLAP-LICENSE.md"
     "${USER_GUIDE_FILE}"
     "${PROJECT_DIR}/PRIVACY.md"
     "${JUCE_LICENSE_INDEX}"
@@ -525,6 +540,8 @@ stage_documentation() {
     ditto "${USER_GUIDE_FILE}" "${destination}/README.md"
     ditto "${PROJECT_DIR}/PRIVACY.md" "${destination}/PRIVACY.md"
     ditto "${JUCE_LICENSE_INDEX}" "${destination}/ThirdParty/JUCE/LICENSE.md"
+    ditto "${PROJECT_DIR}/ThirdParty/CLAP-LICENSE.md" \
+        "${destination}/ThirdParty/CLAP-LICENSE.md"
 
     for relative_path in "${JUCE_DEPENDENCY_LICENSES[@]}"; do
         mkdir -p "$(dirname "${destination}/ThirdParty/JUCE/${relative_path}")"
@@ -541,6 +558,7 @@ stage_documentation "${NOTICE_ROOT}"
 for bundle in \
     "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/YouKnow.vst3" \
     "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/YouKnow.component" \
+    "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/CLAP/YouKnow.clap" \
     "${PACKAGE_ROOT}/Applications/YouKnow.app"; do
     stage_documentation "${bundle}/Contents/Resources/Documentation"
 done
@@ -563,6 +581,7 @@ sign_bundle() {
 
 sign_bundle "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/YouKnow.vst3"
 sign_bundle "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/YouKnow.component"
+sign_bundle "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/CLAP/YouKnow.clap"
 sign_bundle "${PACKAGE_ROOT}/Applications/YouKnow.app"
 
 ARTIFACT_BASE="YouKnow-${VERSION}-macOS-${ARTIFACT_ARCH}"
@@ -594,8 +613,8 @@ while "${PLIST_BUDDY}" -c "Print :${component_index}:RootRelativeBundlePath" \
         "${COMPONENT_PLIST}"
     component_index=$((component_index + 1))
 done
-if [[ "${component_index}" -ne 3 ]]; then
-    echo "error: expected three installable bundles; pkgbuild found ${component_index}" >&2
+if [[ "${component_index}" -ne 4 ]]; then
+    echo "error: expected four installable bundles; pkgbuild found ${component_index}" >&2
     exit 1
 fi
 
@@ -671,6 +690,8 @@ fi
 
 PACKAGE_SHA256="$(shasum -a 256 "${PKG_FINAL}" | awk '{print $1}')"
 JUCE_LICENSE_SHA256="$(shasum -a 256 "${JUCE_LICENSE_INDEX}" | awk '{print $1}')"
+CLAP_LICENSE_SHA256="$(shasum -a 256 "${PROJECT_DIR}/ThirdParty/CLAP-LICENSE.md" \
+    | awk '{print $1}')"
 CUSTOMER_LICENSE_SHA256="not supplied"
 if [[ -f "${CUSTOMER_LICENSE_FILE}" ]]; then
     CUSTOMER_LICENSE_SHA256="$(shasum -a 256 "${CUSTOMER_LICENSE_FILE}" \
@@ -692,7 +713,7 @@ fi
     printf 'Website: %s\n' "${PRODUCT_WEBSITE}"
     printf 'Support: %s\n' "${SUPPORT_EMAIL}"
     printf 'Version: %s\n' "${VERSION}"
-    printf 'Formats: VST3, Audio Unit, Standalone\n'
+    printf 'Formats: VST3, Audio Unit, CLAP, Standalone\n'
     printf 'Architectures: %s\n' "${APP_ARCHS}"
     printf 'Minimum macOS: %s\n' "${DEPLOYMENT_TARGET}"
     printf 'CMake: %s\n' "${CMAKE_TOOL_VERSION}"
@@ -703,6 +724,7 @@ fi
         "${STANDALONE_BUNDLE_IDENTIFIER}"
     printf 'Audio Unit bundle identifier: %s\n' "${AU_BUNDLE_IDENTIFIER}"
     printf 'VST3 bundle identifier: %s\n' "${VST3_BUNDLE_IDENTIFIER}"
+    printf 'CLAP bundle identifier: %s\n' "${CLAP_BUNDLE_IDENTIFIER}"
     printf 'Package identifier: %s\n' "${PACKAGE_IDENTIFIER}"
     printf 'Audio Unit identity: %s/%s/%s\n' \
         "${AU_TYPE}" "${AU_SUBTYPE}" "${AU_MANUFACTURER}"
@@ -718,6 +740,7 @@ fi
     printf 'Customer licence SHA-256: %s\n' "${CUSTOMER_LICENSE_SHA256}"
     printf 'JUCE licensing basis: JUCE 8 Starter (publisher-declared)\n'
     printf 'JUCE LICENSE.md SHA-256: %s\n' "${JUCE_LICENSE_SHA256}"
+    printf 'CLAP-LICENSE.md SHA-256: %s\n' "${CLAP_LICENSE_SHA256}"
     printf 'JUCE dependency license files:\n'
     for relative_path in "${JUCE_DEPENDENCY_LICENSES[@]}"; do
         printf '  %s\n' "${relative_path}"

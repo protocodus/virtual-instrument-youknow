@@ -5,14 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
-# A newer push to the same branch/PR cancels the older, still-running check.
+# Superseded PR checks can stop, but every main push must finish its packages.
+# A run-specific group also prevents pending main runs from replacing each other.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dsp-tests:
@@ -22,6 +24,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Test CI packaging and preview refresh
+        run: python3 scripts/test-ci-packaging.py
 
       - name: Install JUCE Linux dependencies
         run: |
@@ -57,6 +62,9 @@ jobs:
         run: |
           set -euo pipefail
           cmake --build build-dsp --target YouKnowRenderDemos --parallel
+          # Only this run's complete render can satisfy the count below.
+          # Frozen evidence lives in subdirectories and is not removed.
+          rm -f Docs/audio/*.wav
           ./build-dsp/YouKnowRenderDemos Docs/audio
           rendered=$(find Docs/audio -maxdepth 1 -name '*.wav' | wc -l)
           if (( rendered != 10 )); then
@@ -64,6 +72,19 @@ jobs:
             exit 1
           fi
           echo "YouKnow: rendered all $rendered demo WAVs"
+
+      - name: Archive the refreshed audio demos and peak table
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: tar -czf audio-previews.tar.gz README.md Docs/audio/*.wav
+
+      - name: Upload the refreshed audio demos
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-audio-previews
+          path: audio-previews.tar.gz
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Configure Linux plug-in build
         run: |
@@ -110,8 +131,8 @@ jobs:
           retention-days: 7
 
   plugin-macos:
-    name: Plug-in build (macOS native arch)
-    runs-on: macos-latest
+    name: Plug-in build and package (macOS)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,12 +144,11 @@ jobs:
       - name: Clear screenshot before rendering
         run: rm -f Docs/screenshots/youknow-standalone.png
 
-      # Native-arch only keeps per-push CI fast; the nightly workflow builds the
-      # full arm64 + x86_64 universal binaries. Uses the same build script
-      # developers run locally, and runs the project's tests.
+      # PRs check the runner's native architecture. Main pushes and manual runs
+      # build both arm64 and x86_64 for the downloadable distribution.
       - name: Build plug-in and run tests
         env:
-          BUILD_UNIVERSAL: "OFF"
+          BUILD_UNIVERSAL: ${{ github.event_name == 'pull_request' && 'OFF' || 'ON' }}
           YOUKNOW_EDITOR_SNAPSHOT: "${{ github.workspace }}/Docs/screenshots/youknow-standalone.png"
         run: ./scripts/build-macos.sh
 
@@ -151,9 +171,84 @@ jobs:
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
 
+      - name: Archive the refreshed editor screenshot
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: tar -czf editor-preview.tar.gz Docs/screenshots/youknow-standalone.png
+
+      - name: Upload the refreshed editor screenshot
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-editor-preview
+          path: editor-preview.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Package macOS VST3, Audio Unit, CLAP and standalone
+        if: github.event_name != 'pull_request'
+        run: ./scripts/sign-and-package-macos.sh
+
+      - name: Verify macOS packages and write checksums
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build-macos/CMakeCache.txt)"
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]
+          cd build-macos/dist
+          base="YouKnow-${version}-macOS-universal"
+          test -s "$base.zip"
+          test -s "$base.pkg"
+          unzip -tq "$base.zip"
+          shasum -a 256 "$base.zip" "$base.pkg" > SHA256SUMS.txt
+
+      - name: Upload macOS packages
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-macos
+          path: |
+            build-macos/dist/YouKnow-*-macOS-universal.zip
+            build-macos/dist/YouKnow-*-macOS-universal.pkg
+            build-macos/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  refresh-previews:
+    name: Refresh the committed screenshot and audio demos
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [dsp-tests, plugin-macos, dsp-tests-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download the rendered audio demos and peak table
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-audio-previews
+          path: ${{ runner.temp }}/youknow-previews
+
+      - name: Download the rendered screenshot
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-editor-preview
+          path: ${{ runner.temp }}/youknow-previews
+
+      - name: Commit the refreshed previews if they changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_DIR: ${{ runner.temp }}/youknow-previews
+        run: bash scripts/refresh-previews.sh
+
   dsp-tests-windows:
-    name: DSP tests (JUCE-free, Windows)
+    name: DSP tests and plug-in package (Windows x64)
     runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -170,45 +265,24 @@ jobs:
 
       - name: Configure Windows plug-in build
         run: |
-          cmake -S . -B build-win -DYOUKNOW_BUILD_PLUGIN=ON -DBUILD_TESTING=OFF
+          cmake -S . -B build-win -DYOUKNOW_BUILD_PLUGIN=ON -DYOUKNOW_BUILD_CLAP=ON -DBUILD_TESTING=ON
 
-      - name: Build Windows VST3 and standalone
+      - name: Build Windows VST3, CLAP and standalone
         run: |
-          cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_Standalone
+          cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone YouKnowCLAPBundleSmokeTests
 
-      - name: Package Windows VST3 and standalone
-        shell: pwsh
-        run: |
-          $artefacts = "build-win/YouKnow_artefacts/Release"
-          $vst3 = Join-Path $artefacts "VST3/YouKnow.vst3"
-          $standalone = Join-Path $artefacts "Standalone/YouKnow.exe"
-          if (-not (Test-Path -LiteralPath $vst3 -PathType Container)) {
-            throw "expected VST3 bundle at $vst3"
-          }
-          if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
-            throw "expected standalone executable at $standalone"
-          }
-          $dist = "build-win/dist"
-          New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          $zip = Join-Path $dist "YouKnow-Windows-x64.zip"
-          # Licence and notice files ship inside the binary archive (the MIT
-          # licence requires the notice to accompany binaries).
-          $contents = @((Join-Path $artefacts "VST3"), (Join-Path $artefacts "Standalone"))
-          foreach ($notice in @("LICENSE", "THIRD_PARTY_NOTICES.md", "ThirdParty/JUCE-LICENSE.md")) {
-            if (Test-Path -LiteralPath $notice -PathType Leaf) {
-              $contents += $notice
-            }
-          }
-          Compress-Archive -LiteralPath $contents -DestinationPath $zip
-          if (-not (Test-Path -LiteralPath $zip -PathType Leaf) -or
-              (Get-Item -LiteralPath $zip).Length -eq 0) {
-            throw "expected package at $zip"
-          }
+      - name: Test the Windows CLAP host boundary
+        run: ctest --test-dir build-win -C Release --output-on-failure -R '^YouKnow\.CLAPBundle$' --no-tests=error
+
+      - name: Package Windows VST3, CLAP and standalone
+        run: python scripts/package-windows.py --build-dir build-win
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: ci-windows
-          path: build-win/dist/YouKnow-Windows-x64.zip
+          path: |
+            build-win/dist/YouKnow-*-Windows-x64.zip
+            build-win/dist/SHA256SUMS.txt
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30

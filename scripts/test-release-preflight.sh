@@ -10,7 +10,8 @@ mkdir -p "${TEST_ROOT}/project/scripts" "${TEST_ROOT}/project/ThirdParty" \
     "${TEST_ROOT}/bin" "${TEST_ROOT}/project/build-macos/dist"
 cp "${SCRIPT_DIR}/sign-and-package-macos.sh" "${SCRIPT_DIR}/release-macos.sh" \
     "${TEST_ROOT}/project/scripts/"
-for document in LICENSE USER_GUIDE.md THIRD_PARTY_NOTICES.md ThirdParty/JUCE-LICENSE.md PRIVACY.md; do
+for document in LICENSE USER_GUIDE.md THIRD_PARTY_NOTICES.md \
+    ThirdParty/JUCE-LICENSE.md ThirdParty/CLAP-LICENSE.md PRIVACY.md; do
     printf 'Fixture document\n' > "${TEST_ROOT}/project/${document}"
 done
 printf 'project(YouKnow VERSION 1.1.0 LANGUAGES CXX)\n' > "${TEST_ROOT}/project/CMakeLists.txt"
@@ -79,6 +80,9 @@ expect_failure 'full Xcode' env TEST_NO_XCODE=1 "${PACKAGER}" --preflight
 expect_failure 'does not match CMake version' env VERSION=2.0.0 "${PACKAGER}" --preflight
 expect_failure 'fresh build directory' bash "${TEST_ROOT}/project/scripts/release-macos.sh"
 expect_failure 'full Xcode' env TEST_NO_XCODE=1 bash "${TEST_ROOT}/project/scripts/release-macos.sh"
+mv "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md" "${TEST_ROOT}/CLAP-LICENSE.md"
+expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
+mv "${TEST_ROOT}/CLAP-LICENSE.md" "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md"
 printf '### 1.1.0 — unreleased (2026-09-05)\n' > "${TEST_ROOT}/project/README.md"
 expect_failure 'dated' "${PACKAGER}" --preflight
 test -f "${TEST_ROOT}/project/build-macos/dist/YouKnow-old-macOS-universal.pkg"
