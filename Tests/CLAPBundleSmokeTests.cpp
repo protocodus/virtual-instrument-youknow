@@ -124,9 +124,10 @@ struct Host
         from (host).callbackRequested.store (true);
     }
 
-    clap_host_t interface { CLAP_VERSION, this, "YouKnow CLAP smoke test",
-                            "Protocodus", "https://protocodus.cz", "1.0",
-                            getExtension, request, request, requestCallback };
+    // Avoid `interface`, which the Windows SDK defines as a macro.
+    clap_host_t clapHost { CLAP_VERSION, this, "YouKnow CLAP smoke test",
+                          "Protocodus", "https://protocodus.cz", "1.0",
+                          getExtension, request, request, requestCallback };
 };
 
 bool hasFeature (const clap_plugin_descriptor_t& descriptor, const char* feature)
@@ -157,7 +158,7 @@ struct Events
         return events.present && index == 0 ? &events.midi.header : nullptr;
     }
 
-    clap_input_events_t interface { this, size, get };
+    clap_input_events_t inputEvents { this, size, get };
 };
 } // namespace
 
@@ -187,7 +188,7 @@ int main (int argc, char** argv)
                  "CLAP instrument/synthesizer features are missing");
 
         Host host;
-        const auto* plugin = factory->create_plugin (factory, &host.interface, descriptor->id);
+        const auto* plugin = factory->create_plugin (factory, &host.clapHost, descriptor->id);
         require (plugin != nullptr, "CLAP instantiation failed");
         InstanceLifetime instance { plugin };
         require (plugin->init (plugin), "CLAP plugin initialization failed");
@@ -230,7 +231,7 @@ int main (int argc, char** argv)
             nullptr, [] (const clap_output_events_t*, const clap_event_header_t*) -> bool
             { return true; } };
         clap_process_t process { 0, blockSize, nullptr, nullptr, &output, 0, 1,
-                                 &events.interface, &outputEvents };
+                                 &events.inputEvents, &outputEvents };
         bool finite = true;
         bool succeeded = true;
         float peak = 0.0f;
