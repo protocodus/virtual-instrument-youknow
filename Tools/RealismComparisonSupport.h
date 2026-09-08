@@ -132,8 +132,14 @@ inline std::uint32_t readU32(const std::uint8_t* bytes) noexcept
 }
 
 inline bool writeFloatWav(const std::filesystem::path& path,
-                          const StereoBuffer& audio, std::string& error)
+                          const StereoBuffer& audio, std::string& error,
+                          std::uint32_t sampleRate = comparisonSampleRate)
 {
+    if (sampleRate < 8000u || sampleRate > 768000u)
+    {
+        error = "sample rate must be in 8000..768000Hz";
+        return false;
+    }
     if (!validate(audio, error))
         return false;
     if (audio.left.size()
@@ -162,9 +168,9 @@ inline bool writeFloatWav(const std::filesystem::path& path,
     appendLittleEndian(bytes, 16u, 4);
     appendLittleEndian(bytes, 3u, 2); // WAVE_FORMAT_IEEE_FLOAT
     appendLittleEndian(bytes, channels, 2);
-    appendLittleEndian(bytes, comparisonSampleRate, 4);
+    appendLittleEndian(bytes, sampleRate, 4);
     appendLittleEndian(bytes,
-                       comparisonSampleRate * channels * bytesPerSample, 4);
+                       sampleRate * channels * bytesPerSample, 4);
     appendLittleEndian(bytes, channels * bytesPerSample, 2);
     appendLittleEndian(bytes, 32u, 2);
     tag("data");

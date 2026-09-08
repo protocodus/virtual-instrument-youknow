@@ -334,6 +334,11 @@ struct EngineParameters
     // cascade's amplitude-dependent pitch droop. False restores the previous
     // dynamic correction for comparisons. Not serialised.
     bool useFixedVcfServiceFrequencyTrim { true };
+    // Fixed-slot FREQ/WIDTH/current-ceiling comparison coordinates from the
+    // six-card 192kHz sweep of serviced #439522 (Borish replacement cards).
+    // Fit at Unit Character zero; also selects the existing measured DAC
+    // carry steps independently of Character. Not serialised.
+    bool useServiced439522VcfCalibration { false };
     // Which reading of the resonance input-compensation bracket the voice
     // applies. Both derivable readings put the coefficient between 0.2751 and
     // 0.3078; the shipped default is that bracket's floor, and Legacy restores
@@ -909,10 +914,12 @@ public:
 
     // Complete default-profile cutoff after the compatibility profile's
     // frequency correction and the transconductor's control-current
-    // saturation. The explicit product safety cap applies after every
-    // correction so no composition can exceed the declared boundary.
+    // saturation. The nominal profile caps the pole at 50 kHz; the optional
+    // serviced-card profile permits 72.9 kHz to retain its measured ultrasonic
+    // fundamentals. Both render paths additionally enforce 0.45*internalRate.
     [[nodiscard]] static float vcfEffectiveCutoffHz(float counts,
-                                                    float feedback) noexcept;
+                                                    float feedback,
+                                                    int referenceCard = -1) noexcept;
 
     // Integral non-linearity of the R-2R cutoff converter, in counts, for a
     // summed count value. A measured code-to-frequency table for a real voice

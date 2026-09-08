@@ -70,6 +70,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowVcaControl.h
     Source/DSP/YouKnowCoupledMixer.h
     Source/DSP/YouKnowSubLevel.h
+    Source/DSP/YouKnowReferenceVcf.h
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowNoiseCalibration.h
     Source/DSP/YouKnowHighPassSwitch.h

@@ -1,4 +1,5 @@
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowReferenceVcf.h"
 
 #include <algorithm>
 #include <array>
@@ -39,6 +40,11 @@ struct YouKnowTestAccess
     static double internalRate(const YouKnowEngine& engine)
     {
         return engine.oversampledRate_;
+    }
+    static float dacTarget(const YouKnowEngine& engine,
+                           const EngineParameters& parameters)
+    {
+        return engine.voiceVcfTarget(engine.voices_[0], parameters, 0.0f);
     }
 };
 }
@@ -135,10 +141,89 @@ int main()
         require(maximumRateError < 2e-6, "fixed service current depends on host rate or quality rung");
         require(youknow::EngineParameters {}.useFixedVcfServiceFrequencyTrim,
                 "fixed physical service trim is not the default");
+        require(!youknow::EngineParameters {}.useServiced439522VcfCalibration,
+                "replacement-card unit calibration became a universal default");
+
+        // Separate circuit-coordinate oracle, evaluated in double precision:
+        // converter carries precede the WIDTH multiplier, FREQ multiplies
+        // current exponentially, and the finite-current limit has the same
+        // fixed exponent as the nominal model. This checks wiring on both
+        // audio paths, fixed physical slot identity and selector invalidation.
+        using Engine = youknow::YouKnowEngine;
+        const double trim = Engine::VoicedResonanceCompatibilityProfile::frequencyTrim(
+            Engine::VoicedResonanceCompatibilityProfile::maximumFeedback);
+        double maximumReferenceError = 0;
+        for (int slot = 0; slot < 6; ++slot)
+        {
+            const auto& physical = youknow::serviced439522Vcf[static_cast<std::size_t>(slot)];
+            require(physical.selfOscillationCeilingHertz*trim >= 64800
+                    && physical.selfOscillationCeilingHertz*trim <= 72900,
+                    "reference fit escaped its explicit model plausibility bounds");
+            float previous = 0;
+            for (int counts = -2000; counts <= 20000; counts += 4)
+            {
+                const float cutoff = Engine::vcfEffectiveCutoffHz(
+                    static_cast<float>(counts), 4.504f, slot);
+                require(std::isfinite(cutoff) && cutoff >= previous && cutoff <= 72900,
+                        "reference profile is non-finite, non-monotone or exceeds its bound");
+                previous = cutoff;
+            }
+            for (auto kernel : {youknow::VcfTanhMode::PolyZoned, youknow::VcfTanhMode::Exact})
+            for (int rate : {48000, 192000})
+            {
+                auto engine = std::make_unique<Engine>();
+                engine->prepare(rate, 1, 4);
+                youknow::EngineParameters parameters;
+                parameters.calibration = 0;
+                parameters.sawEnabled = parameters.pulseEnabled = false;
+                parameters.subLevel = parameters.noiseLevel = 0;
+                parameters.enableVcfStageOffsets = false;
+                parameters.enablePulseOffWaveNodeCoupling = false;
+                parameters.vcfTanhMode = kernel;
+                parameters.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
+                parameters.vcfSolverMode = kernel == youknow::VcfTanhMode::Exact
+                    ? youknow::VcfSolverMode::MersonHalfSteps
+                    : youknow::VcfSolverMode::Rk4Single;
+                const float nominal = callbackCorner(*engine, parameters, slot, .25f);
+                parameters.useServiced439522VcfCalibration = true;
+                const float selected = callbackCorner(*engine, parameters, slot, .25f);
+                const double raw = physical.baseHertz*std::exp2(6000.0
+                    *physical.centsPerByte/(128.0*1200.0));
+                const double expectedHertz = raw*trim / std::pow(1.0
+                    + std::pow(raw/physical.selfOscillationCeilingHertz, 1.7), 1.0/1.7);
+                const double measuredHertz = selected*youknow::YouKnowTestAccess::internalRate(*engine)
+                    /(2.0*std::acos(-1.0));
+                maximumReferenceError = std::max(maximumReferenceError,
+                    std::abs(measuredHertz/expectedHertz-1));
+                require(selected != nominal, "reference selector did not refresh the callback coefficient");
+                require(callbackCorner(*engine, parameters, slot, 1.0f) == selected,
+                        "reference FREQ trim started following the RES slider");
+                parameters.envDepth = parameters.keyFollow = parameters.vcfLfoDepth = 0;
+                for (int code : {31,32,63,64,95,96,127})
+                {
+                    parameters.cutoff = static_cast<float>(code)/127.0f;
+                    const double carry = ((code >= 32 ? -4.64 : 0)
+                        +(code >= 64 ? 23.31 : 0)+(code >= 96 ? -4.48 : 0))*1143/1200;
+                    require(std::abs(youknow::YouKnowTestAccess::dacTarget(*engine,parameters)
+                        -(128.0*code+carry)) < .002,
+                        "reference profile failed to put the existing carry on the physical hold target");
+                }
+                parameters.useServiced439522VcfCalibration = false;
+                require(callbackCorner(*engine, parameters, slot, .25f) == nominal,
+                        "reference profile did not restore nominal slot calibration");
+            }
+        }
+        require(maximumReferenceError < 2e-6,
+                "reference callback disagrees with independent circuit-coordinate oracle");
+        for (int slot : {-5,-1,6,20})
+            require(Engine::vcfEffectiveCutoffHz(6000,4.504f,slot)
+                    == Engine::vcfEffectiveCutoffHz(6000,4.504f),
+                    "invalid reference card does not fall back to nominal");
         std::cout << "Fixed-service callback cases=" << cases
                   << " max_RES_corner_movement=" << maximumFixedMovement
                   << " min_legacy_corner_movement=" << minimumLegacyMovement
-                  << " max_rate_relative_error=" << maximumRateError << '\n';
+                  << " max_rate_relative_error=" << maximumRateError
+                  << " reference_callback_relative_error=" << maximumReferenceError << '\n';
     }
     catch (const std::exception& error)
     {

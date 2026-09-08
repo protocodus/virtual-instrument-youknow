@@ -1,5 +1,6 @@
 #include "YouKnowEngine.h"
 #include "YouKnowVcaControl.h"
+#include "YouKnowReferenceVcf.h"
 
 #include <algorithm>
 #include <cmath>
@@ -871,29 +872,50 @@ float YouKnowEngine::vcfConverterCarryCounts(float counts) noexcept
     return carry;
 }
 
-// Service Notes p.13 routes VR29/VR28 only into VCF CV; RES CV feeds
-// the separate VR26/R107/Tr18 feedback-OTA branch. Page19 fixes resonance
-// amplitude before adjusting FREQ/WIDTH. The engine therefore passes each
-// card's fixed full-RES service feedback here; only the legacy comparison
-// passes live feedback. The cascade itself retains amplitude-dependent
-// frequency droop, which a fixed hardware trimmer cannot cancel dynamically.
-// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf
 float YouKnowEngine::vcfEffectiveCutoffHz(float counts,
-                                             float feedback) noexcept
+                                             float calibrationFeedback,
+                                             int referenceCard) noexcept
 {
-    const float rawHz = vcfAntilogHz(counts)
-                      * VoicedResonanceCompatibilityProfile::frequencyTrim(feedback);
+    // Service Notes p. 13 connects VR29 FREQ/VR28 WIDTH only to the cutoff
+    // path; VR26 RES feeds a separate grounded-base transistor/BA662. Page
+    // 19 adjusts the two frequency trimmers AFTER the 4.8Vp-p full-RES trim.
+    // Their setting cannot subsequently follow the resonance slider.
+    // The engine therefore passes the card's fixed full-RES service-condition
+    // feedback here. Its legacy comparison passes the live feedback instead.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf
+    const bool reference = referenceCard >= 0
+        && referenceCard < static_cast<int>(serviced439522Vcf.size());
+    float antilogHz = vcfAntilogHz(counts);
+    float saturationHz = vcfControlSaturationHz;
+    if (reference)
+    {
+        const auto& calibration = serviced439522Vcf[static_cast<std::size_t>(referenceCard)];
+        const float safeCounts = std::clamp(sanitised(counts, 0.0f), -2000.0f, 20000.0f);
+        antilogHz = static_cast<float>(calibration.baseHertz
+            * std::exp2(static_cast<double>(safeCounts)
+                * calibration.centsPerByte / (128.0 * 1200.0)));
+        saturationHz = static_cast<float>(calibration.selfOscillationCeilingHertz)
+            * VoicedResonanceCompatibilityProfile::frequencyTrim(
+                VoicedResonanceCompatibilityProfile::maximumFeedback);
+    }
+    const float rawHz = antilogHz
+        * VoicedResonanceCompatibilityProfile::frequencyTrim(calibrationFeedback);
     // The transconductor's control current saturates internally, so the pole
     // stops following the anti-log converter near the top of the slider. The
     // generalized algebraic clip keeps the law numerically exact through the
     // musical range -- under five cents of correction below 2.7 kHz -- and
     // bends it only as the current approaches its own limit.
     const double normalised = static_cast<double>(rawHz)
-                            / static_cast<double>(vcfControlSaturationHz);
+                            / static_cast<double>(saturationHz);
     const double exponent = static_cast<double>(vcfControlSaturationExponent);
     const double saturated = static_cast<double>(rawHz)
         / algebraicSoftClipDenominator(normalised, exponent);
-    return std::min(vcfSafetyCapHz, static_cast<float>(saturated));
+    // The identified capture reaches 51.35kHz, so the nominal 50kHz product
+    // cap would invalidate its upper held-outs. This opt-in profile keeps
+    // its explicit historical-model fit bound; both render paths additionally
+    // cap every physical pole at 0.45 of the actual internal sample rate.
+    return std::min(reference ? 72900.0f : vcfSafetyCapHz,
+                    static_cast<float>(saturated));
 }
 
 float YouKnowEngine::chassisGradientCelsius(int cardIndex) noexcept
@@ -5950,7 +5972,9 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         || next.calibration != activeParameters_.calibration;
     const bool agingChanged = next.aging != activeParameters_.aging;
     if (next.useFixedVcfServiceFrequencyTrim
-            != activeParameters_.useFixedVcfServiceFrequencyTrim)
+            != activeParameters_.useFixedVcfServiceFrequencyTrim
+        || next.useServiced439522VcfCalibration
+            != activeParameters_.useServiced439522VcfCalibration)
         for (auto& voice : voices_)
             voice.cutoffChainCounts = -1.0e30f;
     // Before the first valid prepared audio interval, a host snapshot is the
@@ -7055,7 +7079,8 @@ float YouKnowEngine::voiceVcfTarget(
     // produced, so it stays on the hold capacitor and reaches the filter.
     // Crossing mid-scale on a slow sweep therefore steps by about 23 cents,
     // as a real card's does.
-    return code + vcfConverterCarryCounts(code) * parameters.calibration;
+    return code + vcfConverterCarryCounts(code)
+        * (parameters.useServiced439522VcfCalibration ? 1.0f : parameters.calibration);
 }
 
 void YouKnowEngine::updateVoiceVcaTarget(
@@ -7536,7 +7561,8 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
 #if defined(YOUKNOW_WORK_AUDIT)
         YOUKNOW_COUNT_DOMAIN_WORK(cutoffMemoMisses, 1);
 #endif
-        const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, calibrationFeedback);
+        const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, calibrationFeedback,
+            parameters.useServiced439522VcfCalibration ? voice.cardIndex : -1);
         const float limited =
             std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
         voice.filterOmegaStep = twoPi * limited * inverseOversampledRate_;
@@ -8354,7 +8380,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
                     parameters.useCircuitDerivedResonanceShape)
                 : mappedFeedback;
             const float cutoffHz = vcfEffectiveCutoffHz(
-                mappedAnalogCounts, calibrationFeedback);
+                mappedAnalogCounts, calibrationFeedback,
+                parameters.useServiced439522VcfCalibration ? voice.cardIndex : -1);
             const float limited = std::min(
                 cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
             const float baseOmega = twoPi * limited
