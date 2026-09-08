@@ -30,6 +30,38 @@ bool effectiveChorusProfile(const std::string& name)
     throw std::runtime_error("chorus profile must be nominal or a11-effective");
 }
 
+struct RenderOptions
+{
+    float character { 1.0f };
+    bool shipping { false };
+    float noiseScale { 1.0f };
+    bool a11EffectiveChorus { false };
+};
+
+RenderOptions readOptions(const std::vector<std::string>& arguments)
+{
+    if (arguments.size() > 4)
+        throw std::runtime_error("too many render options");
+    const auto finiteRange = [](const std::string& text, float maximum, const char* label) {
+        std::size_t used;
+        const float value = std::stof(text, &used);
+        if (used != text.size() || !std::isfinite(value) || value < 0.0f || value > maximum)
+            throw std::runtime_error(std::string(label) + " must be finite and in 0.."
+                                     + std::to_string(static_cast<int>(maximum)));
+        return value;
+    };
+    RenderOptions result;
+    if (!arguments.empty())
+        result.character = finiteRange(arguments[0], 2.0f, "character");
+    if (arguments.size() >= 2)
+        result.shipping = shippingMode(arguments[1]);
+    if (arguments.size() >= 3)
+        result.noiseScale = finiteRange(arguments[2], 4.0f, "noise scale");
+    if (arguments.size() == 4)
+        result.a11EffectiveChorus = effectiveChorusProfile(arguments[3]);
+    return result;
+}
+
 EngineParameters parametersFor(const sysex::Patch& patch, float character,
                                bool shipping, float noiseScale = 1.0f,
                                bool a11EffectiveChorus = false)
@@ -63,6 +95,24 @@ EngineParameters parametersFor(const sysex::Patch& patch, float character,
         p.vcfSolverMode = VcfSolverMode::Rk4Single;
     }
     return p;
+}
+
+bool patchParametersForEvent(const std::vector<std::uint8_t>& bytes,
+                             sysex::Patch& patch, bool& havePatch,
+                             const RenderOptions& options, EngineParameters& result)
+{
+    int channel, parameter, value;
+    if (sysex::readPatchMessage(bytes.data(), bytes.size(), patch, channel))
+        havePatch = true;
+    else if (!(havePatch && sysex::readParameterMessage(
+                   bytes.data(), bytes.size(), parameter, value, channel)
+               && sysex::applyParameter(patch, parameter, value)))
+        return false;
+    // Both a new full patch and a single-control update preserve the render's
+    // explicitly selected comparison coordinates.
+    result = parametersFor(patch, options.character, options.shipping,
+                           options.noiseScale, options.a11EffectiveChorus);
+    return true;
 }
 
 struct Event
@@ -105,6 +155,41 @@ std::vector<Event> readEvents(std::istream& input)
 
 void selfTest()
 {
+    const auto defaults = readOptions({});
+    const auto lower = readOptions({ "0", "exact", "0", "nominal" });
+    const auto upper = readOptions({ "2", "shipping", "4", "a11-effective" });
+    const auto selected = readOptions({ "0.75", "shipping", "3.44", "a11-effective" });
+    if (defaults.character != 1.0f || defaults.shipping || defaults.noiseScale != 1.0f
+        || defaults.a11EffectiveChorus || lower.character != 0.0f || lower.shipping
+        || lower.noiseScale != 0.0f || lower.a11EffectiveChorus
+        || upper.character != 2.0f || !upper.shipping || upper.noiseScale != 4.0f
+        || !upper.a11EffectiveChorus || selected.noiseScale != 3.44f)
+        throw std::runtime_error("render option defaults, endpoints or combined candidates changed");
+    for (const auto* invalid : { "", "nan", "inf", "-inf", "-0.01", "1junk", "1e1000" })
+        for (const bool noise : { false, true })
+        {
+            bool rejected = false;
+            try
+            {
+                (void) readOptions(noise
+                    ? std::vector<std::string> { "1", "shipping", invalid, "a11-effective" }
+                    : std::vector<std::string> { invalid });
+            }
+            catch (const std::exception&) { rejected = true; }
+            if (!rejected)
+                throw std::runtime_error("invalid numeric render option was accepted");
+        }
+    for (const auto& invalid : std::vector<std::vector<std::string>> {
+             { "2.01" }, { "1", "shipping", "4.01" },
+             { "1", "shipping", "3.44", "a11" },
+             { "1", "shipping", "3.44", "nominal", "extra" } })
+    {
+        bool rejected = false;
+        try { (void) readOptions(invalid); }
+        catch (const std::exception&) { rejected = true; }
+        if (!rejected)
+            throw std::runtime_error("invalid render option combination was accepted");
+    }
     const auto exact = parametersFor(sysex::Patch {}, 0.0f, shippingMode("exact"));
     const auto shipping = parametersFor(sysex::Patch {}, 1.0f, shippingMode("shipping"));
     if (exact.vcfTanhMode != VcfTanhMode::Exact
@@ -130,6 +215,34 @@ void selfTest()
     catch (const std::runtime_error&) { invalidProfileRejected = true; }
     if (!invalidProfileRejected)
         throw std::runtime_error("unknown chorus profile was accepted");
+
+    sysex::Patch source, decoded;
+    source.chorus = ChorusMode::One;
+    source.cutoff = 0.2f;
+    std::vector<std::uint8_t> fullPatch(sysex::patchMessageBytes);
+    if (sysex::writePatchMessage(source, 0, fullPatch.data(), fullPatch.size()) != fullPatch.size())
+        throw std::runtime_error("patch-update fixture did not encode");
+    bool havePatch = false;
+    EngineParameters changed;
+    const auto checkSelection = [&] {
+        if (changed.mainNoiseLevelScale != selected.noiseScale
+            || changed.useA11EffectiveChorusTimingProfile != selected.a11EffectiveChorus
+            || changed.calibration != selected.character
+            || changed.vcfTanhMode != VcfTanhMode::PolyZoned
+            || changed.cutoff != decoded.cutoff || changed.chorus != decoded.chorus)
+            throw std::runtime_error("a decoded patch update lost the selected render options");
+    };
+    if (!patchParametersForEvent(fullPatch, decoded, havePatch, selected, changed) || !havePatch)
+        throw std::runtime_error("full patch update was not accepted");
+    checkSelection();
+    const std::vector<std::uint8_t> cutoffUpdate { 0xf0, 0x41, 0x32, 0x00, 0x05, 87, 0xf7 };
+    if (!patchParametersForEvent(cutoffUpdate, decoded, havePatch, selected, changed)
+        || changed.cutoff != 87.0f / 127.0f)
+        throw std::runtime_error("single-control update was not applied");
+    checkSelection();
+    havePatch = false;
+    if (patchParametersForEvent(cutoffUpdate, decoded, havePatch, selected, changed))
+        throw std::runtime_error("single-control update was accepted before an initial patch");
     std::istringstream input("# timestamped MIDI\n0 903c7f\n0.05 803c00\n");
     const auto events = readEvents(input);
     if (events.size() != 2 || events[0].frame != 0 || events[1].frame != 2400
@@ -145,7 +258,7 @@ void selfTest()
         if (!rejected)
             throw std::runtime_error("invalid event input was accepted");
     }
-    std::cout << "calibration event parser and kernel self-check passed\n";
+    std::cout << "calibration event/options parser and patch-update persistence self-check passed\n";
 }
 } // namespace
 
@@ -166,28 +279,7 @@ int main(int argc, char** argv)
             selfTest();
             return 0;
         }
-        float character = 1.0f;
-        if (argc >= 4)
-        {
-            std::string value(argv[3]);
-            std::size_t used;
-            character = std::stof(value, &used);
-            if (used != value.size() || !std::isfinite(character)
-                || character < 0.0f || character > 2.0f)
-                throw std::runtime_error("character must be a finite value in 0..2");
-        }
-        const bool shipping = argc >= 5 && shippingMode(argv[4]);
-        float noiseScale = 1.0f;
-        if (argc >= 6)
-        {
-            const std::string value(argv[5]);
-            std::size_t used;
-            noiseScale = std::stof(value, &used);
-            if (used != value.size() || !std::isfinite(noiseScale)
-                || noiseScale < 0.0f || noiseScale > 4.0f)
-                throw std::runtime_error("noise scale must be finite and in 0..4");
-        }
-        const bool a11EffectiveChorus = argc == 7 && effectiveChorusProfile(argv[6]);
+        const auto options = readOptions(std::vector<std::string>(argv + 3, argv + argc));
         std::ifstream input(argv[1]);
         if (!input)
             throw std::runtime_error("cannot open event file");
@@ -215,18 +307,9 @@ int main(int argc, char** argv)
         {
             renderUntil(event.frame);
             const auto& bytes = event.bytes;
-            int channel, parameter, value;
-            if (sysex::readPatchMessage(bytes.data(), bytes.size(), patch, channel))
-            {
-                havePatch = true;
-                engine.setParameters(parametersFor(patch, character, shipping, noiseScale,
-                                                    a11EffectiveChorus));
-            }
-            else if (havePatch && sysex::readParameterMessage(
-                         bytes.data(), bytes.size(), parameter, value, channel)
-                     && sysex::applyParameter(patch, parameter, value))
-                engine.setParameters(parametersFor(patch, character, shipping, noiseScale,
-                                                    a11EffectiveChorus));
+            EngineParameters changed;
+            if (patchParametersForEvent(bytes, patch, havePatch, options, changed))
+                engine.setParameters(changed);
             else if (havePatch && bytes.size() == 3 && bytes[1] < 128 && bytes[2] < 128
                      && ((bytes[0] & 0xf0) == 0x80 || (bytes[0] & 0xf0) == 0x90))
             {
@@ -245,11 +328,11 @@ int main(int argc, char** argv)
             throw std::runtime_error(error);
         std::cout << events.size() << " events, "
                   << audio.left.size() / double(comparisonSampleRate)
-                  << " seconds, character " << character
+                  << " seconds, character " << options.character
                   << ", 48 kHz/4x, "
-                  << (shipping ? "Poly/Cubic/RK4 x1" : "Exact/Merson")
-                  << ", noise scale " << noiseScale
-                  << ", chorus " << (a11EffectiveChorus ? "A11 effective Mode I" : "nominal")
+                  << (options.shipping ? "Poly/Cubic/RK4 x1" : "Exact/Merson")
+                  << ", noise scale " << options.noiseScale
+                  << ", chorus " << (options.a11EffectiveChorus ? "A11 effective Mode I" : "nominal")
                   << ", volume 1, peak "
                   << decibels(measure(audio).peak) << " dBFS\n";
     }
