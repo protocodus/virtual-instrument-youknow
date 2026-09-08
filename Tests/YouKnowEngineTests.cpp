@@ -7564,6 +7564,10 @@ void testFractionalPassiveHoldsUseTheirPhysicalWriteTime()
         YouKnowEngine engine;
         engine.prepare(sampleRate, blockSize, false);
         auto parameters = plainPatch();
+        // This exact-exponential fixture isolates the scheduler with its
+        // retained linear load. The coupled C58/Tr20 load is checked against
+        // independent voltage-domain KCL in YouKnowVcaControlTests.
+        parameters.enableCoupledVoiceVcaControl = false;
         parameters.pulseEnabled = true;
         parameters.pwmSource = PwmSource::Manual;
         parameters.vcaMode = VcaMode::Gate;
@@ -9726,6 +9730,9 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
             YouKnowEngine timeline;
             timeline.prepare(sampleRate, blockSize, oversampled);
             auto parameters = plainPatch();
+            // Keep the documented fixed-RC latency reference reproducible;
+            // the transistor-loaded C58 model has no single time constant.
+            parameters.enableCoupledVoiceVcaControl = false;
             parameters.vcaMode = VcaMode::Envelope;
             parameters.attack = 0.0f;
             timeline.setParameters(parameters);

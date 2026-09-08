@@ -154,7 +154,11 @@ forty-year-old unit will null against the plug-in.
   5 shared — over a 4.2 ms pass in the service chart's exact write order,
   on a fractional scheduler with per-destination hold networks (anchored
   order; VCF and voice-VCA cross their designator-complete post-hold RC —
-  the voice-VCA's 687 µs is exactly (R106 10 kΩ ‖ R105 22 kΩ) × C58 0.1 µF,
+  the voice-VCA now solves C58 with Tr20's changing incremental load: its
+  time constant approaches (R106 10 kΩ ‖ R105 22 kΩ) × C58 0.1 µF = 687.5 µs
+  at high current and 1 ms as the transistor closes, retaining the existing
+  junction/knee calibration and DC gain; an independent voltage-node RK4
+  oracle bounds C58 error to 1.2 µV at 48/192 kHz in the tested transitions,
   and the VCF's C61 sits behind the unread WIDTH trimmer, so its 522 µs is a
   point inside a 467–553 µs bracket — as do PWM/SUB/common-VCA; the DCO
   pitch-CV, NOISE and RESO holds have no post-hold network at all and step at

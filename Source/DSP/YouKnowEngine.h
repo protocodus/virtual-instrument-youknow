@@ -15,6 +15,7 @@
 
 namespace youknow
 {
+class VcaControlCircuit;
 
 // Panel switch positions. Every enumerator is a physical detent on the
 // modelled front panel, so the order is the panel order and the integer value
@@ -230,6 +231,10 @@ struct EngineParameters
     // drawing's 47 kOhm load (see VoiceVcaSignalLaw). False retains the former
     // linear multiply, bit for bit, solely for controlled A/B renders.
     bool enableVoiceVcaSignalSaturation { true };
+    // C58 and Tr20 form one loaded control circuit. Its time constant tends
+    // to 1ms as Tr20 closes and to (10k||22k)*0.1uF at high current. Retains
+    // the same DC junction calibration; false is the former fixed-RC A/B.
+    bool enableCoupledVoiceVcaControl { true };
     // On by default: Tr21/C42 feed the BA662 level OTA, whose output is then
     // loaded by C41/R79. Putting the scanned NOISE control before that output
     // pole lets C41 discharge while muted and recharge when the level returns.
@@ -1541,6 +1546,7 @@ private:
     // own comment for why the constant nonetheless stands.) The suites solve
     // the same ODE.
     static constexpr float thermalVoltage = 0.026f;
+    [[nodiscard]] static const VcaControlCircuit& voiceVcaControlCircuit() noexcept;
     // Roland's JUNO-6/JUNO-60 CPU BOARD p. 9 prints the four IR3109 stage
     // capacitors as "240PJ" -- C1, C2, C3, C4 alongside the seven 68K -- so
     // both the value and its tolerance class come from the drawing rather than
@@ -1648,7 +1654,9 @@ private:
     // it.
     static constexpr float vcfBenderCounts = 4064.0f;
     // Hold-capacitor slew after the converter. VCF and voice-VCA use the
-    // supported 522/687 us values; the common VCA derives its separate value
+    // 522us VCF value and retained 687us linear VCA reference. The default VCA
+    // instead couples C58 to Tr20's current-dependent incremental resistance
+    // (YouKnowVcaControl.h); the common VCA derives its separate value
     // from C7 and its loaded jack-board resistor network. PWM and SUB derive
     // theirs from p. 13's designator-complete post-hold smoothing networks
     // (OQ-07): the PWM hold reaches the comparators through R117/C62 and then
@@ -1686,7 +1694,7 @@ private:
     // against a 2.44 mV LSB (its 1 uA 25 C leakage maximum is a test limit,
     // not a measurement).
     static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
-    static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f;
+    static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f; // linear A/B reference
     static constexpr float pwmSmoothingR117Ohms = 100.0e3f;
     static constexpr float pwmSmoothingC62Farads = 47.0e-9f;
     static constexpr float pwmSmoothingR116Ohms = 560.0e3f;

@@ -229,6 +229,10 @@ struct YouKnowTestAccess
         VcaMode vcaMode = VcaMode::Envelope)
     {
         EngineParameters parameters;
+        // This oracle qualifies the retained *linear* per-hold network and
+        // fractional-write scheduler. C58/Tr20's coupled nonlinear load has
+        // its own voltage-domain oracle in YouKnowVcaControlTests.cpp.
+        parameters.enableCoupledVoiceVcaControl = false;
         parameters.calibration = 0.0f;
         parameters.sawEnabled = false;
         parameters.pulseEnabled = pwmMode != PassiveHoldAuditPwmMode::PulseOff;

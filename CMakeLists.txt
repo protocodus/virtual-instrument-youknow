@@ -67,6 +67,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
+    Source/DSP/YouKnowVcaControl.h
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowPanel.h)
 
@@ -239,6 +240,9 @@ option(YOUKNOW_BUILD_TOOLS "Build the JUCE-free audio render/audit tools" ON)
 
 if(YOUKNOW_BUILD_TOOLS)
     find_package(Threads REQUIRED)
+
+    add_executable(YouKnowRenderVcaControlComparison Tools/RenderVcaControlComparison.cpp)
+    target_link_libraries(YouKnowRenderVcaControlComparison PRIVATE YouKnowDSP)
 
     add_executable(YouKnowRenderDemos Tools/RenderDemos.cpp)
     target_link_libraries(YouKnowRenderDemos PRIVATE YouKnowDSP)
@@ -497,6 +501,10 @@ if(YOUKNOW_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(YouKnowVcaControlTests Tests/YouKnowVcaControlTests.cpp)
+    target_link_libraries(YouKnowVcaControlTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VcaControl COMMAND YouKnowVcaControlTests)
+    set_tests_properties(YouKnow.VcaControl PROPERTIES TIMEOUT 60)
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowEngineTests PRIVATE cxx_std_20)

@@ -1,4 +1,5 @@
 #include "YouKnowEngine.h"
+#include "YouKnowVcaControl.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,7 @@ namespace
 {
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 6.28318530717958647692f;
+
 
 // Signal levels use the established 2.6 V-per-unit model coordinate so the
 // transconductor and BBD nonlinearities retain their existing drive. The
@@ -1590,6 +1592,15 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts,
     const float scale = std::clamp(
         sanitised(rampAmplitudeScale, 1.0f), 0.25f, 4.0f);
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
+}
+
+const VcaControlCircuit& YouKnowEngine::voiceVcaControlCircuit() noexcept
+{
+    static const VcaControlCircuit circuit {
+        thermalVoltage,
+        CircuitDerivedResonanceProfile::controlFullScaleVolts,
+        VoiceVcaControlLaw::turnOn };
+    return circuit;
 }
 
 const std::array<float, YouKnowEngine::VoiceVcaControlLaw::tableSteps + 1>&
@@ -5249,6 +5260,8 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
 
 void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
 {
+    // Prepare the control circuit's table before entering the audio callback.
+    (void) voiceVcaControlCircuit();
     const double previousProcessingRate = oversampledRate_;
     oversampling_ = effectiveOversampleFactor(oversamplingApplied_);
 
@@ -8993,7 +9006,25 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca
                     && physicalHoldEvent.write.voice == slot;
-                voice.vcaControl = voiceVcaEvent
+                if (parameters.enableCoupledVoiceVcaControl)
+                {
+                    const auto& circuit = voiceVcaControlCircuit();
+                    const double dt = coefficients.internalIntervalSeconds;
+                    if (voiceVcaEvent)
+                    {
+                        voice.vcaControl = circuit.advance(
+                            voice.vcaControl, physicalHoldEvent.previousTarget,
+                            dt * physicalHoldEvent.position);
+                        voice.vcaControl = circuit.advance(
+                            voice.vcaControl, physicalHoldEvent.target,
+                            dt * (1.0 - physicalHoldEvent.position));
+                    }
+                    else
+                        voice.vcaControl = circuit.advance(
+                            voice.vcaControl, voice.vcaControlTarget, dt);
+                }
+                else
+                    voice.vcaControl = voiceVcaEvent
                     ? exactOnePoleHoldEndpoint(
                         voice.vcaControl,
                         physicalHoldEvent.previousTarget, true,
