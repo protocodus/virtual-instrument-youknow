@@ -244,6 +244,10 @@ if(YOUKNOW_BUILD_TOOLS)
     add_executable(YouKnowRenderVcaControlComparison Tools/RenderVcaControlComparison.cpp)
     target_link_libraries(YouKnowRenderVcaControlComparison PRIVATE YouKnowDSP)
 
+    add_executable(YouKnowDcoFirmwareTimingAudit Tools/AuditDcoFirmwareTiming.cpp)
+    target_link_libraries(YouKnowDcoFirmwareTimingAudit PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowDcoFirmwareTimingAudit PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderDemos Tools/RenderDemos.cpp)
     target_link_libraries(YouKnowRenderDemos PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderDemos PRIVATE cxx_std_20)
@@ -543,6 +547,8 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.SysEx COMMAND YouKnowSysExTests)
 
     if(YOUKNOW_BUILD_TOOLS)
+        add_test(NAME YouKnow.DcoFirmwareTiming
+                 COMMAND YouKnowDcoFirmwareTimingAudit --self-test)
         add_test(NAME YouKnow.CalibrationEvents
                  COMMAND YouKnowRenderCalibrationEvents --self-test)
         # Guards the renderer that produces the committed demonstration WAVs:

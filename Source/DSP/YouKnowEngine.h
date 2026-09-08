@@ -952,7 +952,10 @@ public:
     {
         NormalizedServiceChart,
         PhaseZeroDiagnostic,
-        MeasuredChartGeometry
+        MeasuredChartGeometry,
+        // Comparison-only partial reconstruction: chart anchors outside the
+        // DCO train, instruction-count intervals inside it. Not serialised.
+        FirmwareDcoNoInterrupt
     };
     // NormalizedServiceChart is an explicit compatibility/product profile: it
     // preserves the chart's sequential writes across one pass without claiming
@@ -971,6 +974,15 @@ public:
     // selection is consumed by the next reset/prepare, never mid-pass.
     [[nodiscard]] static std::array<double, converterWritesPerPass>
         converterEventPhases(ConverterTimingProfile profile) noexcept;
+    // B-2 0493 -> next 0493, at the nominal 4 MHz CPU-state rate, excluding
+    // interrupts. pitchHighByte is the *next* voice's unsigned 8.8 word high
+    // byte before the table clamp. The next voice owns the reset/clamp cost.
+    [[nodiscard]] static constexpr int firmwareDcoInterWriteStates(
+        bool nextVoiceReset, std::uint8_t pitchHighByte) noexcept
+    {
+        return 867 + (nextVoiceReset ? 106 : 0)
+            + (pitchHighByte <= 47 ? 12 : pitchHighByte >= 151 ? 26 : 0);
+    }
     // Selects the profile reset()/prepare() install, so a comparison profile
     // can drive the complete shipping signal path (the A-Z rules forbid
     // offline approximations). Mid-pass switching is deliberately
@@ -2562,6 +2574,7 @@ private:
     // still-unpublished serial wire phase and NMOS interrupt-entry delay out.
     void finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept;
     void restartVoiceBoardScanAfterSerialVoiceCommand() noexcept;
+    void refreshFirmwareDcoTiming() noexcept;
     void noteOffInternal(int midiNote) noexcept;
     [[nodiscard]] static bool pitchChangeRequestsDcoReset(
         const Voice& voice, int voiceMidi) noexcept;
@@ -2830,6 +2843,8 @@ private:
     // six DCOs from being falsely reset on one sample; a measured profile can
     // replace it without changing destination ownership or queue order.
     ConverterTimingProfile converterTimingProfile_ {
+        ConverterTimingProfile::NormalizedServiceChart };
+    ConverterTimingProfile activeConverterTimingProfile_ {
         ConverterTimingProfile::NormalizedServiceChart };
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };

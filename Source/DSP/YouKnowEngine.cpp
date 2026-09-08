@@ -1309,6 +1309,26 @@ YouKnowEngine::converterEventPhases(ConverterTimingProfile profile) noexcept
     if (profile == ConverterTimingProfile::PhaseZeroDiagnostic)
         return phases;
 
+    if (profile == ConverterTimingProfile::FirmwareDcoNoInterrupt)
+    {
+        phases = converterEventPhases(ConverterTimingProfile::MeasuredChartGeometry);
+        // Preserve the unresolved first-DCO and non-DCO anchors. The relative
+        // five gaps have a stronger source than drafting proportions: the B-2
+        // path 0493 -> 0496..04a1 -> 041c..0493 is 867 states for an unclamped,
+        // running voice, not the chart's 223.7..227.1 us. Actual branch costs
+        // are installed by refreshFirmwareDcoTiming at each logical pass.
+        // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L681-L763
+        // NEC uPD7810/11 instruction table pp. 17-26 (states, not clocks):
+        // https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17
+        // AuditDcoFirmwareTiming independently walks the instruction path and
+        // also checks the previously recovered T-334/-323/-389 PIT anchors.
+        for (std::size_t ordinal = 4; ordinal < 9; ++ordinal)
+            phases[ordinal] = phases[ordinal - 1]
+                + firmwareDcoInterWriteStates(false, 60)
+                    * controlScanHz / voiceCpuStateHz;
+        return phases;
+    }
+
     if (profile == ConverterTimingProfile::MeasuredChartGeometry)
     {
         // The Service Notes p. 8 "D/A & S/H TIMING CHART", measured from the
@@ -5694,6 +5714,7 @@ void YouKnowEngine::reset()
     rangeClockClocksToReload_ = 0.0;
     rangeClockTransitionPending_ = false;
     controlScanPhase_ = 1.0;
+    activeConverterTimingProfile_ = converterTimingProfile_;
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
     converterPassLfoGated_ = 0.0f;
@@ -6476,6 +6497,49 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
     nextConverterWrite_ = 0;
     passiveHoldEventLatch_ = {};
+    refreshFirmwareDcoTiming();
+}
+
+void YouKnowEngine::refreshFirmwareDcoTiming() noexcept
+{
+    if (activeConverterTimingProfile_
+        != ConverterTimingProfile::FirmwareDcoNoInterrupt)
+        return;
+
+    // This is deliberately an opt-in *partial* no-interrupt candidate. The
+    // first DCO/other destinations and 4.2 ms pass retain chart policy. B-2's
+    // full loop has data-dependent work and no timer wait at 07b5; replacing
+    // the whole scheduler requires a complete instruction trace, not a rescale
+    // of these gaps. Serial wire/entry time, pin edges and mux acquisition
+    // remain unmeasured. No latency is added to incoming host events.
+    //
+    // Predict only the next pitch/reset branch from the logical pass snapshot.
+    // A host edit after this snapshot can change the later transaction's data;
+    // its branch-time effect is outside this candidate's qualification. This
+    // explicit limit is why the shipping profile does not select it yet.
+    const auto& p = activeParameters_;
+    const float glide = resolveGlideStepPerScan(
+        portamentoTravelAdcFraction(p.portamento));
+    const std::int32_t controlOffset = masterTunePitchWordOffset(p.masterTuneCents)
+        + dcoPitchBendWord_ + dcoLfoPitchWord_;
+    for (int slot = 1; slot < hardwareVoices; ++slot)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(slot)];
+        const float target = voice.rootMidi >= 0
+            ? static_cast<float>(voice.rootMidi + p.keyTranspose)
+            : voice.targetMidi;
+        const float nextMidi = glide > 0.0f
+            ? voice.currentMidi + std::clamp(target - voice.currentMidi, -glide, glide)
+            : target;
+        const auto word = aggregatePitchWord(nextMidi, controlOffset);
+        const bool reset = voice.dcoResetPending
+            || (voice.rootMidi >= 0 && pitchChangeRequestsDcoReset(
+                    voice, voice.rootMidi + p.keyTranspose));
+        const auto ordinal = static_cast<std::size_t>(slot + 3);
+        converterEventPhases_[ordinal] = converterEventPhases_[ordinal - 1]
+            + firmwareDcoInterWriteStates(reset, static_cast<std::uint8_t>(word >> 8u))
+                * controlScanHz / voiceCpuStateHz;
+    }
 }
 
 void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
@@ -8724,6 +8788,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     ? pwmDacCode(parameters.pwmDepth, parameters.pwmSource,
                                  lfoAccumulator_, lfoPolarity_ >= 0.0f)
                     : 0u;
+                refreshFirmwareDcoTiming();
 
                 // Slots above the six physical cards are an explicit product
                 // extension. They reuse one complete logical update at the
