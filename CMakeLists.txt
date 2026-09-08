@@ -287,6 +287,10 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowMeasureChorusSupport PRIVATE YouKnowDSP)
     target_compile_features(YouKnowMeasureChorusSupport PRIVATE cxx_std_20)
 
+    add_executable(YouKnowChorusNoiseAudit Tools/AuditChorusNoise.cpp)
+    target_link_libraries(YouKnowChorusNoiseAudit PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusNoiseAudit PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderRealismFixes Tools/RenderRealismFixes.cpp)
     target_link_libraries(YouKnowRenderRealismFixes PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderRealismFixes PRIVATE cxx_std_20)
@@ -591,6 +595,8 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.SysEx COMMAND YouKnowSysExTests)
 
     if(YOUKNOW_BUILD_TOOLS)
+        add_test(NAME YouKnow.ChorusNoise COMMAND YouKnowChorusNoiseAudit --self-test)
+        set_tests_properties(YouKnow.ChorusNoise PROPERTIES TIMEOUT 60)
         add_test(NAME YouKnow.DcoFirmwareTiming
                  COMMAND YouKnowDcoFirmwareTimingAudit --self-test)
         add_test(NAME YouKnow.CalibrationEvents

@@ -122,18 +122,19 @@ public:
 
     // ------------------------------------------------------------------
     // Panasonic specifies noise at the MN3009 output under fixed conditions:
-    // Ta=25 C, VDD=VCPL=-15 V, VCPH=0 V, VGG=-14 V, RL=100 kOhm. The part
-    // datasheet's electrical table, read at 600 dpi from the scan, gives one
-    // noise row and no other:
+    // Ta=25 C, VDD=VCPL=-15 V, VCPH=0 V, VGG=-14 V, RL=100 kOhm. The
+    // four-page MN3009 sheet (printed p.43) gives:
     //
     //   Noise            Vno  fcp = 100kHz Weighted by "A" curve   Max 0.2  mVrms
     //   Signal to Noise  S/N  Maximum output voltage to noise volt. Typ 88  dB
     //
-    // So 0.200 mVrms is a MAXIMUM and the part publishes NO typical noise
-    // figure. The 0.150 mVrms this comment used to set against it does not
-    // appear in that table at all, so the "two conflicting maxima" reading is
-    // retired: there is one maximum, and the other figure belongs to some
-    // other part or revision. HISS 100% keeps the 0.200 mVrms endpoint, still
+    // https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf
+    // The separate Panasonic BBD book, printed p.37, instead gives 150 uVrms
+    // MAX under the same stated noise conditions (its bandwidth/swing rows
+    // also differ). Neither scan states a revision date or typical noise PSD;
+    // preserve that source distinction rather than silently choosing a
+    // typical amplitude from either maximum. HISS 100% keeps the established
+    // 0.200 mVrms product endpoint, still
     // as an upper limit and still not a measurement after Roland's external
     // tap-sum/reconstruction network.
     //
@@ -170,22 +171,21 @@ public:
     // The established HISS-100 product normalization chooses a recovered wet
     // line of the same numerical 0.200 mVrms. That equality is explicit policy,
     // not a claim that the external board belongs inside Panasonic's
-    // measurand. The constant below is the complete modelled board chain's
-    // A-weighted transfer from uniform edge-noise amplitude to the wet line:
-    // 1/sqrt(3) times 0.6745 for hold/tap sum/reconstruction/output coupling.
+    // measurand. The constant below preserves the legacy numerical
+    // normalization from uniform edge-noise amplitude to the wet line.
     static constexpr float productWetLineNoiseTargetAWeightedVrms =
         mn3009OutputNoiseAWeightedMaximumVrms;
     //
     // Stated at 192 kHz, which is what HQ targets from the 48 kHz host-rate
     // family and is also the engine's `noiseReferenceRateHz`. The combined
-    // exact output support measures 0.3894 there; this is a derived numerical
+    // exact output support originally measured 0.3894 there: a numerical
     // transfer update, not a change to the part's 0.2 mVrms row or its noise
-    // law. Across HQ the recovered result moves less than 0.004 dB between the
-    // 192 and 176.4 kHz internal grids. HQ-off's separately audited folded
-    // power remains numerical-grid error rather than a property of the part.
+    // law. The later correction of noise steps removes host-grid folded
+    // power (about 0.026 dB in the 48k/4x shipping silence fixture) without
+    // renormalizing this amplitude or claiming a new hardware noise level.
     //
-    // Known to about +/-0.1%, and no better: it is estimated from a finite
-    // random sequence. Fixed-seed 128 s measurements put the effective
+    // The legacy estimate was known to about +/-0.1% from a finite random
+    // sequence. Fixed-seed 128 s measurements put the effective
     // transfer at 0.38948-0.38953 on the 176.4 kHz family and
     // 0.38937-0.38941 on the 192 kHz family. Four figures is all the
     // measurand supports, which is why the suites allow estimator margin on
@@ -641,8 +641,9 @@ private:
         // The BBD's clock-grid images are physical and remain in the modeled
         // staircase. Sampling that asynchronous staircase on the numerical
         // grid creates a second, non-physical family of aliases. A short
-        // polyBLEP history removes only that host-grid error before the five
-        // hardware output poles. It is numerical state: unlike buckets,
+        // polyBLEP history reduces that host-grid error for both the signal
+        // and held random noise before the five hardware output poles. It is
+        // numerical state: unlike buckets,
         // clock phase, transfer loss and held noise, it is cleared when the
         // engine changes processing rate.
         std::array<double, 6> exactOutputState {};
@@ -659,7 +660,7 @@ private:
         void ageBlepEvents() noexcept;
         void rememberBlepEvent(float jump, double ageInSamples) noexcept;
         [[nodiscard]] double deterministicBlepCorrection(
-            double clockIncrement) const noexcept;
+            double clockIncrement, float noiseScale = 0.0f) const noexcept;
         [[nodiscard]] float processClockedCore(
             float limitedInput, float clockHz, float sampleRate,
             float noiseScale) noexcept;

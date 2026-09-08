@@ -5071,9 +5071,10 @@ void testBbdOutputPolyBlepReferenceAndBounds()
     expect(YouKnowTestAccess::bbdBlepEventCount(maximumRate) == 50,
            "BBD polyBLEP did not retain every edge in the worst two-sample window");
 
-    // A noise-only line has no deterministic transfer jumps, hence a zero BLEP
-    // delta. Its output, held sample and xorshift sequence remain bit-identical
-    // to the pre-correction path even while 25 edges occur per sample.
+    // Noise reconstruction changes the sampled output, while the physical
+    // held value and xorshift draws stay unchanged even at 25 edges/sample.
+    // The independent continuous-staircase quadrature and high-rate PSD
+    // oracles in AuditChorusNoise qualify the reconstructed output itself.
     Chorus noiseOnly;
     noiseOnly.prepare(8000.0);
     YouKnowTestAccess::configureBbdCore(
@@ -5090,8 +5091,8 @@ void testBbdOutputPolyBlepReferenceAndBounds()
             (static_cast<float>(expectedNoiseState & 0xffffffu)
                  * (2.0f / 16777215.0f) - 1.0f)
             * Chorus::independentLineRandomAmplitude;
-        expect(output == state.held && state.held == expectedNoise,
-               "deterministic BBD BLEP coloured or rerounded held line noise");
+        expect(std::isfinite(output) && state.held == expectedNoise,
+               "BBD reconstruction rerounded the physical held line noise");
         expect(state.transferState == 0.0f,
                "noise-only BBD developed a deterministic transfer signal");
     }

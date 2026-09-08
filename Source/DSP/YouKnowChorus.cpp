@@ -1027,7 +1027,7 @@ void Chorus::Line::rememberBlepEvent(float jump,
 }
 
 double Chorus::Line::deterministicBlepCorrection(
-    double clockIncrement) const noexcept
+    double clockIncrement, float noiseScale) const noexcept
 {
     double correction = 0.0;
 
@@ -1049,11 +1049,17 @@ double Chorus::Line::deterministicBlepCorrection(
     // Buckets that will emerge during the residual's two-sample lookahead are
     // already in the ring: even at 200 kHz / 8 kHz there are at most 50, short
     // of one 128-cell revolution. Advance a local copy of the aggregate
-    // transfer-loss state through those known values. Nothing physical --
-    // bucket contents/index, phase, held noise, transfer state or RNG -- moves.
+    // transfer-loss state through those known values. The random edge source
+    // is equally reproducible: advance a LOCAL RNG copy, never the live one.
+    // Including its steps reconstructs the declared held-noise process before
+    // sampling it on this numerical grid. Omitting those steps instead folded
+    // extra broadband power into the audible band at low processing rates.
+    // No physical state (bucket/index/phase/held/transfer/RNG) moves here.
     const double inverseIncrement = 1.0 / clockIncrement;
     double distance = (1.0 - clockPhase) * inverseIncrement;
     float predictedTransferState = transferState;
+    float predictedHeld = held;
+    std::uint32_t predictedNoiseState = noiseState;
     int futureIndex = writeIndex;
 
     for (int event = 0;
@@ -1064,11 +1070,14 @@ double Chorus::Line::deterministicBlepCorrection(
         YOUKNOW_COUNT_DOMAIN_WORK(blepFuturePredictionVisits, 1);
 #endif
         futureIndex = futureIndex + 1 < cellPairs ? futureIndex + 1 : 0;
-        const float before = predictedTransferState;
+        const float before = predictedHeld;
         Chorus::transferLossStep(
             predictedTransferState,
             cells[static_cast<std::size_t>(futureIndex)]);
-        const float jump = predictedTransferState - before;
+        predictedNoiseState = nextNoiseState(predictedNoiseState);
+        predictedHeld = predictedTransferState + noiseFromState(predictedNoiseState)
+            * Chorus::independentLineRandomAmplitude * noiseScale;
+        const float jump = predictedHeld - before;
 
         // A future change s[0] -> s[1] enters the authors' correction with
         // the opposite sign: s[0] - (s[1] - s[0]) * beta(timeUntilEdge).
@@ -1122,18 +1131,22 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
         const float emerging = cells[static_cast<std::size_t>(writeIndex)];
         cells[static_cast<std::size_t>(writeIndex)] = bounded;
 
-        const float transferBefore = transferState;
+        const float heldBefore = held;
         Chorus::transferLossStep(transferState, emerging);
-        rememberBlepEvent(transferState - transferBefore, ageInSamples);
 
-        // Noise remains a literal random, edge-held BBD contribution. BLEP is
-        // applied later as a deterministic delta to this already-rounded held
-        // value, so neither its spectrum nor the RNG sequence is predicted or
-        // altered by the numerical reconstruction.
+        // Keep the literal per-edge source and its rounded physical held
+        // value unchanged. Its discontinuity needs the same host-grid
+        // reconstruction as the signal; no new physical color or amplitude is
+        // inferred. The continuous iid staircase's averaged PSD is
+        // variance/fcp*sinc(f/fcp)^2 before the external reconstruction filter.
+        // AuditChorusNoise checks an independently integrated staircase and
+        // the high-rate limit, not a fitted noise spectrum from this part's
+        // single A-weighted maximum row.
         noiseState = nextNoiseState(noiseState);
         held = transferState
              + noiseFromState(noiseState)
                * Chorus::independentLineRandomAmplitude * noiseScale;
+        rememberBlepEvent(held - heldBefore, ageInSamples);
     }
     // If the ratio somehow exceeded even that bound, drop the remainder rather
     // than carrying it: a backlog would make the line run slower than the clock
@@ -1144,7 +1157,7 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
     previousInput2 = previousInput;
     previousInput = limitedInput;
 
-    return held + static_cast<float>(deterministicBlepCorrection(increment));
+    return held + static_cast<float>(deterministicBlepCorrection(increment, noiseScale));
 }
 
 float Chorus::Line::process(
