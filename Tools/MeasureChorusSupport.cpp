@@ -6,13 +6,19 @@
 
 #include <iomanip>
 #include <iostream>
+#include <string>
 
-int main()
+int main(int argc, char** argv)
 {
     using youknow::Chorus;
+    if (argc > 2 || (argc == 2 && std::string(argv[1]) != "a11-effective"))
+    {
+        std::cerr << "usage: YouKnowMeasureChorusSupport [a11-effective]\n";
+        return 2;
+    }
     constexpr float rate = 192000.0f;
     const auto support = Chorus::supportChainFor(rate);
-    const auto mode = Chorus::settingsFor(youknow::ChorusMode::One);
+    const auto mode = Chorus::settingsFor(youknow::ChorusMode::One, argc == 2);
     std::cout << std::setprecision(17)
               << "{\"sample_rate\":" << rate
               << ",\"mode_one\":{\"centre_s\":" << mode.centreDelaySeconds

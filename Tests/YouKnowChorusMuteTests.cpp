@@ -4,6 +4,7 @@
 // It validates the passive/threshold model, not original-unit transistor
 // parameters or the separate 5 ms plug-in wet-return fade.
 #include "../Source/DSP/YouKnowChorus.h"
+#include "../Source/DSP/YouKnowEngine.h"
 
 #include <algorithm>
 #include <array>
@@ -163,10 +164,56 @@ void check(double rate)
               << maxError << " V; RK4 convergence " << convergence
               << " V; mute " << muteMs << " ms; open " << openMs << " ms\n";
 }
+
+void checkEffectiveProfileIsolation()
+{
+    using youknow::Chorus;
+    using youknow::ChorusMode;
+    require(!youknow::EngineParameters {}.useA11EffectiveChorusTimingProfile,
+            "effective A11 timing was enabled in shipping defaults");
+    for (const auto mode : { ChorusMode::Off, ChorusMode::One, ChorusMode::Two, ChorusMode::OneTwo })
+    {
+        const auto nominal = Chorus::settingsFor(mode);
+        const auto effective = Chorus::settingsFor(mode, true);
+        require(nominal.wetGain == effective.wetGain,
+                "timing comparison also changed chorus gain");
+        if (mode != ChorusMode::One)
+            require(nominal.centreDelaySeconds == effective.centreDelaySeconds
+                    && nominal.sweepSeconds == effective.sweepSeconds
+                    && nominal.rateHz == effective.rateHz,
+                    "the Mode-I identification invented a different chorus mode");
+        else
+            require(std::abs(effective.centreDelaySeconds - 0.00338027575) < 1.0e-9
+                    && std::abs(effective.sweepSeconds - 0.00176176683) < 1.0e-9
+                    && std::abs(effective.rateHz - 0.5159334275) < 1.0e-7,
+                    "comparison profile no longer matches the identified effective timing");
+        Chorus ordinary, candidate;
+        ordinary.prepare(48000.0);
+        candidate.prepare(48000.0);
+        double error = 0.0;
+        for (int frame = 0; frame < 4800; ++frame)
+        {
+            const float input = static_cast<float>(0.1 * std::sin(2.0 * 3.141592653589793 * 173.0 * frame / 48000.0));
+            float leftA {}, rightA {}, leftB {}, rightB {};
+            ordinary.process(input, mode, 0.0f, leftA, rightA, false, false,
+                             1.0f, false, true, true, true, false);
+            candidate.process(input, mode, 0.0f, leftB, rightB, false, false,
+                              1.0f, false, true, true, true, true);
+            require(ordinary.muteDriveMuted() == candidate.muteDriveMuted(),
+                    "timing-profile comparison changed the mute circuit state");
+            error = std::max({ error, std::abs(static_cast<double>(leftA) - leftB),
+                              std::abs(static_cast<double>(rightA) - rightB) });
+        }
+        require(mode == ChorusMode::One ? error > 1.0e-4 : error == 0.0,
+                "comparison flag did not isolate the Mode-I timing audio path");
+    }
+    std::cout << "A11 effective timing changes Mode I only; gains/mute and shipping default preserved\n";
+}
 }
 
 int main()
 {
     for (const double rate : { 8000.0, 44100.0, 48000.0, 176400.0, 192000.0, 768000.0 })
         check(rate);
+    checkEffectiveProfileIsolation();
 }

@@ -16,6 +16,13 @@ events and render with YouKnowRenderCalibrationEvents, character 1, shipping.
   python3 Tools/AnalyzeChorusCapture.py --reference hardware.wav --model model.wav \
       --support support.json --reference-pitch-cents -6.5 --output result.json
 
+For the explicitly selected effective Mode-I comparison, render with trailing
+arguments `1 shipping 1 a11-effective` and export support with
+`YouKnowMeasureChorusSupport a11-effective`. The fixed-timing score then tests
+that actual engine profile against the same held-out hardware notes. Only
+free-running phase and nuisance gains are fitted for that score; centre,
+depth and rate remain fixed. Keep the same mute/noise/other engine settings.
+
 Convert the original AIFF to a PCM WAV without resampling. Its normalized PCM
 hash is pinned, independent of WAV headers. The oscillator detune is a declared
 capture nuisance coordinate, not a DCO calibration. Frequency-domain channel
@@ -149,6 +156,31 @@ def identify(audio, rate, pitch_cents, support):
     train_rmse = math.sqrt(best[0])
     held_rmse = float(np.sqrt(np.mean(residual(p, held_out) ** 2)))
     boundary = bool(np.any(np.minimum(p - low, high - p) / (high - low) < 0.005))
+    # Evaluate the profile actually used by the supplied engine render. Its
+    # three timing coordinates stay fixed; allow the same phase/channel-gain
+    # nuisance fit on both profiles so a free-running phase is not mistaken
+    # for a timing error. Reuse the complete held-out notes, never fit them.
+    supplied = support["mode_one"]
+    fixed_timing = np.array([supplied["centre_s"], supplied["depth_s"], supplied["rate_hz"]])
+    fixed_best = None
+    for phase in (0, 0.25, 0.5, 0.75):
+        fixed_fit = least_squares(lambda q: residual(np.r_[fixed_timing, q], training),
+                                  [phase, 1.2, 1.2, 1.0], bounds=(low[3:], high[3:]),
+                                  loss="soft_l1", f_scale=0.08, diff_step=1e-4, max_nfev=120)
+        fixed_error = float(np.mean(residual(np.r_[fixed_timing, fixed_fit.x], training) ** 2))
+        if fixed_best is None or fixed_error < fixed_best[0]:
+            fixed_best = (fixed_error, fixed_fit.x)
+    fixed_parameters = np.r_[fixed_timing, fixed_best[1]]
+    fixed_result = {"centre_seconds": float(fixed_timing[0]),
+                    "depth_seconds": float(fixed_timing[1]), "rate_hz": float(fixed_timing[2]),
+                    "training_rmse": math.sqrt(fixed_best[0]),
+                    "held_out_rmse": float(np.sqrt(np.mean(residual(fixed_parameters, held_out) ** 2))),
+                    "fitted_phase_cycles": float(fixed_parameters[3] % 1),
+                    "fitted_wet_gains": fixed_parameters[4:6].tolist(),
+                    "fitted_output_balance": float(fixed_parameters[6]),
+                    "nuisance_near_search_boundary": bool(np.any(
+                        np.minimum(fixed_parameters[3:] - low[3:], high[3:] - fixed_parameters[3:])
+                        / (high[3:] - low[3:]) < 0.005))}
     return {"provisional_centre_seconds": float(p[0]),
             "provisional_depth_seconds": float(p[1]),
             "provisional_delay_endpoints_seconds": [float(p[0] - p[1]), float(p[0] + p[1])],
@@ -157,6 +189,7 @@ def identify(audio, rate, pitch_cents, support):
             "declared_pitch_cents": pitch_cents, "training_rmse": train_rmse,
             "held_out_rmse": held_rmse, "near_search_boundary": boundary,
             "held_out_consistent": bool(not boundary and p[0] > p[1] and held_rmse <= 2 * train_rmse),
+            "fixed_timing_comparison": fixed_result,
             "training_midi_notes": [36, 60, 84], "held_out_midi_notes": [48, 72],
             "window_rmse": [{"seconds": float(f["time"]),
                              "rmse": float(np.sqrt(np.mean(residual(p, [i]) ** 2)))}

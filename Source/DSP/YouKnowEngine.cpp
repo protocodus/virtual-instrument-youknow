@@ -9405,7 +9405,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 parameters.useChorusRateNoiseHypothesis,
                                 parameters.enableNarrowOneTwoChorus,
                                 parameters.enableChorusMuteDrive,
-                                parameters.enableChorusLineGainSpread);
+                                parameters.enableChorusLineGainSpread,
+                                parameters.useA11EffectiveChorusTimingProfile);
 
             // TA75558S IC6 has finite loaded output swing inside its +/-15 V
             // supplies. The modelled 13.5 V asymptote and knee are provisional

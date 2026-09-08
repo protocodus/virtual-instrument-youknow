@@ -246,7 +246,8 @@ public:
                  bool useRateProportionalNoiseHypothesis = false,
                  bool enableNarrowOneTwo = true,
                  bool enableMuteDrive = false,
-                 bool enableLineGainSpread = false) noexcept;
+                 bool enableLineGainSpread = false,
+                 bool useA11EffectiveTimingProfile = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -488,7 +489,10 @@ public:
         float wetGain { 0.0f };
     };
 
-    [[nodiscard]] static ModeSettings settingsFor(ChorusMode mode) noexcept;
+    // Optional offline comparison of the identified A11 Mode-I timing.
+    // Off/II/I+II keep their ordinary programs; nothing is inferred for them.
+    [[nodiscard]] static ModeSettings settingsFor(
+        ChorusMode mode, bool useA11EffectiveTimingProfile = false) noexcept;
 
     // The legacy low-rate input fallback, exposed as a coefficient and a
     // single step so the suites can measure where its corner actually lands

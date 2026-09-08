@@ -259,13 +259,18 @@ struct EngineParameters
     bool enableNarrowOneTwoChorus { true };
     // On by default: the chorus button reaches the wet-return JFETs through
     // the drawn Tr5/C16/R48/C13/Tr4 drive (see Chorus::muteDrive*), so the
-    // wet return mutes about 60 ms after CHORUS goes off and returns about
-    // 115 ms after it comes on. False switches at the command, as before.
+    // wet return mutes about 84.5 ms after CHORUS goes off and returns about
+    // 113.2 ms after it comes on. False switches at the command, as before.
     bool enableChorusMuteDrive { true };
     // On by default: each MN3009 line carries its own fixed-seed insertion
     // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
     // keeps the two returns identical for controlled A/B renders.
     bool enableChorusLineGainSpread { true };
+    // Comparison-only, off by default: Mode I uses the effective timing
+    // identified from Lewis Francis's A11 capture (Chorus::settingsFor).
+    // The engine still uses its ordinary gains, noise, mute circuit and
+    // other chorus modes. Not a host parameter or a saved factory setting.
+    bool useA11EffectiveChorusTimingProfile { false };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.

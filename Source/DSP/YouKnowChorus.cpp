@@ -607,7 +607,8 @@ float Chorus::deterministicToneStep(double& phase, float frequencyHz,
     return static_cast<float>(std::sin(2.0 * pi * phase));
 }
 
-Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
+Chorus::ModeSettings Chorus::settingsFor(
+    ChorusMode mode, bool useA11EffectiveTimingProfile) noexcept
 {
     // The rates are this instrument's own, straight from its circuit:
     // derivedRateHz() evaluates f = 1/(4 * beta * R_eff * C3) with the
@@ -644,7 +645,21 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
     constexpr float rateTwo = static_cast<float>(derivedRateHz(false));
     switch (mode)
     {
-        case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
+        case ChorusMode::One:
+            // Comparison-only profile identified by AnalyzeChorusCapture.py
+            // from the hash-pinned bank_A1x recording below. Complete C1/C3/C5
+            // notes fit the model-based effective timing; C2/C4 are withheld.
+            // The shipped-support estimator recovers a known model within
+            // 20 us centre / 12 us depth / 0.000006 Hz rate. Hardware held-out
+            // residual is 0.113 versus 0.095 training, appreciably above the
+            // known-model 0.015 residual. Thus these are effective coordinates
+            // under that support/triangle hypothesis, not direct chip-delay
+            // measurements, a population nominal, or a Mode-II calibration.
+            // AIFF SHA256: b235ba2236c1a509627ce1e84fa35004b0d7c3e99eb36899c4c5de63cc668662
+            // https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/16#issuecomment-4184997000
+            if (useA11EffectiveTimingProfile)
+                return { 0.5159334275f, 0.00338027575f, 0.00176176683f, lineGain };
+            return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
         // Product compatibility policy, not a claim about a third resistance
         // in the original circuit. The audited Roland Cloud JUNO-106 exposes
@@ -1320,7 +1335,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool useRateProportionalNoiseHypothesis,
                      bool enableNarrowOneTwo,
                      bool enableMuteDrive,
-                     bool enableLineGainSpread) noexcept
+                     bool enableLineGainSpread,
+                     bool useA11EffectiveTimingProfile) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -1339,7 +1355,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         clockSpurPhaseB_ = 0.0;
     }
 
-    const auto target = settingsFor(mode);
+    const auto target = settingsFor(mode, useA11EffectiveTimingProfile);
 
     const bool commandMute = mode == ChorusMode::Off;
     if (!primed_)
