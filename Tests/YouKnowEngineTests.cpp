@@ -12572,7 +12572,7 @@ void testSampleRateAndOversamplingConsistency()
                + std::to_string(shallow) + ")");
 }
 
-void testResonanceDoesNotMoveTheRenderedCorner()
+void testFixedServiceTrimKeepsTheRenderedCorner()
 {
     // The circuit suite checks the control law; this checks the coefficient
     // the render actually consumes, so a correction fixed in the pure
@@ -12582,12 +12582,13 @@ void testResonanceDoesNotMoveTheRenderedCorner()
     // omegaStep * internal rate / (2*pi).
     //
     // Every source is off, the envelope is out of the cutoff path and Unit
-    // Character is zero, so nothing but the frequency correction couples
-    // RESONANCE to that coefficient at a fixed CUTOFF. Below the oscillation
-    // threshold the cascade carries no limit cycle, so there is no droop to
-    // correct and the five settings must coincide. They spread +0.00 / +8.70
-    // / +32.91 / +80.42 / +117.53 cents at converter code 6272 before this
-    // was derived rather than fitted.
+    // Character is zero. Roland's service adjustment sets FREQ/WIDTH after
+    // the full-RES 4.8 Vp-p trim (Service Notes p. 19); those fixed trimmers
+    // cannot follow the player's RESONANCE setting. The physical pole must
+    // therefore stay at its service-calibrated value both below and above
+    // oscillation onset. The resulting limit-cycle pitch may still droop:
+    // that is distinct from the coefficient inspected here, and the full-
+    // voice self-oscillation service anchors are checked separately below.
     constexpr double sampleRate = 48000.0;
     const auto corner = [&](float cutoffPanel, float resonance) {
         YouKnowEngine engine;
@@ -12613,17 +12614,27 @@ void testResonanceDoesNotMoveTheRenderedCorner()
     };
 
     struct Code { const char* name; float panel; double hertz; };
-    // Panel byte times 128 is the converter code, so these are bytes 30, 49
-    // and 90 -- the service code among them.
-    for (const auto& code : { Code { "3840", 30.0f / 127.0f, 56.76 },
-                              Code { "6272", 49.0f / 127.0f, 248.05 },
-                              Code { "11520", 90.0f / 127.0f, 5918.5 } })
+    // Independent service-pole reference, not a readback of frequencyTrim:
+    // simultaneous harmonic balance at a 2.4 V output peak gives
+    // D = omega_osc / omega_pole = 0.891506910605767. This uses exact tanh
+    // with 128-point Gauss-Legendre quadrature (64 points agrees to 1e-13),
+    // H = 0.052 / (560/68560), sum atan(D/N_i) = pi, and the four stage
+    // amplitudes walked backwards from the output. Applying the fixed 1/D
+    // trim to 5.53 * 2^(counts/1143), then the established 64 kHz, exponent
+    // 1.7 current limiter, gives the three corners below. The existing 0.2%
+    // gate covers the production describing-function/table approximation;
+    // it is not a tolerance on a measured original unit. Panel bytes 30,
+    // 49 and 90 produce these converter counts; 49 is the service code.
+    for (const auto& code : { Code { "3840", 30.0f / 127.0f, 63.669695734 },
+                              Code { "6272", 49.0f / 127.0f, 278.241477908 },
+                              Code { "11520", 90.0f / 127.0f, 6624.313334947 } })
     {
         const double reference = corner(code.panel, 0.0f);
         expectNear(reference, code.hertz, code.hertz * 0.002,
                    std::string("the rendered corner at converter code ")
                        + code.name + " is not the one the control law asks for");
-        for (const float resonance : { 0.00f, 0.30f, 0.50f, 0.70f, 0.80f })
+        for (const float resonance : { 0.00f, 0.30f, 0.50f, 0.70f, 0.80f,
+                                       0.90f, 0.95f, 1.00f })
             expectNear(1200.0 * std::log2(corner(code.panel, resonance)
                                           / reference),
                        0.0, 10.0,
@@ -14723,7 +14734,7 @@ int main()
     testChorusNoiseProfilesReproduceTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
-    testResonanceDoesNotMoveTheRenderedCorner();
+    testFixedServiceTrimKeepsTheRenderedCorner();
     testVelocityScalesTheEnvelopeIntoTheFilter();
     testSelfOscillationMatchesTheServiceTrim();
     testVoiceVcaSaturationFollowsTheBa662Pair();
