@@ -21,9 +21,66 @@ struct YouKnowTestAccess
         engine.voices_[0].vcaControl=.015;
         engine.voices_[0].vcaControlTarget=0;
     }
-    static double control(const YouKnowEngine& engine)
+    static double control(const YouKnowEngine& engine, int slot = 0)
     {
-        return engine.voices_[0].vcaControl;
+        return engine.voices_[static_cast<std::size_t>(slot)].vcaControl;
+    }
+    static double seedFractionalWrite(YouKnowEngine& engine, int slot,
+                                      double requestedPosition)
+    {
+        for (int index = 0; index < YouKnowEngine::hardwareVoices; ++index)
+        {
+            auto& voice = engine.voices_[static_cast<std::size_t>(index)];
+            voice.vcaControl = .009;
+            voice.vcaControlTarget = .006f;
+            voice.envelope.value = .8f;
+        }
+        const auto& writes = YouKnowEngine::converterWriteOrder();
+        const auto found = std::find_if(writes.begin(), writes.end(), [slot](const auto& write) {
+            return write.destination == YouKnowEngine::ConverterDestination::VoiceVca
+                && write.voice == slot;
+        });
+        if (found == writes.end())
+            throw std::runtime_error("voice VCA write missing from the converter schedule");
+        const auto ordinal = static_cast<std::size_t>(found - writes.begin());
+        const double delta = YouKnowEngine::controlScanHz / engine.oversampledRate_;
+        const double event = engine.converterEventPhases_[ordinal];
+        engine.controlScanPhase_ = event - requestedPosition * delta;
+        engine.nextConverterWrite_ = ordinal;
+        engine.passiveHoldEventLatch_ = {};
+        engine.assignmentRescanPending_ = false;
+        engine.assignmentRescanPassArmed_ = false;
+        return std::clamp((event - engine.controlScanPhase_) / delta, 0.0, 1.0);
+    }
+    static float target(const YouKnowEngine& engine, int slot)
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].vcaControlTarget;
+    }
+    static void changeEnvelope(YouKnowEngine& engine, int slot)
+    {
+        engine.voices_[static_cast<std::size_t>(slot)].envelope.value = .3f;
+    }
+    static void seedInactiveAudioCell(YouKnowEngine& engine)
+    {
+        auto& voice = engine.voices_[0];
+        voice.active = false;
+        voice.vcaControl = voice.vcaControlTarget = .5f;
+        voice.vcaGain = 0.0f;
+        voice.cutoffCounts = voice.cutoffCountsTarget = 6000.0f;
+        voice.filterOmegaStep = 0.0f;
+        voice.cutoffChainCounts = -1.0e30f;
+        voice.pulseThresholdVolts = -100.0f;
+        // No converter write is due during this one-sample callback.
+        engine.controlScanPhase_ = -1.0;
+        engine.nextConverterWrite_ = 0;
+        engine.passiveHoldEventLatch_ = {};
+    }
+    static bool inactiveAudioCellUpdated(const YouKnowEngine& engine)
+    {
+        const auto& voice = engine.voices_[0];
+        return !voice.active && voice.vcaGain > 0.0f
+            && voice.filterOmegaStep > 0.0f
+            && voice.pulseThresholdVolts > -100.0f;
     }
 };
 }
@@ -32,7 +89,7 @@ namespace
 {
 // Independent voltage-domain oracle: solve Tr20's exponential junction at
 // R105 and integrate C58 KCL with substepped long-double RK4. It never calls
-// the production charge table, Newton timestep or effective-CV equation.
+// the production charge table, RK4 helper or effective-CV equation.
 constexpr long double vt = static_cast<long double>(0.026f);
 constexpr long double span = 9.921875L;
 constexpr long double knee = static_cast<long double>(0.015f);
@@ -76,6 +133,138 @@ long double advanceOracle(long double node, long double target, long double dt)
 void require(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
+}
+
+long double advanceFineOracle(long double node, long double target, long double seconds)
+{
+    for (int substep = 0; substep < 64; ++substep)
+        node = advanceOracle(node, target, seconds / 64);
+    return node;
+}
+
+double capacitorError(const youknow::VcaControlCircuit& circuit,
+                       double control, long double reference)
+{
+    return std::abs(static_cast<double>(standoff
+        + span * circuit.capacitorCoordinate(control) - reference));
+}
+
+double errorBudget(int rate)
+{
+    // Includes the single-step side of the bounded-substep cutoff, which
+    // is substantially harder than the ordinary envelope transition sweep.
+    return .003 * std::pow(8000.0 / rate, 2) + 5e-6;
+}
+
+void processOne(youknow::YouKnowEngine& engine)
+{
+    float left = 0, right = 0;
+    engine.process(&left, &right, 1);
+    require(std::isfinite(left) && std::isfinite(right),
+            "VCA callback fixture produced non-finite audio");
+}
+
+void testSubstepBoundary(const youknow::VcaControlCircuit& circuit)
+{
+    // Deliberately approach the branch on both sides. At the boundary the
+    // solver takes one RK4 step even for a large upward target change.
+    const double boundary = static_cast<double>(knee)
+        + 8.0 * static_cast<double>(vt) / static_cast<double>(span);
+    for (int rate : {8000, 44100, 48000, 192000, 768000})
+    {
+        double maximumError = 0;
+        for (double initial : {std::nextafter(boundary, 0.0), boundary,
+                               std::nextafter(boundary, 1.0)})
+        {
+            double control = initial;
+            long double reference = equilibrium(initial);
+            for (int frame = 0; frame < rate / 500; ++frame)
+            {
+                control = circuit.advance(control, 1.0, 1.0 / rate);
+                reference = advanceFineOracle(reference, 1.0, 1.0L / rate);
+                maximumError = std::max(maximumError,
+                    capacitorError(circuit, control, reference));
+            }
+        }
+        std::cout << rate << "Hz substep cutoff: max C58 error "
+                  << maximumError * 1e6 << "uV\n";
+        require(maximumError < errorBudget(rate),
+                "VCA substep cutoff exceeded its circuit error budget");
+    }
+}
+
+void testFractionalCallbacks(const youknow::VcaControlCircuit& circuit)
+{
+    for (int rate : {8000, 48000, 192000})
+    {
+        double maximumError = 0;
+        for (int slot = 0; slot < 6; ++slot)
+        {
+            for (double requestedPosition : {0.0, .001, .17, .5, .89, .999, 1.0})
+            {
+                auto engine = std::make_unique<youknow::YouKnowEngine>();
+                engine->prepare(rate, 1, 1);
+                youknow::EngineParameters parameters;
+                parameters.calibration = 0;
+                parameters.velocityDepth = 0;
+                parameters.vcaMode = youknow::VcaMode::Envelope;
+                parameters.enableCoupledVoiceVcaControl = true;
+                engine->setParameters(parameters);
+                const double position = youknow::YouKnowTestAccess::seedFractionalWrite(
+                    *engine, slot, requestedPosition);
+                const long double dt = 1.0L / rate;
+                long double reference = advanceFineOracle(
+                    equilibrium(.009), static_cast<long double>(.006f), dt * position);
+                reference = advanceFineOracle(
+                    reference, static_cast<long double>(.8f), dt * (1 - position));
+                processOne(*engine);
+                maximumError = std::max(maximumError, capacitorError(circuit,
+                    youknow::YouKnowTestAccess::control(*engine, slot), reference));
+                // The event belongs to exactly one physical card.
+                const auto otherReference = advanceFineOracle(
+                    equilibrium(.009), static_cast<long double>(.006f), dt);
+                for (int other = 0; other < 6; ++other)
+                    if (other != slot)
+                        require(capacitorError(circuit,
+                            youknow::YouKnowTestAccess::control(*engine, other),
+                            otherReference) < 5e-6,
+                            "fractional VCA write reached a different card");
+
+                // A right-edge peek must commit its saved payload at the next
+                // callback, including when the envelope has changed meanwhile.
+                youknow::YouKnowTestAccess::changeEnvelope(*engine, slot);
+                processOne(*engine);
+                reference = advanceFineOracle(reference, static_cast<long double>(.8f), dt);
+                require(youknow::YouKnowTestAccess::target(*engine, slot) == .8f,
+                        "fractional VCA write did not commit its captured target");
+                maximumError = std::max(maximumError, capacitorError(circuit,
+                    youknow::YouKnowTestAccess::control(*engine, slot), reference));
+            }
+        }
+        std::cout << rate << "Hz actual fractional callbacks: max C58 error "
+                  << maximumError * 1e6 << "uV\n";
+        require(maximumError < errorBudget(rate),
+                "fractional engine VCA write misses continuous C58 KCL");
+    }
+}
+
+void testInactiveCoupledMixer()
+{
+    auto engine = std::make_unique<youknow::YouKnowEngine>();
+    // Synthetic, explicitly supplied circuit fixture; no claim that these
+    // unmeasured mixer source parameters are hardware calibration readings.
+    require(engine->configureCoupledMixer({10000, 47000, .5, 0, .6, .1}),
+            "coupled mixer fixture rejected its valid calibration");
+    engine->prepare(48000, 1, 1);
+    youknow::EngineParameters parameters;
+    parameters.calibration = 0;
+    parameters.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
+    parameters.enablePulseOffWaveNodeCoupling = false;
+    engine->setParameters(parameters);
+    youknow::YouKnowTestAccess::seedInactiveAudioCell(*engine);
+    processOne(*engine);
+    require(youknow::YouKnowTestAccess::inactiveAudioCellUpdated(*engine),
+            "inactive coupled mixer card consumed stale VCA/filter/comparator coefficients");
 }
 }
 
@@ -122,9 +311,12 @@ int main()
             // Conservative temporal budget plus a 5uV interpolation allowance.
             // 48kHz acceptance is <90uV on a ~10V full-scale control rail;
             // the independent RK4 oracle has eight times finer steps.
-            require(maximumError < 0.003 * std::pow(8000.0/rate,2) + 5e-6,
+            require(maximumError < errorBudget(rate),
                     "coupled VCA hold exceeded its circuit error budget");
         }
+        testSubstepBoundary(circuit);
+        testFractionalCallbacks(circuit);
+        testInactiveCoupledMixer();
         for(double position:{0.0,.001,.17,.5,.89,.999,1.0})
         {
             const double dt=1.0/48000;

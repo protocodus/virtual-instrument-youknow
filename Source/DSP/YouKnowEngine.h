@@ -2420,9 +2420,10 @@ private:
         float cutoffCountsTarget { 0.0f };
         float cutoffCounts { 0.0f };
         float vcaControlTarget { 0.0f };
-        // Physical capacitor charge. Double precision keeps very slow tails
-        // moving at high internal rates after their float-sized increment has
-        // fallen below half an ULP of the present state.
+        // Equivalent settled CV u, mapped to C58 voltage by the coupled
+        // circuit's q(u). The linear comparison uses u directly. Double
+        // precision keeps very slow tails moving at high internal rates after
+        // their float-sized increment falls below half an ULP of this state.
         double vcaControl { 0.0 };
         // Oscillator compensation hold in the firmware's unshifted 12-bit DAC
         // code. The timer's count steps independently; this code slews, and

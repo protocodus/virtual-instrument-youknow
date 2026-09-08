@@ -9163,9 +9163,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 // still needs the comparator duty when the Pulse-Off WAVE-node
                 // model is live: its slow C56/C50 state follows the endpoint at
                 // low carrier rates and that duty mean at high rates. The
-                // expensive filter/audio coefficients remain skipped.
+                // expensive filter/audio coefficients remain skipped unless
+                // the coupled mixer keeps the complete physical card live.
                 const bool freewheels = !voice.active
-                    && parameters.vcfTanhMode != VcfTanhMode::Exact;
+                    && parameters.vcfTanhMode != VcfTanhMode::Exact
+                    && !coupledMixerEnabled_;
                 const bool hasAudioCell = voice.active || slot < hardwareVoices;
                 if (hasAudioCell
                     && (!freewheels
