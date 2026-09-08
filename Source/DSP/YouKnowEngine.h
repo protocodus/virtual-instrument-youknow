@@ -3,6 +3,7 @@
 #include "YouKnowChorus.h"
 #include "YouKnowCoupledMixer.h"
 #include "YouKnowSubLevel.h"
+#include "YouKnowNoiseCalibration.h"
 
 #include <array>
 #include <bit>
@@ -193,10 +194,12 @@ struct EngineParameters
     static constexpr float calibrationCeiling = 2.0f;
     float chorusNoise { Chorus::defaultNoiseScale };
     // Comparison-only, not serialised: a linear scale on the shared Tr21
-    // noise rail for listening tests of the scope-crest convention behind
-    // the 4 Vp-p TP8 anchor (OQ-16). 1.0 is the shipped, conservative
-    // reading; the anchored bracket admits up to about +3.5 dB.
+    // noise rail for measurement/audition candidates (OQ-16). The 0..4
+    // sanitizer is a comparison guard, not a manufacturer tolerance. 1.0
+    // preserves the chosen profile; Nominal preserves the shipped reading.
     float mainNoiseLevelScale { 1.0f };
+    MainNoiseCalibrationProfile mainNoiseCalibrationProfile {
+        MainNoiseCalibrationProfile::Nominal };
     int polyphony { 6 };           // 6 is the hardware voice count.
     // Exact preserves the established always-running sound and state.
     // ZonedHermite and PolyZoned trade bounded kernel error for lower VCF CPU

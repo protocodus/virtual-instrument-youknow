@@ -8712,6 +8712,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
     const auto& parameters = activeParameters_;
 
+    // Resolve a reference calibration once per block, before the shared
+    // Tr21/C42/BA662/C41 path. Nominal is exactly unity; the profile changes
+    // source level only and leaves the measured control/spectral laws intact.
+    const float mainNoiseSourceScale = parameters.mainNoiseLevelScale
+        * mainNoiseCalibrationScale(parameters.mainNoiseCalibrationProfile);
+
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
@@ -9010,7 +9016,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
                 bipolarFromState(noiseState_) * noiseRateScale_
-                * parameters.mainNoiseLevelScale;
+                * mainNoiseSourceScale;
             // The hold voltage is what moves; Tr22 converts it to control
             // current instantaneously, so the onset law is applied after the
             // hold and ahead of both the C41-driven and legacy level paths.

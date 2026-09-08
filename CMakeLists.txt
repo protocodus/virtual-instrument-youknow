@@ -71,6 +71,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowCoupledMixer.h
     Source/DSP/YouKnowSubLevel.h
     Source/DSP/YouKnowChorus.h
+    Source/DSP/YouKnowNoiseCalibration.h
     Source/DSP/YouKnowPanel.h)
 
 add_library(YouKnowDSP STATIC
@@ -526,6 +527,11 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowVcaControlTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaControl COMMAND YouKnowVcaControlTests)
     set_tests_properties(YouKnow.VcaControl PROPERTIES TIMEOUT 60)
+    add_executable(YouKnowNoiseCalibrationTests Tests/YouKnowNoiseCalibrationTests.cpp)
+    target_link_libraries(YouKnowNoiseCalibrationTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowNoiseCalibrationTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.NoiseCalibration COMMAND YouKnowNoiseCalibrationTests)
+
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowEngineTests PRIVATE cxx_std_20)
