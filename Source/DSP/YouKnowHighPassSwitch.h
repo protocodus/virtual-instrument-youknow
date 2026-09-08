@@ -32,6 +32,8 @@ public:
         // Only setup builds/inverts matrices; no allocation or inversion in
         // process(). Retain the physical capacitor voltages on rate changes.
         const double fastTau = resistance * (47e-9 * 10e-9 / (47e-9 + 10e-9));
+        intervalSeconds_ = 1.0 / rate;
+        switchWindowSeconds_ = 10.0 * fastTau;
         switchSteps_ = std::clamp(static_cast<int>(std::ceil(10.0 / (rate * fastTau))), 1, 4096);
         for (int mode = 0; mode != 4; ++mode)
         {
@@ -40,7 +42,11 @@ public:
         }
     }
 
-    void reset() noexcept { voltage_.fill(0); feedbackVoltage_ = 0; previousMode_ = -1; }
+    void reset() noexcept
+    {
+        voltage_.fill(0); feedbackVoltage_ = 0; previousMode_ = -1;
+        switchRemainingSeconds_ = 0;
+    }
     [[nodiscard]] const State& capacitorVoltages() const noexcept { return voltage_; }
     [[nodiscard]] double feedbackVoltage() const noexcept { return feedbackVoltage_; }
 
@@ -51,13 +57,22 @@ public:
         double output = 0;
         if (mode != previousMode_)
         {
-            // Resolve the fast Ron/C9/C8 redistribution on a switch event.
-            // An ordinary coarse trapezoidal step would invent a long
-            // alternating residue from this sub-sample physical mode.
+            switchRemainingSeconds_ = switchWindowSeconds_;
+            previousMode_ = mode;
+        }
+        if (switchRemainingSeconds_ > 0)
+        {
+            // Resolve redistribution for at least ten physical Ron*Cseries
+            // time constants. At high internal rates the first sample covers
+            // only part of that interval: dropping straight back to the
+            // coarse kernel leaves a spurious alternating fast-mode residue.
+            // The remaining time survives rate changes; only the final
+            // internal interval is rounded upward to its sample boundary.
             for (int i = 0; i != switchSteps_; ++i)
                 output += step(input, switching_[mode], clip);
             output /= switchSteps_;
-            previousMode_ = mode;
+            switchRemainingSeconds_ = std::max(0.0,
+                switchRemainingSeconds_ - intervalSeconds_);
         }
         else
             output = step(input, ordinary_[mode], clip);
@@ -76,6 +91,7 @@ private:
     std::array<Kernel, 4> ordinary_ {}, switching_ {};
     State voltage_ {};
     double feedbackVoltage_ {};
+    double intervalSeconds_ {}, switchWindowSeconds_ {}, switchRemainingSeconds_ {};
     int previousMode_ {-1}, switchSteps_ {1};
 
     static Kernel makeKernel(int mode, double ron, double h) noexcept

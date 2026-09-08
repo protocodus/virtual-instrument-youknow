@@ -25,6 +25,7 @@ struct HighPassSwitchTestAccess
     {
         std::copy_n(state.begin(), 5, circuit.voltage_.begin());
         circuit.feedbackVoltage_ = state[5]; circuit.previousMode_ = mode;
+        circuit.switchRemainingSeconds_ = 0;
     }
     static State state(const HighPassSwitchCircuit& circuit)
     {
@@ -32,6 +33,10 @@ struct HighPassSwitchTestAccess
         std::copy_n(circuit.voltage_.begin(), 5, result.begin());
         result[5] = circuit.feedbackVoltage_; return result;
     }
+    static double remainingSeconds(const HighPassSwitchCircuit& circuit)
+    { return circuit.switchRemainingSeconds_; }
+    static double windowSeconds(const HighPassSwitchCircuit& circuit)
+    { return circuit.switchWindowSeconds_; }
 };
 }
 #endif
@@ -40,6 +45,7 @@ namespace
 {
 using namespace youknow;
 using namespace youknow::tools::realism;
+StereoBuffer render(double ron, int block=128);
 using Complex = std::complex<long double>;
 template<class T, std::size_t N> using Matrix = std::array<std::array<T,N>,N>;
 template<class T, std::size_t N>
@@ -162,6 +168,8 @@ void selfTest()
 {
     double maxTransfer=0,maxState=0,maxSwitchOutput=0;
     for(double rate:{8000.,44100.,48000.,192000.,768000.})
+    {
+        double rateState=0,rateOutput=0;
         for(double ron:{50.,110.,240.,1000.})for(int mode=0;mode<4;++mode)
         {
             HighPassSwitchCircuit circuit;circuit.prepare(rate,ron);
@@ -194,29 +202,69 @@ void selfTest()
             State state;std::copy(initial.begin(),initial.end(),state.begin());
             const Ode ode(mode,ron);const double h=1/rate;
             const int steps=std::max(64,static_cast<int>(std::ceil(h/(ron*8e-9*.025))));
-            const long double expected=integrate(ode,state,.2L,h,steps);
-            const double actual=circuit.process(.2,mode,identity);
-            const auto got=Probe::state(circuit);
-            for(int i=0;i<6;++i)maxState=std::max(maxState,static_cast<double>(std::abs(state[i]-got[i])));
-            maxSwitchOutput=std::max(maxSwitchOutput,static_cast<double>(std::abs(expected-actual)));
-            const auto saved=got;circuit.prepare(rate*2,ron);
+            // Include thirty ordinary intervals after the refined window;
+            // testing only its first sample hid a later fast-mode residue.
+            const int samples=30+static_cast<int>(std::ceil(Probe::windowSeconds(circuit)*rate));
+            for(int sample=0;sample<samples;++sample)
+            {
+                const long double expected=integrate(ode,state,.2L,h,steps);
+                const double actual=circuit.process(.2,mode,identity);
+                const auto got=Probe::state(circuit);
+                for(int i=0;i<6;++i)rateState=std::max(rateState,static_cast<double>(std::abs(state[i]-got[i])));
+                rateOutput=std::max(rateOutput,static_cast<double>(std::abs(expected-actual)));
+            }
+            const auto saved=Probe::state(circuit);circuit.prepare(rate*2,ron);
             require(Probe::state(circuit)==saved,"rate change lost capacitor charge");
         }
-    std::cout<<"max complex transfer error "<<maxTransfer<<", switch capacitor error "<<maxState
+        // The former 100uV bound tested only the refined first interval.
+        // Ordinary trapezoidal integration has O(h^2) global step error;
+        // keep 100uV at48kHz+ and scale that fixture allowance below48kHz.
+        // This qualifies the low-rate approximation, not an analogue voltage
+        // tolerance. Report its actual error instead of hiding it with a
+        // long, expensive fine-step tail through the slower C11/C10 poles.
+        const double rateRatio=std::max(1.0,48000.0/rate);
+        const double limit=1e-4*rateRatio*rateRatio;
+        std::cout<<"rate "<<rate<<" full-trajectory capacitor error "<<rateState
+                 <<", mean output error "<<rateOutput<<", bound "<<limit<<'\n';
+        require(rateState<limit,"switch charge failed rate-qualified fine RK4 comparison");
+        require(rateOutput<limit,"switch output failed rate-qualified fine RK4 comparison");
+        maxState=std::max(maxState,rateState);maxSwitchOutput=std::max(maxSwitchOutput,rateOutput);
+    }
+    {
+        using Probe=HighPassSwitchTestAccess;
+        HighPassSwitchCircuit circuit;circuit.prepare(768000,240);
+        circuit.process(.2,0,[](double x){return x;});
+        const auto remaining=Probe::remainingSeconds(circuit);
+        const auto saved=Probe::state(circuit);
+        const double expectedWindow=10.0*240.0*(47e-9*10e-9/(47e-9+10e-9));
+        require(std::abs(remaining-(expectedWindow-1.0/768000))<1e-15,
+                "switch window is not ten physical Ron*Cseries time constants");
+        circuit.prepare(192000,240);
+        require(Probe::remainingSeconds(circuit)==remaining&&Probe::state(circuit)==saved,
+                "rate change altered remaining physical switch time or charge");
+        circuit.process(.2,0,[](double x){return x;});
+        require(std::abs(Probe::remainingSeconds(circuit)-(remaining-1.0/192000))<1e-15,
+                "switch countdown did not follow the new interval duration");
+        circuit.reset();
+        require(Probe::remainingSeconds(circuit)==0,"reset retained an old switch window");
+    }
+    std::cout<<"max complex transfer error "<<maxTransfer<<", full switch trajectory capacitor error "<<maxState
              <<", mean switch output error "<<maxSwitchOutput<<'\n';
     require(maxTransfer<1e-7,"component-node transfer mismatch");
-    require(maxState<1e-4,"switch charge failed independent fine RK4");
-    require(maxSwitchOutput<1e-4,"switch mean output failed independent fine RK4");
     auto engine=std::make_unique<YouKnowEngine>();
     require(!engine->configureHighPassSwitch(0)&&!engine->configureHighPassSwitch(NAN),"invalid switch resistance accepted");
     require(engine->configureHighPassSwitch(110),"valid circuit configuration rejected");
     engine->prepare(48000,128,4);
     require(!engine->configureHighPassSwitch(240),"live circuit replacement accepted");
+    const auto a=render(0,128),b=render(110,128),split=render(110,17);
+    require(measure(a).rms>1e-5&&measure(b).rms>1e-5,"callback comparison was silent");
+    require(a.left!=b.left,"configured circuit did not reach the audio callback");
+    require(b.left==split.left&&b.right==split.right,"configured callback is block dependent");
     std::cout<<"HPF switch circuit self-test passed\n";
 }
 #endif
 
-StereoBuffer render(double ron,int block=128)
+StereoBuffer render(double ron,int block)
 {
     EngineParameters p;p.calibration=1;p.sawEnabled=true;p.pulseEnabled=true;
     p.subLevel=.4f;p.noiseLevel=0;p.chorus=ChorusMode::Off;p.chorusNoise=0;
