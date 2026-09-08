@@ -1668,45 +1668,63 @@ bool metricGoldensExact(const std::array<CellResult, 10>& cells)
         -75.714, -76.439, -75.587, -76.269, -75.473,
         -76.142, -24.839, -26.344, -36.992, -38.458
     };
+    // Noise coordinates re-pinned for the held-noise BLEP correction in
+    // ad0382e. Its local RNG lookahead reconstructs the same edge-held source
+    // before numerical sampling; it changes neither the physical RNG ledger
+    // nor its amplitude. A frozen e41c573/current comparison reproduces all
+    // five hot coordinates exactly across the ten rows, while noise level,
+    // band power, correlation and mode-delta coordinates change. PWM, VCF and
+    // main-source noise are absent from this direct Chorus::process fixture.
+    // Keep every admission gate, golden tolerance and mutation gate unchanged.
     constexpr std::array<double, 10> noiseLevel {
-        0.071, 0.071, 0.071, 0.071, 0.071,
-        0.071, 0.671, 0.508, 0.183, 0.171
+        0.001, 0.001, 0.000, 0.000, 0.000,
+        0.000, 0.035, 0.018, 0.003, 0.002
     };
     constexpr std::array<double, 10> noiseBands {
-        0.561, 0.237, 0.411, 0.210, 0.248,
-        0.135, 1.428, 1.101, 0.328, 0.319
+        0.003, 0.002, 0.003, 0.002, 0.003,
+        0.002, 0.544, 0.322, 0.016, 0.014
     };
     constexpr std::array<double, 10> noiseCorrelationOne {
-        0.015, 0.019, 0.015, 0.019, 0.015,
-        0.019, 0.012, 0.025, 0.019, 0.010
+        0.015, 0.016, 0.016, 0.016, 0.016,
+        0.016, 0.011, 0.012, 0.014, 0.014
     };
     constexpr std::array<double, 10> noiseCorrelationTwo {
-        0.004, 0.001, 0.004, 0.001, 0.004,
-        0.001, -0.014, -0.009, -0.004, -0.003
+        0.000, 0.000, 0.000, 0.001, 0.000,
+        0.001, -0.015, -0.013, -0.004, -0.003
     };
     constexpr std::array<double, 10> noiseModeDelta {
-        4.085, 4.079, 4.085, 4.079, 4.085,
-        4.079, 4.089, 4.134, 4.090, 4.075
+        4.083, 4.083, 4.083, 4.083, 4.083,
+        4.083, 4.081, 4.082, 4.084, 4.084
     };
     bool exact = true;
     for (std::size_t index = 0u; index < cells.size(); ++index)
     {
-        exact = exact
-            && within(cells[index].hotWhole.stereoDb, whole[index], 0.20)
-            && within(cells[index].hotOne.stereoDb, modeOne[index], 0.20)
-            && within(cells[index].hotMute.stereoDb, mute[index], 0.20)
-            && within(cells[index].hotTwo.stereoDb, modeTwo[index], 0.20)
-            && within(cells[index].residualPeakDb, residual[index], 0.20)
-            && within(cells[index].noiseMaximumLevelDb,
-                      noiseLevel[index], 0.025)
-            && within(cells[index].noiseMaximumBandDb,
-                      noiseBands[index], 0.075)
-            && within(cells[index].noiseOne.candidateCorrelation,
-                      noiseCorrelationOne[index], 0.006)
-            && within(cells[index].noiseTwo.candidateCorrelation,
-                      noiseCorrelationTwo[index], 0.006)
-            && within(cells[index].candidateModeDeltaDb,
-                      noiseModeDelta[index], 0.015);
+        const auto check = [&](std::string_view metric, double actual,
+                               double expected, double tolerance) {
+            if (!within(actual, expected, tolerance))
+            {
+                std::cout << "golden " << selectorRows[index].label << ' '
+                          << metric << " actual=" << actual
+                          << " expected=" << expected
+                          << " tolerance=" << tolerance << '\n';
+                exact = false;
+            }
+        };
+        check("whole", cells[index].hotWhole.stereoDb, whole[index], 0.20);
+        check("modeOne", cells[index].hotOne.stereoDb, modeOne[index], 0.20);
+        check("mute", cells[index].hotMute.stereoDb, mute[index], 0.20);
+        check("modeTwo", cells[index].hotTwo.stereoDb, modeTwo[index], 0.20);
+        check("residual", cells[index].residualPeakDb, residual[index], 0.20);
+        check("noiseLevel", cells[index].noiseMaximumLevelDb,
+              noiseLevel[index], 0.025);
+        check("noiseBands", cells[index].noiseMaximumBandDb,
+              noiseBands[index], 0.075);
+        check("noiseCorrelationOne", cells[index].noiseOne.candidateCorrelation,
+              noiseCorrelationOne[index], 0.006);
+        check("noiseCorrelationTwo", cells[index].noiseTwo.candidateCorrelation,
+              noiseCorrelationTwo[index], 0.006);
+        check("noiseModeDelta", cells[index].candidateModeDeltaDb,
+              noiseModeDelta[index], 0.015);
     }
     return exact;
 }
