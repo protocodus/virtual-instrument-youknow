@@ -8171,7 +8171,7 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     // re-enable the shared base CV therefore crosses zero before that card
     // stops being pinned high. Its audible gate must follow the card
     // comparator, not the already-positive shared base value. The shared CV
-    // climbs out of -0.8 V through the R117/C62 and R116/C63 smoothing poles,
+    // climbs out of -0.8 V through the R118+VR31/C62 and R119/C63 poles,
     // so the crossing sits several milliseconds after the write; search a
     // window that covers it.
     bool sawPerCardOffsetWindow = false;
@@ -10105,8 +10105,8 @@ void testCommonVcaHoldUsesJackBoardC7TimeConstant()
 
 void testPwmHoldCrossesItsTwoSmoothingPoles()
 {
-    // The PWM hold reaches the comparators through R117/C62 and then R116/C63
-    // around IC17a. A step from a discharged network must follow the two-pole
+    // The PWM hold reaches the comparators through IC17a's R118+VR31/C62
+    // feedback, then R119/C63. A discharged network must follow the two-pole
     // cascade those components fix -- independently of the engine's internal
     // oversampling rate -- rather than the retired single compatibility pole.
     constexpr double sampleRate = 48000.0;
@@ -10139,8 +10139,8 @@ void testPwmHoldCrossesItsTwoSmoothingPoles()
                    5.0e-3 * target,
                    oversampling
                        ? "PWM two-pole smoothing changed at 4x processing"
-                       : "PWM smoothing does not follow the R117/C62 and "
-                         "R116/C63 cascade");
+                       : "PWM smoothing does not follow the R118+VR31/C62 and "
+                         "R119/C63 cascade");
     }
 }
 

@@ -2274,16 +2274,17 @@ void testPulseWidthAndHighPassLaws()
     }
 
     // The held PWM CV reaches the comparators through its p. 13 smoothing
-    // chain -- R117 100 kOhm into C62 47 nF, then R116 560 kOhm with C63
-    // 4.7 nF around IC17a -- and the stored SUB level crosses R11 1 kOhm into
-    // C1 10 uF ahead of the R9/R10 inverter. The shipped time constants must
-    // stay the products of those anchored designators.
+    // chain: C62 47nF is across R118 56k+VR31 20k in IC17a's feedback;
+    // R119 47k then drives C63 4.7nF. At the nominal -6V input/+6V PWM
+    // calibration point the feedback KCL gives Rf below. The SUB level
+    // crosses R11 1k into C1 10uF ahead of the R9/R10 inverter.
+    const double pwmFeedbackOhms = 6.0 / (6.0/100.0e3 + 15.0/560.0e3);
     expectNear(YouKnowTestAccess::pwmFirstPoleSeconds(),
-               100.0e3 * 47.0e-9, 1.0e-9,
-               "PWM first smoothing pole is not R117 * C62");
+               pwmFeedbackOhms * 47.0e-9, 1.0e-9,
+               "PWM first smoothing pole is not (R118+VR31) * C62");
     expectNear(YouKnowTestAccess::pwmSecondPoleSeconds(),
-               560.0e3 * 4.7e-9, 1.0e-9,
-               "PWM second smoothing pole is not R116 * C63");
+               47.0e3 * 4.7e-9, 1.0e-9,
+               "PWM second smoothing pole is not R119 * C63");
     expectNear(YouKnowTestAccess::subHoldSlewSeconds(),
                1.0e3 * 10.0e-6, 1.0e-9,
                "SUB hold slew is not R11 * C1");

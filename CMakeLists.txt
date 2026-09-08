@@ -73,6 +73,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowNoiseCalibration.h
     Source/DSP/YouKnowHighPassSwitch.h
+    Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowPanel.h)
 
 add_library(YouKnowDSP STATIC
@@ -540,6 +541,11 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowNoiseCalibrationTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowNoiseCalibrationTests PRIVATE cxx_std_20)
     add_test(NAME YouKnow.NoiseCalibration COMMAND YouKnowNoiseCalibrationTests)
+
+    add_executable(YouKnowPwmControlTests Tests/YouKnowPwmControlTests.cpp)
+    target_link_libraries(YouKnowPwmControlTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowPwmControlTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.PwmControl COMMAND YouKnowPwmControlTests)
 
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)

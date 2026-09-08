@@ -5,6 +5,7 @@
 #include "YouKnowSubLevel.h"
 #include "YouKnowNoiseCalibration.h"
 #include "YouKnowHighPassSwitch.h"
+#include "YouKnowPwmControl.h"
 
 #include <array>
 #include <bit>
@@ -1698,9 +1699,10 @@ private:
     // (YouKnowVcaControl.h); the common VCA derives its separate value
     // from C7 and its loaded jack-board resistor network. PWM and SUB derive
     // theirs from p. 13's designator-complete post-hold smoothing networks
-    // (OQ-07): the PWM hold reaches the comparators through R117/C62 and then
-    // R116/C63 around IC17a -- two cascaded poles -- and the stored SUB level
-    // reaches its mixer OTA through R11 into C1 ahead of the R9/R10 inverter.
+    // (OQ-07): the PWM hold reaches the comparators through IC17a's parallel
+    // R118+VR31/C62 feedback and the R119/C63 output pole (YouKnowPwmControl),
+    // and the stored SUB level reaches its mixer OTA through R11 into C1
+    // ahead of the R9/R10 inverter.
     // Both networks settle to their held value, so the calibrated DC laws are
     // untouched; what they add is the lag the hardware's PWM LFO and level
     // staircase actually cross. IC26's RESO channel instead shares IC24's
@@ -1734,14 +1736,10 @@ private:
     // not a measurement).
     static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
     static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f; // linear A/B reference
-    static constexpr float pwmSmoothingR117Ohms = 100.0e3f;
-    static constexpr float pwmSmoothingC62Farads = 47.0e-9f;
-    static constexpr float pwmSmoothingR116Ohms = 560.0e3f;
-    static constexpr float pwmSmoothingC63Farads = 4.7e-9f;
-    static constexpr float pwmHoldFirstPoleSeconds =         // 4.7 ms
-        pwmSmoothingR117Ohms * pwmSmoothingC62Farads;
-    static constexpr float pwmHoldSecondPoleSeconds =        // 2.632 ms
-        pwmSmoothingR116Ohms * pwmSmoothingC63Farads;
+    static constexpr float pwmHoldFirstPoleSeconds =        // ~3.249 ms
+        static_cast<float>(PwmControlCircuit::feedbackPoleSeconds);
+    static constexpr float pwmHoldSecondPoleSeconds =       // 0.2209 ms
+        static_cast<float>(PwmControlCircuit::outputPoleSeconds);
     static constexpr float subSmoothingR11Ohms = 1.0e3f;
     static constexpr float subSmoothingC1Farads = 10.0e-6f;
     static constexpr float subHoldSlewSeconds =              // 10 ms
@@ -2934,9 +2932,9 @@ private:
     // and noise level. Every voice card consumes these shared voltages, while
     // its downstream comparator and level errors remain card-specific.
     // The PWM hold crosses two smoothing poles on its way to the comparators
-    // -- R117/C62, then R116/C63 around IC17a -- so it carries the R117/C62
-    // node as a second continuous state between the target and the value the
-    // cards see.
+    // -- IC17a's R118+VR31/C62 feedback, then R119/C63 -- so it carries the
+    // opamp output as a second continuous state between the target and the
+    // value the cards see.
     float pwmVoltsTarget_ { 6.0f };
     double pwmVoltsFirstPole_ { 6.0 };
     double pwmVolts_ { 6.0 };
