@@ -43,6 +43,7 @@ import json
 import math
 from pathlib import Path
 import struct
+import tempfile
 
 import numpy as np
 from scipy.io import wavfile
@@ -88,7 +89,15 @@ class Audio:
                 raise ValueError("missing AIFF audio or format")
         else:
             self.file.close()
-            self.rate, self.data = wavfile.read(path, mmap=True)
+            try:
+                self.rate, self.data = wavfile.read(path, mmap=True)
+            except ValueError as error:
+                # SciPy cannot map packed24-bit RIFF frames. The shorter
+                # resonance recording uses that format; large fullsweep AIFF
+                # and32-bit rendered WAVs retain selective/mapped access.
+                if "mmap=True not compatible" not in str(error):
+                    raise
+                self.rate, self.data = wavfile.read(path, mmap=False)
             self.frames = len(self.data)
             self.channels = self.data.shape[1] if self.data.ndim == 2 else 1
 
@@ -229,8 +238,14 @@ def compare(reference, candidate):
                 sample_rate=candidate["sample_rate"], cards=result)
 
 
+def resonance_steps(event_path):
+    # The MIDI contains the identical opening patch twice at t=0. It is one
+    # physical dwell, not a second observation or a shift of the holdout split.
+    return list(dict.fromkeys((t,data[11]) for t,data in events(event_path) if len(data) == 24))
+
+
 def resonance(reference_path, model_path, event_path):
-    steps = [(t, data[11]) for t,data in events(event_path) if len(data) == 24]
+    steps = resonance_steps(event_path)
     spectra = []
     for path in (reference_path, model_path):
         audio, power = Audio(path), []
@@ -256,6 +271,20 @@ def resonance(reference_path, model_path, event_path):
 
 
 def self_test():
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory)/"packed24.wav"
+        payload = b"".join((sample & 0xffffff).to_bytes(3,"little")
+                           for sample in (-8388608,0,4194304))
+        fmt = struct.pack("<HHIIHH",1,1,48000,144000,3,24)
+        body = b"WAVEfmt " + struct.pack("<I",16) + fmt
+        body += b"data" + struct.pack("<I",len(payload)) + payload + b"\0"
+        path.write_bytes(b"RIFF"+struct.pack("<I",len(body))+body)
+        assert np.array_equal(Audio(path).read(0,3/48000)[:,0],[-1,0,.5])
+        initial = bytearray(24)
+        next_patch = bytearray(initial); next_patch[11] = 8
+        event_path = Path(directory)/"repeated-patch.txt"
+        event_path.write_text(f"0 {initial.hex()}\n0 {initial.hex()}\n2 {next_patch.hex()}\n")
+        assert resonance_steps(event_path) == [(0,0),(2,8)]
     for rate in (192000,384000):
         for hz in (5.12,249.8,51054.0):
             seconds = 5 if hz < 10 else .2
