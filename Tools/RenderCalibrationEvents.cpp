@@ -22,7 +22,7 @@ bool shippingMode(const std::string& name)
 }
 
 EngineParameters parametersFor(const sysex::Patch& patch, float character,
-                               bool shipping)
+                               bool shipping, float noiseScale = 1.0f)
 {
     EngineParameters p;
     p.lfoRate = patch.lfoRate; p.lfoDelay = patch.lfoDelay;
@@ -38,6 +38,10 @@ EngineParameters parametersFor(const sysex::Patch& patch, float character,
     p.decay = patch.decay; p.sustain = patch.sustain;
     p.release = patch.release; p.chorus = patch.chorus;
     p.volume = 1.0f; p.polyphony = 6; p.calibration = character;
+    // A measured source-level candidate is independent of the recording's
+    // output gain. Keep it ahead of the actual filter/VCA/nonlinearities,
+    // exactly where the shared noise rail enters the shipping engine.
+    p.mainNoiseLevelScale = noiseScale;
     // Match fresh plug-in instances, including the inactive-card/chorus skips.
     // Keep Exact/Merson as the default for historical hardware comparisons.
     // PluginProcessor's public defaults are Poly (2), Cubic (1), RK4 x1 (2).
@@ -126,11 +130,11 @@ void selfTest()
 int main(int argc, char** argv)
 {
     const bool selfCheck = argc == 2 && std::string(argv[1]) == "--self-test";
-    if (!selfCheck && argc != 3 && argc != 4 && argc != 5)
+    if (!selfCheck && (argc < 3 || argc > 6))
     {
         std::cerr << "usage: " << argv[0]
                   << " <seconds-hex-events.txt> <output.wav> [character 0..2]"
-                     " [exact|shipping]\n";
+                     " [exact|shipping] [noise-scale 0..4]\n";
         return 2;
     }
     try
@@ -150,7 +154,17 @@ int main(int argc, char** argv)
                 || character < 0.0f || character > 2.0f)
                 throw std::runtime_error("character must be a finite value in 0..2");
         }
-        const bool shipping = argc == 5 && shippingMode(argv[4]);
+        const bool shipping = argc >= 5 && shippingMode(argv[4]);
+        float noiseScale = 1.0f;
+        if (argc == 6)
+        {
+            const std::string value(argv[5]);
+            std::size_t used;
+            noiseScale = std::stof(value, &used);
+            if (used != value.size() || !std::isfinite(noiseScale)
+                || noiseScale < 0.0f || noiseScale > 4.0f)
+                throw std::runtime_error("noise scale must be finite and in 0..4");
+        }
         std::ifstream input(argv[1]);
         if (!input)
             throw std::runtime_error("cannot open event file");
@@ -182,12 +196,12 @@ int main(int argc, char** argv)
             if (sysex::readPatchMessage(bytes.data(), bytes.size(), patch, channel))
             {
                 havePatch = true;
-                engine.setParameters(parametersFor(patch, character, shipping));
+                engine.setParameters(parametersFor(patch, character, shipping, noiseScale));
             }
             else if (havePatch && sysex::readParameterMessage(
                          bytes.data(), bytes.size(), parameter, value, channel)
                      && sysex::applyParameter(patch, parameter, value))
-                engine.setParameters(parametersFor(patch, character, shipping));
+                engine.setParameters(parametersFor(patch, character, shipping, noiseScale));
             else if (havePatch && bytes.size() == 3 && bytes[1] < 128 && bytes[2] < 128
                      && ((bytes[0] & 0xf0) == 0x80 || (bytes[0] & 0xf0) == 0x90))
             {
@@ -209,6 +223,7 @@ int main(int argc, char** argv)
                   << " seconds, character " << character
                   << ", 48 kHz/4x, "
                   << (shipping ? "Poly/Cubic/RK4 x1" : "Exact/Merson")
+                  << ", noise scale " << noiseScale
                   << ", volume 1, peak "
                   << decibels(measure(audio).peak) << " dBFS\n";
     }
