@@ -5572,11 +5572,13 @@ void testChorusMuteDriveFollowsItsDrawnTiming()
         if (openAfter < 0 && !chorus.muteDriveMuted())
             openAfter = index;
     }
-    // C16 through R50 then C13 through R48 to Tr4's threshold: about 81 ms
-    // to mute; C13 alone from its +9.0 V rest: about 115 ms to open.
-    expectNear(1000.0 * mutedAfter / rate, 81.4, 2.0,
+    // Coupled C16/R50 and C13/R48 to Tr4's threshold: about 84.5 ms
+    // to mute; C13 alone from its loaded +8.68 V rest: about 113.2 ms
+    // to open. YouKnow.ChorusMute independently integrates the node currents
+    // and checks complete trajectories and sample-level threshold timing.
+    expectNear(1000.0 * mutedAfter / rate, 84.5, 2.0,
                "the wet mute did not engage on the drawn RC timing");
-    expectNear(1000.0 * openAfter / rate, 114.8, 2.0,
+    expectNear(1000.0 * openAfter / rate, 113.2, 2.0,
                "the wet return did not open on the drawn RC timing");
     expectNear(Chorus::muteDriveThresholdVolts, -5.785, 0.01,
                "Tr4's divided junction threshold moved");

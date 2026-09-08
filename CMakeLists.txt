@@ -266,6 +266,14 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderFidelityFixes PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderFidelityFixes PRIVATE cxx_std_20)
 
+    add_executable(YouKnowRenderChorusMute Tools/RenderChorusMute.cpp)
+    target_link_libraries(YouKnowRenderChorusMute PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderChorusMute PRIVATE cxx_std_20)
+
+    add_executable(YouKnowMeasureChorusSupport Tools/MeasureChorusSupport.cpp)
+    target_link_libraries(YouKnowMeasureChorusSupport PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowMeasureChorusSupport PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderRealismFixes Tools/RenderRealismFixes.cpp)
     target_link_libraries(YouKnowRenderRealismFixes PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderRealismFixes PRIVATE cxx_std_20)
@@ -521,6 +529,10 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowChorusBypassTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowChorusBypassTests PRIVATE cxx_std_20)
 
+    add_executable(YouKnowChorusMuteTests Tests/YouKnowChorusMuteTests.cpp)
+    target_link_libraries(YouKnowChorusMuteTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusMuteTests PRIVATE cxx_std_20)
+
     add_executable(YouKnowVcfIntegratorTests
         Tests/YouKnowVcfIntegratorTests.cpp)
     target_link_libraries(YouKnowVcfIntegratorTests PRIVATE YouKnowDSP)
@@ -530,7 +542,7 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowSysExTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowSysExTests PRIVATE cxx_std_20)
 
-    foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests
+    foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
                    YouKnowVcfIntegratorTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
@@ -543,6 +555,8 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.Circuit COMMAND YouKnowCircuitTests)
     add_test(NAME YouKnow.ChorusBypass COMMAND YouKnowChorusBypassTests)
     set_tests_properties(YouKnow.ChorusBypass PROPERTIES TIMEOUT 60)
+    add_test(NAME YouKnow.ChorusMute COMMAND YouKnowChorusMuteTests)
+    set_tests_properties(YouKnow.ChorusMute PROPERTIES TIMEOUT 60)
     add_test(NAME YouKnow.VcfIntegrator COMMAND YouKnowVcfIntegratorTests)
     add_test(NAME YouKnow.SysEx COMMAND YouKnowSysExTests)
 

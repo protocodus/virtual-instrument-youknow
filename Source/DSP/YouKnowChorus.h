@@ -259,17 +259,21 @@ public:
     // return; Tr4 off lets the gates float to their sources and the JFETs
     // conduct. So the button reaches the JFETs only after two RCs and a
     // junction threshold:
-    //   - chorus OFF: Tr5 opens, C16 charges through R50 (22 ms), C13
-    //     follows through R48 against R49+R42 (120 ms) and mutes when Tr4's
-    //     base reaches one junction drop -- about 81 ms after the command;
+    //   - chorus OFF: Tr5 opens; R50/C16 and R48/C13 exchange current in
+    //     both directions, against R49+R42. The coupled network mutes when
+    //     Tr4's base reaches one junction drop -- about 84.5 ms later;
     //   - chorus ON: Tr5 saturates, C16 is emptied at once, C13 decays from
-    //     its +9.0 V rest toward -15 V and un-mutes about 115 ms in.
+    //     its +8.68 V rest toward -15 V and un-mutes about 113 ms in.
     // Both are derived from the drawn parts with the same 0.6 V junction
     // prior the resonance and NOISE onsets use; the JFET transition itself
-    // keeps the declared 5 ms glide policy below, because the 2SK30A's
+    // keeps the declared 5 ms glide policy, because the 2SK30A's
     // pinch-off spread is not fixed by any source. Off by default at this
     // level so the bare-chorus suites keep their immediate switching; the
-    // engine enables it.
+    // engine enables it. The passive two-node solve includes R48's loading
+    // back into C16; Tr4's base-current loading above the threshold and the
+    // transistor's actual junction voltage still need device data. These
+    // are circuit-prior timings, not measured original-unit switching times.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
     static constexpr float muteDrivePullUpOhms = 10.0e3f;        // R50
     static constexpr float muteDriveNodeFarads = 2.2e-6f;        // C16
     static constexpr float muteDriveSeriesOhms = 150.0e3f;       // R48
@@ -292,12 +296,21 @@ public:
            / (muteDriveSeriesOhms + muteDriveBaseOhms + muteDriveEmitterOhms));
     static constexpr float muteDriveNodeSeconds =
         muteDrivePullUpOhms * muteDriveNodeFarads;                // 22 ms
-    // Where C13 rests for a given Tr5 node voltage: the R48 / (R49+R42)
-    // divider between that node and the -15 V rail.
-    [[nodiscard]] static constexpr float muteDriveHoldRestVolts(
-        float nodeVolts) noexcept
+    // With Tr5 open, R50, R48, R49 and R42 form one series DC path.
+    // C16 therefore rests below +15 V: treating it as an ideal +15 V
+    // source would overcharge C13 and delay the next return opening.
+    [[nodiscard]] static constexpr double muteDriveMutedNodeRestVolts() noexcept
     {
-        const float lower = muteDriveBaseOhms + muteDriveEmitterOhms;
+        return muteDriveRailVolts - 2.0 * muteDriveRailVolts
+            * muteDrivePullUpOhms
+            / (muteDrivePullUpOhms + muteDriveSeriesOhms
+               + muteDriveBaseOhms + muteDriveEmitterOhms);
+    }
+    // C13's rest for a fixed Tr5 node voltage.
+    [[nodiscard]] static constexpr double muteDriveHoldRestVolts(
+        double nodeVolts) noexcept
+    {
+        const double lower = muteDriveBaseOhms + muteDriveEmitterOhms;
         return (nodeVolts * lower - muteDriveRailVolts * muteDriveSeriesOhms)
              / (lower + muteDriveSeriesOhms);
     }
@@ -533,6 +546,10 @@ public:
         ExactTransition exactInput {};
         ExactTransition exactOutputMuted {};
         ExactTransition exactOutputConnected {};
+        // Prepared with the audio support at every cached numerical rate, so
+        // live quality changes also avoid building the control transition.
+        std::array<std::array<double, 2>, 2> muteDriveOpenTransition {};
+        double muteDriveHoldGlide { 0.0 };
     };
     [[nodiscard]] static SupportChain supportChainFor(float sampleRate) noexcept;
 
@@ -722,12 +739,10 @@ private:
     ChorusMode runningMode_ { ChorusMode::One };
     // Whether the glided settings have a starting point yet.
     bool primed_ { false };
-    // The wet-mute drive's two capacitor voltages and Tr4's state; the
-    // per-sample glides are solved in prepare().
-    float muteDriveNodeVolts_ { 15.0f };
-    float muteDriveHoldVolts_ { 0.0f };
-    float muteDriveNodeGlide_ { 0.0f };
-    float muteDriveHoldGlide_ { 0.0f };
+    // The wet-mute drive's physical capacitor coordinates and Tr4's state;
+    // its prepared numerical transitions live in the cached support chain.
+    double muteDriveNodeVolts_ { 15.0 };
+    double muteDriveHoldVolts_ { 0.0 };
     bool muteDriveMuted_ { true };
     bool muteDriveEnabled_ { false };
     // Per-line insertion gains at the last calibration they were solved for.

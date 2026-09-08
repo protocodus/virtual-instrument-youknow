@@ -859,6 +859,23 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     chain.exactOutputConnected = exactTransition(
         outputSupportMatrix(true), outputSupportDrive(), outputEquilibrium,
         sampleRate);
+    // Tr5 open: C16 and C13 are two physical coordinates joined by R48,
+    // not cascaded independent RCs. Prepare exp(A / fs) once; the audio path
+    // only advances the two voltages relative to their loaded DC rest.
+    const double dt = 1.0 / static_cast<double>(sampleRate);
+    const double pullUp = 1.0 / muteDrivePullUpOhms;
+    const double series = 1.0 / muteDriveSeriesOhms;
+    const double lower = 1.0 / (muteDriveBaseOhms + muteDriveEmitterOhms);
+    FixedMatrix<2> muteDriveMatrix {{
+        {{ -dt * (pullUp + series) / muteDriveNodeFarads,
+            dt * series / muteDriveNodeFarads }},
+        {{  dt * series / muteDriveHoldFarads,
+           -dt * (series + lower) / muteDriveHoldFarads }}
+    }};
+    chain.muteDriveOpenTransition = matrixExponential(muteDriveMatrix);
+    // Tr5 conducting clamps C16 to -15 V, leaving C13's one-pole discharge.
+    chain.muteDriveHoldGlide = -std::expm1(
+        -dt * (series + lower) / muteDriveHoldFarads);
     return chain;
 }
 
@@ -1169,8 +1186,6 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
     wetMuteGlide_ = 1.0f - std::exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds);
-    muteDriveNodeGlide_ = 1.0f - std::exp(-inverseSampleRate_ / muteDriveNodeSeconds);
-    muteDriveHoldGlide_ = 1.0f - std::exp(-inverseSampleRate_ / muteDriveHoldSeconds);
     const auto cached = supportRatesPrepared_
         ? std::find(preparedSupportRates_.begin(), preparedSupportRates_.end(),
                     sampleRate_)
@@ -1220,8 +1235,8 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     // reset takes the mode as it stands, and only changes made afterwards
     // glide. The mute drive is primed to the same rest on that first sample.
     primed_ = false;
-    muteDriveNodeVolts_ = muteDriveRailVolts;
-    muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveRailVolts);
+    muteDriveNodeVolts_ = muteDriveMutedNodeRestVolts();
+    muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveNodeVolts_);
     muteDriveMuted_ = true;
     muteDriveEnabled_ = false;
 }
@@ -1273,15 +1288,27 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
 
 void Chorus::advanceMuteDrive(bool commandMute) noexcept
 {
-    // Existing nominal RC/0.6 V junction model; the 5 ms JFET glide is separate.
+    // Same 0.6 V junction prior and 5 ms JFET glide; only the passive
+    // network's missing reciprocal R48 current is corrected here.
     if (commandMute)
-        muteDriveNodeVolts_ += (muteDriveRailVolts - muteDriveNodeVolts_)
-                             * muteDriveNodeGlide_;
+    {
+        constexpr double nodeRest = muteDriveMutedNodeRestVolts();
+        constexpr double holdRest = muteDriveHoldRestVolts(nodeRest);
+        const double node = muteDriveNodeVolts_ - nodeRest;
+        const double hold = muteDriveHoldVolts_ - holdRest;
+        muteDriveNodeVolts_ = nodeRest
+            + support_.muteDriveOpenTransition[0][0] * node
+            + support_.muteDriveOpenTransition[0][1] * hold;
+        muteDriveHoldVolts_ = holdRest
+            + support_.muteDriveOpenTransition[1][0] * node
+            + support_.muteDriveOpenTransition[1][1] * hold;
+    }
     else
+    {
         muteDriveNodeVolts_ = -muteDriveRailVolts;
-    muteDriveHoldVolts_ += (muteDriveHoldRestVolts(muteDriveNodeVolts_)
-                            - muteDriveHoldVolts_)
-                         * muteDriveHoldGlide_;
+        muteDriveHoldVolts_ += (-muteDriveRailVolts - muteDriveHoldVolts_)
+                             * support_.muteDriveHoldGlide;
+    }
     muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
 }
 
@@ -1324,7 +1351,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         // The drive rests where the command has held it: Tr5 open and both
         // capacitors at their positive rests when muted, both on the
         // negative rail when conducting.
-        muteDriveNodeVolts_ = commandMute ? muteDriveRailVolts
+        muteDriveNodeVolts_ = commandMute ? muteDriveMutedNodeRestVolts()
                                           : -muteDriveRailVolts;
         muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveNodeVolts_);
         muteDriveMuted_ = commandMute;
