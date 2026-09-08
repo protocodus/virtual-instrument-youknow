@@ -4956,6 +4956,7 @@ YouKnowEngine::YouKnowEngine() noexcept
     // Function-local statics are thread-safe, but their first-use guards and
     // exponentials do not belong in the first audio callback.
     (void) chassisGradientMeanCelsius();
+    (void) SubLevelDiodeLaw::table();
     buildVoiceCards();
     refreshVoiceCardThermalScales();
     clearHeldNotes();
@@ -5660,6 +5661,7 @@ void YouKnowEngine::reset()
         voice.dco.reset();
         voice.filter.reset();
         voice.moduleCoupling.reset();
+        voice.coupledMixer.reset();
         voice.vcaInputCoupling.reset();
         voice.vcaInputVolts = 0.0f;
         voice.envelope.reset();
@@ -5883,6 +5885,16 @@ float YouKnowEngine::processMainNoiseSource(
         otaOutput, noiseSourceLowPassG_, 1.0f, 0.0f);
     const float rail = shaped * noiseMixVolts;
     return resolvedC41Memory ? rail : rail * level;
+}
+
+bool YouKnowEngine::configureCoupledMixer(
+    const CoupledSubMixer::Calibration& calibration) noexcept
+{
+    if (prepared_ || !calibration.valid())
+        return false;
+    coupledMixerCalibration_ = calibration;
+    coupledMixerEnabled_ = true;
+    return true;
 }
 
 void YouKnowEngine::setParameters(const EngineParameters& parameters)
@@ -6371,6 +6383,7 @@ void YouKnowEngine::silenceVoice(Voice& voice) noexcept
         voice.pulseThresholdPrimed = false;
         voice.filter.reset();
         voice.moduleCoupling.reset();
+        voice.coupledMixer.reset();
         voice.vcaInputCoupling.reset();
         voice.vcaInputVolts = 0.0f;
         voice.noiseState = hash32(
@@ -7634,7 +7647,9 @@ float YouKnowEngine::subWaveNodeMean(
     if (!parameters.enableSubHalfWaveNodeCoupling)
         return 0.0f;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    return subMixVolts * static_cast<float>(subCv_)
+    const float subCurrent = parameters.enableSubDiodeControl
+        ? SubLevelDiodeLaw::gain(subCv_) : static_cast<float>(subCv_);
+    return subMixVolts * subCurrent
          * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
 }
 
@@ -7657,6 +7672,16 @@ void YouKnowEngine::primeVoiceWaveNode(
     voice.moduleCoupling.state = static_cast<double>(
         pulseWaveNodeMean(voice, parameters)
         + subWaveNodeMean(voice, parameters));
+    if (coupledMixerEnabled_)
+    {
+        const auto& c = coupledMixerCalibration_;
+        // Same settled-mean startup policy as the compatibility network.
+        // This is not a claim about power-on charge or the nonlinear periodic
+        // mean; the audit allows settling before measuring steady windows.
+        voice.coupledMixer.prime(c,
+            c.sourceBiasVolts + c.sourceScale * pulseWaveNodeMean(voice, parameters),
+            CoupledSubMixer::railFullScaleVolts * subCv_, 0.5);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -8101,7 +8126,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Exact keeps the established full render, so the reference kernel's
     // frozen fingerprints and work counters are untouched -- and switching
     // back to Exact is the way to switch this behaviour off.
-    if (!voice.active && parameters.vcfTanhMode != VcfTanhMode::Exact)
+    if (!voice.active && parameters.vcfTanhMode != VcfTanhMode::Exact
+        && !coupledMixerEnabled_)
     {
         freewheelVoiceCard(voice);
         return {};
@@ -8143,7 +8169,9 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // timestamps above; their logic levels are independent of ramp amplitude.
     const float pulseOut =
         dco.pulse.advance(dco.pulseState) * pulseMixVolts;
-    const float subGain = subMixVolts * static_cast<float>(subCv_)
+    const float subCurrent = parameters.enableSubDiodeControl
+        ? SubLevelDiodeLaw::gain(subCv_) : static_cast<float>(subCv_);
+    const float subGain = subMixVolts * subCurrent
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
     // Half-wave: AC +/- subGain as before, plus a +subGain mean (see the
     // summing-node note below). The comparison switch keeps the zero-mean
@@ -8171,9 +8199,12 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // sources (9.92 V * subCv - V_D6) / 60k, roughly 155 uA at full scale
     // for a ~0.6 V drop (the D6 part is unread), on the half-cycle Tr19 is
     // off and nothing on the other -- so its mean rides on this node for
-    // C56/C50 to remove; the level law stays linear in the held rail (the
-    // diode's onset and the saw-dependent modulation of the sub current
-    // through the node's own swing are OQ-15). The node's
+    // C56/C50 to remove. SubLevelDiodeLaw supplies the measured aggregate
+    // onset/soft knee at a settled WAVE bias; false enableSubDiodeControl
+    // restores the old linear rail law. Saw-dependent modulation through
+    // the node's swing remains calibration-dependent: the explicit coupled
+    // candidate above can represent it, but has no installed-unit defaults.
+    // The compatibility node's
     // DC-to-AC impedance ratio is voiced at 1, the floor of its <= 2 bracket,
     // inside the already-voiced subMixVolts coordinate. This is NOT the
     // removed "sub-driver amplitude asymmetry" (a fabricated 0.3 % inequality
@@ -8194,7 +8225,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty,
                         parameters.enablePulseOffWaveNodeCoupling))
         mixed += pulseOut;
-    mixed += subOut;
+    if (!coupledMixerEnabled_)
+        mixed += subOut;
     mixed += noiseSample
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration)
            * agedNoiseGain_;
@@ -8222,8 +8254,26 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // puts it on the jack board, downstream of the summing amplifier, so it is
     // one shared stage after all six voices rather than a leg inside each --
     // see the mix.
-    const float coupled = voice.moduleCoupling.process(
-        mixed, moduleCouplingG_, 0.0f, 1.0f);
+    float coupled;
+    if (coupledMixerEnabled_)
+    {
+        const auto& c = coupledMixerCalibration_;
+        // Required calibration maps the existing no-sub source sum to the
+        // physical Thevenin source. The coupled solve replaces BOTH the
+        // independent sub add and C56: its output is already volts at VCF IN.
+        // Divide out the compatibility coordinate here so the existing
+        // compensation/core path below receives those physical volts once.
+        // Inactive cards run the same solve, preserving real capacitor charge;
+        // the old freewheel mean is invalid for this nonlinear network.
+        const auto node = voice.coupledMixer.process(c,
+            c.sourceBiasVolts + c.sourceScale * mixed,
+            CoupledSubMixer::railFullScaleVolts * subCv_,
+            0.5 * (1.0 + subTrack), inverseOversampledRate_);
+        coupled = static_cast<float>(node.filterVolts / filterInputAttenuation);
+    }
+    else
+        coupled = voice.moduleCoupling.process(
+            mixed, moduleCouplingG_, 0.0f, 1.0f);
     // The microscopic card excitation is injected at the filter input, after
     // the source coordinate scale, so it stays outside this capacitor (OQ-16).
     // With the differential form the compensation rides inside the resonance

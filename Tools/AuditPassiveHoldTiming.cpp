@@ -641,7 +641,12 @@ struct YouKnowTestAccess
         constexpr double highControl = 0.75;
         const double low = recoveredSubMixerInput(lowControl);
         const double high = recoveredSubMixerInput(highControl);
-        const double expected = low * (highControl / lowControl);
+        // This probe checks that the audio consumer reads the held SUB rail.
+        // The rail itself still obeys the same RC; the consumer now applies
+        // the separately circuit-qualified diode law after that hold.
+        const double expected = low
+            * (SubLevelDiodeLaw::exactGain(highControl)
+               / SubLevelDiodeLaw::exactGain(lowControl));
         const double scale = std::max(std::abs(expected), 1.0e-12);
         return {
             std::abs(high - expected) / scale,

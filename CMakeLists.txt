@@ -68,6 +68,8 @@ set(YOUKNOW_DSP_SOURCES
 set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
     Source/DSP/YouKnowVcaControl.h
+    Source/DSP/YouKnowCoupledMixer.h
+    Source/DSP/YouKnowSubLevel.h
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowPanel.h)
 
@@ -442,6 +444,13 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowNoiseSourceQualityAudit
         PRIVATE YouKnowDSP)
     target_compile_features(YouKnowNoiseSourceQualityAudit PRIVATE cxx_std_20)
+
+    add_executable(YouKnowCoupledMixerAudit Tools/AuditCoupledMixer.cpp)
+    target_link_libraries(YouKnowCoupledMixerAudit PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowCoupledMixerAudit PRIVATE cxx_std_20)
+    if(BUILD_TESTING)
+        add_test(NAME YouKnow.CoupledMixer COMMAND YouKnowCoupledMixerAudit --self-test)
+    endif()
 
     if(MSVC)
         target_compile_options(YouKnowRenderDemos PRIVATE /W4 /permissive-)

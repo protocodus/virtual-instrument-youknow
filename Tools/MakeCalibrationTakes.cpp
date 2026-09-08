@@ -343,8 +343,9 @@ std::vector<Take> buildTakes()
         take.id = "03-sub";
         take.purpose = "Sub level and spectrum (OQ-15 sub coordinate, the one "
                        "the earlier corpus pass already found contradicted). "
-                       "The sub is a half-wave gated square an octave down, so "
-                       "its even harmonics carry the diode gate's signature.";
+                       "The sub is a half-wave gated square an octave down. "
+                       "Its DC mean alone creates no even harmonics; a "
+                       "measured even-order residual needs separate diagnosis.";
         take.panel = "As take 01 but SAW off, PULSE off, SUB slider at max";
         take.patch = openPanel();
         take.patch.sub = 1.0f;

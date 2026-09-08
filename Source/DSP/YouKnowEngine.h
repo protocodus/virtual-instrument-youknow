@@ -1,6 +1,8 @@
 #pragma once
 
 #include "YouKnowChorus.h"
+#include "YouKnowCoupledMixer.h"
+#include "YouKnowSubLevel.h"
 
 #include <array>
 #include <bit>
@@ -221,7 +223,8 @@ struct EngineParameters
     bool enablePulseOffWaveNodeCoupling { true };
     // On by default: the sub reaches the WAVE node as the half-cycle current
     // its R102/R101/D6 leg passes from the SUB LEVEL rail, so its mean rides
-    // on the node and C56/C50 remove it; the level law is unchanged. False
+    // on the node and C56/C50 remove it. Its separately selected diode law
+    // acts on the held rail before both the AC and mean terms. False
     // retains the former zero-mean bipolar square solely for controlled A/B
     // renders.
     bool enableSubHalfWaveNodeCoupling { true };
@@ -362,6 +365,10 @@ struct EngineParameters
     // Ignored by Exact. The opt-in cubic replaces only the small
     // Character/Early multiplier transfer in the Fast kernel.
     VcfFastEarlyMode vcfFastEarlyMode { VcfFastEarlyMode::Hermite };
+    // Reference-unit diode onset/soft knee on the held SUB rail. False keeps
+    // the former linear law for controlled baseline renders. The optional
+    // fully coupled mixer handles its own diode and does not apply this twice.
+    bool enableSubDiodeControl { true };
 
     // Hosts commonly present the same complete parameter snapshot on every
     // block. Value equality is the right test for that public control image:
@@ -417,6 +424,11 @@ public:
     // for ten minutes is still warm when the transport stops.
     void resetForHostStop();
     void setParameters(const EngineParameters& parameters);
+    // Comparison-only circuit calibration. Call before prepare(); an invalid
+    // calibration or a prepared engine is rejected without changing state.
+    // No public plug-in parameter, preset byte or shipping default selects it.
+    [[nodiscard]] bool configureCoupledMixer(
+        const CoupledSubMixer::Calibration& calibration) noexcept;
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     // Re-pressing the selected hardware POLY button leaves the visible mode
@@ -2466,6 +2478,7 @@ private:
         // summed WAVE node and pin 1 VCF IN, so no mixer DC reaches the
         // filter core or the voice VCA behind it.
         HighPass moduleCoupling {};
+        CoupledSubMixer coupledMixer {};
         // C59, the per-voice coupling out of pin 3 VCF OUT and into pin 9
         // VCA IN. The filter core makes DC of its own -- stage offsets and the
         // duty-asymmetric pulse the cascade only partly removes -- and this is
@@ -3115,6 +3128,9 @@ private:
     // envelopeLaw* cache above memoizes ATTACK/DECAY/RELEASE: comparison is
     // exact equality against the same parameters.portamento source, so the
     // memo can never return anything the unconditional call would not have.
+    CoupledSubMixer::Calibration coupledMixerCalibration_ {};
+    bool coupledMixerEnabled_ { false };
+
     float glideLawPortamento_ { -1.0f };
     float glideLawStepPerScan_ { 0.0f };
 };
