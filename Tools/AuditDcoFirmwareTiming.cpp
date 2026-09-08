@@ -95,7 +95,7 @@ constexpr Instruction program[] {
     { 0x045d, 2, 10, 0x0000, false, false }, // LDAW $FF34_actvVoiceBit
     { 0x045f, 3, 14, 0x0000, false, false }, // OFFAW $FF00_resetVoiceBits
     { 0x0462, 2, 10, 0x04b3, false, false }, // JRE $04B3
-    { 0x0464, 1, 4, 0x0000, false, false }, // DI 
+    { 0x0464, 1, 4, 0x0000, false, false }, // DI
     { 0x0465, 3, 10, 0x0000, false, false }, // LXI HL,$0B50
     { 0x0468, 1, 13, 0x0000, false, false }, // LDAX (HL+B)
     { 0x0469, 1, 4, 0x0000, false, false }, // MOV H,A
@@ -104,7 +104,7 @@ constexpr Instruction program[] {
     { 0x046d, 1, 7, 0x0000, false, false }, // STAX (HL)
     { 0x046e, 1, 4, 0x0000, false, false }, // MOV A,EAH
     { 0x046f, 1, 7, 0x0000, false, false }, // STAX (HL)
-    { 0x0470, 1, 4, 0x0000, false, false }, // EI 
+    { 0x0470, 1, 4, 0x0000, false, false }, // EI
     { 0x0471, 1, 10, 0x0000, false, false }, // POP HL
     { 0x0472, 2, 14, 0x0000, false, false }, // LDEAX (HL++)
     { 0x0474, 1, 4, 0x0000, false, false }, // DMOV BC,EA
@@ -149,7 +149,7 @@ constexpr Instruction program[] {
     { 0x04c0, 3, 11, 0x0000, false, false }, // LTI B,$03
     { 0x04c3, 2, 7, 0x0000, false, false }, // MVI H,$13
     { 0x04c5, 2, 7, 0x0000, false, false }, // MVI L,$00
-    { 0x04c7, 1, 4, 0x0000, false, false }, // DI 
+    { 0x04c7, 1, 4, 0x0000, false, false }, // DI
     { 0x04c8, 1, 7, 0x0000, false, false }, // STAX (HL)
     { 0x04c9, 2, 10, 0x0465, false, false }, // JRE $0465
     { 0x082f, 3, 20, 0x0000, false, false }, // ORI PA,$F0
@@ -159,7 +159,7 @@ constexpr Instruction program[] {
     { 0x0837, 2, 10, 0x0000, false, false }, // MOV PB,A
     { 0x0839, 1, 4, 0x0000, false, false }, // MOV A,EAL
     { 0x083a, 2, 10, 0x0000, false, false }, // MOV PC,A
-    { 0x083c, 1, 10, 0x0000, false, true }, // RET 
+    { 0x083c, 1, 10, 0x0000, false, true }, // RET
 };
 const Instruction& at(int pc)
 {
