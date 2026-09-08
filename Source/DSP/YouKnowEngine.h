@@ -328,6 +328,12 @@ struct EngineParameters
     // family still owns the final calibration; the physical topology is the
     // stronger prior in its absence.
     bool useCircuitDerivedResonanceShape { true };
+    // FREQ/WIDTH are fixed trimmers adjusted at the service self-oscillation
+    // amplitude. Keep that pole calibration when RES changes instead of
+    // dynamically cancelling the
+    // cascade's amplitude-dependent pitch droop. False restores the previous
+    // dynamic correction for comparisons. Not serialised.
+    bool useFixedVcfServiceFrequencyTrim { true };
     // Which reading of the resonance input-compensation bracket the voice
     // applies. Both derivable readings put the coefficient between 0.2751 and
     // 0.3078; the shipped default is that bracket's floor, and Legacy restores
@@ -2409,7 +2415,9 @@ private:
         // Unlike the former TPT coefficient this is consumed directly by the
         // continuous-time RK step and therefore needs no tan/atan round trip.
         float filterOmegaStep { 0.1f };
-        // The counts and loop gain `filterOmegaStep` was last solved for.
+        // The counts and calibration feedback `filterOmegaStep` was last
+        // solved for. The latter is the card's fixed full-RES setting by
+        // default, or the live loop gain for the legacy dynamic comparison.
         // Both are compared for exact equality, so this memo cannot return
         // anything the chain would not have recomputed; a sentinel that no
         // real count can equal forces the first solve. The internal rate is

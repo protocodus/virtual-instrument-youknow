@@ -537,6 +537,11 @@ if(YOUKNOW_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(YouKnowVcfCalibrationTests Tests/YouKnowVcfCalibrationTests.cpp)
+    target_link_libraries(YouKnowVcfCalibrationTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VcfCalibration COMMAND YouKnowVcfCalibrationTests)
+    set_tests_properties(YouKnow.VcfCalibration PROPERTIES TIMEOUT 60)
+
     add_executable(YouKnowVcaControlTests Tests/YouKnowVcaControlTests.cpp)
     target_link_libraries(YouKnowVcaControlTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaControl COMMAND YouKnowVcaControlTests)

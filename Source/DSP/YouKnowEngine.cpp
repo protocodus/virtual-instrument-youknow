@@ -871,6 +871,13 @@ float YouKnowEngine::vcfConverterCarryCounts(float counts) noexcept
     return carry;
 }
 
+// Service Notes p.13 routes VR29/VR28 only into VCF CV; RES CV feeds
+// the separate VR26/R107/Tr18 feedback-OTA branch. Page19 fixes resonance
+// amplitude before adjusting FREQ/WIDTH. The engine therefore passes each
+// card's fixed full-RES service feedback here; only the legacy comparison
+// passes live feedback. The cascade itself retains amplitude-dependent
+// frequency droop, which a fixed hardware trimmer cannot cancel dynamically.
+// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf
 float YouKnowEngine::vcfEffectiveCutoffHz(float counts,
                                              float feedback) noexcept
 {
@@ -5942,6 +5949,10 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     const bool rampCurrentScalesChanged = startupSnapshot
         || next.calibration != activeParameters_.calibration;
     const bool agingChanged = next.aging != activeParameters_.aging;
+    if (next.useFixedVcfServiceFrequencyTrim
+            != activeParameters_.useFixedVcfServiceFrequencyTrim)
+        for (auto& voice : voices_)
+            voice.cutoffChainCounts = -1.0e30f;
     // Before the first valid prepared audio interval, a host snapshot is the
     // power-up image rather than a timed panel move. `panelGlidePrimed_` is
     // already the exact one-shot marker for that boundary: invalid/zero calls
@@ -7508,6 +7519,10 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
 
     const float analogCounts = cutoffAnalogCounts(
         voice.cutoffCounts, card, tolerance, powerSupplyDroop_);
+    const float calibrationFeedback = parameters.useFixedVcfServiceFrequencyTrim
+        ? resonanceFeedbackFor(1.0f, card, tolerance,
+            parameters.useCircuitDerivedResonanceShape)
+        : voice.feedback;
     // The chain from counts to the physical omega*dt interval costs an exp2
     // and two double pow calls per card, per internal sample -- and it is a
     // pure function of the two values compared here. A card whose hold has
@@ -7516,17 +7531,17 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     // instrument does. The guard is exact equality, so the cache can only
     // return the value the chain would have recomputed.
     if (analogCounts != voice.cutoffChainCounts
-        || voice.feedback != voice.cutoffChainFeedback)
+        || calibrationFeedback != voice.cutoffChainFeedback)
     {
 #if defined(YOUKNOW_WORK_AUDIT)
         YOUKNOW_COUNT_DOMAIN_WORK(cutoffMemoMisses, 1);
 #endif
-        const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
+        const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, calibrationFeedback);
         const float limited =
             std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
         voice.filterOmegaStep = twoPi * limited * inverseOversampledRate_;
         voice.cutoffChainCounts = analogCounts;
-        voice.cutoffChainFeedback = voice.feedback;
+        voice.cutoffChainFeedback = calibrationFeedback;
     }
 #if defined(YOUKNOW_WORK_AUDIT)
     else
@@ -8334,8 +8349,12 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
             const float mappedAnalogCounts = cutoffAnalogCounts(
                 static_cast<float>(cutoffCounts), card, parameters.calibration,
                 powerSupplyDroop_);
+            const float calibrationFeedback = parameters.useFixedVcfServiceFrequencyTrim
+                ? resonanceFeedbackFor(1.0f, card, parameters.calibration,
+                    parameters.useCircuitDerivedResonanceShape)
+                : mappedFeedback;
             const float cutoffHz = vcfEffectiveCutoffHz(
-                mappedAnalogCounts, mappedFeedback);
+                mappedAnalogCounts, calibrationFeedback);
             const float limited = std::min(
                 cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
             const float baseOmega = twoPi * limited
