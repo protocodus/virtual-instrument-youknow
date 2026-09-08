@@ -5344,6 +5344,8 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     // C14's load and the following HPF are selected by one panel switch.  Their
     // coefficients move only with that mode or this internal rate.
     updateSharedHighPass(activeParameters_);
+    if (highPassSwitchResistance_ > 0)
+        highPassSwitch_.prepare(oversampledRate_, highPassSwitchResistance_);
     // The two cut legs' undriven corners: each leg's own passband corner
     // scaled by highPassDepartRatio. 225.8 Hz -> 10.14 Hz leaving Two,
     // 720.5 Hz -> 32.34 Hz leaving Three. Both sit far below every supported
@@ -5542,6 +5544,7 @@ void YouKnowEngine::clearRateDependentOutputPath(
     if (!preserveFreeRunningState)
     {
         voiceBusCoupling_.reset();
+        highPassSwitch_.reset();
         highPass_.reset();
         highPassTwoLeg_.reset();
         highPassThreeLeg_.reset();
@@ -5894,6 +5897,14 @@ bool YouKnowEngine::configureCoupledMixer(
         return false;
     coupledMixerCalibration_ = calibration;
     coupledMixerEnabled_ = true;
+    return true;
+}
+
+bool YouKnowEngine::configureHighPassSwitch(double resistance) noexcept
+{
+    if (prepared_ || !std::isfinite(resistance) || resistance < 50 || resistance > 1000)
+        return false;
+    highPassSwitchResistance_ = resistance;
     return true;
 }
 
@@ -9359,6 +9370,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 if (!boostActive)
                     shaped += boostLeg;
             }
+
+            if (highPassSwitchResistance_ > 0)
+                shaped = static_cast<float>(highPassSwitch_.process(
+                    busIn, static_cast<int>(parameters.highPass), [](double value) {
+                        return static_cast<double>(outputSummerClip(static_cast<float>(value)));
+                    }));
 
             // VCA LEVEL is the one common uPC1252H2 on the jack board, after
             // the voice sum and HPF. The six voice-module VCAs above are driven

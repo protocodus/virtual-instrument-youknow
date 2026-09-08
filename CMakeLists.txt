@@ -72,6 +72,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowSubLevel.h
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowNoiseCalibration.h
+    Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPanel.h)
 
 add_library(YouKnowDSP STATIC
@@ -243,6 +244,14 @@ option(YOUKNOW_BUILD_TOOLS "Build the JUCE-free audio render/audit tools" ON)
 
 if(YOUKNOW_BUILD_TOOLS)
     find_package(Threads REQUIRED)
+
+    add_executable(YouKnowHighPassSwitchAudit Tools/AuditHighPassSwitch.cpp)
+    target_link_libraries(YouKnowHighPassSwitchAudit PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowHighPassSwitchAudit PRIVATE cxx_std_20)
+    if(BUILD_TESTING)
+        add_test(NAME YouKnow.HighPassSwitch COMMAND YouKnowHighPassSwitchAudit --self-test)
+        set_tests_properties(YouKnow.HighPassSwitch PROPERTIES TIMEOUT 60)
+    endif()
 
     add_executable(YouKnowRenderVcaControlComparison Tools/RenderVcaControlComparison.cpp)
     target_link_libraries(YouKnowRenderVcaControlComparison PRIVATE YouKnowDSP)

@@ -4,6 +4,7 @@
 #include "YouKnowCoupledMixer.h"
 #include "YouKnowSubLevel.h"
 #include "YouKnowNoiseCalibration.h"
+#include "YouKnowHighPassSwitch.h"
 
 #include <array>
 #include <bit>
@@ -1010,6 +1011,12 @@ public:
     // under a running pass would invent an event discontinuity no hardware
     // has, so a selection takes effect at the next reset()/prepare().
     void selectConverterTimingProfile(ConverterTimingProfile profile) noexcept;
+
+    // Comparison-only, before prepare(): solve the literal C14/IC3/HPF
+    // network with an explicit finite switch resistance (50..1000 ohms).
+    // This supersedes the legacy C14/HPF approximation switches. No installed
+    // Ron or signal-dependent switching law is implied; host state is unchanged.
+    bool configureHighPassSwitch(double onResistanceOhms) noexcept;
 
     // Output calibration is a product convention, not a JUNO-106 voltage.
     // One internal unit is still the established 2.6 V model coordinate used
@@ -3015,6 +3022,8 @@ private:
     // networks occur once on the jack board rather than once per voice, which
     // is why they live here and carry no per-voice dispersion.
     HighPass voiceBusCoupling_ {};
+    HighPassSwitchCircuit highPassSwitch_ {};
+    double highPassSwitchResistance_ { 0.0 };
     float voiceBusCouplingG_ { 0.0001f };
     // Shared by all six cards: one part number, one nominal corner. The state
     // is per voice because each card has its own capacitor.
