@@ -208,7 +208,7 @@ struct YouKnowTestAccess
             loopGain(panel);
     }
 
-    static float omegaStep(float heldCutoffCounts, float feedbackValue,
+    static float omegaStep(float heldCutoffCounts, float /*feedbackValue*/,
                            const CardProfile& profile,
                            double internalRate) noexcept
     {
@@ -216,8 +216,10 @@ struct YouKnowTestAccess
             * (1.0f + profile.cutoffScaleError * 0.05f * profile.character)
             + profile.cutoffOffsetError * 0.07f
                 * YouKnowEngine::vcfCountsPerOctave * profile.character;
+        // FREQ/WIDTH is trimmed at full RES and stays fixed while the
+        // separately scheduled feedback changes (Service Notes pp.13/19).
         const float cutoff = YouKnowEngine::vcfEffectiveCutoffHz(
-            analogCounts, feedbackValue);
+            analogCounts, feedback(1.0f, profile));
         const float limited = std::min(
             cutoff, static_cast<float>(internalRate) * 0.45f);
         const double thermallySpread = 2.0 * 3.14159265358979323846
@@ -228,7 +230,7 @@ struct YouKnowTestAccess
     }
 
     static double unclampedOmegaStep(float heldCutoffCounts,
-                                     float feedbackValue,
+                                     float /*feedbackValue*/,
                                      const CardProfile& profile,
                                      double internalRate) noexcept
     {
@@ -237,7 +239,7 @@ struct YouKnowTestAccess
             + profile.cutoffOffsetError * 0.07f
                 * YouKnowEngine::vcfCountsPerOctave * profile.character;
         const float cutoff = YouKnowEngine::vcfEffectiveCutoffHz(
-            analogCounts, feedbackValue);
+            analogCounts, feedback(1.0f, profile));
         const float limited = std::min(
             cutoff, static_cast<float>(internalRate) * 0.45f);
         return 2.0 * 3.14159265358979323846
@@ -598,8 +600,11 @@ struct YouKnowTestAccess
                         loopGain(panel)
                     : YouKnowEngine::VoicedResonanceCompatibilityProfile::
                         loopGain(panel);
+                const float serviceFeedback = circuitDerivedShape
+                    ? YouKnowEngine::CircuitDerivedResonanceProfile::loopGain(1.0f)
+                    : YouKnowEngine::VoicedResonanceCompatibilityProfile::loopGain(1.0f);
                 const float cutoffHz = YouKnowEngine::vcfEffectiveCutoffHz(
-                    static_cast<float>(cutoffCounts), feedback);
+                    static_cast<float>(cutoffCounts), serviceFeedback);
                 const float limited = std::min(
                     cutoffHz,
                     static_cast<float>(engine.oversampledRate_) * 0.45f);
@@ -887,11 +892,14 @@ struct MovingGolden
 
 constexpr std::array<MovingGolden, lowerRateMovingCells.size()>
     lowerRateMovingGoldens {{
-        { -53.214, -109.950 },
-        { -84.662, -142.547 },
-        { -86.553, -144.613 },
-        { -97.868, -154.664 },
-        { -99.590, -157.781 },
+        // Fixed full-RES service trim changes the scheduled pole trajectory.
+        // These are its fingerprints; all continuous-reference admission
+        // limits and the static hot-saw coordinates below remain unchanged.
+        { -54.791, -111.616 },
+        { -84.511, -144.817 },
+        { -87.099, -145.029 },
+        { -98.221, -155.728 },
+        { -99.950, -158.072 },
     }};
 
 struct HotGolden
@@ -912,7 +920,7 @@ constexpr std::array<HotGolden, standardLowerRateHosts.size()>
     }};
 
 constexpr std::array<double, 2> lowerRateSnapGoldensDb {
-    -27.145, -26.744
+    -28.787, -28.656
 };
 
 struct ScheduledEvent
