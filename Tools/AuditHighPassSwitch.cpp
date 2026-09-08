@@ -4,6 +4,9 @@
 // redistribution. The oracle does not use the production midpoint matrix.
 // --render creates shipping-path A/B/C (0/110/240 ohms), frozen baseline A
 // can be built with YOUKNOW_HPF_BASELINE against e405d7a headers/library.
+// To isolate the reviewed switch from later engine changes, build e41c573
+// with the reviewed HighPassSwitch header and this audit overlaid, then
+// require its raw A to match that independently built frozen baseline.
 // 110/240 ohms are Toshiba's 10V/5V typical table points, NOT a measured
 // bound for the Juno's +5V/Tr3 rail or its signal-dependent switch resistance.
 #include "DSP/YouKnowEngine.h"
@@ -295,7 +298,7 @@ void audition(const std::filesystem::path& directory)
     for(int i=0;i<3;++i){levels[i]=measure(audio[i]);peak=std::max(peak,levels[i].peak);}
     const double common=.4/peak;
     std::ofstream key(directory/"key.md"),metrics(directory/"metrics.csv");
-    key<<"A: e405d7a shipping HPF. B/C: coupled C14/IC3/HPF with110/240ohm Ron.\n"
+    key<<"A: nominal engine, comparison disabled. B/C: coupled C14/IC3/HPF with110/240ohm Ron.\n"
           "Toshiba10V/5V typical table points; neither is claimed to be this Juno's installed resistance.\n"
           "Same shipping Poly/Cubic/RK4 kernels,48kHz/4x,block128,seed,MIDI and controls.\n"
           "Whole-file stereo RMS matched. Raw WAVs retain gain. Keys are separate from lettered listening files.\n";
