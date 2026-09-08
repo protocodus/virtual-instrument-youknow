@@ -40,8 +40,9 @@ from each build (Linux: seven days).
 - Hardware-calibrated SUB response, coupled voice-VCA control and chorus-mute
   circuits; measured noise/Chorus I and firmware DCO-timing profiles remain
   explicit comparison options while their unit-specific assumptions are open.
-- Corrected PWM control smoothing and reconstruction of clocked chorus noise,
-  with additional component and original-recording comparisons.
+- Corrected PWM control smoothing, reconstruction of clocked chorus noise,
+  and fixed filter service trimming, with additional component and
+  original-recording comparisons.
 
 [Full changes and compatibility details](#detailed-release-notes).
 
@@ -265,6 +266,23 @@ forty-year-old unit will null against the plug-in.
   its junction onset, measured from the anchored +0.26 V VR34/TP7 standoff
   the RES CV hold shares with the voice VCA rail, while the exact onset and
   compensation await OQ-09).
+- FREQ/WIDTH calibration now stays fixed when RES changes, as the separate
+  cutoff and resonance control paths on service-note p. 13 require. The
+  cascade retains its own amplitude-dependent frequency droop; the former
+  live resonance correction cancelled that behaviour. Full-RES service
+  tuning is preserved for each card. On held-out portions of the identified
+  unit's resonance sweep, spectral-ratio error falls from 2.931 to 1.982 dB
+  RMS with the same noise calibration in both renders. This supports the
+  wiring correction without identifying every resonance component value.
+- The optional `useServiced439522VcfCalibration` comparison assigns fitted
+  FREQ/WIDTH and effective current-ceiling coordinates to six fixed card
+  slots. Native 192 kHz renders reduce per-card held-out tuning error from
+  42.0–56.8 to 9.7–22.2 cents RMS; worst error falls from 243.6 to 45.9 cents.
+  Those are steady codes from one serviced instrument with Borish replacement
+  cards. The profile does not establish original-module tolerances or drift,
+  and its ascending-sweep startup discrepancy remains visible. Representative
+  192/384 kHz renders differ by at most 2.42 cents, so fitted decimal places
+  are not physical measurement precision.
 - C59's 1 µF voice coupling now uses the
   [module board's R108 82 kΩ](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13)
   as its minimum series resistance, replacing a contradicted 33 kΩ estimate.
@@ -529,10 +547,12 @@ Roland Cloud content was downloaded or extracted.
 What each preset carries besides its bytes is a VR1 volume shaft position —
 the one control a player moves when one patch arrives hotter than the last.
 The `YouKnowAuditFactoryPresets` tool renders all
-128 tones through the shipping engine and enforces two contracts as build
+144 tones through the shipping engine and enforces two contracts as build
 failures: no preset peaks above −1 dBFS and none exceeds −28.5 dBFS gated
 RMS. The trims are attenuation only, and below those ceilings the level
 differences follow the original tone settings and current circuit model.
+The fixed filter-trim correction required small VR1 reductions for B14, B43,
+B52 and B76; their historical tone bytes and the level ceilings are unchanged.
 The [noise-level mismatch](Docs/hardware-validation.md) remains a fidelity gap.
 
 The hardware stores positions, not names; labels such as "Brass Set 1" are
@@ -779,7 +799,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy. The integrator capacitor no longer splits the saturation bracket: a de-potted original measures ~250 pF across all four stages ([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)), which is the 240 pF the sibling schematic prints, and the competing 270 pF is the Analogue Renaissance clone's own value rather than Roland's. The shipped 240 pF stands and the 64.8 kHz branch of the bracket can be retired | P2 |
 | OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled. The gate-drive parts are read from p. 15 — Tr5/R50/C16 into R48/C13 against R49+R42 into Tr4, whose collector pulls the D4/D5 gate node down. The coupled C16/C13 solution includes bidirectional R48 loading and, with the existing 0.6 V junction prior, predicts about 84.5 ms to mute and 113.2 ms to open. An independent component-node RK4 reference agrees within 0.37 µV across tested rates. Tr4 base-current effects on C13's resting charge still require hardware validation. Fast bypass now preserves the same capacitor evolution as continuous processing. Also open are the 2SK30A pair's pinch-off spread (the transition keeps its declared 5 ms glide), gate-diode leakage, and an original-unit switching capture | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. The Boost leg now runs as its three real stores (C9, C8, C6) in both configurations, so its departing tail (C8 back through R22‖C9 and R25 while IC4b keeps amplifying node N — the exact undriven pair has a 2.77 ms slow mode, longer than the earlier 940 µs single-pole reading), its re-entry charge redistribution and IC4b's finite swing are derived rather than estimated. The comparison-only `configureHighPassSwitch` path now solves C14, all selected and deselected passive legs, and IC4b feedback with finite TC4052 resistance and preserved capacitor charge. Independent component-node MNA and continuous-time switching checks qualify the implementation. The 110/240 Ω audition coordinates are Toshiba’s 10 V/5 V typical table points, not measured bounds for the installed +5 V/Tr3 supply. Nominal remains unchanged; actual Ron versus signal voltage, charge injection, leakage, rail clipping and an original-unit switch capture remain open | P2 |
-| OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model is settled policy: zero inter-voice spread, zero drift, with all seeded variation living in Unit Character as voiced sound design | P3 |
+| OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model retains zero inter-voice spread and drift; seeded Unit Character remains voiced sound design. The optional `useServiced439522VcfCalibration` profile instead assigns fixed FREQ/WIDTH and effective upper-current coordinates fitted to six card slots from one identified sweep. It is a serviced unit with Borish replacement VCF/VCA cards, and card identity is confounded with sweep direction. Complementary held-out cutoff codes test interpolation within that capture; they do not establish original 80017A population tolerances, independent-unit accuracy, repeatability or thermal drift | P3 |
 | OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law is settled and the ladder's ideal taps land within 1.2 dB of the published steps | P3 |
 
 OQ-08's `T-389`, `T-334` and `T-323` values are proven no-interrupt
@@ -1219,14 +1239,18 @@ and factory-preset audits. Each takes several minutes at full length;
 
 The hardware comparison protocols live with their executable checks in
 [`AnalyzeSubMixerCalibration.py`](Tools/AnalyzeSubMixerCalibration.py),
-[`AnalyzeHardwareNoise.py`](Tools/AnalyzeHardwareNoise.py) and
-[`AnalyzeChorusCapture.py`](Tools/AnalyzeChorusCapture.py): each separates
+[`AnalyzeHardwareNoise.py`](Tools/AnalyzeHardwareNoise.py),
+[`AnalyzeHardwarePwm.py`](Tools/AnalyzeHardwarePwm.py) and
+[`AnalyzeChorusCapture.py`](Tools/AnalyzeChorusCapture.py), together with
+[`AnalyzeVoiceCardCalibration.py`](Tools/AnalyzeVoiceCardCalibration.py), separate
 fitting from held-out measurements and identifies its recording inputs.
 `YouKnowRenderVcaControlComparison`, `YouKnowRenderChorusMute`,
-`YouKnowCoupledMixerAudit` and `YouKnowDcoFirmwareTimingAudit` provide the
-circuit/timing comparisons. Comparison profiles are internal audit options;
-they add no host parameters or session-format changes. Listening files are
-level-matched decision artifacts, with raw measurements and separate keys.
+`YouKnowCoupledMixerAudit`, `YouKnowHighPassSwitchAudit`,
+`YouKnowChorusNoiseAudit` and `YouKnowDcoFirmwareTimingAudit` provide the
+circuit, numerical-noise and timing comparisons. Comparison profiles are
+internal audit options; they add no host parameters or session-format changes.
+Listening files are level-matched decision artifacts, with raw measurements
+and separate keys.
 
 The full plug-in (JUCE 8.0.14 is fetched pinned at configure time, or pass
 `-DYOUKNOW_JUCE_PATH=/path/to/JUCE`; CLAP uses pinned `clap-juce-extensions`
