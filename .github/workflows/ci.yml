@@ -129,12 +129,18 @@ jobs:
           tar -czf "$archive" -C "$artefacts" "${contents[@]}"
           test -s "$archive"
           tar -tzf "$archive" >/dev/null
+          (
+            cd "$dist"
+            shasum -a 256 YouKnow-Linux-x64.tar.gz > SHA256SUMS.txt
+          )
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v4
         with:
           name: ci-linux
-          path: build-dsp/dist/YouKnow-Linux-x64.tar.gz
+          path: |
+            build-dsp/dist/YouKnow-Linux-x64.tar.gz
+            build-dsp/dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 7
 

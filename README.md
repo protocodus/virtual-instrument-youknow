@@ -47,8 +47,8 @@ Upload the customer files in the table to the shop's download storage, keeping
 the packaged licences and notices intact. Newly built packages include the
 customer guide, privacy notice and all three installation guides linked above.
 Older downloads may need the installation guides supplied separately. Keep
-each platform's matching `SHA256SUMS.txt` alongside its files in a separate platform folder, since both
-checksum files have the same name. Use persistent shop or published release
+each platform's matching `SHA256SUMS.txt` alongside its files in a separate
+platform folder, since the checksum files have the same name. Use persistent shop or published release
 URLs for customers: CI artifact links expire.
 
 To download a selected passing build locally with the GitHub CLI, first find

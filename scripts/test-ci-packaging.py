@@ -158,6 +158,11 @@ class LinuxPackagingTests(unittest.TestCase):
             for relative in set(self.documents) - {"USER_GUIDE.md"}:
                 self.assertEqual(output.extractfile(relative).read(), relative.encode())
             self.assertTrue(output.getmember("Standalone/YouKnow").mode & 0o111)
+        digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        self.assertEqual(
+            (self.archive.parent / "SHA256SUMS.txt").read_text(),
+            f"{digest}  {self.archive.name}\n",
+        )
 
     def test_missing_or_empty_document_fails_before_archiving(self):
         for relative in self.documents:

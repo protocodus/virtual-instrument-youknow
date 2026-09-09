@@ -6,9 +6,9 @@ For Windows x64 and a compatible 64-bit music host. The download includes
 ## Install the plug-in
 
 1. Close your music host and any running copy of YouKnow.
-2. Right-click `YouKnow-1.1.0-Windows-x64.zip`, choose **Extract All**, and keep
-   the extracted folder in a permanent location. Run files from that folder,
-   not from inside the ZIP.
+2. Right-click the YouKnow ZIP whose name ends in `-Windows-x64.zip`, choose
+   **Extract All**, and keep the extracted folder in a permanent location.
+   Run files from that folder, not from inside the ZIP.
 3. Copy the format your host supports to the location below. Create the
    destination folder if needed; Windows may ask for administrator permission.
 4. Reopen your music host and rescan its plug-ins. Add **YouKnow** to an
@@ -26,7 +26,7 @@ and [CLAP locations](https://github.com/free-audio/clap/blob/main/include/clap/e
 When updating, replace the previous YouKnow folder or file.
 
 If your download is `ci-windows.zip`, extract it first to find the inner
-`YouKnow-1.1.0-Windows-x64.zip`, then extract that too. Keep the supplied
+YouKnow Windows x64 ZIP, then extract that too. Keep the supplied
 `README.md`, licences, privacy notice and `ThirdParty` folder with your download.
 
 ## Play without a music host

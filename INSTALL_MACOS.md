@@ -6,7 +6,7 @@ includes **VST3, Audio Unit (AU), CLAP and the standalone app**.
 ## Install
 
 1. Close your music host and any running copy of YouKnow.
-2. Open `YouKnow-1.1.0-macOS-universal.pkg` and follow the installer prompts.
+2. Open the macOS universal `.pkg` installer and follow its prompts.
    macOS may ask for an administrator password.
 3. Reopen your music host and rescan its plug-ins if YouKnow does not appear.
 4. Add **YouKnow** to an instrument track using a format your host supports.
@@ -23,7 +23,8 @@ on-screen keys.
 
 ## Manual installation from the optional ZIP
 
-Extract `YouKnow-1.1.0-macOS-universal.zip`. Copy the individual bundles from
+Extract the optional macOS universal ZIP (its name ends in
+`-macOS-universal.zip`). Copy the individual bundles from
 its `Applications` and `Library/Audio/Plug-Ins` folders to these destinations:
 
 | Item | Destination |

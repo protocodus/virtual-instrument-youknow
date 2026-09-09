@@ -876,19 +876,15 @@ constexpr std::size_t hotRenderTailHostFrames = 256u;
 constexpr std::size_t hotHostFrames =
     hotMeasurementEndHostFrame + hotRenderTailHostFrames;
 constexpr double qualificationGoldenToleranceDb = 0.05;
-// The tiny moving RK64/RK128 residual is sensitive to cross-platform
-// floating-point evaluation. With the fixed full-RES service trim, the
-// 88.2 kHz convergence is -155.728 dB on Apple Silicon and -155.883 dB on
-// Windows/Linux x86_64: a 0.155 dB spread, over 75 dB below the unchanged
-// -80 dB convergence gate. Bound this non-admission fingerprint at 0.20 dB
-// (less than 2.4% in residual amplitude). The actual convergence admission
-// and the 0.05 dB signal/mutation fingerprints stay unchanged.
-constexpr double movingConvergenceGoldenToleranceDb = 0.20;
+// Keep the established convergence fingerprint budget unless a row has a
+// measured cross-platform exception documented beside its golden below.
+constexpr double defaultMovingConvergenceGoldenToleranceDb = 0.15;
 
 struct MovingGolden
 {
     double relativeRmsDb;
     double convergenceDb;
+    double convergenceToleranceDb { defaultMovingConvergenceGoldenToleranceDb };
 };
 
 constexpr std::array<MovingGolden, lowerRateMovingCells.size()>
@@ -899,7 +895,13 @@ constexpr std::array<MovingGolden, lowerRateMovingCells.size()>
         { -54.791, -111.616 },
         { -84.511, -144.817 },
         { -87.099, -145.029 },
-        { -98.221, -155.728 },
+        // The tiny RK64/RK128 residual is sensitive to floating-point
+        // evaluation: at 88.2 kHz it is -155.728 dB on Apple Silicon and
+        // -155.883 dB on Windows/Linux x86_64, a 0.155 dB spread over 75 dB
+        // below the unchanged -80 dB admission gate. Only this row needs
+        // 0.20 dB (less than 2.4% in residual amplitude); all other rows keep
+        // 0.15 dB and signal/mutation fingerprints stay at 0.05 dB.
+        { -98.221, -155.728, 0.20 },
         { -99.950, -158.072 },
     }};
 
@@ -3512,7 +3514,7 @@ Audit runAudit(bool diagnoseEightKCell = false)
             && matchesQualificationGolden(
                 audit.lowerRateMoving[index].worstConvergence,
                 lowerRateMovingGoldens[index].convergenceDb,
-                movingConvergenceGoldenToleranceDb);
+                lowerRateMovingGoldens[index].convergenceToleranceDb);
     }
 
     const auto auditLowerRateSnapMutation = [&](bool early) {
@@ -3800,8 +3802,18 @@ void printAudit(const Audit& audit)
               << " snap_goldens="
               << (audit.lowerRateSnapGoldensExact ? "PASS" : "FAIL")
               << " metric_tolerance=" << qualificationGoldenToleranceDb
-              << " dB convergence_tolerance="
-              << movingConvergenceGoldenToleranceDb << " dB\n";
+              << " dB convergence_tolerance_default="
+              << defaultMovingConvergenceGoldenToleranceDb << " dB";
+    for (std::size_t index = 0; index < lowerRateMovingGoldens.size(); ++index)
+    {
+        const double tolerance =
+            lowerRateMovingGoldens[index].convergenceToleranceDb;
+        if (tolerance != defaultMovingConvergenceGoldenToleranceDb)
+            std::cout << " convergence_tolerance_at_" << std::setprecision(0)
+                      << lowerRateMovingCells[index].hostRate << "Hz="
+                      << std::setprecision(3) << tolerance << " dB";
+    }
+    std::cout << '\n';
     for (std::size_t index = 0;
          index < audit.lowerRateMoving.size(); ++index)
     {
@@ -3843,7 +3855,7 @@ void printAudit(const Audit& audit)
             "moving_convergence", metrics.cell.hostRate,
             ratioDecibels(metrics.worstConvergence),
             lowerRateMovingGoldens[index].convergenceDb,
-            movingConvergenceGoldenToleranceDb);
+            lowerRateMovingGoldens[index].convergenceToleranceDb);
     }
     printSnap("q1-8k-late/ceil-snap", audit.lowerRateLateSnap);
     printSnap("q1-8k-early/floor-snap", audit.lowerRateEarlySnap);
