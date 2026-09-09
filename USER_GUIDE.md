@@ -5,6 +5,11 @@ oscillators, filters and stereo chorus.
 
 ## Install
 
+Detailed installation instructions: [macOS](INSTALL_MACOS.md) ·
+[Windows](INSTALL_WINDOWS.md) · [Linux](INSTALL_LINUX.md).
+
+### macOS
+
 The macOS builds require macOS 11 or later. The universal Audio Unit (AU), VST3,
 CLAP and Standalone builds support both Apple silicon and Intel Macs.
 
@@ -19,21 +24,35 @@ Open the supplied `.pkg` installer and follow its prompts. It installs:
 If using the macOS ZIP, extract it and copy the enclosed app and plug-in bundles
 to the same locations.
 
-On Windows, extract the x64 ZIP. Copy the whole `VST3/YouKnow.vst3` folder to
+### Windows
+
+Extract the x64 ZIP. Copy the whole `VST3/YouKnow.vst3` folder to
 `C:\Program Files\Common Files\VST3\`, and copy `CLAP/YouKnow.clap` to
 `C:\Program Files\Common Files\CLAP\`. Create these folders if needed. The
 standalone program is `Standalone/YouKnow.exe` in the extracted archive; keep
 the guide, licences and notices from the archive with your installation.
 
+### Linux
+
+Extract `YouKnow-Linux-x64.tar.gz` into a permanent folder. Copy the whole
+`VST3/YouKnow.vst3` folder to `~/.vst3/`, creating that destination if needed.
+Run `Standalone/YouKnow` from the extracted folder to play without a host.
+Keep the guide, licences and notices with the extracted files. This x86_64
+package includes VST3 and Standalone; the current CI build uses Ubuntu 24.04.
+
+### In your music host
+
 Restart your music host after installation and rescan its plug-ins if needed.
-Choose the AU (macOS), VST3 or CLAP instrument format supported by your host.
+Choose VST3 on any supported platform, AU on macOS or CLAP on macOS/Windows,
+according to the formats your host supports.
 
 ## Play your first sound
 
 In a music host, insert YouKnow on an instrument track, route your MIDI keyboard
 to that track, and enable the host's input monitoring or record arm as needed.
-In Standalone, open YouKnow from Applications on macOS or run `YouKnow.exe` on
-Windows, then choose your audio output and MIDI input devices in **Options**.
+In Standalone, open YouKnow from Applications on macOS, run
+`Standalone/YouKnow.exe` on Windows or run `Standalone/YouKnow` on Linux.
+Choose your audio output and MIDI input devices in **Options**.
 
 Choose a preset, then play your MIDI keyboard or click the on-screen keys.
 Use **VOLUME** to set the output level. If there is no sound, check the selected

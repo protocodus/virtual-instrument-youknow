@@ -18,6 +18,7 @@ CACHE_FILE="${BUILD_DIR}/CMakeCache.txt"
 CMAKE_FILE="${PROJECT_DIR}/CMakeLists.txt"
 RELEASE_NOTES_FILE="${PROJECT_DIR}/README.md"
 USER_GUIDE_FILE="${PROJECT_DIR}/USER_GUIDE.md"
+INSTALL_GUIDES=(INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md)
 CUSTOMER_LICENSE_FILE="${PROJECT_DIR}/LICENSE"
 PRODUCT_NAME="YouKnow"
 VENDOR_NAME="Protocodus"
@@ -85,6 +86,13 @@ for document in "${CUSTOMER_LICENSE_FILE}" "${RELEASE_NOTES_FILE}" "${USER_GUIDE
     "${PROJECT_DIR}/ThirdParty/CLAP-LICENSE.md" "${PROJECT_DIR}/PRIVACY.md"; do
     if [[ ! -s "${document}" ]]; then
         echo "error: missing or empty distribution document: ${document}" >&2
+        exit 1
+    fi
+done
+
+for guide in "${INSTALL_GUIDES[@]}"; do
+    if [[ ! -s "${PROJECT_DIR}/${guide}" ]]; then
+        echo "error: missing or empty distribution document: ${PROJECT_DIR}/${guide}" >&2
         exit 1
     fi
 done
@@ -538,7 +546,11 @@ stage_documentation() {
         "${destination}/THIRD_PARTY_NOTICES.md"
     # Ship the self-contained customer guide; developer notes stay in the repo.
     ditto "${USER_GUIDE_FILE}" "${destination}/README.md"
+    for relative_path in "${INSTALL_GUIDES[@]}"; do
+        ditto "${PROJECT_DIR}/${relative_path}" "${destination}/${relative_path}"
+    done
     ditto "${PROJECT_DIR}/PRIVACY.md" "${destination}/PRIVACY.md"
+    ditto "${REPOSITORY_JUCE_LICENSE}" "${destination}/ThirdParty/JUCE-LICENSE.md"
     ditto "${JUCE_LICENSE_INDEX}" "${destination}/ThirdParty/JUCE/LICENSE.md"
     ditto "${PROJECT_DIR}/ThirdParty/CLAP-LICENSE.md" \
         "${destination}/ThirdParty/CLAP-LICENSE.md"

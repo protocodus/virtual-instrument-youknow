@@ -36,6 +36,7 @@ def package(build_dir: Path) -> Path:
     for relative in (
         "LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md",
         "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
+        "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
     ):
         files[relative] = project_dir / relative
     files["README.md"] = project_dir / "USER_GUIDE.md"

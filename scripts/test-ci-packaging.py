@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import unittest
 import zipfile
 
@@ -44,6 +45,7 @@ class WindowsPackagingTests(unittest.TestCase):
         self.notices = (
             "LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md", "USER_GUIDE.md",
             "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
+            "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
         )
         for relative in self.notices:
             write(self.project / relative, relative.encode())
@@ -102,6 +104,75 @@ class WindowsPackagingTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("one valid project version", result.stderr)
                 self.assertFalse((self.build / "dist").exists())
+
+
+class LinuxPackagingTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="youknow-linux-package-test-")
+        self.addCleanup(self.temporary.cleanup)
+        self.project = Path(self.temporary.name)
+        self.artifacts = self.project / "build-dsp/YouKnow_artefacts/Release"
+        self.payload = {
+            "VST3/YouKnow.vst3/Contents/x86_64-linux/YouKnow.so": b"vst3 binary",
+            "Standalone/YouKnow": b"standalone binary",
+        }
+        for relative, contents in self.payload.items():
+            write(self.artifacts / relative, contents)
+        (self.artifacts / "Standalone/YouKnow").chmod(0o755)
+        self.documents = (
+            "LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md", "USER_GUIDE.md",
+            "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
+            "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
+        )
+        for relative in self.documents:
+            write(self.project / relative, relative.encode())
+        # Execute the actual inline CI packaging step without a YAML dependency.
+        workflow = (SCRIPTS.parent / ".github/workflows/ci.yml").read_text()
+        step = workflow.split("      - name: Package Linux VST3 and standalone\n", 1)[1]
+        run_block = step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
+        self.script = textwrap.dedent(run_block)
+        self.archive = self.project / "build-dsp/dist/YouKnow-Linux-x64.tar.gz"
+
+    def package(self):
+        # macOS tar adds AppleDouble files by default; the production step runs
+        # on Linux, so keep the local fixture archive equivalent to that output.
+        environment = os.environ.copy()
+        environment["COPYFILE_DISABLE"] = "1"
+        return subprocess.run(
+            ["bash", "-c", self.script], cwd=self.project,
+            env=environment,
+            capture_output=True, text=True, check=False,
+        )
+
+    def test_archive_preserves_binaries_and_includes_linked_documentation(self):
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(self.archive) as output:
+            files = {entry.name for entry in output.getmembers() if entry.isfile()}
+            expected = set(self.payload) | (set(self.documents) - {"USER_GUIDE.md"})
+            expected |= {"README.md", "JUCE-LICENSE.md"}
+            self.assertEqual(files, expected)
+            for relative, contents in self.payload.items():
+                self.assertEqual(output.extractfile(relative).read(), contents)
+            self.assertEqual(output.extractfile("README.md").read(), b"USER_GUIDE.md")
+            for relative in set(self.documents) - {"USER_GUIDE.md"}:
+                self.assertEqual(output.extractfile(relative).read(), relative.encode())
+            self.assertTrue(output.getmember("Standalone/YouKnow").mode & 0o111)
+
+    def test_missing_or_empty_document_fails_before_archiving(self):
+        for relative in self.documents:
+            path = self.project / relative
+            original = path.read_bytes()
+            for empty in (False, True):
+                with self.subTest(document=relative, empty=empty):
+                    if empty:
+                        path.write_bytes(b"")
+                    else:
+                        path.unlink()
+                    result = self.package()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(self.archive.exists())
+                    path.write_bytes(original)
 
 
 class PreviewPublicationTests(unittest.TestCase):

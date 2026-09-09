@@ -11,6 +11,7 @@ mkdir -p "${TEST_ROOT}/project/scripts" "${TEST_ROOT}/project/ThirdParty" \
 cp "${SCRIPT_DIR}/sign-and-package-macos.sh" "${SCRIPT_DIR}/release-macos.sh" \
     "${TEST_ROOT}/project/scripts/"
 for document in LICENSE USER_GUIDE.md THIRD_PARTY_NOTICES.md \
+    INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md \
     ThirdParty/JUCE-LICENSE.md ThirdParty/CLAP-LICENSE.md PRIVACY.md; do
     printf 'Fixture document\n' > "${TEST_ROOT}/project/${document}"
 done
@@ -83,6 +84,15 @@ expect_failure 'full Xcode' env TEST_NO_XCODE=1 bash "${TEST_ROOT}/project/scrip
 mv "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md" "${TEST_ROOT}/CLAP-LICENSE.md"
 expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
 mv "${TEST_ROOT}/CLAP-LICENSE.md" "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md"
+for guide in INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md; do
+    mv "${TEST_ROOT}/project/${guide}" "${TEST_ROOT}/${guide}"
+    expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
+    grep -F -- "/project/${guide}" "${TEST_ROOT}/output" >/dev/null
+    touch "${TEST_ROOT}/project/${guide}"
+    expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
+    grep -F -- "/project/${guide}" "${TEST_ROOT}/output" >/dev/null
+    mv "${TEST_ROOT}/${guide}" "${TEST_ROOT}/project/${guide}"
+done
 printf '### 1.1.0 — unreleased (2026-09-05)\n' > "${TEST_ROOT}/project/README.md"
 expect_failure 'dated' "${PACKAGER}" --preflight
 test -f "${TEST_ROOT}/project/build-macos/dist/YouKnow-old-macOS-universal.pkg"

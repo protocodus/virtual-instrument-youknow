@@ -109,15 +109,23 @@ jobs:
           dist="build-dsp/dist"
           mkdir -p "$dist"
           archive="$dist/YouKnow-Linux-x64.tar.gz"
-          # Licence and notice files ship inside the binary archive (the MIT
-          # licence requires the notice to accompany binaries).
+          # Ship the customer guide and its linked installation/privacy docs
+          # alongside the required licence and third-party notices.
           contents=("VST3/YouKnow.vst3" "Standalone/YouKnow")
-          for notice in LICENSE THIRD_PARTY_NOTICES.md ThirdParty/JUCE-LICENSE.md; do
-            if [[ -f "$notice" ]]; then
-              cp "$notice" "$artefacts/$(basename "$notice")"
-              contents+=("$(basename "$notice")")
-            fi
+          for document in LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md \
+            ThirdParty/JUCE-LICENSE.md ThirdParty/CLAP-LICENSE.md \
+            INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md; do
+            test -s "$document"
+            mkdir -p "$artefacts/$(dirname "$document")"
+            cp "$document" "$artefacts/$document"
+            contents+=("$document")
           done
+          test -s USER_GUIDE.md
+          cp USER_GUIDE.md "$artefacts/README.md"
+          contents+=("README.md")
+          # Retain the licence filename shipped in earlier Linux archives.
+          cp ThirdParty/JUCE-LICENSE.md "$artefacts/JUCE-LICENSE.md"
+          contents+=("JUCE-LICENSE.md")
           tar -czf "$archive" -C "$artefacts" "${contents[@]}"
           test -s "$archive"
           tar -tzf "$archive" >/dev/null

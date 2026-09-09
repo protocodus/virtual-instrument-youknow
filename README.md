@@ -8,23 +8,78 @@ plug-in for your music host or a standalone instrument.
 
 ## Download
 
-**[Download for macOS](https://nightly.link/protocodus/virtual-instrument-youknow/workflows/ci.yml/main/ci-macos.zip)**
-· **[Download for Windows](https://nightly.link/protocodus/virtual-instrument-youknow/workflows/ci.yml/main/ci-windows.zip)**
+**For the e-shop, the two main customer downloads are the macOS `.pkg`
+installer and the Windows `.zip` below.** Each contains all formats for its
+platform, so customers do not need a separate download for each plug-in format.
 
-| Platform | Formats | Package |
-| --- | --- | --- |
-| macOS 11+, Apple silicon and Intel | VST3, Audio Unit, CLAP, Standalone | Universal ZIP and PKG installer |
-| Windows x64 | VST3, CLAP, Standalone | ZIP |
-| [Linux x64](https://nightly.link/protocodus/virtual-instrument-youknow/workflows/ci.yml/main/ci-linux.zip) | VST3, Standalone | Tarball |
+| Platform | Artifact in the latest passing build¹ | File to give customers | Included formats |
+| --- | --- | --- | --- |
+| macOS 11+, Apple silicon and Intel | `ci-macos` | `YouKnow-1.1.0-macOS-universal.pkg` | VST3, Audio Unit, CLAP, Standalone |
+| Windows x64 | `ci-windows` | `YouKnow-1.1.0-Windows-x64.zip` | VST3, CLAP, Standalone |
+| Linux x64 (optional) | `ci-linux` | `YouKnow-Linux-x64.tar.gz` | VST3, Standalone |
 
-These links track the latest successful `main` build. Version 1.1.0 is still
-in development; there is no tagged release yet. macOS bundles are ad-hoc
-signed and not notarized; Windows binaries are unsigned. The macOS and
-Windows downloads include SHA-256 checksums and remain available for 30 days
-from each build (Linux: seven days).
+¹ Open the **[latest successful package builds](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=is%3Asuccess+-event%3Apull_request)**,
+select the newest passing run for the branch/commit you want, and download
+the named files from its **Artifacts** section. Use the same run for all
+platforms. GitHub sign-in is required. Extract the downloaded `ci-macos.zip`,
+`ci-windows.zip` or `ci-linux.zip` once to get the customer file listed above.
+The macOS archive also contains `YouKnow-1.1.0-macOS-universal.zip` for optional
+manual installation; the `.pkg` is the recommended customer download.
 
-[Installation and quick start](USER_GUIDE.md) ·
-[Successful builds and download history](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=branch%3Amain+is%3Asuccess)
+These are **development builds**. A manually dispatched build can come from
+a feature branch; check the run's branch and source commit before distributing.
+Version 1.1.0 is unreleased; no tagged release has been published. The CI macOS
+installer is unsigned, its bundles are ad-hoc signed and not notarized, and
+Windows binaries are unsigned.
+
+macOS and Windows build archives expire 30 days after each build; Linux
+archives expire after seven days. Download the files for permanent shop storage.
+
+**Installation instructions:** [macOS](INSTALL_MACOS.md) ·
+[Windows](INSTALL_WINDOWS.md) · [Linux](INSTALL_LINUX.md).
+
+[Full user guide](USER_GUIDE.md) ·
+[Successful builds and download history](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=is%3Asuccess+-event%3Apull_request)
+
+### Files for e-shop distribution
+
+Upload the customer files in the table to the shop's download storage, keeping
+the packaged licences and notices intact. Newly built packages include the
+customer guide, privacy notice and all three installation guides linked above.
+Older downloads may need the installation guides supplied separately. Keep
+each platform's matching `SHA256SUMS.txt` alongside its files in a separate platform folder, since both
+checksum files have the same name. Use persistent shop or published release
+URLs for customers: CI artifact links expire.
+
+To download a selected passing build locally with the GitHub CLI, first find
+its run ID (the number at the end of the run's URL):
+
+```sh
+gh run list --repo protocodus/virtual-instrument-youknow \
+  --workflow ci.yml --status success --limit 10
+```
+
+Replace `RUN_ID` below with a passing push or manually dispatched run that
+contains all three package artifacts. Pull-request runs do not package macOS.
+
+```sh
+gh run download RUN_ID \
+  --repo protocodus/virtual-instrument-youknow \
+  --name ci-macos --name ci-windows --name ci-linux \
+  --dir out/distribution/ci-RUN_ID
+```
+
+The CLI extracts the outer archives into `ci-macos/`, `ci-windows/` and
+`ci-linux/` beneath that directory. The customer filenames remain as listed
+in the table. Local builds produce them under `build-macos/dist/`,
+`build-win/dist/` and `build-dsp/dist/`, respectively.
+
+For a signed and notarized macOS release, use the existing
+[release workflow](.github/workflows/release.yml) and
+[release script](scripts/release-macos.sh). That path produces the universal
+`.pkg`, a `.manifest.txt` build record and a versioned `-SHA256SUMS.txt` file;
+it does not produce the optional manual-install ZIP. The release workflow
+currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
