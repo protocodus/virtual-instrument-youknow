@@ -992,6 +992,25 @@ struct YouKnowTestAccess
         return engine.assignmentRescanPending_;
     }
 
+    struct VoiceKeyState
+    {
+        int note;
+        bool down;
+        bool sustained;
+        bool attacking;
+        float velocity;
+        std::uint64_t generation;
+    };
+
+    static VoiceKeyState voiceKeyState(const YouKnowEngine& engine,
+                                       int slot) noexcept
+    {
+        const auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        return { voice.rootMidi, voice.keyDown, voice.sustained,
+                 voice.envelope.stage == YouKnowEngine::EnvelopeStage::Attack,
+                 voice.velocity, voice.generation };
+    }
+
     static std::array<float, 4> filterState(const YouKnowEngine& engine,
                                             int slot) noexcept
     {
@@ -6724,6 +6743,144 @@ void testDuplicateAndUnmatchedKeyEdgesAreIgnored()
     renderExact(engine, 2);
     expectNear(engine.getDisplayEnvelope(), beforeUnmatched, 0.01,
                "an unmatched Note Off changed a sounding assignment");
+}
+
+void testOverlappingEqualNotesReleaseOnlyOnTheFinalOff()
+{
+    // MIDI can overlap the same pitch even though the hardware keyboard has
+    // only one bit per key. Each off must consume one press without silencing
+    // or retriggering the remaining press, including a full Unison stack.
+    for (const auto mode : { KeyMode::Poly1, KeyMode::Poly2, KeyMode::Unison })
+        for (const bool pedal : { false, true })
+        {
+            const std::string context = "equal-note overlap mode "
+                + std::to_string(static_cast<int>(mode))
+                + (pedal ? " with sustain: " : " without sustain: ");
+            YouKnowEngine engine;
+            engine.prepare(48000.0, blockSize, false);
+            auto parameters = plainPatch();
+            parameters.keyMode = mode;
+            parameters.attack = 0.0f;
+            parameters.decay = 0.0f;
+            parameters.sustain = 0.2f;
+            parameters.release = 0.0f;
+            engine.setParameters(parameters);
+            renderExact(engine, 1024); // Finish any initial mode rescan.
+            engine.setSustainPedal(pedal);
+            engine.noteOn(60, 0.8f);
+            renderExact(engine, 8192);
+            const auto initial = YouKnowTestAccess::voiceKeyState(engine, 0);
+            const int expectedVoices = mode == KeyMode::Unison ? 6 : 1;
+
+            engine.noteOn(60, 0.3f);
+            engine.noteOff(60);
+            for (int slot = 0; slot < expectedVoices; ++slot)
+            {
+                const auto key = YouKnowTestAccess::voiceKeyState(engine, slot);
+                expect(key.note == 60 && key.down && !key.sustained
+                           && !key.attacking && key.velocity == 0.8f,
+                       context + "one off changed the still-held assignment");
+            }
+            expect(YouKnowTestAccess::voiceKeyState(engine, 0).generation
+                       == initial.generation,
+                   context + "the duplicate press reassigned its voice");
+            expect(!YouKnowTestAccess::assignmentPending(engine),
+                   context + "a partial off entered the Unison rescan");
+            renderExact(engine, 1024);
+            expect(engine.getActiveVoiceCount() == expectedVoices,
+                   context + "one off silenced the remaining press");
+
+            engine.noteOff(60);
+            for (int slot = 0; slot < expectedVoices; ++slot)
+            {
+                const auto key = YouKnowTestAccess::voiceKeyState(engine, slot);
+                expect(!key.down && key.sustained == pedal,
+                       context + "the final off did not release the key");
+            }
+            renderExact(engine, 4800);
+            expect(engine.getActiveVoiceCount() == (pedal ? expectedVoices : 0),
+                   context + "the final off did not follow the sustain pedal");
+            engine.setSustainPedal(false);
+            renderExact(engine, 4800);
+            expect(engine.getActiveVoiceCount() == 0,
+                   context + "balanced offs left a stuck voice");
+        }
+}
+
+void testGaplessOffOnHandoffsKeepEveryNewAssignment()
+{
+    // The processor MIDI boundary normalizes old offs before the new ons.
+    // No process call separates them: this is a genuine zero-gap boundary,
+    // with every card occupied before each handoff. Equal pitches must attack
+    // again with the new velocity; different pitches must not be dropped.
+    for (const auto mode : { KeyMode::Poly1, KeyMode::Poly2, KeyMode::Unison })
+        for (const bool pedal : { false, true })
+            for (const bool samePitches : { false, true })
+            {
+                const std::string context = "gapless handoff mode "
+                    + std::to_string(static_cast<int>(mode))
+                    + (pedal ? " with sustain" : " without sustain")
+                    + (samePitches ? " at equal pitches: " : " at new pitches: ");
+                YouKnowEngine engine;
+                engine.prepare(48000.0, blockSize, false);
+                auto parameters = plainPatch();
+                parameters.keyMode = mode;
+                parameters.attack = 0.0f;
+                parameters.decay = 0.0f;
+                parameters.sustain = 0.2f;
+                parameters.release = 0.0f;
+                engine.setParameters(parameters);
+                renderExact(engine, 1024);
+                engine.setSustainPedal(pedal);
+                const int keys = mode == KeyMode::Unison ? 1 : 6;
+                int baseNote = 48;
+                for (int key = 0; key < keys; ++key)
+                    engine.noteOn(baseNote + key, 0.8f);
+                renderExact(engine, 8192);
+                expect(engine.getActiveVoiceCount() == 6,
+                       context + "the fixture did not fill every card");
+
+                for (int handoff = 0; handoff < 3; ++handoff)
+                {
+                    for (int key = 0; key < keys; ++key)
+                        engine.noteOff(baseNote + key);
+                    if (!samePitches)
+                        baseNote += 7;
+                    const float velocity = 0.3f + 0.1f * handoff;
+                    for (int key = 0; key < keys; ++key)
+                        engine.noteOn(baseNote + key, velocity);
+
+                    expect(!YouKnowTestAccess::assignmentPending(engine),
+                           context + "the boundary inserted a Unison rescan gap");
+                    std::array<int, 6> assignments {};
+                    for (int slot = 0; slot < 6; ++slot)
+                    {
+                        const auto key = YouKnowTestAccess::voiceKeyState(engine, slot);
+                        expect(key.note >= baseNote && key.note < baseNote + keys
+                                   && key.down && !key.sustained && key.attacking
+                                   && key.velocity == velocity,
+                               context + "a new note was dropped or not retriggered");
+                        if (key.note >= baseNote && key.note < baseNote + keys)
+                            ++assignments[static_cast<std::size_t>(key.note - baseNote)];
+                    }
+                    for (int key = 0; key < keys; ++key)
+                        expect(assignments[static_cast<std::size_t>(key)]
+                                   == (mode == KeyMode::Unison ? 6 : 1),
+                               context + "the replacement chord lost or duplicated a pitch");
+
+                    const auto audio = renderExact(engine, 4096);
+                    expect(engine.getActiveVoiceCount() == 6
+                               && peakOf(audio.left, audio.left.size() / 2) > 0.001,
+                           context + "the next notes failed to sound");
+                }
+
+                for (int key = 0; key < keys; ++key)
+                    engine.noteOff(baseNote + key);
+                engine.setSustainPedal(false);
+                renderExact(engine, 4800);
+                expect(engine.getActiveVoiceCount() == 0,
+                       context + "the final offs left a stuck voice");
+            }
 }
 
 // OQ-12's ROM-resolved envelope recurrence makes SUSTAIN asymmetric mid-note:
@@ -14508,6 +14665,29 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW_NOTE_TESTS_ONLY") != nullptr)
+    {
+        testKeyAssignerDropsRatherThanSteals();
+        testPolyModesDifferInAllocation();
+        testHeldKeyRescanRunsHighToLow();
+        testRescanGateOffReachesTheVoiceCpu();
+        testDuplicateAndUnmatchedKeyEdgesAreIgnored();
+        testOverlappingEqualNotesReleaseOnlyOnTheFinalOff();
+        testGaplessOffOnHandoffsKeepEveryNewAssignment();
+        testModeChangesRebuildHeldKeys();
+        testSustainHeldVoicesRemainAssignable();
+        testUnisonReturnsToAHeldKey();
+        testAllNotesOffReleasesRatherThanCutting();
+        testSustainPedalHoldsAndReleases();
+        if (failures != 0)
+        {
+            std::cerr << failures << " note-handling check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All note-handling checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW_SIMD_TEST_ONLY") != nullptr)
     {
 #if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
@@ -14646,6 +14826,8 @@ int main()
     testPitStateMatchesFastFreewheel();
     testRescanGateOffReachesTheVoiceCpu();
     testDuplicateAndUnmatchedKeyEdgesAreIgnored();
+    testOverlappingEqualNotesReleaseOnlyOnTheFinalOff();
+    testGaplessOffOnHandoffsKeepEveryNewAssignment();
     testMidNoteSustainSnapsUpAndDecaysDown();
     testReassignedVoiceGlidesFromItsOwnPreviousPitch();
     testIdleSnapshotPrimesEverySharedHold();

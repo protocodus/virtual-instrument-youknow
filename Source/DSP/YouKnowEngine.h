@@ -452,6 +452,13 @@ public:
         const CoupledSubMixer::Calibration& calibration) noexcept;
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
+    // Audio-thread query for host event ordering. Counts include overlapping
+    // presses and keys dropped by the full assigner, independently of voices.
+    [[nodiscard]] bool isNoteHeld(int midiNote) const noexcept
+    {
+        return midiNote >= 0 && midiNote < 128
+            && heldNoteCounts_[static_cast<std::size_t>(midiNote)] != 0;
+    }
     // Re-pressing the selected hardware POLY button leaves the visible mode
     // unchanged but still gates, clears and rescans all held assignments.
     void reassertKeyMode() noexcept;

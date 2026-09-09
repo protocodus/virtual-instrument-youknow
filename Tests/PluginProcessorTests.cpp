@@ -901,6 +901,287 @@ void testVariableHostBlockSizesPreserveTheTimeline()
             "audio changed when the same MIDI timeline used another block partition");
 }
 
+struct NoteTimelineEvent
+{
+    int sample;
+    juce::MidiMessage message;
+};
+
+// The serial voice engine intentionally counts genuinely overlapping presses
+// of the same pitch. Host event ordering at a shared note boundary must not
+// accidentally turn two adjacent notes into that legato case.
+juce::AudioBuffer<float> renderNoteOrderingTimeline (
+    const std::vector<NoteTimelineEvent>& events, KeyMode mode, int voices,
+    const std::string& context)
+{
+    constexpr int timelineSamples = 3072;
+    YouKnowAudioProcessor processor;
+    setParameterValue (processor, parameters::quality, 0.0f);
+    setParameterValue (processor, parameters::calibration, 0.0f);
+    setParameterValue (processor, parameters::chorusNoise, 0.0f);
+    setParameterValue (processor, parameters::polyphony, static_cast<float> (voices));
+    setParameterValue (processor, parameters::poly1, poly1Engaged (mode) ? 1.0f : 0.0f);
+    setParameterValue (processor, parameters::poly2, poly2Engaged (mode) ? 1.0f : 0.0f);
+    setParameterValue (processor, parameters::velocity, 1.0f);
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::decay, 0.1f);
+    setParameterValue (processor, parameters::sustain, 0.7f);
+    setParameterValue (processor, parameters::release, 0.0f);
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> timeline (2, timelineSamples);
+    juce::AudioBuffer<float> block (2, blockSize);
+    for (int start = 0; start < timelineSamples; start += blockSize)
+    {
+        juce::MidiBuffer midi;
+        for (const auto& event : events)
+            if (event.sample >= start && event.sample < start + blockSize)
+                midi.addEvent (event.message, event.sample - start);
+        block.clear();
+        processor.processBlock (block, midi);
+        expect (bufferIsFinite (block), context + " emitted a non-finite sample");
+        expect (midi.isEmpty(), context + " passed MIDI to the host");
+        for (int channel = 0; channel < 2; ++channel)
+            timeline.copyFrom (channel, start, block, channel, 0, blockSize);
+    }
+
+    // Reflect any program barrier before shortening its release, so the MIDI
+    // tone shadow cannot override the final key-count check's short tail.
+    // Do not send a panic, which would conceal a stuck key.
+    processor.flushPendingMidiEvents();
+    setParameterValue (processor, parameters::release, 0.0f);
+    for (int tail = 0; tail < 32 && processor.getActiveVoiceCount() != 0; ++tail)
+        renderBlocks (processor, block, 1);
+    expect (processor.getActiveVoiceCount() == 0,
+            context + " left a voice held after its final Note Off");
+    processor.releaseResources();
+    return timeline;
+}
+
+void testAdjacentMidiNotesAreIndependentOfSameSampleInsertionOrder()
+{
+    for (const auto mode : { KeyMode::Poly1, KeyMode::Poly2, KeyMode::Unison })
+        for (const int voices : { 1, 6, 16 })
+            for (const bool differentChord : { false, true })
+                for (const int offset : { 0, 37 })
+                {
+                    // Exercise explicit Note Off and MIDI's zero-velocity Note
+                    // On encoding at both sample zero and inside a host block.
+                    const bool zeroVelocityOff = offset != 0;
+                    const auto off = [zeroVelocityOff] (int note)
+                    {
+                        return zeroVelocityOff
+                            ? juce::MidiMessage::noteOn (1, note, 0.0f)
+                            : juce::MidiMessage::noteOff (1, note);
+                    };
+                    const auto makeEvents = [&] (bool onFirst)
+                    {
+                        std::vector<NoteTimelineEvent> events;
+                        const int chordSize = differentChord ? voices : 1;
+                        for (int note = 0; note < chordSize; ++note)
+                            events.push_back ({ 0, juce::MidiMessage::noteOn (
+                                1, 36 + note, 0.2f) });
+                        for (int boundary = 1; boundary <= 2; ++boundary)
+                        {
+                            const int previousRoot = differentChord
+                                ? 36 + (boundary - 1) * 24 : 36;
+                            const int nextRoot = differentChord
+                                ? 36 + boundary * 24 : 36;
+                            const int sample = boundary * blockSize + offset;
+                            const auto addOffs = [&]
+                            {
+                                for (int note = 0; note < chordSize; ++note)
+                                    events.push_back ({ sample, off (previousRoot + note) });
+                            };
+                            const auto addOns = [&]
+                            {
+                                for (int note = 0; note < chordSize; ++note)
+                                    events.push_back ({ sample, juce::MidiMessage::noteOn (
+                                        1, nextRoot + note, boundary == 1 ? 0.95f : 0.4f) });
+                            };
+                            if (onFirst) { addOns(); addOffs(); }
+                            else         { addOffs(); addOns(); }
+                        }
+                        const int finalRoot = differentChord ? 84 : 36;
+                        for (int note = 0; note < chordSize; ++note)
+                            events.push_back ({ 3 * blockSize + offset,
+                                                off (finalRoot + note) });
+                        return events;
+                    };
+                    const std::string context = "adjacent MIDI mode "
+                        + std::to_string (static_cast<int> (mode)) + ", "
+                        + std::to_string (voices) + " voices, "
+                        + (differentChord ? "different chords, " : "same pitch, ")
+                        + (offset == 0 ? "block boundary" : "inside block / velocity-zero off");
+                    const auto offFirst = renderNoteOrderingTimeline (
+                        makeEvents (false), mode, voices, context + " / off first");
+                    const auto onFirst = renderNoteOrderingTimeline (
+                        makeEvents (true), mode, voices, context + " / on first");
+                    expect (bufferPeak (offFirst) > 0.001f,
+                            context + " fixture produced silence");
+                    expect (maximumBufferDifference (offFirst, onFirst) == 0.0f,
+                            context + " changed attack, velocity or pitch with insertion order");
+                }
+}
+
+void testMidiNoteOrderingPreservesOverlapsAndZeroLengthNotes()
+{
+    for (const auto mode : { KeyMode::Poly1, KeyMode::Poly2, KeyMode::Unison })
+    {
+        const std::vector<NoteTimelineEvent> reference {
+            { 0, juce::MidiMessage::noteOn (1, 60, 0.2f) },
+            { 1536, juce::MidiMessage::noteOff (1, 60) }
+        };
+        const std::vector<NoteTimelineEvent> overlapping {
+            { 0, juce::MidiMessage::noteOn (1, 60, 0.2f) },
+            { 511, juce::MidiMessage::noteOn (1, 60, 0.95f) },
+            { 512, juce::MidiMessage::noteOff (1, 60) },
+            { 1536, juce::MidiMessage::noteOff (1, 60) }
+        };
+        const std::string context = "overlapping MIDI mode "
+            + std::to_string (static_cast<int> (mode));
+        const auto expected = renderNoteOrderingTimeline (reference, mode, 6, context);
+        const auto actual = renderNoteOrderingTimeline (overlapping, mode, 6, context);
+        expect (maximumBufferDifference (expected, actual) == 0.0f,
+                context + " retriggered a genuine one-sample overlap");
+
+        // An initially unheld on/off pair has no older press to close. Sorting
+        // every Note Off ahead of every Note On would strand this key down.
+        renderNoteOrderingTimeline ({
+            { 37, juce::MidiMessage::noteOn (1, 64, 0.8f) },
+            { 37, juce::MidiMessage::noteOff (1, 64) }
+        }, mode, 6, context + " / zero-length note");
+
+        // Only one of these two offs belongs to the key held before this run.
+        // The second off must still close the extra same-timestamp press.
+        const std::vector<NoteTimelineEvent> extraPair {
+            { 0, juce::MidiMessage::noteOn (1, 60, 0.2f) },
+            { 512, juce::MidiMessage::noteOn (1, 60, 0.8f) },
+            { 512, juce::MidiMessage::noteOff (1, 60) },
+            { 512, juce::MidiMessage::noteOn (1, 60, 0.4f) },
+            { 512, juce::MidiMessage::noteOff (1, 60) },
+            { 1536, juce::MidiMessage::noteOff (1, 60) }
+        };
+        auto orderedPair = extraPair;
+        std::swap (orderedPair[1], orderedPair[2]);
+        const auto ordered = renderNoteOrderingTimeline (orderedPair, mode, 6, context);
+        const auto reordered = renderNoteOrderingTimeline (extraPair, mode, 6, context);
+        expect (maximumBufferDifference (ordered, reordered) == 0.0f,
+                context + " reordered more offs than the previously held press count");
+    }
+}
+
+void testNonNoteMidiEventsAreBarriersToNoteReordering()
+{
+    const std::array<juce::uint8, 3> foreignSysEx { 0x7d, 0x01, 0x02 };
+    const auto barriers = std::to_array<juce::MidiMessage> ({
+        juce::MidiMessage::controllerEvent (1, 100, 0),
+        juce::MidiMessage::controllerEvent (1, 64, 127),
+        juce::MidiMessage::allSoundOff (1),
+        juce::MidiMessage::programChange (1, 2),
+        juce::MidiMessage::createSysExMessage (
+            foreignSysEx.data(), static_cast<int> (foreignSysEx.size()))
+    });
+    for (std::size_t index = 0; index < barriers.size(); ++index)
+    {
+        // The duplicate press is still held when the barrier arrives; its off
+        // after the barrier cannot jump back and retrigger the original note.
+        const std::vector<NoteTimelineEvent> reference {
+            { 0, juce::MidiMessage::noteOn (1, 60, 0.2f) },
+            { 512, barriers[index] },
+            { 1024, juce::MidiMessage::noteOn (1, 67, 0.6f) },
+            { 1536, juce::MidiMessage::noteOff (1, 60) },
+            { 1536, juce::MidiMessage::noteOff (1, 67) },
+            { 2048, juce::MidiMessage::controllerEvent (1, 64, 0) }
+        };
+        const std::vector<NoteTimelineEvent> duplicate {
+            { 0, juce::MidiMessage::noteOn (1, 60, 0.2f) },
+            { 512, juce::MidiMessage::noteOn (1, 60, 0.95f) },
+            { 512, barriers[index] },
+            { 512, juce::MidiMessage::noteOff (1, 60) },
+            { 1024, juce::MidiMessage::noteOn (1, 67, 0.6f) },
+            { 1536, juce::MidiMessage::noteOff (1, 60) },
+            { 1536, juce::MidiMessage::noteOff (1, 67) },
+            { 2048, juce::MidiMessage::controllerEvent (1, 64, 0) }
+        };
+        const auto context = "non-note MIDI barrier " + std::to_string (index);
+        const auto expected = renderNoteOrderingTimeline (
+            reference, KeyMode::Poly1, 6, context);
+        const auto actual = renderNoteOrderingTimeline (
+            duplicate, KeyMode::Poly1, 6, context);
+        expect (maximumBufferDifference (expected, actual) == 0.0f,
+                context + " allowed a Note Off to cross a non-note event");
+    }
+}
+
+void testZeroFrameMidiNoteOrderingKeepsOriginalTimestamps()
+{
+    const auto render = [] (int scenario)
+    {
+        YouKnowAudioProcessor processor;
+        setParameterValue (processor, parameters::quality, 0.0f);
+        setParameterValue (processor, parameters::calibration, 0.0f);
+        setParameterValue (processor, parameters::chorusNoise, 0.0f);
+        setParameterValue (processor, parameters::velocity, 1.0f);
+        setParameterValue (processor, parameters::release, 0.0f);
+        processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+
+        juce::AudioBuffer<float> block (2, blockSize);
+        juce::MidiBuffer start;
+        start.addEvent (juce::MidiMessage::noteOn (1, 60, 0.2f), 0);
+        block.clear();
+        processor.processBlock (block, start);
+        renderBlocks (processor, block, 1);
+
+        juce::AudioBuffer<float> noFrames (2, 0);
+        juce::MidiBuffer zeroFrameMidi;
+        if (scenario != 1)
+        {
+            const auto on = juce::MidiMessage::noteOn (1, 60, 0.95f);
+            const auto off = juce::MidiMessage::noteOff (1, 60);
+            if (scenario == 3)
+            {
+                zeroFrameMidi.addEvent (off, 37);
+                zeroFrameMidi.addEvent (on, 37);
+            }
+            else
+            {
+                zeroFrameMidi.addEvent (on, 37);
+                zeroFrameMidi.addEvent (off, scenario == 0 ? 38 : 37);
+            }
+        }
+        processor.processBlock (noFrames, zeroFrameMidi);
+        expect (zeroFrameMidi.isEmpty(), "a zero-frame block passed MIDI to the host");
+
+        juce::AudioBuffer<float> result (2, blockSize * 2);
+        for (int index = 0; index < 2; ++index)
+        {
+            renderBlocks (processor, block, 1);
+            for (int channel = 0; channel < 2; ++channel)
+                result.copyFrom (channel, index * blockSize, block, channel, 0, blockSize);
+        }
+        juce::MidiBuffer finalOff;
+        finalOff.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+        processor.processBlock (block, finalOff);
+        for (int tail = 0; tail < 32 && processor.getActiveVoiceCount() != 0; ++tail)
+            renderBlocks (processor, block, 1);
+        expect (processor.getActiveVoiceCount() == 0,
+                "a zero-frame note sequence left its key held");
+        processor.releaseResources();
+        return result;
+    };
+
+    // Different original positions retain their genuine overlap even though
+    // both dispatch at sample zero in this callback. Equal original positions
+    // still represent an adjacent pair and must use the normalized order.
+    expect (maximumBufferDifference (render (0), render (1)) == 0.0f,
+            "zero-frame clamping turned distinct timestamps into an adjacent pair");
+    expect (maximumBufferDifference (render (2), render (3)) == 0.0f,
+            "a zero-frame same-timestamp pair depended on insertion order");
+}
+
 void testOscilloscopeCanBeReadWhileAudioWrites()
 {
     YouKnowAudioProcessor processor;
@@ -7527,6 +7808,20 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
 
+    if (std::getenv ("YOUKNOW_MIDI_TEST_ONLY") != nullptr)
+    {
+        testVariableHostBlockSizesPreserveTheTimeline();
+        testAdjacentMidiNotesAreIndependentOfSameSampleInsertionOrder();
+        testMidiNoteOrderingPreservesOverlapsAndZeroLengthNotes();
+        testNonNoteMidiEventsAreBarriersToNoteReordering();
+        testZeroFrameMidiNoteOrderingKeepsOriginalTimestamps();
+        testShortNoteInsideOneBlockIsHeard();
+        testUiKeyboardPressAndReleaseIsHeard();
+        testAllNotesOffReleasesAndAllSoundOffCuts();
+        testHoldLatchesOnAnyNonZeroValue();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     if (std::getenv ("YOUKNOW_PRESET_TEST_ONLY") != nullptr)
     {
         testFactoryProgramsLoad();
@@ -7556,6 +7851,10 @@ int main()
     testParameterTextRoundTrips();
     testProcessingProducesSound();
     testVariableHostBlockSizesPreserveTheTimeline();
+    testAdjacentMidiNotesAreIndependentOfSameSampleInsertionOrder();
+    testMidiNoteOrderingPreservesOverlapsAndZeroLengthNotes();
+    testNonNoteMidiEventsAreBarriersToNoteReordering();
+    testZeroFrameMidiNoteOrderingKeepsOriginalTimestamps();
     testOscilloscopeCanBeReadWhileAudioWrites();
     testOscilloscopeRetainsTheNewestSamplesFromLargeBlocks();
     testInitProgramHasHeadroomUnderASixKeyChord();

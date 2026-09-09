@@ -363,6 +363,51 @@ void overlayPendingMidiTone (
     }
 }
 
+[[nodiscard]] bool isMidiNoteEvent (
+    const juce::MidiMessageMetadata& event) noexcept
+{
+    return event.data != nullptr && event.numBytes == 3 && event.data[1] < 128
+        && ((event.data[0] & 0xf0) == 0x80
+            || (event.data[0] & 0xf0) == 0x90);
+}
+
+void dispatchMidiNoteRun (YouKnowEngine& engine,
+                         juce::MidiBufferIterator begin,
+                         juce::MidiBufferIterator end) noexcept
+{
+    // Hosts can put the next note before the old note's release at the same
+    // sample. Close existing presses first: otherwise equal pitches swallow
+    // the new attack, and a full assigner drops a different incoming pitch.
+    // Only consume releases of keys held before this run. Moving every off
+    // first would turn an initially unheld zero-length on/off into a stuck key.
+    std::array<std::uint16_t, 128> released {};
+    for (auto event = begin; event != end; ++event)
+    {
+        const auto message = (*event).getMessage();
+        const int note = message.getNoteNumber();
+        if (message.isNoteOff() && engine.isNoteHeld (note))
+        {
+            engine.noteOff (note);
+            ++released[static_cast<std::size_t> (note)];
+        }
+    }
+
+    // Keep note-on order (including chord priority) and every remaining off
+    // in arrival order. The counter also balances genuinely overlapping
+    // same-pitch notes; a single release must not lift multiple presses.
+    for (auto event = begin; event != end; ++event)
+    {
+        const auto message = (*event).getMessage();
+        const int note = message.getNoteNumber();
+        if (message.isNoteOn())
+            engine.noteOn (note, message.getFloatVelocity());
+        else if (auto& count = released[static_cast<std::size_t> (note)]; count != 0)
+            --count;
+        else
+            engine.noteOff (note);
+    }
+}
+
 // The owner's MIDI implementation chart lists five channel-mode rows under
 // RECOGNIZED RECEIVE DATA -- ALL NOTES OFF, OMNI OFF, OMNI ON, MONO ON and
 // POLY ON -- and then prints, in the notes below them, "Mode messages
@@ -1221,8 +1266,12 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // MIDI at the block boundary would collapse a short note-on/note-off pair
     // onto the same instant and lose the note entirely.
     int renderedTo = 0;
-    for (const auto metadata : midiMessages)
+    auto midiEvent = midiMessages.cbegin();
+    const auto midiEnd = midiMessages.cend();
+    while (midiEvent != midiEnd)
     {
+        const auto noteRunBegin = midiEvent;
+        const auto metadata = *midiEvent++;
         // JUCE permits occasional zero-frame callbacks which still carry MIDI.
         // Give every event timestamp zero explicitly in that case; there is no
         // audio range to clamp against, but its state transition still counts.
@@ -1236,6 +1285,20 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                             buffer.getWritePointer (1, renderedTo),
                             eventSample - renderedTo);
             renderedTo = eventSample;
+        }
+
+        if (isMidiNoteEvent (metadata))
+        {
+            // Normalise only adjacent notes sharing the original timestamp.
+            // Controllers, program changes and SysEx are ordering barriers:
+            // moving a release across a pedal or patch change changes meaning.
+            // Distinct host timestamps stay distinct even if clamped above.
+            while (midiEvent != midiEnd
+                   && (*midiEvent).samplePosition == metadata.samplePosition
+                   && isMidiNoteEvent (*midiEvent))
+                ++midiEvent;
+            dispatchMidiNoteRun (engine, noteRunBegin, midiEvent);
+            continue;
         }
 
         // MidiMessageMetadata is a non-owning view, but getMessage() makes an
