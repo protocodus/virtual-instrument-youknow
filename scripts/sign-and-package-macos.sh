@@ -225,6 +225,22 @@ if [[ ! -f "${CACHE_FILE}" ]]; then
     exit 1
 fi
 
+CONFIGURED_VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "${CACHE_FILE}")"
+BUILD_NUMBER="$(sed -n 's/^YOUKNOW_BUILD_NUMBER:STRING=//p' "${CACHE_FILE}")"
+DISTRIBUTION_VERSION="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' "${CACHE_FILE}")"
+if [[ ! "${CONFIGURED_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: CMake cache must contain one valid project version" >&2
+    exit 1
+fi
+if [[ ! "${BUILD_NUMBER}" =~ ^[1-9][0-9]*(\.[1-9][0-9]*)?$ ]]; then
+    echo "error: CMake cache must contain one valid build number" >&2
+    exit 1
+fi
+if [[ "${DISTRIBUTION_VERSION}" != "${CONFIGURED_VERSION}-build.${BUILD_NUMBER}" ]]; then
+    echo "error: CMake cache distribution version must match project version and build number" >&2
+    exit 1
+fi
+
 JUCE_SOURCE_DIR="$(sed -n 's/^JUCE_SOURCE_DIR:[^=]*=//p' "${CACHE_FILE}")"
 DEPLOYMENT_TARGET="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:[^=]*=//p' \
     "${CACHE_FILE}")"
@@ -354,6 +370,7 @@ if [[ -z "${VST3_VERSION}" || "${VST3_VERSION}" != "${AU_VERSION}" \
 fi
 
 VERSION="${VST3_VERSION}"
+require_value "bundle version" "${CONFIGURED_VERSION}" "${VERSION}"
 if [[ -n "${VERSION_OVERRIDE}" && "${VERSION_OVERRIDE}" != "${VERSION}" ]]; then
     echo "error: VERSION=${VERSION_OVERRIDE} does not match bundle version ${VERSION}" >&2
     exit 1
@@ -373,6 +390,8 @@ require_value "Standalone bundle identifier" "${STANDALONE_BUNDLE_IDENTIFIER}" \
     "$(bundle_value "${APP}" CFBundleIdentifier)"
 
 for bundle in "${VST3}" "${AU}" "${CLAP}" "${APP}"; do
+    require_value "$(basename "${bundle}") build number" \
+        "${BUILD_NUMBER}" "$(bundle_value "${bundle}" CFBundleVersion)"
     require_value "$(basename "${bundle}") display name" \
         "${PRODUCT_NAME}" "$(bundle_value "${bundle}" CFBundleDisplayName)"
     require_value "$(basename "${bundle}") copyright" \
@@ -596,7 +615,7 @@ sign_bundle "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/YouKnow.component
 sign_bundle "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/CLAP/YouKnow.clap"
 sign_bundle "${PACKAGE_ROOT}/Applications/YouKnow.app"
 
-ARTIFACT_BASE="YouKnow-${VERSION}-macOS-${ARTIFACT_ARCH}"
+ARTIFACT_BASE="YouKnow-${DISTRIBUTION_VERSION}-macOS-${ARTIFACT_ARCH}"
 PKG_FINAL="${DIST_DIR}/${ARTIFACT_BASE}.pkg"
 ZIP_PATH="${DIST_DIR}/${ARTIFACT_BASE}.zip"
 MANIFEST_PATH="${DIST_DIR}/${ARTIFACT_BASE}.manifest.txt"
@@ -634,7 +653,7 @@ COPYFILE_DISABLE=1 pkgbuild \
     --root "${PACKAGE_ROOT}" \
     --component-plist "${COMPONENT_PLIST}" \
     --identifier "${PACKAGE_IDENTIFIER}" \
-    --version "${VERSION}" \
+    --version "${BUILD_NUMBER}" \
     --install-location / \
     "${PKG_COMPONENT}"
 
@@ -725,6 +744,8 @@ fi
     printf 'Website: %s\n' "${PRODUCT_WEBSITE}"
     printf 'Support: %s\n' "${SUPPORT_EMAIL}"
     printf 'Version: %s\n' "${VERSION}"
+    printf 'Build: %s\n' "${BUILD_NUMBER}"
+    printf 'Distribution version: %s\n' "${DISTRIBUTION_VERSION}"
     printf 'Formats: VST3, Audio Unit, CLAP, Standalone\n'
     printf 'Architectures: %s\n' "${APP_ARCHS}"
     printf 'Minimum macOS: %s\n' "${DEPLOYMENT_TARGET}"

@@ -7,16 +7,26 @@ compatible system libraries. An ARM system cannot run this binary natively.
 ## Extract the download
 
 Keep the extracted files in a permanent folder so the standalone program,
-guide and licences stay together. For example, if the archive is in Downloads:
+guide and licences stay together. In Bash, the following extracts the single
+YouKnow Linux archive in Downloads:
 
-```sh
-mkdir -p "$HOME/.local/share/Protocodus/YouKnow"
-tar -xzf "$HOME/Downloads/YouKnow-Linux-x64.tar.gz" \
-  -C "$HOME/.local/share/Protocodus/YouKnow"
+```bash
+(
+  shopt -s nullglob
+  archives=("$HOME"/Downloads/YouKnow-*-Linux-x64.tar.gz)
+  if (( ${#archives[@]} != 1 )); then
+    echo "Keep exactly one YouKnow Linux archive in Downloads, then retry." >&2
+    exit 1
+  fi
+  mkdir -p "$HOME/.local/share/Protocodus/YouKnow"
+  tar -xzf "${archives[0]}" -C "$HOME/.local/share/Protocodus/YouKnow"
+)
 ```
 
 Adjust the archive path if you saved it elsewhere. If your download is
-`ci-linux.zip`, extract that first to find `YouKnow-Linux-x64.tar.gz`.
+`ci-linux.zip`, extract that first to find the versioned file ending in
+`-Linux-x64.tar.gz`. If you have several builds, move the others out of
+Downloads before running the commands so you install the intended version.
 
 ## Install VST3 for your user
 

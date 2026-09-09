@@ -2425,7 +2425,7 @@ void YouKnowAudioProcessorEditor::showProductInfo (bool quickStart)
           "file onto YouKnow to import a tone.\n\n"
           "PERFORMANCE\nQuality 1x is the default. Choose 2x or 4x to reduce aliasing; "
           "the change takes effect when idle. PANIC stops stuck notes."
-        : "YouKnow " JucePlugin_VersionString "\nBy " JucePlugin_Manufacturer
+        : "YouKnow " YOUKNOW_DISPLAY_VERSION "\nBy " JucePlugin_Manufacturer
           "\n\nA circuit-modeled polyphonic synthesizer.\n\n"
           "YouKnow is licensed under the MIT License. "
           "JUCE and other dependencies retain their own licence terms; "

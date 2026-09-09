@@ -34,7 +34,8 @@ the guide, licences and notices from the archive with your installation.
 
 ### Linux
 
-Extract `YouKnow-Linux-x64.tar.gz` into a permanent folder. Copy the whole
+Extract the versioned archive ending in `-Linux-x64.tar.gz` into a permanent
+folder. Copy the whole
 `VST3/YouKnow.vst3` folder to `~/.vst3/`, creating that destination if needed.
 Run `Standalone/YouKnow` from the extracted folder to play without a host.
 Keep the guide, licences and notices with the extracted files. This x86_64

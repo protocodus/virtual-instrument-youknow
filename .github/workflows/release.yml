@@ -174,10 +174,20 @@ jobs:
             echo "error: invalid release tag: ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
+          cache="build-macos/CMakeCache.txt"
+          built_version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "${cache}")"
+          build_number="$(sed -n 's/^YOUKNOW_BUILD_NUMBER:STRING=//p' "${cache}")"
+          distribution_version="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' "${cache}")"
+          if [[ "${built_version}" != "${version}" \
+              || ! "${build_number}" =~ ^[1-9][0-9]*(\.[1-9][0-9]*)?$ \
+              || "${distribution_version}" != "${version}-build.${build_number}" ]]; then
+            echo "error: build version metadata does not match the release tag" >&2
+            exit 1
+          fi
 
-          package="${dist}/YouKnow-${version}-macOS-universal.pkg"
-          manifest="${dist}/YouKnow-${version}-macOS-universal.manifest.txt"
-          checksum="${dist}/YouKnow-${version}-macOS-universal-SHA256SUMS.txt"
+          package="${dist}/YouKnow-${distribution_version}-macOS-universal.pkg"
+          manifest="${dist}/YouKnow-${distribution_version}-macOS-universal.manifest.txt"
+          checksum="${dist}/YouKnow-${distribution_version}-macOS-universal-SHA256SUMS.txt"
           artifacts=("${dist}"/*)
           if (( ${#artifacts[@]} != 3 )); then
             echo "error: expected exactly three publication artifacts" >&2
@@ -223,6 +233,8 @@ jobs:
           grep -Fx -- "Website: https://protocodus.cz" "${manifest}" >/dev/null
           grep -Fx -- "Support: protocodus@proton.me" "${manifest}" >/dev/null
           grep -Fx -- "Version: ${version}" "${manifest}" >/dev/null
+          grep -Fx -- "Build: ${build_number}" "${manifest}" >/dev/null
+          grep -Fx -- "Distribution version: ${distribution_version}" "${manifest}" >/dev/null
           grep -Ex -- '^Architectures: (arm64 x86_64|x86_64 arm64)$' \
             "${manifest}" >/dev/null
           grep -Fx -- "Minimum macOS: 11.0" "${manifest}" >/dev/null
@@ -289,14 +301,15 @@ jobs:
             exit 1
           fi
 
+          distribution_version="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' \
+            build-macos/CMakeCache.txt)"
           assets=(
-            build-macos/dist/YouKnow-*-macOS-universal.pkg
-            build-macos/dist/YouKnow-*-macOS-universal.manifest.txt
-            build-macos/dist/YouKnow-*-macOS-universal-SHA256SUMS.txt
+            "build-macos/dist/YouKnow-${distribution_version}-macOS-universal.pkg"
+            "build-macos/dist/YouKnow-${distribution_version}-macOS-universal.manifest.txt"
+            "build-macos/dist/YouKnow-${distribution_version}-macOS-universal-SHA256SUMS.txt"
           )
-          version="${GITHUB_REF_NAME#youknow-v}"
           gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
-            --verify-tag --title "YouKnow ${version}" \
+            --verify-tag --title "YouKnow ${distribution_version}" \
             --notes "Signed, notarized and stapled commercial macOS release."
 
           immutable="$(gh release view "${GITHUB_REF_NAME}" \

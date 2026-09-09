@@ -12,8 +12,17 @@ def package(build_dir: Path) -> Path:
     project_dir = Path(__file__).resolve().parent.parent
     cache = (build_dir / "CMakeCache.txt").read_text(encoding="utf-8")
     versions = re.findall(r"^CMAKE_PROJECT_VERSION:STATIC=(.+)$", cache, re.MULTILINE)
-    if len(versions) != 1 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", versions[0]):
+    if len(versions) != 1 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}", versions[0]):
         raise ValueError("CMakeCache.txt must contain one valid project version")
+    build_numbers = re.findall(r"^YOUKNOW_BUILD_NUMBER:STRING=(.+)$", cache, re.MULTILINE)
+    if len(build_numbers) != 1 or not re.fullmatch(r"[1-9][0-9]*(?:\.[1-9][0-9]*)?", build_numbers[0]):
+        raise ValueError("CMakeCache.txt must contain one valid build number")
+    distribution_versions = re.findall(
+        r"^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=(.+)$", cache, re.MULTILINE
+    )
+    distribution_version = f"{versions[0]}-build.{build_numbers[0]}"
+    if distribution_versions != [distribution_version]:
+        raise ValueError("CMakeCache.txt distribution version must match project version and build number")
 
     artifacts = build_dir / "YouKnow_artefacts" / "Release"
     required = (
@@ -46,7 +55,11 @@ def package(build_dir: Path) -> Path:
 
     dist = build_dir / "dist"
     dist.mkdir(parents=True, exist_ok=True)
-    archive = dist / f"YouKnow-{versions[0]}-Windows-x64.zip"
+    # A reused build directory must not upload older builds alongside the new
+    # archive while its checksum file covers only the current build.
+    for previous in dist.glob("YouKnow-*-Windows-x64.zip"):
+        previous.unlink()
+    archive = dist / f"YouKnow-{distribution_version}-Windows-x64.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
         for relative, path in sorted(files.items()):
             output.write(path, relative)

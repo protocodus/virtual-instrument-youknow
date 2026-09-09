@@ -25,6 +25,23 @@ endif()
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
 project(YouKnow VERSION 1.1.0 LANGUAGES C CXX)
 
+# Keep the three-part host version stable; the build identity distinguishes
+# downloads and appears in About YouKnow and macOS CFBundleVersion. GitHub's
+# run ID is shared by all jobs and does not collide across workflows.
+set(youknow_default_build_number "1")
+if(DEFINED ENV{GITHUB_RUN_ID} AND NOT "$ENV{GITHUB_RUN_ID}" STREQUAL "")
+    set(youknow_default_build_number "$ENV{GITHUB_RUN_ID}.$ENV{GITHUB_RUN_ATTEMPT}")
+endif()
+set(YOUKNOW_BUILD_NUMBER "${youknow_default_build_number}" CACHE STRING
+    "Build identifier: positive integer, optionally followed by .attempt")
+if(NOT YOUKNOW_BUILD_NUMBER MATCHES "^[1-9][0-9]*(\\.[1-9][0-9]*)?$")
+    message(FATAL_ERROR "YOUKNOW_BUILD_NUMBER must be a positive integer or run.attempt")
+endif()
+set(YOUKNOW_DISTRIBUTION_VERSION "${PROJECT_VERSION}-build.${YOUKNOW_BUILD_NUMBER}"
+    CACHE INTERNAL "Version used in customer download filenames" FORCE)
+set(YOUKNOW_DISPLAY_VERSION "${PROJECT_VERSION} (build ${YOUKNOW_BUILD_NUMBER})")
+message(STATUS "YouKnow ${YOUKNOW_DISPLAY_VERSION}")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -133,6 +150,7 @@ if(YOUKNOW_BUILD_PLUGIN)
 
     juce_add_plugin(YouKnow
         VERSION ${PROJECT_VERSION}
+        BUILD_VERSION ${YOUKNOW_BUILD_NUMBER}
         COMPANY_NAME "Protocodus"
         COMPANY_WEBSITE "https://protocodus.cz"
         COMPANY_EMAIL "protocodus@proton.me"
@@ -203,6 +221,7 @@ if(YOUKNOW_BUILD_PLUGIN)
             set_target_properties(YouKnow_CLAP PROPERTIES
                 MACOSX_BUNDLE_INFO_PLIST "${youknow_clap_info_plist}"
                 MACOSX_BUNDLE_GUI_IDENTIFIER "cz.protocodus.youknow.clap"
+                MACOSX_BUNDLE_BUNDLE_VERSION "${YOUKNOW_BUILD_NUMBER}"
                 MACOSX_BUNDLE_COPYRIGHT "Copyright (c) 2026 Protocodus")
             youknow_set_wrapper_bundle_identifier(YouKnow_CLAP
                 cz.protocodus.youknow.clap)
@@ -233,6 +252,7 @@ if(YOUKNOW_BUILD_PLUGIN)
 
     target_compile_definitions(YouKnow
         PUBLIC
+            YOUKNOW_DISPLAY_VERSION="${YOUKNOW_DISPLAY_VERSION}"
             JUCE_WEB_BROWSER=0
             JUCE_USE_CURL=0
             JUCE_VST3_CAN_REPLACE_VST2=0)

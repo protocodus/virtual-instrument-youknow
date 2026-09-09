@@ -5,6 +5,7 @@ import hashlib
 import io
 import os
 from pathlib import Path
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,31 @@ import zipfile
 
 
 SCRIPTS = Path(__file__).resolve().parent
+BUILD_NUMBER = "34393416911.1"
+DISTRIBUTION_VERSION = f"1.2.3-build.{BUILD_NUMBER}"
+
+
+def version_cache() -> bytes:
+    return (
+        "CMAKE_PROJECT_VERSION:STATIC=1.2.3\n"
+        f"YOUKNOW_BUILD_NUMBER:STRING={BUILD_NUMBER}\n"
+        f"YOUKNOW_DISTRIBUTION_VERSION:INTERNAL={DISTRIBUTION_VERSION}\n"
+    ).encode()
+
+
+def invalid_build_caches():
+    valid = version_cache()
+    build_entry = f"YOUKNOW_BUILD_NUMBER:STRING={BUILD_NUMBER}\n".encode()
+    for build in (b"", b"0", b"1.0", b"01", b"1.01", b"1.2.3", b"../bad", b"1\n2"):
+        yield "invalid build number", valid.replace(build_entry, b"YOUKNOW_BUILD_NUMBER:STRING=" + build + b"\n")
+    yield "missing build number", valid.replace(build_entry, b"")
+    yield "duplicate build number", valid + build_entry
+    distribution_entry = f"YOUKNOW_DISTRIBUTION_VERSION:INTERNAL={DISTRIBUTION_VERSION}\n".encode()
+    yield "missing distribution version", valid.replace(distribution_entry, b"")
+    yield "duplicate distribution version", valid + distribution_entry
+    yield "mismatched project version", valid.replace(b"STATIC=1.2.3", b"STATIC=1.2.4")
+    yield "mismatched build number", valid.replace(build_entry, b"YOUKNOW_BUILD_NUMBER:STRING=34393416911.2\n")
+    yield "unsafe distribution version", valid.replace(distribution_entry, b"YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=../bad\n")
 
 
 def write(path: Path, contents: bytes) -> None:
@@ -41,7 +67,7 @@ class WindowsPackagingTests(unittest.TestCase):
         }
         for relative, contents in self.payload.items():
             write(self.artifacts / relative, contents)
-        write(self.build / "CMakeCache.txt", b"CMAKE_PROJECT_VERSION:STATIC=1.2.3\n")
+        write(self.build / "CMakeCache.txt", version_cache())
         self.notices = (
             "LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md", "USER_GUIDE.md",
             "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
@@ -59,7 +85,7 @@ class WindowsPackagingTests(unittest.TestCase):
     def test_archive_contains_complete_bundle_formats_notices_and_matching_checksum(self):
         result = self.package()
         self.assertEqual(result.returncode, 0, result.stderr)
-        archive = self.build / "dist/YouKnow-1.2.3-Windows-x64.zip"
+        archive = self.build / f"dist/YouKnow-{DISTRIBUTION_VERSION}-Windows-x64.zip"
         with zipfile.ZipFile(archive) as output:
             expected = set(self.payload) | (set(self.notices) - {"USER_GUIDE.md"}) | {"README.md"}
             self.assertEqual(set(output.namelist()), expected)
@@ -105,12 +131,123 @@ class WindowsPackagingTests(unittest.TestCase):
                 self.assertIn("one valid project version", result.stderr)
                 self.assertFalse((self.build / "dist").exists())
 
+    def test_invalid_or_inconsistent_build_identity_fails_before_archiving(self):
+        for description, cache in invalid_build_caches():
+            with self.subTest(description=description):
+                (self.build / "CMakeCache.txt").write_bytes(cache)
+                result = self.package()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, "valid build number|distribution version must match")
+                self.assertFalse((self.build / "dist").exists())
+
+    def test_new_build_replaces_old_archive_and_checksum(self):
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        unrelated = self.build / "dist/keep.txt"
+        unrelated.write_text("preserve")
+        (self.build / "CMakeCache.txt").write_bytes(
+            version_cache().replace(BUILD_NUMBER.encode(), b"34393416911.2")
+        )
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dist = self.build / "dist"
+        archive = dist / "YouKnow-1.2.3-build.34393416911.2-Windows-x64.zip"
+        self.assertEqual(set(dist.iterdir()), {archive, dist / "SHA256SUMS.txt", unrelated})
+        self.assertEqual(unrelated.read_text(), "preserve")
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertEqual((dist / "SHA256SUMS.txt").read_text(), f"{digest}  {archive.name}\n")
+
+
+@unittest.skipUnless(sys.platform == "darwin", "macOS bundle validation requires PlistBuddy")
+class MacPackagingVersionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="youknow-macos-version-test-")
+        self.addCleanup(self.temporary.cleanup)
+        self.project = Path(self.temporary.name)
+        self.script = self.project / "scripts/sign-and-package-macos.sh"
+        self.script.parent.mkdir()
+        shutil.copyfile(SCRIPTS / "sign-and-package-macos.sh", self.script)
+        self.build = self.project / "build-macos"
+        self.juce = self.build / "juce"
+        self.juce.mkdir(parents=True)
+        self.cache = version_cache() + (
+            f"JUCE_SOURCE_DIR:STATIC={self.juce}\n"
+            "CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/clang++\n"
+            "CMAKE_OSX_DEPLOYMENT_TARGET:STRING=11.0\n"
+        ).encode()
+        write(self.build / "CMakeCache.txt", self.cache)
+        for relative in (
+            "LICENSE", "README.md", "USER_GUIDE.md", "THIRD_PARTY_NOTICES.md", "PRIVACY.md",
+            "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
+            "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
+        ):
+            write(self.project / relative, relative.encode())
+        self.plists = {}
+        for relative, identifier in (
+            ("VST3/YouKnow.vst3", "cz.protocodus.youknow.vst3"),
+            ("AU/YouKnow.component", "cz.protocodus.youknow.au"),
+            ("CLAP/YouKnow.clap", "cz.protocodus.youknow.clap"),
+            ("Standalone/YouKnow.app", "cz.protocodus.youknow"),
+        ):
+            path = self.build / "YouKnow_artefacts/Release" / relative / "Contents/Info.plist"
+            contents = {
+                "CFBundleShortVersionString": "1.2.3", "CFBundleVersion": BUILD_NUMBER,
+                "CFBundleIdentifier": identifier, "CFBundleDisplayName": "YouKnow",
+                "NSHumanReadableCopyright": "Copyright (c) 2026 Protocodus",
+                "AudioComponents": [{"type": "aumu", "subtype": "Yk06", "manufacturer": "Ykno"}],
+            }
+            self.plists[path] = contents
+            write(path, plistlib.dumps(contents))
+
+    def package(self):
+        environment = os.environ.copy()
+        environment.update({"BUILD_DIR": str(self.build), "RELEASE_MODE": "0", "CONFIG": "Release"})
+        environment.pop("VERSION", None)
+        return subprocess.run(
+            ["bash", str(self.script)], env=environment,
+            capture_output=True, text=True, check=False,
+        )
+
+    def test_all_four_bundle_build_numbers_must_match_configured_build(self):
+        # The complete version identity is accepted before the intentionally
+        # absent module metadata stops this non-signing fixture.
+        result = self.package()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing VST3 module metadata", result.stderr)
+        for path, contents in self.plists.items():
+            with self.subTest(bundle=path.parent.parent.name):
+                write(path, plistlib.dumps({**contents, "CFBundleVersion": "34393416911.2"}))
+                result = self.package()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"{path.parent.parent.name} build number", result.stderr)
+                self.assertIn(f"expected '{BUILD_NUMBER}'", result.stderr)
+                self.assertFalse((self.build / "dist").exists())
+                write(path, plistlib.dumps(contents))
+
+    def test_bundle_marketing_version_must_match_configured_version(self):
+        for path, contents in self.plists.items():
+            write(path, plistlib.dumps({**contents, "CFBundleShortVersionString": "1.2.4"}))
+        result = self.package()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bundle version is '1.2.4', expected '1.2.3'", result.stderr)
+        self.assertFalse((self.build / "dist").exists())
+
+    def test_invalid_or_inconsistent_build_identity_fails_before_staging(self):
+        for description, cache in invalid_build_caches():
+            with self.subTest(description=description):
+                (self.build / "CMakeCache.txt").write_bytes(cache)
+                result = self.package()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, "valid build number|distribution version must match")
+                self.assertFalse((self.build / "dist").exists())
+
 
 class LinuxPackagingTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="youknow-linux-package-test-")
         self.addCleanup(self.temporary.cleanup)
         self.project = Path(self.temporary.name)
+        write(self.project / "build-dsp/CMakeCache.txt", version_cache())
         self.artifacts = self.project / "build-dsp/YouKnow_artefacts/Release"
         self.payload = {
             "VST3/YouKnow.vst3/Contents/x86_64-linux/YouKnow.so": b"vst3 binary",
@@ -131,7 +268,7 @@ class LinuxPackagingTests(unittest.TestCase):
         step = workflow.split("      - name: Package Linux VST3 and standalone\n", 1)[1]
         run_block = step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
         self.script = textwrap.dedent(run_block)
-        self.archive = self.project / "build-dsp/dist/YouKnow-Linux-x64.tar.gz"
+        self.archive = self.project / f"build-dsp/dist/YouKnow-{DISTRIBUTION_VERSION}-Linux-x64.tar.gz"
 
     def package(self):
         # macOS tar adds AppleDouble files by default; the production step runs
@@ -178,6 +315,31 @@ class LinuxPackagingTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse(self.archive.exists())
                     path.write_bytes(original)
+
+    def test_invalid_or_inconsistent_build_identity_fails_before_archiving(self):
+        for description, cache in invalid_build_caches():
+            with self.subTest(description=description):
+                (self.project / "build-dsp/CMakeCache.txt").write_bytes(cache)
+                result = self.package()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.archive.exists())
+
+    def test_new_build_replaces_old_archive_and_checksum(self):
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dist = self.archive.parent
+        unrelated = dist / "keep.txt"
+        unrelated.write_text("preserve")
+        (self.project / "build-dsp/CMakeCache.txt").write_bytes(
+            version_cache().replace(BUILD_NUMBER.encode(), b"34393416911.2")
+        )
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archive = dist / "YouKnow-1.2.3-build.34393416911.2-Linux-x64.tar.gz"
+        self.assertEqual(set(dist.iterdir()), {archive, dist / "SHA256SUMS.txt", unrelated})
+        self.assertEqual(unrelated.read_text(), "preserve")
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertEqual((dist / "SHA256SUMS.txt").read_text(), f"{digest}  {archive.name}\n")
 
 
 class PreviewPublicationTests(unittest.TestCase):

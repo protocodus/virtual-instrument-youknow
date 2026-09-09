@@ -14,17 +14,24 @@ platform, so customers do not need a separate download for each plug-in format.
 
 | Platform | Artifact in the latest passing build¹ | File to give customers | Included formats |
 | --- | --- | --- | --- |
-| macOS 11+, Apple silicon and Intel | `ci-macos` | `YouKnow-1.1.0-macOS-universal.pkg` | VST3, Audio Unit, CLAP, Standalone |
-| Windows x64 | `ci-windows` | `YouKnow-1.1.0-Windows-x64.zip` | VST3, CLAP, Standalone |
-| Linux x64 (optional) | `ci-linux` | `YouKnow-Linux-x64.tar.gz` | VST3, Standalone |
+| macOS 11+, Apple silicon and Intel | `ci-macos` | `YouKnow-1.1.0-build.<number>-macOS-universal.pkg` | VST3, Audio Unit, CLAP, Standalone |
+| Windows x64 | `ci-windows` | `YouKnow-1.1.0-build.<number>-Windows-x64.zip` | VST3, CLAP, Standalone |
+| Linux x64 (optional) | `ci-linux` | `YouKnow-1.1.0-build.<number>-Linux-x64.tar.gz` | VST3, Standalone |
 
 ¹ Open the **[latest successful package builds](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=is%3Asuccess+-event%3Apull_request)**,
 select the newest passing run for the branch/commit you want, and download
-the named files from its **Artifacts** section. Use the same run for all
-platforms. GitHub sign-in is required. Extract the downloaded `ci-macos.zip`,
+the named files from its **Artifacts** section. Use the same run and attempt
+for all platforms. When retrying a complete download set, rerun all jobs together
+so artifacts from different attempts are not mixed. GitHub sign-in is required.
+Extract the downloaded `ci-macos.zip`,
 `ci-windows.zip` or `ci-linux.zip` once to get the customer file listed above.
-The macOS archive also contains `YouKnow-1.1.0-macOS-universal.zip` for optional
+The macOS archive also contains `YouKnow-1.1.0-build.<number>-macOS-universal.zip` for optional
 manual installation; the `.pkg` is the recommended customer download.
+
+Each build has its own version, such as `1.1.0-build.34393416911.1`.
+For CI downloads, `<number>` is the GitHub run ID followed by its attempt
+number; rerunning a build increases the attempt. All platforms from the same
+run and attempt share this number. The instrument shows it in its About box.
 
 These are **development builds**. A manually dispatched build can come from
 a feature branch; check the run's branch and source commit before distributing.
@@ -1316,6 +1323,13 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
+
+Local builds default to `1.1.0-build.1`. To identify a local build, pass
+`-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
+CMake. CI automatically uses `GITHUB_RUN_ID.GITHUB_RUN_ATTEMPT`; the configured
+number is saved in the build directory. The release version stays `1.1.0`,
+and release tags remain `youknow-v1.1.0`. Archive names and the About box include
+the build number; macOS bundle and installer build metadata carry it too.
 
 To export the editor at default, minimum and maximum sizes, plus an edited
 patch with contextual help:
