@@ -876,18 +876,15 @@ constexpr std::size_t hotRenderTailHostFrames = 256u;
 constexpr std::size_t hotHostFrames =
     hotMeasurementEndHostFrame + hotRenderTailHostFrames;
 constexpr double qualificationGoldenToleranceDb = 0.05;
-// The moving RK64/RK128 comparison reaches the platform's floating-point
-// floor. Apple Silicon and x86_64 long-double evaluation differ by up to
-// 0.103 dB near -158 dB while remaining almost 78 dB below the unchanged
-// -80 dB convergence gate. Keep the signal and mutation fingerprints at
-// 0.05 dB, but give this non-admission convergence fingerprint an explicit,
-// narrowly bounded cross-architecture allowance.
-constexpr double movingConvergenceGoldenToleranceDb = 0.15;
+// Keep the established convergence fingerprint budget unless a row has a
+// measured cross-platform exception documented beside its golden below.
+constexpr double defaultMovingConvergenceGoldenToleranceDb = 0.15;
 
 struct MovingGolden
 {
     double relativeRmsDb;
     double convergenceDb;
+    double convergenceToleranceDb { defaultMovingConvergenceGoldenToleranceDb };
 };
 
 constexpr std::array<MovingGolden, lowerRateMovingCells.size()>
@@ -898,7 +895,13 @@ constexpr std::array<MovingGolden, lowerRateMovingCells.size()>
         { -54.791, -111.616 },
         { -84.511, -144.817 },
         { -87.099, -145.029 },
-        { -98.221, -155.728 },
+        // The tiny RK64/RK128 residual is sensitive to floating-point
+        // evaluation: at 88.2 kHz it is -155.728 dB on Apple Silicon and
+        // -155.883 dB on Windows/Linux x86_64, a 0.155 dB spread over 75 dB
+        // below the unchanged -80 dB admission gate. Only this row needs
+        // 0.20 dB (less than 2.4% in residual amplitude); all other rows keep
+        // 0.15 dB and signal/mutation fingerprints stay at 0.05 dB.
+        { -98.221, -155.728, 0.20 },
         { -99.950, -158.072 },
     }};
 
@@ -2914,6 +2917,27 @@ bool matchesQualificationGolden(
                <= toleranceDb;
 }
 
+// Report every mismatched fingerprint after the audit, including ones the
+// aggregate pass/fail expressions may have skipped after an earlier failure.
+// A convergence fingerprint must be distinguishable from an admission failure.
+void printQualificationGoldenMismatch(
+    std::string_view metric, double sampleRateHz, double actual,
+    double expected, double tolerance = qualificationGoldenToleranceDb,
+    std::string_view unit = "dB")
+{
+    const double delta = std::abs(actual - expected);
+    if (std::isfinite(actual) && delta <= tolerance)
+        return;
+    std::cout << "    golden FAIL metric=" << metric
+              << " rate=" << std::setprecision(1) << sampleRateHz << " Hz"
+              << std::setprecision(6)
+              << " actual=" << actual << ' ' << unit
+              << " expected=" << expected << ' ' << unit
+              << " delta=" << delta << ' ' << unit
+              << " tolerance=" << tolerance << ' ' << unit << '\n'
+              << std::setprecision(3);
+}
+
 // Static nominal Character-0 nonlinear control. This deliberately matches the
 // common-host hot-saw fixture, but lives here so HQ-off q1 is admitted against
 // an independent RK64/RK128 answer at all four standard host boundaries.
@@ -3490,7 +3514,7 @@ Audit runAudit(bool diagnoseEightKCell = false)
             && matchesQualificationGolden(
                 audit.lowerRateMoving[index].worstConvergence,
                 lowerRateMovingGoldens[index].convergenceDb,
-                movingConvergenceGoldenToleranceDb);
+                lowerRateMovingGoldens[index].convergenceToleranceDb);
     }
 
     const auto auditLowerRateSnapMutation = [&](bool early) {
@@ -3778,8 +3802,18 @@ void printAudit(const Audit& audit)
               << " snap_goldens="
               << (audit.lowerRateSnapGoldensExact ? "PASS" : "FAIL")
               << " metric_tolerance=" << qualificationGoldenToleranceDb
-              << " dB convergence_tolerance="
-              << movingConvergenceGoldenToleranceDb << " dB\n";
+              << " dB convergence_tolerance_default="
+              << defaultMovingConvergenceGoldenToleranceDb << " dB";
+    for (std::size_t index = 0; index < lowerRateMovingGoldens.size(); ++index)
+    {
+        const double tolerance =
+            lowerRateMovingGoldens[index].convergenceToleranceDb;
+        if (tolerance != defaultMovingConvergenceGoldenToleranceDb)
+            std::cout << " convergence_tolerance_at_" << std::setprecision(0)
+                      << lowerRateMovingCells[index].hostRate << "Hz="
+                      << std::setprecision(3) << tolerance << " dB";
+    }
+    std::cout << '\n';
     for (std::size_t index = 0;
          index < audit.lowerRateMoving.size(); ++index)
     {
@@ -3813,9 +3847,26 @@ void printAudit(const Audit& audit)
                   << " raw_hash=0x" << std::hex
                   << audit.lowerRateFamilyHashes[index] << std::dec
                   << " worst=" << metrics.worstTake << '\n';
+        printQualificationGoldenMismatch(
+            "moving_nrms", metrics.cell.hostRate,
+            ratioDecibels(metrics.worstRelative),
+            lowerRateMovingGoldens[index].relativeRmsDb);
+        printQualificationGoldenMismatch(
+            "moving_convergence", metrics.cell.hostRate,
+            ratioDecibels(metrics.worstConvergence),
+            lowerRateMovingGoldens[index].convergenceDb,
+            lowerRateMovingGoldens[index].convergenceToleranceDb);
     }
     printSnap("q1-8k-late/ceil-snap", audit.lowerRateLateSnap);
     printSnap("q1-8k-early/floor-snap", audit.lowerRateEarlySnap);
+    printQualificationGoldenMismatch(
+        "late_snap_nrms", 8000.0,
+        ratioDecibels(audit.lowerRateLateSnap.worstRelative),
+        lowerRateSnapGoldensDb[0]);
+    printQualificationGoldenMismatch(
+        "early_snap_nrms", 8000.0,
+        ratioDecibels(audit.lowerRateEarlySnap.worstRelative),
+        lowerRateSnapGoldensDb[1]);
 
     std::cout << "HQ-off q1 hot-saw standard-host qualification:\n"
               << "  scope=static nominal Character-0 only (not the 19/24 "
@@ -3859,6 +3910,27 @@ void printAudit(const Audit& audit)
                   << " selector=q" << hot.preparedFactor << '@'
                   << hot.preparedInternalRate
                   << (hot.selectorExact ? " exact" : " mismatch") << '\n';
+        const auto& golden = hotGoldens[index];
+        printQualificationGoldenMismatch(
+            "hot_nrms", hot.hostRate, ratioDecibels(hot.relativeRms),
+            golden.relativeRmsDb);
+        printQualificationGoldenMismatch(
+            "hot_convergence", hot.hostRate, ratioDecibels(hot.convergence),
+            golden.convergenceDb);
+        printQualificationGoldenMismatch(
+            "hot_residual_offmask", hot.hostRate, hot.worstResidualOffMaskDb,
+            golden.residualOffMaskDb);
+        printQualificationGoldenMismatch(
+            "hot_oracle_offmask", hot.hostRate, hot.oracleOffMaskDb,
+            golden.oracleOffMaskDb);
+        printQualificationGoldenMismatch(
+            "hot_residual_bins", hot.hostRate,
+            static_cast<double>(hot.validResidualBins),
+            static_cast<double>(golden.validBins), 0.0, "bins");
+        printQualificationGoldenMismatch(
+            "hot_oracle_bins", hot.hostRate,
+            static_cast<double>(hot.validOracleBins),
+            static_cast<double>(golden.validBins), 0.0, "bins");
     }
     std::cout << "  frozen_truth_table="
               << (audit.lowerRateTruthTableExact ? "PASS" : "FAIL")
