@@ -180,24 +180,401 @@ struct Composition
     std::vector<Part> parts;
 };
 
-// Placeholder score, replaced by the composed piece. Kept only long enough to
-// prove the render path end to end.
+// "Long Shadow": thirty-two bars in D aeolian at 76 bpm, about 101 seconds
+// before the tails.
+//
+// The form is five sections. A prologue of two chords on one pad alone; the
+// floor arriving at bar 5 with the low strings, the bass and the first chime;
+// a dry middle from bar 13 where both chorus-II pads drop out and the plucked
+// parts carry it; a climb from bar 21 into the climax at bar 26; and a
+// resolution from bar 29. Every entrance is staggered so each preset is heard
+// on its own before it becomes texture, and the melody does not play a note
+// until bar 20 of 32.
+//
+// The parts do not share register. Six lanes were assigned before any note was
+// written - bass alone below 60, low strings and cello in the tenor, the inner
+// voice in a close triad above them, the wide pads and brass in the crowded
+// middle, the shimmer pad and chimes at the ceiling - because ten parts summed
+// with no panner separate by pitch and by chorus width or they do not separate
+// at all. The two 16' parts are written in the middle of the keyboard and
+// sound an octave below what is written here.
+//
+// Dynamics come from the arrangement rather than from key velocity, because
+// the hardware ignores velocity and every factory patch stores zero velocity
+// depth. What changes is which presets are sounding, in which register, at
+// what density.
+//
+// Bender positions below are lever positions, not semitones. Every factory
+// patch stores bender sensitivity 0.30 and full deflection at full sensitivity
+// is 11.96484375 semitones, so full lever here is 3.589 semitones and a
+// one-semitone scoop is a lever of 0.279.
 Composition composition()
 {
     Composition piece;
-    piece.title = "Placeholder";
-    piece.key = "C minor";
-    piece.tempo = 96.0;
+    piece.title = "Long Shadow";
+    piece.key = "D minor";
+    piece.tempo = 76.0;
     piece.beatsPerBar = 4.0;
-    piece.tailBeats = 4.0;
+    // Six beats past the last release at 76 bpm: the pad release is 0.39 and
+    // the chime's 0.47, so the final chord needs about five seconds to leave.
+    piece.tailBeats = 6.0;
     piece.parts = {
-        Part { "A11", "brass", 0.80f,
-               { Event { 0.0, 2.0, { 48, 55, 60 } },
-                 Event { 4.0, 2.0, { 46, 53, 58 } } },
-               {}, {} },
-        Part { "A17", "pad", 0.70f,
-               { Event { 0.0, 8.0, { 60, 63, 67 } } },
-               {}, {} },
+        // Principal wide pad - the harmonic bed and the first sound in the piece.
+        // Attack 0.66 with decay 0.35, sustain 0.45 and release 0.39 is a pad
+        // envelope and nothing else: it needs two to three seconds to speak, so
+        // every note here is at least a full bar and most are two. Cutoff 0.62
+        // with key follow 1.00 and zero resonance gives an even, unpeaky tone
+        // across the register lane.
+        Part { "B47", "principal wide pad", 0.55f,
+               {
+                 { 0, 8, { 62, 65, 69, 74 } },
+                 { 8, 8, { 58, 62, 65, 69 } },
+                 { 16, 8, { 62, 65, 69, 72 } },
+                 { 24, 8, { 62, 67, 70, 74 } },
+                 { 32, 8, { 65, 69, 74, 77 } },
+                 { 40, 4, { 65, 69, 72, 77 } },
+                 { 44, 4, { 64, 69, 71, 76 } },
+                 { 64, 4, { 65, 69, 74, 77 } },
+                 { 68, 4, { 65, 69, 72, 77 } },
+                 { 72, 4, { 65, 67, 70, 74 } },
+                 { 76, 4, { 64, 69, 71, 76 } },
+                 { 80, 8, { 65, 69, 72, 76 } },
+                 { 88, 8, { 69, 74, 77, 81 } },
+                 { 96, 4, { 69, 72, 77, 81 } },
+                 { 100, 4, { 67, 72, 76, 79 } },
+                 { 104, 4, { 70, 74, 77 } },
+                 { 108, 4, { 69, 71, 76, 79 } },
+                 { 112, 4, { 62, 65, 69, 74 } },
+                 { 116, 4, { 62, 65, 67, 70 } },
+                 { 120, 8, { 62, 69, 74 } },
+               },
+               {},
+               { { 0, 0.0000f }, { 72, 0.0000f }, { 80, 0.3000f }, { 111, 0.3000f }, { 112, 0.3000f }, { 119, 0.0000f } } },
+
+        // High shimmer pad - the ceiling; two notes at a time, never more than three.
+        // Resonance 0.94 against a cutoff of 0.37 with key follow 1.00 is the
+        // whole reason it is here: the resonant peak tracks the keyboard, so
+        // held high notes get a singing formant on top that no other preset in
+        // the bank produces at this register. Attack 0.72 is the slowest in the
+        // piece, sustain 1.00 and release 0.43, so it fades in and hangs - I
+        // never give it a note shorter than four beats.
+        Part { "B56", "high shimmer pad", 0.30f,
+               {
+                 { 8, 8, { 77, 81 } },
+                 { 16, 8, { 76, 81 } },
+                 { 24, 8, { 77, 82 } },
+                 { 32, 8, { 77, 81, 86 } },
+                 { 40, 4, { 77, 81 } },
+                 { 44, 4, { 76, 79 } },
+                 { 64, 12, { 77, 84 } },
+                 { 76, 4, { 76, 83 } },
+                 { 80, 8, { 81, 86 } },
+                 { 88, 8, { 81, 89 } },
+                 { 96, 8, { 81, 84 } },
+                 { 104, 4, { 79, 86 } },
+                 { 108, 4, { 81, 85 } },
+                 { 112, 8, { 86, 89 } },
+                 { 120, 8, { 86 } },
+               },
+               {},
+               { { 0, 0.0000f }, { 96, 0.0000f }, { 111, 0.2500f }, { 112, 0.0000f } } },
+
+        // Low string bed - the floor under the harmony, root/fifth/octave only.
+        // 16' range, so everything written here sounds an octave lower and the
+        // part occupies G2-D4 while being written comfortably in the middle of
+        // the keyboard. Attack 0.65 and release 0.33 with sustain 0.86 make it
+        // swell rather than start, which is exactly what a floor arriving at bar
+        // 5 should do.
+        Part { "B81", "low string bed", 0.45f,
+               {
+                 { 16, 8, { 62, 69, 74 } },
+                 { 24, 8, { 55, 62, 70 } },
+                 { 32, 8, { 58, 65, 74 } },
+                 { 40, 4, { 57, 65, 72 } },
+                 { 44, 4, { 57, 64, 67 } },
+                 { 48, 4, { 62, 69 } },
+                 { 52, 4, { 60, 65, 69 } },
+                 { 56, 4, { 58, 65, 74 } },
+                 { 60, 4, { 55, 62, 70 } },
+                 { 64, 4, { 58, 65, 74 } },
+                 { 68, 4, { 57, 65, 72 } },
+                 { 72, 4, { 55, 62, 70 } },
+                 { 76, 4, { 57, 64, 67 } },
+                 { 80, 8, { 62, 69, 74 } },
+                 { 88, 8, { 58, 65, 74 } },
+                 { 96, 4, { 53, 60, 65 } },
+                 { 100, 4, { 60, 67, 72 } },
+                 { 104, 4, { 55, 62, 70 } },
+                 { 108, 4, { 57, 64, 67 } },
+                 { 112, 4, { 62, 69, 74 } },
+                 { 116, 4, { 62, 67, 70 } },
+                 { 120, 8, { 62, 69 } },
+               },
+               {},
+               {} },
+
+        // Bass - one plucked note at a time, dead centre.
+        // Key mode is unison, so it is monophonic by construction, and I have
+        // written it monophonically: never two notes, never an overlap. That is
+        // a feature here, not a limit - a cinematic low end should be one line.
+        Part { "A48", "bass", 0.55f,
+               {
+                 { 16, 2, { 50 } },
+                 { 20, 2, { 50 } },
+                 { 24, 2, { 55 } },
+                 { 28, 2, { 55 } },
+                 { 32, 2, { 58 } },
+                 { 36, 2, { 58 } },
+                 { 40, 2, { 57 } },
+                 { 44, 2, { 57 } },
+                 { 46, 2, { 57 } },
+                 { 48, 2, { 50 } },
+                 { 50, 1, { 50 } },
+                 { 52, 2, { 48 } },
+                 { 54, 1, { 48 } },
+                 { 56, 2, { 46 } },
+                 { 58, 1, { 46 } },
+                 { 60, 2, { 55 } },
+                 { 62, 1, { 55 } },
+                 { 64, 2, { 58 } },
+                 { 66, 1, { 58 } },
+                 { 68, 2, { 57 } },
+                 { 70, 1, { 57 } },
+                 { 72, 2, { 55 } },
+                 { 74, 1, { 55 } },
+                 { 76, 2, { 57 } },
+                 { 78, 1, { 57 } },
+                 { 80, 2, { 50 } },
+                 { 82, 1, { 57 } },
+                 { 84, 2, { 50 } },
+                 { 86, 1, { 57 } },
+                 { 88, 2, { 46 } },
+                 { 90, 1, { 53 } },
+                 { 92, 2, { 46 } },
+                 { 94, 1, { 53 } },
+                 { 96, 2, { 53 } },
+                 { 98, 1, { 60 } },
+                 { 100, 2, { 48 } },
+                 { 102, 1, { 55 } },
+                 { 104, 2, { 55 } },
+                 { 106, 1, { 50 } },
+                 { 108, 2, { 57 } },
+                 { 110, 2, { 57 } },
+                 { 112, 2, { 50 } },
+                 { 116, 2, { 50 } },
+                 { 120, 4, { 50 } },
+               },
+               {},
+               {} },
+
+        // Warm inner harmony - the three-note middle voice that does the actual voice leading.
+        // Attack 0.17 is the fastest of the four sustaining parts, which is
+        // precisely what an inner voice needs: it can change chord on beat 3
+        // (bars 12, 20, 28) and be heard doing it, where the 0.66 and 0.72
+        // attack pads cannot. Sustain 1.00 with release 0.28 means it holds flat
+        // and stops cleanly.
+        Part { "B43", "warm inner harmony", 0.40f,
+               {
+                 { 32, 8, { 58, 62, 65 } },
+                 { 40, 4, { 57, 60, 65 } },
+                 { 44, 2, { 57, 62, 67 } },
+                 { 46, 2, { 57, 61, 67 } },
+                 { 48, 4, { 57, 62, 65 } },
+                 { 52, 4, { 57, 60, 65 } },
+                 { 56, 4, { 58, 62, 65 } },
+                 { 60, 4, { 58, 62, 67 } },
+                 { 64, 4, { 58, 62, 65 } },
+                 { 68, 4, { 57, 60, 65 } },
+                 { 72, 4, { 58, 62, 67 } },
+                 { 76, 2, { 57, 62, 67 } },
+                 { 78, 2, { 55, 61, 64 } },
+                 { 80, 8, { 57, 62, 65 } },
+                 { 88, 8, { 58, 62, 65 } },
+                 { 96, 4, { 57, 60, 65 } },
+                 { 100, 4, { 55, 60, 64 } },
+                 { 104, 4, { 55, 58, 62 } },
+                 { 108, 2, { 57, 62, 67 } },
+                 { 110, 2, { 55, 61, 64 } },
+                 { 112, 4, { 57, 62, 65 } },
+                 { 116, 4, { 55, 58, 62 } },
+                 { 120, 8, { 57, 62, 65 } },
+               },
+               {},
+               {} },
+
+        // Counter-melody, single line, dead centre - states the theme before the lead does.
+        // 16' range puts a comfortably-played written line down into C3-E4, the
+        // real cello register, without asking the part to live at the bottom of
+        // the keyboard. Attack 0.38 is a bow, not a hit; decay 0.51 to sustain
+        // 0.71 with release 0.27 is a sustained bowed note that settles
+        // slightly.
+        Part { "B83", "counter-melody, single line,", 0.62f,
+               {
+                 { 32, 2, { 65 } },
+                 { 34, 2, { 69 } },
+                 { 36, 3, { 74 } },
+                 { 39, 1, { 72 } },
+                 { 40, 2, { 69 } },
+                 { 42, 2, { 72 } },
+                 { 44, 2, { 74 } },
+                 { 46, 2, { 73 } },
+                 { 48, 4, { 74 } },
+                 { 64, 4, { 70 } },
+                 { 68, 4, { 69 } },
+                 { 72, 3, { 67 } },
+                 { 75, 1, { 65 } },
+                 { 76, 2, { 64 } },
+                 { 78, 2, { 67 } },
+                 { 96, 4, { 72 } },
+                 { 100, 4, { 76 } },
+                 { 104, 2, { 74 } },
+                 { 106, 2, { 70 } },
+                 { 108, 2, { 69 } },
+                 { 110, 2, { 73 } },
+                 { 112, 4, { 74 } },
+                 { 116, 2, { 70 } },
+                 { 118, 2, { 69 } },
+                 { 120, 6, { 62 } },
+               },
+               { { 32, -0.2786f }, { 32.3167, 0.0000f }, { 112, -0.2786f }, { 112.317, 0.0000f } },
+               { { 36, 0.0000f }, { 39, 0.4000f }, { 40, 0.0000f }, { 112, 0.0000f }, { 115, 0.4500f }, { 118, 0.0000f } } },
+
+        // The only rhythm in the piece - three short notes a bar, arpeggiating the chord upward.
+        // Attack 0.00, decay 0.09, sustain 0.00, release 0.09 is the shortest
+        // envelope of anything I chose - about a tenth of a second of sound per
+        // note, and a measured crest factor of 27.7 dB confirms it is nearly all
+        // transient. That is why it can play in the same octaves as the pads
+        // without adding any sustained energy to them.
+        Part { "A37", "the only rhythm in the piece", 1.00f,
+               {
+                 { 48, 0.5, { 62 } },
+                 { 49.5, 0.5, { 65 } },
+                 { 51, 0.5, { 69 } },
+                 { 52, 0.5, { 60 } },
+                 { 53.5, 0.5, { 65 } },
+                 { 55, 0.5, { 69 } },
+                 { 56, 0.5, { 65 } },
+                 { 57.5, 0.5, { 69 } },
+                 { 59, 0.5, { 70 } },
+                 { 60, 0.5, { 67 } },
+                 { 61.5, 0.5, { 70 } },
+                 { 63, 0.5, { 74 } },
+                 { 64, 0.5, { 70 } },
+                 { 65.5, 0.5, { 74 } },
+                 { 67, 0.5, { 77 } },
+                 { 68, 0.5, { 69 } },
+                 { 69.5, 0.5, { 72 } },
+                 { 71, 0.5, { 77 } },
+                 { 72, 0.5, { 67 } },
+                 { 73.5, 0.5, { 70 } },
+                 { 75, 0.5, { 74 } },
+                 { 76, 0.5, { 69 } },
+                 { 77.5, 0.5, { 71 } },
+                 { 79, 0.5, { 76 } },
+                 { 88, 0.5, { 70 } },
+                 { 89.5, 0.5, { 74 } },
+                 { 91, 0.5, { 77 } },
+                 { 92, 0.5, { 74 } },
+                 { 93.5, 0.5, { 77 } },
+                 { 95, 0.5, { 81 } },
+                 { 96, 0.5, { 72 } },
+                 { 97.5, 0.5, { 77 } },
+                 { 99, 0.5, { 81 } },
+                 { 100, 0.5, { 72 } },
+                 { 101.5, 0.5, { 76 } },
+                 { 103, 0.5, { 79 } },
+                 { 104, 0.5, { 70 } },
+                 { 105.5, 0.5, { 74 } },
+                 { 107, 0.5, { 77 } },
+                 { 108, 0.5, { 69 } },
+                 { 109.5, 0.5, { 71 } },
+                 { 111, 0.5, { 76 } },
+                 { 112, 0.5, { 74 } },
+               },
+               {},
+               {} },
+
+        // Single high pings - punctuation, seventeen notes in the whole piece.
+        // Resonance 1.00 with the oscillator contributing almost nothing (pulse
+        // only, no sub, no PWM) means the sound is essentially the filter
+        // ringing: a near-sine ping. Attack 0.00, decay 0.20, sustain 0.00,
+        // release 0.47 gives a strike with a long ring-out, which is why one
+        // note can occupy a whole bar of silence.
+        Part { "B21", "single high pings", 0.95f,
+               {
+                 { 16, 1, { 69 } },
+                 { 22, 1, { 74 } },
+                 { 24, 1, { 67 } },
+                 { 30, 1, { 70 } },
+                 { 40, 1, { 72 } },
+                 { 46, 1, { 73 } },
+                 { 64, 1, { 77 } },
+                 { 72, 1, { 74 } },
+                 { 80, 1, { 74 } },
+                 { 88, 1, { 77 } },
+                 { 96, 1, { 77 } },
+                 { 100, 1, { 76 } },
+                 { 104, 1, { 74 } },
+                 { 108, 1, { 73 } },
+                 { 112, 1, { 74 } },
+                 { 120, 1, { 69 } },
+                 { 126, 1, { 62 } },
+               },
+               {},
+               {} },
+
+        // Slow brass swells - one chord per bar, alternating bars at the climax so the texture breathes.
+        // Attack 0.46 with decay 0.79 and sustain 0.74 is a swell, not a stab:
+        // about a second to reach full level and then it holds. That makes it
+        // useless for anything fast and perfect for a chord-per-bar sequence,
+        // which is exactly how I have used it.
+        Part { "A34", "slow brass swells", 0.48f,
+               {
+                 { 64, 4, { 65, 70, 74 } },
+                 { 68, 4, { 65, 69, 72 } },
+                 { 72, 4, { 67, 70, 74 } },
+                 { 76, 4, { 64, 69, 73 } },
+                 { 80, 4, { 62, 69, 74 } },
+                 { 88, 4, { 65, 70, 74 } },
+                 { 96, 4, { 65, 69, 72 } },
+                 { 100, 4, { 64, 67, 72 } },
+                 { 104, 4, { 62, 67, 70, 74 } },
+                 { 108, 4, { 64, 69, 73, 79 } },
+                 { 112, 4, { 62, 69, 74 } },
+               },
+               {},
+               { { 0, 0.0000f }, { 100, 0.0000f }, { 111, 0.3000f }, { 112, 0.0000f } } },
+
+        // The melody - single line, centre, enters at bar 20 beat 4 and not one note before.
+        // VCA level 1.00 with patch volume 0.80 makes it the loudest-configured
+        // patch of the ten before trims, which is what a melody arriving over
+        // nine other parts needs. Attack 0.00 with decay 0.52 to sustain 0.38
+        // and a short 0.09 release gives a note that speaks instantly, softens,
+        // and stops cleanly - so a line of two- and three-beat notes articulates
+        // rather than blurs.
+        Part { "A53", "the melody", 0.75f,
+               {
+                 { 79, 1, { 69 } },
+                 { 80, 3, { 74 } },
+                 { 83, 1, { 77 } },
+                 { 84, 2, { 81 } },
+                 { 86, 2, { 79 } },
+                 { 88, 3, { 77 } },
+                 { 91, 1, { 79 } },
+                 { 92, 2, { 81 } },
+                 { 94, 2, { 77 } },
+                 { 96, 2, { 77 } },
+                 { 98, 2, { 81 } },
+                 { 100, 4, { 84 } },
+                 { 104, 2, { 81 } },
+                 { 106, 2, { 79 } },
+                 { 108, 2, { 77 } },
+                 { 110, 2, { 73 } },
+                 { 112, 6, { 74 } },
+                 { 120, 4, { 69 } },
+               },
+               { { 79, -0.5572f }, { 79.228, 0.0000f }, { 112, -0.5572f }, { 112.19, 0.0000f } },
+               { { 84, 0.0000f }, { 87, 0.5000f }, { 88, 0.0000f }, { 100, 0.0000f }, { 103, 0.6000f }, { 104, 0.0000f }, { 112, 0.0000f }, { 115, 0.3500f }, { 118, 0.0000f } } },
     };
     return piece;
 }
