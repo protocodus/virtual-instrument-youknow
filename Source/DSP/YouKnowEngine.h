@@ -1217,6 +1217,13 @@ public:
     // calibrated nominal 12 Vpp ramp.
     [[nodiscard]] static float pwmDutyCycle(float controlVolts,
                                             float rampAmplitudeScale) noexcept;
+    // The same law with the +6 V / 50 % floor placed where a card's own
+    // threshold puts it: updatePulseComparator forms each threshold as the
+    // shared hold plus a per-card offset, so the hold's 6 V ceiling lands at
+    // 6 V + that offset for the card, not at 6 V.
+    [[nodiscard]] static float pwmDutyCycle(float controlVolts,
+                                            float rampAmplitudeScale,
+                                            float holdCeilingVolts) noexcept;
     // The ramp's constant-current rising segment: 0..1 across the rise and
     // -1..+1 out. The reset that follows it is a straight fall back to the
     // negative rail over the remainder of the cycle.

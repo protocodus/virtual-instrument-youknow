@@ -1624,6 +1624,13 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts) noexcept
 float YouKnowEngine::pwmDutyCycle(float controlVolts,
                                      float rampAmplitudeScale) noexcept
 {
+    return pwmDutyCycle(controlVolts, rampAmplitudeScale, 6.0f);
+}
+
+float YouKnowEngine::pwmDutyCycle(float controlVolts,
+                                     float rampAmplitudeScale,
+                                     float holdCeilingVolts) noexcept
+{
     // Pulse Off writes -0.8 V. That sits below the ramp and leaves the
     // comparator permanently high while the oscillator itself keeps running.
     if (std::isfinite(controlVolts) && controlVolts < 0.0f)
@@ -1636,8 +1643,12 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts,
     // B-2 accepts all seven-bit SysEx values. That digital overrange can ask
     // for 0..+0.6 V before finally crossing below zero and pinning the output,
     // so retain the established +6 V / 50% floor but move the lower clamp from
-    // the physical slider stop to the comparator ramp's zero-volt rail.
-    const float volts = std::clamp(sanitised(controlVolts, 6.0f), 0.0f, 6.0f);
+    // the physical slider stop to the comparator ramp's zero-volt rail. The
+    // floor is the shared hold's; a card threshold carrying its own offset
+    // passes the ceiling that offset moves it to.
+    const float ceiling = std::max(sanitised(holdCeilingVolts, 6.0f), 0.0f);
+    const float volts = std::clamp(
+        sanitised(controlVolts, 6.0f), 0.0f, ceiling);
     const float scale = std::clamp(
         sanitised(rampAmplitudeScale, 1.0f), 0.25f, 4.0f);
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
@@ -7656,7 +7667,18 @@ void YouKnowEngine::updatePulseComparator(
     const float threshold = static_cast<float>(pwmVolts_) + thresholdOffset;
     voice.pulseThresholdVolts = sanitised(threshold, 6.0f);
     voice.pulsePinnedHigh = voice.pulseThresholdVolts < 0.0f;
-    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
+    // The event walk crosses this threshold as it stands, so the duty it
+    // reports has to be the one the walk solves. pwmDutyCycle's +6 V / 50 %
+    // floor is the shared hold's; on a card whose offset lifts the threshold
+    // above 6 V (6.12 V at rampCurrentScale 1.02) clamping the sum back to
+    // 6 V reported 0.5098 where the render holds exactly 0.5, and
+    // pulseWaveNodeMean then primed C56/C50 and drove the freewheel mean with
+    // 0.118 V of DC the rendered comparator never carries -- a false C56 step
+    // at note-on and on resume. The floor therefore moves with the offset:
+    // 6 V * rampCurrentScale * (1 - 2 netDuty), which is 6 V again at Unit
+    // Character 0.
+    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale,
+                                   6.0f + thresholdOffset);
 }
 
 void YouKnowEngine::primeStartupVoiceWaveNodes(
