@@ -2653,6 +2653,11 @@ private:
     // The jack board's temperature: the chassis warm-up the cards read,
     // without their spatial gradient, because it is not a voice card. Unit
     // Character scales the rise exactly as dynamicOtaHeadroomVolts does.
+    // Resampled once per converter pass, so the level it drives is a
+    // function of the internal sample grid rather than of the host's block
+    // partition. 25 C until the first pass boundary, which is the data
+    // book's own condition.
+    float jackBoardCelsius_ { 25.0f };
     [[nodiscard]] float jackBoardCelsius(
         const EngineParameters& parameters) const noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;

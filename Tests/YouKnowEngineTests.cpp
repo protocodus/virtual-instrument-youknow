@@ -12260,9 +12260,16 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     const CouplingRun middle = measure(0.50f);
     const CouplingRun narrow = measure(nominalPwmPanelMaximum);
     // Voice 0 is CH1, the card the shared VR31 trims to exactly 50 % at the
-    // trim point, so its residual here is the B-2 pair's own, not a draw.
-    expectNear(open.duty, 0.500498, 1.0e-3,
-               "the coupling fixture's PWM panel 0.00 left its B-2-pair duty");
+    // trim point, so no comparator draw of its own enters here. What is left
+    // is the B-2 DAC pair's residual and this note's ramp amplitude: the
+    // threshold is fixed in volts while the ramp is the pitch's own
+    // code x divider product, so the duty the comparator solves drifts off
+    // the trim point away from the trimmed note, and the reported figure is
+    // that solved duty (testReportedPulseDutyIsTheSolvedDutyAtTheTrimPoint
+    // meters the two against each other). The retired 0.500498 was the old
+    // helper clamping the card's own threshold back to the shared hold's 6 V.
+    expectNear(open.duty, 0.497578, 1.0e-3,
+               "the coupling fixture's PWM panel 0.00 left its solved duty");
     expectNear(narrow.duty, 0.944239, 1.0e-3,
                "the coupling fixture's loaded PWM maximum left its card-specific duty");
     for (const auto& run : { open, middle, narrow })

@@ -5904,6 +5904,7 @@ void YouKnowEngine::reset()
 
     thermalWarmupSeconds_ = 0.0;
     thermalWarmupFraction_ = 0.0f;
+    jackBoardCelsius_ = 25.0f;
     powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
     lfoRising_ = true;
@@ -9033,11 +9034,6 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const double resolvedTarget = static_cast<double>(target);
         return resolvedTarget + (state - resolvedTarget) * decay;
     };
-    // The common VCA's control constant is proportional to absolute
-    // temperature (patchLevelGain). The chassis warms over 900 s, so once per
-    // call is the same number to well under a millidecibel, and the
-    // temperature is folded into the level cache's key below.
-    const float jackBoardTemperature = jackBoardCelsius(parameters);
     bool patchLevelCacheValid = false;
     std::uint64_t patchLevelCacheKey = 0u;
     float patchLevelCacheValue = 0.0f;
@@ -9117,6 +9113,15 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 #endif
                 controlScanPhase_ -= 1.0;
                 nextConverterWrite_ = 0;
+                // The common VCA's control constant is proportional to
+                // absolute temperature (patchLevelGain), and the chassis
+                // warms on a 900 s exponential. Resample it here, with the
+                // pass that writes the VCA's own control byte: reading it
+                // once per callback instead would make the level depend on
+                // how the host partitions its blocks, and reading it every
+                // internal sample would spend a power for a number that
+                // moves by microdecibels across a pass.
+                jackBoardCelsius_ = jackBoardCelsius(parameters);
                 if (assignmentRescanPending_)
                     assignmentRescanPassArmed_ = true;
                 const std::int16_t bendCommand = dcoBendCommand(pitchBendTarget_);
@@ -9671,11 +9676,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             const auto patchLevelKey =
                 (static_cast<std::uint64_t>(
                      std::bit_cast<std::uint32_t>(patchLevelInput)) << 32)
-                | std::bit_cast<std::uint32_t>(jackBoardTemperature);
+                | std::bit_cast<std::uint32_t>(jackBoardCelsius_);
             if (!patchLevelCacheValid || patchLevelCacheKey != patchLevelKey)
             {
                 patchLevelCacheValue =
-                    patchLevelGain(patchLevelInput, jackBoardTemperature);
+                    patchLevelGain(patchLevelInput, jackBoardCelsius_);
                 patchLevelCacheKey = patchLevelKey;
                 patchLevelCacheValid = true;
             }
