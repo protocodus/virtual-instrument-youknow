@@ -12771,6 +12771,7 @@ void testInvertedEnvelopePolarityMirrorsTheCutoffModulation()
            "an Inverted envelope did not darken the sustained note ("
                + std::to_string(dark) + " against " + std::to_string(bright)
                + " high-band energy ratio)");
+}
 
 void testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates()
 {

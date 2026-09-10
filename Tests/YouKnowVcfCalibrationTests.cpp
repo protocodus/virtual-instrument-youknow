@@ -44,7 +44,7 @@ struct YouKnowTestAccess
     static float dacTarget(const YouKnowEngine& engine,
                            const EngineParameters& parameters)
     {
-        return engine.voiceVcfTarget(engine.voices_[0], parameters, 0.0f);
+        return engine.voiceVcfTarget(engine.voices_[0], parameters);
     }
 };
 }
