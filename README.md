@@ -977,6 +977,23 @@ For plug-in notes and modulation outside the physical keybed, the final word
 saturates at 0/65535 rather than reproducing the firmware's unsigned wrap; that
 is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
+- **No hardware reference capture.** Every number in this document is derived
+  from a service-note component value, a firmware address or a datasheet curve.
+  None of it is checked against a recording of a real Juno-106, because the
+  project owns no captures and no recording it could find carries a licence
+  permitting redistribution here. That is the gap behind several of the open
+  questions above, and it is not one more analysis can close.
+  [`Tools/BenchmarkReference.cpp`](Tools/BenchmarkReference.cpp) is the harness
+  waiting for it: the head of that file states what a capture has to be — a
+  citable licence, a known panel, known notes and a declared signal path — and
+  the tool aligns, level-matches and grades the engine against any capture that
+  qualifies, on pitch, harmonic structure, envelope timing, brightness, noise
+  floor and chorus width. Its case table is empty. Its self-test runs anyway, so
+  the measures are known to detect the differences they exist to report rather
+  than reporting an agreement they cannot see. No engine constant may be fitted
+  to a capture that does arrive; the limit that governs listening tests governs
+  this with more force, not less.
+
 ## Detailed release notes
 
 ### Changes in 1.1.0

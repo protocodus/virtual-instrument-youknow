@@ -266,6 +266,13 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderDemos PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderDemos PRIVATE cxx_std_20)
 
+    add_executable(YouKnowBenchmarkReference
+        Tools/BenchmarkReference.cpp
+        Tools/OversamplingQualitySupport.h)
+    target_link_libraries(YouKnowBenchmarkReference PRIVATE YouKnowDSP)
+    target_include_directories(YouKnowBenchmarkReference PRIVATE Tools)
+    target_compile_features(YouKnowBenchmarkReference PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderComposition Tools/RenderComposition.cpp)
     target_link_libraries(YouKnowRenderComposition PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderComposition PRIVATE cxx_std_20)
@@ -474,6 +481,7 @@ if(YOUKNOW_BUILD_TOOLS)
 
     if(MSVC)
         target_compile_options(YouKnowRenderDemos PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowBenchmarkReference PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderTanhAuditions
@@ -506,6 +514,8 @@ if(YOUKNOW_BUILD_TOOLS)
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnowRenderDemos PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowBenchmarkReference PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderComposition PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -630,6 +640,16 @@ if(BUILD_TESTING)
                  COMMAND YouKnowRenderComposition --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/composition-smoke")
         set_tests_properties(YouKnow.RenderComposition PROPERTIES TIMEOUT 120)
+
+        # Proves the hardware-benchmark measures can see the differences they
+        # exist to report: a render must compare equal to itself, and a known
+        # detune, a closed filter, a slowed attack, a known lag and a known
+        # level trim must each be recovered. It runs whether or not any capture
+        # is committed, because a table of small errors from measures that
+        # cannot see anything looks exactly like agreement.
+        add_test(NAME YouKnow.BenchmarkReference
+                 COMMAND YouKnowBenchmarkReference --self-test)
+        set_tests_properties(YouKnow.BenchmarkReference PROPERTIES TIMEOUT 300)
 
         # Fast integration coverage for the long-form factory gain auditor. It
         # uses the same mappings, meters, ownership guard and fixed preview
