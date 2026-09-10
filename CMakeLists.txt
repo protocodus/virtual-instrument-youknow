@@ -649,7 +649,8 @@ if(BUILD_TESTING)
         # cannot see anything looks exactly like agreement.
         add_test(NAME YouKnow.BenchmarkReference
                  COMMAND YouKnowBenchmarkReference --self-test)
-        set_tests_properties(YouKnow.BenchmarkReference PROPERTIES TIMEOUT 300)
+        # Eleven renders at the deepest rung, which is minutes on a slow runner.
+        set_tests_properties(YouKnow.BenchmarkReference PROPERTIES TIMEOUT 900)
 
         # Fast integration coverage for the long-form factory gain auditor. It
         # uses the same mappings, meters, ownership guard and fixed preview

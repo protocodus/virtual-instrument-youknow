@@ -215,14 +215,21 @@ std::optional<Capture> readWav (const std::filesystem::path& path)
     {
         const auto size = readLittleEndian (bytes, cursor + 4, 4);
         const auto body = cursor + 8;
-        if (std::memcmp (bytes.data() + cursor, "fmt ", 4) == 0 && size >= 16)
+        // A declared size is not a present size. These captures come from
+        // someone else's converter and editor, and a truncated file can
+        // declare a chunk it does not carry; reading the declared length would
+        // walk off the end of a capture this tool is supposed to reject.
+        const bool bodyPresent = size <= bytes.size() - std::min (body, bytes.size());
+        if (std::memcmp (bytes.data() + cursor, "fmt ", 4) == 0 && size >= 16
+            && bodyPresent)
         {
             format = static_cast<std::uint16_t> (readLittleEndian (bytes, body, 2));
             channels = static_cast<std::uint16_t> (readLittleEndian (bytes, body + 2, 2));
             rate = static_cast<double> (readLittleEndian (bytes, body + 4, 4));
             bits = static_cast<std::uint16_t> (readLittleEndian (bytes, body + 14, 2));
         }
-        else if (std::memcmp (bytes.data() + cursor, "data", 4) == 0)
+        else if (std::memcmp (bytes.data() + cursor, "data", 4) == 0
+                 && body <= bytes.size())
         {
             dataOffset = body;
             dataBytes = std::min (static_cast<std::size_t> (size), bytes.size() - body);
@@ -406,15 +413,25 @@ std::vector<double> monoOf (const Capture& capture)
 
 // The lag, in frames, at which `candidate` best matches `reference`. Positive
 // means the candidate's content happens later than the reference's.
-std::int64_t bestLag (const std::vector<double>& reference,
-                      const std::vector<double>& candidate, double sampleRate)
+//
+// Returns nothing when the pair is too short to align. A short capture is
+// exactly the kind that carries converter latency and an arbitrary lead-in, so
+// reporting an unmeasured zero would quietly feed a misaligned pair into every
+// spectral and envelope measure below. The search span shrinks to fit what the
+// capture can support rather than being abandoned at the first short file.
+std::optional<std::int64_t> bestLag (const std::vector<double>& reference,
+                                     const std::vector<double>& candidate,
+                                     double sampleRate)
 {
-    const auto search = static_cast<std::int64_t> (
-        std::llround (alignmentSearchSeconds * sampleRate));
     const auto usable = static_cast<std::int64_t> (
         std::min (reference.size(), candidate.size()));
-    if (usable <= 2 * search)
-        return 0;
+    const auto wanted = static_cast<std::int64_t> (
+        std::llround (alignmentSearchSeconds * sampleRate));
+    // A quarter of the pair at each end, so at least half of it always remains
+    // as the window the correlation is actually computed over.
+    const auto search = std::min (wanted, usable / 4);
+    if (search <= 0)
+        return std::nullopt;
 
     const auto window = usable - search;
     std::int64_t best = 0;
@@ -560,20 +577,48 @@ struct Envelope
     double releaseMs = 0.0;  // from key-up down to -40 dB of the peak
 };
 
-// A rectified, one-pole-smoothed amplitude envelope. The smoothing is short
-// enough to keep a 2 ms attack and long enough to ride over the waveform.
+// Root-mean-square over a centred sliding window.
+//
+// A one-pole follower on the rectified signal is not usable here. The lowest
+// note a 16' patch plays has a period around 8 ms, and the two chorus lines
+// beat against each other on top of that, so any follower fast enough to
+// resolve a 2 ms attack also tracks the waveform and reports the next ripple
+// trough as the end of the decay. This window is long enough to ride both and
+// short enough that the envelope segments a Juno-106 produces are still
+// resolved; it is centred so the timings it yields are not biased late.
+constexpr double envelopeWindowSeconds = 0.05;
+
 std::vector<double> amplitudeEnvelope (std::span<const double> samples,
                                        double sampleRate)
 {
-    const auto coefficient = std::exp (-1.0 / (0.002 * sampleRate));
-    std::vector<double> envelope (samples.size());
-    double state = 0.0;
+    const auto half = std::max<std::size_t> (
+        1, static_cast<std::size_t> (std::llround (0.5 * envelopeWindowSeconds * sampleRate)));
+    std::vector<double> envelope (samples.size(), 0.0);
+    if (samples.empty())
+        return envelope;
+
+    // Running sum of squares over the window, so the cost does not grow with it.
+    double sum = 0.0;
+    std::size_t from = 0;
+    std::size_t to = 0; // exclusive
     for (std::size_t index = 0; index < samples.size(); ++index)
     {
-        const auto rectified = std::abs (samples[index]);
-        state = rectified > state ? rectified
-                                  : coefficient * state + (1.0 - coefficient) * rectified;
-        envelope[index] = state;
+        const auto wanted = index + half + 1 < samples.size() ? index + half + 1
+                                                              : samples.size();
+        const auto start = index > half ? index - half : 0u;
+        while (to < wanted)
+        {
+            sum += samples[to] * samples[to];
+            ++to;
+        }
+        while (from < start)
+        {
+            sum -= samples[from] * samples[from];
+            ++from;
+        }
+        const auto count = to - from;
+        envelope[index] = count > 0 ? std::sqrt (std::max (0.0, sum) / static_cast<double> (count))
+                                    : 0.0;
     }
     return envelope;
 }
@@ -612,12 +657,24 @@ Envelope measureEnvelope (std::span<const double> samples, double sampleRate,
     }
     result.sustainDb = toDecibels (plateau / peak);
 
+    // Time from the peak down to 3 dB below it.
+    //
+    // The threshold is fixed against the peak and not against the plateau
+    // above, which is the whole point: a plateau-relative target moves up when
+    // the decay lengthens - because a slower decay has not finished by key-up -
+    // so it is crossed EARLIER and a longer decay measures as a shorter one.
+    // Against the peak the reading is monotone in the decay setting whether or
+    // not the segment completes inside the held note.
+    //
+    // A patch whose sustain sits within 3 dB of its peak has no decay to
+    // measure at all; that reads as the full held length, which is the honest
+    // answer rather than a fitted one.
     std::size_t decayIndex = peakIndex;
-    const auto decayTarget = plateau + 0.1 * (peak - plateau);
+    const auto decayTarget =
+        peak * youknow::oversampling_quality::decibelsToAmplitude (-3.0);
     while (decayIndex < keyUp && envelope[decayIndex] > decayTarget)
         ++decayIndex;
     result.decayMs = 1000.0 * static_cast<double> (decayIndex - peakIndex) / sampleRate;
-
     const auto releaseTarget = 0.01 * peak; // -40 dB
     std::size_t releaseIndex = keyUp;
     while (releaseIndex < envelope.size() && envelope[releaseIndex] > releaseTarget)
@@ -849,6 +906,103 @@ int runSelfTest()
         }
     }
 
+    // Changing the waveform must move the harmonic series. An identity
+    // comparison proves only that equal inputs compare equal; without this the
+    // harmonic measure could be permanently zero and still look like agreement.
+    {
+        auto pulsed = *preset;
+        pulsed.patch.saw = false;
+        pulsed.patch.pulse = true;
+        const auto shifted = renderCase (item, pulsed, rate, 3.0);
+        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        if (std::abs (result.worstHarmonicDb) < 3.0)
+        {
+            std::fprintf (stderr,
+                          "self-test: a saw-to-pulse change moved the worst "
+                          "harmonic only %.2f dB\n", result.worstHarmonicDb);
+            return 1;
+        }
+    }
+
+    // A longer decay must be measured as a longer one, and a lower sustain as
+    // a lower one. They are taken from the same envelope but by different
+    // arithmetic, so neither stands in for the other.
+    {
+        auto slower = *preset;
+        slower.patch.decay = std::min (1.0f, preset->patch.decay + 0.35f);
+        const auto shifted = renderCase (item, slower, rate, 3.0);
+        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        if (result.decayErrorMs < 20.0)
+        {
+            std::fprintf (stderr,
+                          "self-test: a much longer decay measured only "
+                          "%.1f ms longer\n", result.decayErrorMs);
+            return 1;
+        }
+    }
+    {
+        auto quieter = *preset;
+        quieter.patch.sustain = std::max (0.05f, preset->patch.sustain - 0.30f);
+        const auto shifted = renderCase (item, quieter, rate, 3.0);
+        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        if (result.sustainErrorDb > -1.0)
+        {
+            std::fprintf (stderr,
+                          "self-test: a much lower sustain measured only "
+                          "%.2f dB down\n", result.sustainErrorDb);
+            return 1;
+        }
+    }
+
+    // A longer release must be measured as a longer one.
+    {
+        auto longer = *preset;
+        longer.patch.release = std::min (1.0f, preset->patch.release + 0.40f);
+        const auto shifted = renderCase (item, longer, rate, 3.0);
+        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        if (result.releaseErrorMs < 20.0)
+        {
+            std::fprintf (stderr,
+                          "self-test: a much longer release measured only "
+                          "%.1f ms longer\n", result.releaseErrorMs);
+            return 1;
+        }
+    }
+
+    // Raising the chorus hiss must raise the measured floor. The bucket-brigade
+    // noise is downstream of the amplifier, so it is what remains between and
+    // after notes and it is what this measure is pointed at.
+    {
+        auto hissier = *preset;
+        hissier.controls.chorusNoise = 1.0f;
+        const auto shifted = renderCase (item, hissier, rate, 3.0);
+        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        if (result.noiseFloorErrorDb < 3.0)
+        {
+            std::fprintf (stderr,
+                          "self-test: a much louder chorus hiss raised the floor "
+                          "only %.2f dB\n", result.noiseFloorErrorDb);
+            return 1;
+        }
+    }
+
+    // Switching the chorus off must collapse the stereo image. A11 stores
+    // chorus I, so its two lines are clocked in antiphase and its channels
+    // decorrelate; with the effect off they are the same signal.
+    {
+        auto dry = *preset;
+        dry.patch.chorus = youknow::ChorusMode::Off;
+        const auto shifted = renderCase (item, dry, rate, 3.0);
+        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        if (result.correlationError < 0.05)
+        {
+            std::fprintf (stderr,
+                          "self-test: switching the chorus off moved the channel "
+                          "correlation only %.4f\n", result.correlationError);
+            return 1;
+        }
+    }
+
     // A known lag must be recovered by the alignment search.
     {
         const auto lagFrames = static_cast<std::size_t> (std::llround (0.037 * rate));
@@ -856,11 +1010,28 @@ int runSelfTest()
         delayed.left.insert (delayed.left.begin(), lagFrames, 0.0);
         delayed.right.insert (delayed.right.begin(), lagFrames, 0.0);
         const auto found = bestLag (monoOf (baseline), monoOf (delayed), rate);
-        if (std::abs (found - static_cast<std::int64_t> (lagFrames)) > 2)
+        if (! found.has_value()
+            || std::abs (*found - static_cast<std::int64_t> (lagFrames)) > 2)
         {
             std::fprintf (stderr,
-                          "self-test: a %zu-frame lag was found at %lld\n",
-                          lagFrames, static_cast<long long> (found));
+                          "self-test: a %zu-frame lag was found at %s\n",
+                          lagFrames,
+                          found.has_value() ? std::to_string (*found).c_str() : "nothing");
+            return 1;
+        }
+    }
+
+    // A capture too short to align must say so rather than reporting a zero
+    // lag it never measured.
+    {
+        Capture stub;
+        stub.sampleRate = rate;
+        stub.left.assign (3, 0.5);
+        stub.right.assign (3, 0.5);
+        if (bestLag (monoOf (stub), monoOf (stub), rate).has_value())
+        {
+            std::fprintf (stderr,
+                          "self-test: a three-frame pair reported an alignment\n");
             return 1;
         }
     }
@@ -952,9 +1123,16 @@ int main (int argc, char** argv)
 
         const auto lag = bestLag (monoOf (*capture), monoOf (rendered),
                                   capture->sampleRate);
-        if (lag > 0)
+        if (! lag.has_value())
         {
-            const auto drop = static_cast<std::size_t> (lag);
+            std::fprintf (stderr,
+                          "%s: %s is too short to align, so no measurement here "
+                          "would be trustworthy\n", item.id, path.string().c_str());
+            return 1;
+        }
+        if (*lag > 0)
+        {
+            const auto drop = static_cast<std::size_t> (*lag);
             if (drop < rendered.left.size())
             {
                 rendered.left.erase (rendered.left.begin(),
@@ -963,9 +1141,9 @@ int main (int argc, char** argv)
                                       rendered.right.begin() + static_cast<std::ptrdiff_t> (drop));
             }
         }
-        else if (lag < 0)
+        else if (*lag < 0)
         {
-            const auto pad = static_cast<std::size_t> (-lag);
+            const auto pad = static_cast<std::size_t> (-*lag);
             rendered.left.insert (rendered.left.begin(), pad, 0.0);
             rendered.right.insert (rendered.right.begin(), pad, 0.0);
         }
@@ -979,13 +1157,27 @@ int main (int argc, char** argv)
             sample *= trim;
 
         results.push_back (compare (item, *capture, rendered,
-                                    static_cast<double> (lag), toDecibels (trim)));
+                                    static_cast<double> (*lag), toDecibels (trim)));
         const auto& last = results.back();
-        std::printf ("%-16s lag %+7.2f ms  trim %+6.2f dB  corr %+.3f  "
-                     "pitch %+6.2f cents  H%-2d %+6.2f dB  attack %+7.1f ms\n",
-                     last.id.c_str(), last.lagMs, last.levelTrimDb, last.correlation,
-                     last.centsError, last.worstHarmonic, last.worstHarmonicDb,
-                     last.attackErrorMs);
+        // Every measure the protocol names, because a dimension that is
+        // computed and not printed is a dimension this tool does not grade.
+        std::printf ("%s - %s\n", last.id.c_str(), item.what);
+        std::printf ("  alignment   lag %+.2f ms, level trim %+.2f dB, "
+                     "waveform correlation %+.3f\n",
+                     last.lagMs, last.levelTrimDb, last.correlation);
+        std::printf ("  pitch       %+.2f cents\n", last.centsError);
+        std::printf ("  harmonics   worst H%d at %+.2f dB\n",
+                     last.worstHarmonic, last.worstHarmonicDb);
+        std::printf ("  brightness  centroid ratio %.4f (%+.2f dB)\n",
+                     last.centroidRatio,
+                     last.centroidRatio > 0.0 ? 20.0 * std::log10 (last.centroidRatio) : 0.0);
+        std::printf ("  envelope    attack %+.1f ms, decay %+.1f ms, "
+                     "sustain %+.2f dB, release %+.1f ms\n",
+                     last.attackErrorMs, last.decayErrorMs, last.sustainErrorDb,
+                     last.releaseErrorMs);
+        std::printf ("  noise floor %+.2f dB\n", last.noiseFloorErrorDb);
+        std::printf ("  chorus      channel correlation %+.4f\n",
+                     last.correlationError);
     }
 
     std::printf ("Graded %zu capture(s).\n", results.size());
