@@ -672,9 +672,14 @@ Chorus::ModeSettings Chorus::settingsFor(
             return { rateOne + rateTwo, centre, sweep, lineGain };
         case ChorusMode::Off:
         default:
-            // Bypass only mutes the wet return. The oscillator and both BBDs
-            // continue to run behind the mute, so an effect prepared while
-            // off still needs a real clock programme and sweep depth.
+            // Bypass mutes the wet return and the modulator free-runs. The
+            // button line also reaches both MN3101 oscillators through the
+            // D3/R41/R47/C15/R46 branch on the C16 node into Tr23/Tr28
+            // (p. 15), which clamps the clocks about 0.17 s after the return
+            // has muted and releases them about 35 ms after the button comes
+            // on, 78 ms before the return opens -- inaudible either way, so
+            // the lines keep clocking here and an effect prepared while off
+            // still needs a real clock programme and sweep depth.
             return { rateOne, centre, sweep, 0.0f };
     }
 }
@@ -1422,25 +1427,30 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lfoPhase_ -= std::floor(lfoPhase_);
     const float modulation = triangle(lfoPhase_);
 
-    // Delay sweep trajectory. The linear-in-delay law below is the shipped
-    // default, because the one trajectory measurement in existence says so:
-    // a ~50-point click-timing series across the 106's modulation cycle fits
-    // a straight line in delay with 16 us RMS residual and "no exponential
-    // curvature" (recorded in OQ-01; below the anchoring bar, but a direct
-    // measurement standing against an explicit assumption). It also renders
-    // the instrument's fixed-detune character: a linear delay flank is a
-    // constant pitch offset, where a bent flank slides through it.
+    // Delay sweep trajectory. The linear-in-delay law below is the circuit's
+    // own: on p. 15 each MN3101's oscillator is Tr19 (R123 1.8k / R124 8.2k /
+    // R125 10k), a fixed current source charging C53 150 pF through R132
+    // 6.8k, with the TP4 triangle setting the upper threshold through
+    // Tr21/R129/D9 and Tr22 resetting C53 from OX3. A constant charge current
+    // between a fixed lower and an LFO-set upper threshold makes the clock
+    // period affine in the triangle voltage, so the delay (128 periods) is
+    // linear in the LFO and the clock hyperbolic in it. KR-106's ~50-point
+    // click-timing series across the modulation cycle (16 us RMS residual
+    // against a straight line, recorded in OQ-01) corroborates the
+    // derivation. It also renders the instrument's fixed-detune character: a
+    // linear delay flank is a constant pitch offset, where a bent flank
+    // slides through it.
     //
-    // The hyperbolic path behind `enableHyperbolicSweep` keeps the competing
-    // frequency-linear reading of Tr22's voltage-to-current converter -- the
-    // clock linear in the control voltage, hence delay bending -- available
-    // for the calibrated clock time-series OQ-01 still requests. When it
-    // engages it bends about the clock's own endpoints, not the delay's
-    // centre: an earlier centre-relative revision rendered a 38%-too-wide
-    // 2.30-7.40 ms range at Unit Character 1.0 instead of the then-shipped
-    // 1.66-5.35 ms, which OQ-01 records. Bending about the endpoint clocks
-    // keeps both endpoints exact at every blend amount, so the two laws
-    // differ only in the trajectory between them.
+    // The path behind `enableHyperbolicSweep` is a comparison hypothesis that
+    // does not describe this board: a current-modulated oscillator whose
+    // clock is linear in the control voltage, hence a bending delay. It is
+    // kept for A/B renders only. When it engages it bends about the clock's
+    // own endpoints, not the delay's centre: an earlier centre-relative
+    // revision rendered a 38%-too-wide 2.30-7.40 ms range at Unit Character
+    // 1.0 instead of the then-shipped 1.66-5.35 ms, which OQ-01 records.
+    // Bending about the endpoint clocks keeps both endpoints exact at every
+    // blend amount, so the two laws differ only in the trajectory between
+    // them.
     float nominalDelayA = centreDelay_ + sweep_ * modulation;
     float nominalDelayB = centreDelay_ - sweep_ * modulation;
 

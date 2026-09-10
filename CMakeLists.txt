@@ -687,7 +687,16 @@ if(BUILD_TESTING)
     # Address/undefined sanitizers make both substantially slower; retain
     # runaway guards with enough margin for universal macOS builds and loaded
     # CI workers instead of intermittently timing out valid coverage.
-    if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
+    # The sanitizer can arrive through the per-configuration flags, the
+    # linker flags or an explicit option as well as CMAKE_CXX_FLAGS; a build
+    # instrumented any of those ways still has to widen the timeouts and tell
+    # the suites.
+    option(YOUKNOW_SANITIZER_BUILD
+        "Widen test timeouts and tell the suites the build is instrumented" OFF)
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" YOUKNOW_BUILD_TYPE_UPPER)
+    set(YOUKNOW_ALL_CXX_FLAGS
+        "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${YOUKNOW_BUILD_TYPE_UPPER}} ${CMAKE_EXE_LINKER_FLAGS}")
+    if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_ALL_CXX_FLAGS MATCHES "fsanitize")
         set(YOUKNOW_ENGINE_TEST_TIMEOUT 600)
         set(YOUKNOW_CIRCUIT_TEST_TIMEOUT 900)
         # The suites also have to know, because one of them asserts the engine
