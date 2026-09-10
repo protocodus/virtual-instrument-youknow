@@ -1412,6 +1412,15 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         muteDriveMuted_ = commandMute;
     }
     wetGain_ += (wetTarget - wetGain_) * wetMuteGlide_;
+    // The glide is geometric and never reaches zero by itself: below about
+    // 1.4e-42 the product underflows and wetGain_ parks on a denormal, so the
+    // exact-zero test in processBypassedWhenSettled only ever passed under
+    // the plug-in's ScopedNoDenormals. Flush at FLT_MIN, the flush-to-zero
+    // threshold that mode applies, so the JUCE-free tools and tests settle
+    // the same way the plug-in does. Nothing audible moves: a gain below
+    // FLT_MIN is already zero in the mix.
+    if (std::abs(wetGain_) < std::numeric_limits<float>::min())
+        wetGain_ = 0.0f;
     // TR11/TR12 add no modelled distortion or switching artefact of their own.
     // Conducting, a 2SK30A's few hundred ohms sit against IC6's 39 kOhm wet
     // input, so it drops about 1% of the signal and sees some 30 mV across

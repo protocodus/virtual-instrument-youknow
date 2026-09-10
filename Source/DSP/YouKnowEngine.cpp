@@ -1666,6 +1666,13 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts) noexcept
 float YouKnowEngine::pwmDutyCycle(float controlVolts,
                                      float rampAmplitudeScale) noexcept
 {
+    return pwmDutyCycle(controlVolts, rampAmplitudeScale, 6.0f);
+}
+
+float YouKnowEngine::pwmDutyCycle(float controlVolts,
+                                     float rampAmplitudeScale,
+                                     float holdCeilingVolts) noexcept
+{
     // Pulse Off writes -0.8 V. That sits below the ramp and leaves the
     // comparator permanently high while the oscillator itself keeps running.
     if (std::isfinite(controlVolts) && controlVolts < 0.0f)
@@ -1678,8 +1685,12 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts,
     // B-2 accepts all seven-bit SysEx values. That digital overrange can ask
     // for 0..+0.6 V before finally crossing below zero and pinning the output,
     // so retain the established +6 V / 50% floor but move the lower clamp from
-    // the physical slider stop to the comparator ramp's zero-volt rail.
-    const float volts = std::clamp(sanitised(controlVolts, 6.0f), 0.0f, 6.0f);
+    // the physical slider stop to the comparator ramp's zero-volt rail. The
+    // floor is the shared hold's; a card threshold carrying its own offset
+    // passes the ceiling that offset moves it to.
+    const float ceiling = std::max(sanitised(holdCeilingVolts, 6.0f), 0.0f);
+    const float volts = std::clamp(
+        sanitised(controlVolts, 6.0f), 0.0f, ceiling);
     const float scale = std::clamp(
         sanitised(rampAmplitudeScale, 1.0f), 0.25f, 4.0f);
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
@@ -2242,7 +2253,7 @@ float YouKnowEngine::interpolatedCorrectionSample(
 }
 
 // `samplesAgo` is how far back inside the sample just rendered the event sits,
-// in [0, 1). Output sample `j` of the correction ring is `j - halfWidth`
+// in [0, 1]. Output sample `j` of the correction ring is `j - halfWidth`
 // samples away from the sample just rendered, so the residual is read at
 // `j - halfWidth + samplesAgo` and the table is offset by the half width.
 //
@@ -2250,6 +2261,17 @@ float YouKnowEngine::interpolatedCorrectionSample(
 // neighbour. The ideal step is then evaluated exactly at the query time.
 // Keeping the discontinuity out of the interpolated data is essential: even a
 // dense table otherwise blends across the unit jump immediately before t=0.
+//
+// A query time of exactly zero is the naive sample sitting on the event, and
+// which side of the step that sample holds depends on where the event was
+// found. Inside the sample just rendered (samplesAgo < 1) that sample already
+// carries the new level, so the ideal step is subtracted from it. At
+// samplesAgo == 1 -- eventSamplesAgo(0.0), the left-boundary comparator
+// reconciliation and the two control-word sub flips -- the event sits on the
+// previous sample's instant, and that sample was rendered before the event at
+// the old level: subtracting the step there wrote h * (0.5 - 1) into slot
+// halfWidth - 1 instead of h * 0.5, a full-swing one-sample spike on every
+// such edge (-2.0 against -0.002 one 1/64 grid step earlier for a +2 step).
 void YouKnowEngine::addStep(BandlimitedTrack& track, float height,
                                float samplesAgo) const noexcept
 {
@@ -2268,7 +2290,9 @@ void YouKnowEngine::addStep(BandlimitedTrack& track, float height,
         const float response = interpolatedCorrectionSample(table, j, offset);
         const float queryTime = static_cast<float>(j - correctionHalfWidth)
                               + offset;
-        const float residual = response - (queryTime >= 0.0f ? 1.0f : 0.0f);
+        const bool afterEvent = queryTime > 0.0f
+                             || (queryTime == 0.0f && offset < 1.0f);
+        const float residual = response - (afterEvent ? 1.0f : 0.0f);
         track.ring[static_cast<std::size_t>(slot)] += height * residual;
         slot = slot + 1 < correctionRing ? slot + 1 : 0;
     }
@@ -7736,7 +7760,18 @@ void YouKnowEngine::updatePulseComparator(
     const float threshold = static_cast<float>(pwmVolts_) + thresholdOffset;
     voice.pulseThresholdVolts = sanitised(threshold, 6.0f);
     voice.pulsePinnedHigh = voice.pulseThresholdVolts < 0.0f;
-    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
+    // The event walk crosses this threshold as it stands, so the duty it
+    // reports has to be the one the walk solves. pwmDutyCycle's +6 V / 50 %
+    // floor is the shared hold's; on a card whose offset lifts the threshold
+    // above 6 V (6.12 V at rampCurrentScale 1.02) clamping the sum back to
+    // 6 V reported 0.5098 where the render holds exactly 0.5, and
+    // pulseWaveNodeMean then primed C56/C50 and drove the freewheel mean with
+    // 0.118 V of DC the rendered comparator never carries -- a false C56 step
+    // at note-on and on resume. The floor therefore moves with the offset:
+    // 6 V * rampCurrentScale * (1 - 2 netDuty), which is 6 V again at Unit
+    // Character 0.
+    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale,
+                                   6.0f + thresholdOffset);
 }
 
 void YouKnowEngine::primeStartupVoiceWaveNodes(

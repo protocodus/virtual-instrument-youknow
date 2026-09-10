@@ -1569,6 +1569,55 @@ struct YouKnowTestAccess
         };
     }
 
+    // The edge a +2 step at `samplesAgo` renders on a track that has sat at
+    // -1 for a full ring, read through the track's own advance: the first
+    // halfWidth outputs are the delayed pre-event level, the rest the new one.
+    static std::array<float, YouKnowEngine::correctionRing> renderedStepEdge(
+        const YouKnowEngine& engine, float samplesAgo) noexcept
+    {
+        YouKnowEngine::BandlimitedTrack track;
+        for (int sample = 0; sample < YouKnowEngine::correctionRing; ++sample)
+            static_cast<void>(track.advance(-1.0f));
+        engine.addStep(track, 2.0f, samplesAgo);
+        std::array<float, YouKnowEngine::correctionRing> output {};
+        for (auto& sample : output)
+            sample = track.advance(1.0f);
+        return output;
+    }
+
+    static bool freewheeling(const YouKnowEngine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].freewheeling;
+    }
+
+    static int cardIndex(const YouKnowEngine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].cardIndex;
+    }
+
+    static float dcoRenderScale(const YouKnowEngine& engine,
+                                int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.renderScale;
+    }
+
+    // The comparator level the next corrected interval reconciles its stored
+    // pulse state against at its left boundary, from the ramp as it stands.
+    static float comparatorStateFromRamp(const YouKnowEngine& engine,
+                                         int slot) noexcept
+    {
+        const auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        const double totalScale =
+            static_cast<double>(voice.dco.renderScale)
+            * static_cast<double>(voice.rampCurrentScale);
+        const double rampVolts =
+            0.5 * static_cast<double>(YouKnowEngine::rampAmplitudeVolts)
+            * totalScale * (voice.dco.rampValue + 1.0);
+        return voice.pulsePinnedHigh
+                    || rampVolts >= voice.pulseThresholdVolts
+            ? 1.0f : -1.0f;
+    }
+
     static double numericalLatencyCentre(int factor) noexcept
     {
         return YouKnowEngine::totalLatencySamples(factor);
@@ -3056,6 +3105,231 @@ void testStepCorrectionKeepsTheAnalyticEventSide()
            "step correction did not apply the t >= 0 event-side convention");
     expectNear(sides[0] + sides[2], 0.0, 0.02,
                "step correction lost its two-sided event symmetry");
+}
+
+void testStepAtTheIntervalBoundaryIsThePreviousSamplesEdge()
+{
+    // eventSamplesAgo(0.0) is exactly 1.0, and three call sites pass that
+    // literal: the left-boundary comparator reconciliation and the two
+    // control-word sub flips. Output slot halfWidth - 1 is then the naive
+    // sample sitting on the event, rendered before the event at the old
+    // level, so subtracting the ideal step from it wrote h * (0.5 - 1) rather
+    // than h * 0.5: a full-swing spike one sample before the edge, with the
+    // edge itself continuous in samplesAgo everywhere else.
+    YouKnowEngine engine;
+    constexpr int slot = YouKnowTestAccess::correctionHalfWidth() - 1;
+    constexpr float justInside = 1.0f - 1.0f / 1024.0f;
+    const auto inside = YouKnowTestAccess::renderedStepEdge(engine, justInside);
+    const auto boundary = YouKnowTestAccess::renderedStepEdge(engine, 1.0f);
+    expectNear(boundary[slot], inside[slot], 0.05,
+               "the step at samplesAgo 1.0 is discontinuous with 0.999 on the "
+               "sample before the edge: " + std::to_string(boundary[slot])
+                   + " against " + std::to_string(inside[slot]));
+
+    // An event one whole sample ago is the previous sample's samplesAgo 0.0
+    // event: the same edge, one output earlier. Every table read lands on
+    // the same 1/64 grid point, so the two renders agree bit for bit.
+    const auto previous = YouKnowTestAccess::renderedStepEdge(engine, 0.0f);
+    bool shifted = true;
+    for (std::size_t index = 0; index + 1 < previous.size(); ++index)
+        shifted &= boundary[index] == previous[index + 1];
+    expect(shifted,
+           "the samplesAgo 1.0 edge is not the samplesAgo 0.0 edge one sample "
+           "earlier");
+
+    // Whatever the event position, the rendered edge swings no further than
+    // the bandlimited step's own pre-ring, 1.177 one sample either side of
+    // the edge for a -1..+1 step; 1.2 is the fence the -2.0 spike broke.
+    for (const float samplesAgo : { 0.0f, 0.5f, justInside, 1.0f })
+    {
+        const auto edge = YouKnowTestAccess::renderedStepEdge(engine, samplesAgo);
+        float peak = 0.0f;
+        for (const float sample : edge)
+            peak = std::max(peak, std::abs(sample));
+        expect(peak < 1.2f,
+               "a +2 step at samplesAgo " + std::to_string(samplesAgo)
+                   + " swung to " + std::to_string(peak));
+    }
+}
+
+void testReportedPulseDutyIsTheSolvedDutyAtTheTrimPoint()
+{
+    // ADJUSTMENT s. 10 trims CH1 to exactly 50 % with PWM at 5 and accepts
+    // the other cards inside 48-52 % as they stand. updatePulseComparator
+    // forms each card's threshold as the shared 6 V hold plus its own offset
+    // -- above 6 V on a card with a positive ramp-current error, 6.12 V at
+    // rampCurrentScale 1.02 -- and the event walk solves the crossing against
+    // that threshold. pwmDutyCycle's own 6 V ceiling clamped it back and
+    // reported 0.5098 for a card the render holds at 0.5000, which
+    // pulseWaveNodeMean then primed C56/C50 with as 0.118 V of DC the
+    // rendered comparator never carries. Meter every card's rendered duty at
+    // the trim point against the duty it reports.
+    constexpr double sampleRate = 192000.0;
+    YouKnowEngine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.calibration = 1.0f;
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Manual;
+    parameters.pwmDepth = 0.0f; // +6 V, the 50 % trim point
+    engine.setParameters(parameters);
+    constexpr std::array notes { 48, 50, 52, 53, 55, 57 };
+    for (const int note : notes)
+        engine.noteOn(note, 1.0f);
+    renderExact(engine, static_cast<int>(sampleRate * 0.1));
+    expectNear(YouKnowTestAccess::pwmHeld(engine), 6.0, 1.0e-6,
+               "the PWM trim point did not hold the shared +6 V");
+
+    // Count each comparator's high samples between its first and last rising
+    // edge: 30-odd cycles at note 48, so the sample grid's edge quantisation
+    // averages well below the 1e-3 the reported duty has to meet.
+    struct Meter
+    {
+        int firstRise { -1 };
+        int lastRise { -1 };
+        int high { 0 };
+        int highAtLastRise { 0 };
+        float previous { 0.0f };
+    };
+    std::array<Meter, notes.size()> meters {};
+    const int samples = static_cast<int>(sampleRate * 0.25);
+    for (int sample = 0; sample < samples; ++sample)
+    {
+        for (std::size_t slot = 0; slot < meters.size(); ++slot)
+        {
+            auto& meter = meters[slot];
+            const float state = YouKnowTestAccess::pulseLogicState(
+                engine, static_cast<int>(slot));
+            if (state > 0.0f && meter.previous < 0.0f)
+            {
+                if (meter.firstRise < 0)
+                    meter.firstRise = sample;
+                else
+                {
+                    meter.lastRise = sample;
+                    meter.highAtLastRise = meter.high;
+                }
+            }
+            if (meter.firstRise >= 0 && state > 0.0f)
+                ++meter.high;
+            meter.previous = state;
+        }
+        renderExact(engine, 1);
+    }
+
+    int liftedCards = 0;
+    for (std::size_t slot = 0; slot < meters.size(); ++slot)
+    {
+        const auto& meter = meters[slot];
+        const int index = static_cast<int>(slot);
+        expect(YouKnowTestAccess::cardIndex(engine, index) == index
+                   && meter.lastRise > meter.firstRise,
+               "card " + std::to_string(slot) + " did not render its pulse");
+        const double measured = static_cast<double>(meter.highAtLastRise)
+                              / (meter.lastRise - meter.firstRise);
+        const float reported = YouKnowTestAccess::pulseDuty(engine, index);
+        const float threshold =
+            YouKnowTestAccess::pulseThresholdVolts(engine, index);
+        expectNear(reported, measured, 1.0e-3,
+                   "card " + std::to_string(slot) + " reports duty "
+                       + std::to_string(reported) + " at a "
+                       + std::to_string(threshold) + " V threshold but "
+                       + "renders " + std::to_string(measured));
+        // The 6 V-ceiling law is what the report used to be. On a card whose
+        // threshold sits above 6 V it misses the render by exactly the lift's
+        // share of the ramp, (threshold - 6 V) / (12 V * scale): 0.0029 on
+        // card 0's 6.035 V and 0.0168 on card 5's 6.204 V with the default
+        // unit.
+        if (threshold > 6.0f)
+        {
+            ++liftedCards;
+            const float scale =
+                YouKnowTestAccess::dcoRenderScale(engine, index)
+                * YouKnowTestAccess::rampCurrentScale(engine, index);
+            const float clamped = YouKnowEngine::pwmDutyCycle(threshold, scale);
+            expectNear(clamped - measured, (threshold - 6.0f) / (12.0f * scale),
+                       1.0e-3,
+                       "card " + std::to_string(slot)
+                           + " no longer exposes the 6 V hold ceiling");
+        }
+    }
+    expect(liftedCards > 0,
+           "no card's threshold sits above the 6 V hold at Unit Character 1");
+}
+
+void testFreewheelRetriggerReconcilesThePulseWithoutASpike()
+{
+    // Under the fast tanh modes a retired card freewheels without
+    // corrections, so its stored comparator level goes stale while the ramp
+    // keeps crossing the threshold, and with the Pulse Off WAVE-node coupling
+    // switched off nothing tracks it either. The retrigger's first corrected
+    // interval reconciles that level at its left boundary with samplesAgo
+    // 1.0, which used to put a full-swing sample into the WAVE-node pulse
+    // track 23 samples into the attack.
+    constexpr double sampleRate = 48000.0;
+    YouKnowEngine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Manual;
+    parameters.pwmDepth = 0.0f;
+    parameters.vcfTanhMode = VcfTanhMode::PolyZoned;
+    parameters.vcfSolverMode = VcfSolverMode::Rk4Single;
+    parameters.enablePulseOffWaveNodeCoupling = false;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    renderExact(engine, static_cast<int>(sampleRate * 0.2));
+    engine.noteOff(60);
+    int waited = 0;
+    while (!YouKnowTestAccess::freewheeling(engine, 0)
+           && waited < static_cast<int>(sampleRate))
+    {
+        renderExact(engine, 1);
+        ++waited;
+    }
+    expect(YouKnowTestAccess::freewheeling(engine, 0),
+           "the released card did not freewheel under the fast tanh mode");
+
+    // Retrigger only once the stored level disagrees with the ramp, so the
+    // reconciliation has an edge to place. The ramp crosses the 50 % threshold
+    // every half period, 92 samples here.
+    waited = 0;
+    while (YouKnowTestAccess::comparatorStateFromRamp(engine, 0)
+               == YouKnowTestAccess::pulseLogicState(engine, 0)
+           && waited < 1024)
+    {
+        renderExact(engine, 1);
+        ++waited;
+    }
+    expect(YouKnowTestAccess::comparatorStateFromRamp(engine, 0)
+               != YouKnowTestAccess::pulseLogicState(engine, 0),
+           "the freewheel never left the stored comparator level stale");
+
+    engine.noteOn(60, 1.0f);
+    expect(!YouKnowTestAccess::freewheeling(engine, 0)
+               && YouKnowTestAccess::lastVoiceMidi(engine, 0) == 60,
+           "the retrigger did not resume the freewheeling card");
+    float peak = 0.0f;
+    int peakSample = -1;
+    for (int sample = 0; sample < 2 * YouKnowTestAccess::correctionHalfWidth();
+         ++sample)
+    {
+        const float next = std::abs(
+            YouKnowTestAccess::nextPulseTrackSample(engine, 0, 0.0f));
+        if (next > peak)
+        {
+            peak = next;
+            peakSample = sample;
+        }
+        renderExact(engine, 1);
+    }
+    expect(peak < 1.2f,
+           "the retrigger's WAVE-node pulse track swung to "
+               + std::to_string(peak) + " at sample "
+               + std::to_string(peakSample) + " of the attack");
 }
 
 void testRampHasARampSpectrum()
@@ -15286,6 +15560,9 @@ int main()
     testWideDownwardRetargetStaysOnRampRails();
     testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();
     testComparatorEndpointPinsAndTransitionTiming();
+    testStepAtTheIntervalBoundaryIsThePreviousSamplesEdge();
+    testFreewheelRetriggerReconcilesThePulseWithoutASpike();
+    testReportedPulseDutyIsTheSolvedDutyAtTheTrimPoint();
     testPitEventBudgetCoversWorstCaseInterval();
     testPitStateMatchesFastFreewheel();
     testRescanGateOffReachesTheVoiceCpu();

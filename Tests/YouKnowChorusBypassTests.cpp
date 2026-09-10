@@ -1,21 +1,16 @@
 #include "../Source/DSP/YouKnowChorus.h"
 
 #include <array>
-#include <cmath>
 #include <cstdlib>
 #include <iostream>
-#include <limits>
 
 namespace youknow
 {
 struct YouKnowTestAccess
 {
-    static void flushWetMuteDenormal(Chorus& chorus)
+    static float wetGain(const Chorus& chorus) noexcept
     {
-        // The plug-in uses JUCE ScopedNoDenormals. Reproduce its wet-gain
-        // flush portably without architecture-specific control-register code.
-        if (std::abs(chorus.wetGain_) < std::numeric_limits<float>::min())
-            chorus.wetGain_ = 0.0f;
+        return chorus.wetGain_;
     }
 };
 }
@@ -67,7 +62,6 @@ void checkControlContinuity(float rate, bool enableMuteDrive)
                 chorus.process(0.0f, interval.mode, 0.0f, left, right,
                                false, false, 1.0f, false, true,
                                enableMuteDrive, false);
-                youknow::YouKnowTestAccess::flushWetMuteDenormal(chorus);
             };
             fullStep(exact, exactLeft, exactRight);
             if (interval.mode == ChorusMode::Off
@@ -106,11 +100,60 @@ void checkControlContinuity(float rate, bool enableMuteDrive)
               << skippedSamples << " skipped samples; " << reopened
               << " matching openings\n";
 }
+
+// The settled skip asks for an exact zero, and the 5 ms glide only decays
+// geometrically towards it. Without the flush at FLT_MIN the gain parks on a
+// denormal a little below 1.4e-42 and the skip never engages in any build
+// that lacks the plug-in's ScopedNoDenormals -- every JUCE-free tool and this
+// test included. Nothing here reproduces that flush: the engine has to settle
+// on its own.
+void checkSettledSkipEngagesWithoutFlushToZero(float rate, bool enableMuteDrive)
+{
+    Chorus chorus;
+    chorus.prepare(rate);
+    const auto run = [&](ChorusMode mode, double seconds) {
+        const int frames = static_cast<int>(seconds * rate);
+        for (int frame = 0; frame < frames; ++frame)
+        {
+            float left {}, right {};
+            chorus.process(0.0f, mode, 0.0f, left, right,
+                           false, false, 1.0f, false, true,
+                           enableMuteDrive, false);
+        }
+    };
+    run(ChorusMode::One, 0.02);
+    float left {}, right {};
+    if (chorus.processBypassedWhenSettled(0.0f, left, right))
+    {
+        std::cerr << "Settled skip engaged while the wet path was open at "
+                  << rate << " Hz\n";
+        std::exit(1);
+    }
+
+    // From unity the glide passes FLT_MIN after ln(1 / FLT_MIN) = 87.3 time
+    // constants, 437 ms; the denormal park would follow at 482 ms. One
+    // second of Off is well past both, for either mute-drive policy.
+    run(ChorusMode::Off, 1.0);
+    const float gain = youknow::YouKnowTestAccess::wetGain(chorus);
+    if (gain != 0.0f
+        || !chorus.processBypassedWhenSettled(0.0f, left, right))
+    {
+        std::cerr << "Settled skip did not engage after 1 s of Off at "
+                  << rate << " Hz, mute drive " << enableMuteDrive
+                  << ": wet gain " << gain << "\n";
+        std::exit(1);
+    }
+    std::cout << rate << " Hz, mute drive " << enableMuteDrive
+              << ": settled skip engaged with wet gain exactly zero\n";
+}
 } // namespace
 
 int main()
 {
     for (const float rate : { 48000.0f, 192000.0f })
         for (const bool enabled : { false, true })
+        {
+            checkSettledSkipEngagesWithoutFlushToZero(rate, enabled);
             checkControlContinuity(rate, enabled);
+        }
 }
