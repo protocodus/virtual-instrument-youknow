@@ -411,37 +411,99 @@ std::vector<double> monoOf (const Capture& capture)
     return mono;
 }
 
+// Root-mean-square over a centred sliding window.
+//
+// A one-pole follower on the rectified signal is not usable here. The lowest
+// note a 16' patch plays has a period around 8 ms, and the two chorus lines
+// beat against each other on top of that, so any follower fast enough to
+// resolve a 2 ms attack also tracks the waveform and reports the next ripple
+// trough as the end of the decay. This window is long enough to ride both and
+// short enough that the envelope segments a Juno-106 produces are still
+// resolved; it is centred so the timings it yields are not biased late.
+constexpr double envelopeWindowSeconds = 0.05;
+
+std::vector<double> amplitudeEnvelope (std::span<const double> samples,
+                                       double sampleRate)
+{
+    const auto half = std::max<std::size_t> (
+        1, static_cast<std::size_t> (std::llround (0.5 * envelopeWindowSeconds * sampleRate)));
+    std::vector<double> envelope (samples.size(), 0.0);
+    if (samples.empty())
+        return envelope;
+
+    // Running sum of squares over the window, so the cost does not grow with it.
+    double sum = 0.0;
+    std::size_t from = 0;
+    std::size_t to = 0; // exclusive
+    for (std::size_t index = 0; index < samples.size(); ++index)
+    {
+        const auto wanted = index + half + 1 < samples.size() ? index + half + 1
+                                                              : samples.size();
+        const auto start = index > half ? index - half : 0u;
+        while (to < wanted)
+        {
+            sum += samples[to] * samples[to];
+            ++to;
+        }
+        while (from < start)
+        {
+            sum -= samples[from] * samples[from];
+            ++from;
+        }
+        const auto count = to - from;
+        envelope[index] = count > 0 ? std::sqrt (std::max (0.0, sum) / static_cast<double> (count))
+                                    : 0.0;
+    }
+    return envelope;
+}
+
 // The lag, in frames, at which `candidate` best matches `reference`. Positive
 // means the candidate's content happens later than the reference's.
+//
+// Two stages, because neither alone is right for this material.
+//
+// A held note is very nearly periodic, so its sample correlation has almost
+// equal maxima one period apart across the whole search: matching cycles is
+// not the same as matching notes, and the winner can sit a whole number of
+// periods away from the truth. The coarse stage therefore correlates the
+// AMPLITUDE ENVELOPES, where the attack is a unique feature and there is no
+// period to be confused by, on a decimated grid. The fine stage then refines
+// that answer with sample correlation over a window narrower than one period
+// of the lowest note this instrument produces, so it can sharpen the coarse
+// answer without being able to jump a cycle.
+//
+// The decimation is also what makes this affordable. Correlating every lag
+// against every sample is quadratic in the capture length; at 44.1 kHz an
+// exhaustive one-second search over a ten-second capture is on the order of
+// 10^10 multiply-adds before any measurement begins.
 //
 // Returns nothing when the pair is too short to align. A short capture is
 // exactly the kind that carries converter latency and an arbitrary lead-in, so
 // reporting an unmeasured zero would quietly feed a misaligned pair into every
 // spectral and envelope measure below. The search span shrinks to fit what the
 // capture can support rather than being abandoned at the first short file.
-std::optional<std::int64_t> bestLag (const std::vector<double>& reference,
-                                     const std::vector<double>& candidate,
-                                     double sampleRate)
+constexpr std::int64_t coarseDecimation = 32;
+// C0 is 16.35 Hz, so the longest period a 16' patch on the lowest key produces
+// is about 61 ms. The fine search stays inside half of that and cannot cross
+// into a neighbouring cycle.
+constexpr double fineSearchSeconds = 0.03;
+
+// Best lag by plain normalised cross-correlation of two series, searched over
+// [-search, +search] and evaluated on the overlap.
+std::int64_t correlateForLag (const std::vector<double>& reference,
+                              const std::vector<double>& candidate,
+                              std::int64_t search, std::int64_t centre)
 {
     const auto usable = static_cast<std::int64_t> (
         std::min (reference.size(), candidate.size()));
-    const auto wanted = static_cast<std::int64_t> (
-        std::llround (alignmentSearchSeconds * sampleRate));
-    // A quarter of the pair at each end, so at least half of it always remains
-    // as the window the correlation is actually computed over.
-    const auto search = std::min (wanted, usable / 4);
-    if (search <= 0)
-        return std::nullopt;
-
-    const auto window = usable - search;
-    std::int64_t best = 0;
+    std::int64_t best = centre;
     double bestScore = -2.0;
-    for (std::int64_t lag = -search; lag <= search; ++lag)
+    for (std::int64_t lag = centre - search; lag <= centre + search; ++lag)
     {
         double dot = 0.0;
         double referenceEnergy = 0.0;
         double candidateEnergy = 0.0;
-        for (std::int64_t index = search; index < window; ++index)
+        for (std::int64_t index = 0; index < usable; ++index)
         {
             const auto candidateIndex = index + lag;
             if (candidateIndex < 0 || candidateIndex >= usable)
@@ -463,6 +525,56 @@ std::optional<std::int64_t> bestLag (const std::vector<double>& reference,
         }
     }
     return best;
+}
+
+std::optional<std::int64_t> bestLag (const std::vector<double>& reference,
+                                     const std::vector<double>& candidate,
+                                     double sampleRate)
+{
+    const auto usable = static_cast<std::int64_t> (
+        std::min (reference.size(), candidate.size()));
+    const auto wanted = static_cast<std::int64_t> (
+        std::llround (alignmentSearchSeconds * sampleRate));
+    // A quarter of the pair, so at least half of it always remains as the
+    // window the correlation is actually computed over.
+    const auto search = std::min (wanted, usable / 4);
+    if (search <= 0)
+        return std::nullopt;
+
+    // Coarse: the envelopes, decimated. Mean-removed so the correlation
+    // responds to the shape of the attack rather than to the standing level.
+    const auto referenceEnvelope = amplitudeEnvelope (reference, sampleRate);
+    const auto candidateEnvelope = amplitudeEnvelope (candidate, sampleRate);
+    std::vector<double> coarseReference;
+    std::vector<double> coarseCandidate;
+    for (std::int64_t index = 0; index < usable; index += coarseDecimation)
+    {
+        coarseReference.push_back (referenceEnvelope[static_cast<std::size_t> (index)]);
+        coarseCandidate.push_back (candidateEnvelope[static_cast<std::size_t> (index)]);
+    }
+    if (coarseReference.size() < 2)
+        return std::nullopt;
+    const auto removeMean = [] (std::vector<double>& series)
+    {
+        double sum = 0.0;
+        for (const auto value : series)
+            sum += value;
+        const auto mean = sum / static_cast<double> (series.size());
+        for (auto& value : series)
+            value -= mean;
+    };
+    removeMean (coarseReference);
+    removeMean (coarseCandidate);
+
+    const auto coarse = correlateForLag (coarseReference, coarseCandidate,
+                                         search / coarseDecimation, 0)
+                      * coarseDecimation;
+
+    // Fine: samples, bounded to less than half a period of the lowest note.
+    const auto fine = std::max<std::int64_t> (
+        coarseDecimation,
+        static_cast<std::int64_t> (std::llround (fineSearchSeconds * sampleRate)));
+    return correlateForLag (reference, candidate, fine, coarse);
 }
 
 // RMS over the windows within `levelGateDb` of the loudest, so silence between
@@ -569,6 +681,48 @@ Spectrum measureSpectrum (std::span<const double> samples, double sampleRate,
     return spectrum;
 }
 
+// The window belonging to the stroke the case designates for envelope timing:
+// from its attack to the next attack anywhere in the part, so no other note is
+// sounding inside it.
+//
+// Returns nothing when no such isolated window exists - when the designated
+// note is never struck, when another note is already sounding as it begins, or
+// when the next note arrives before this one has been released. In those cases
+// the envelope is a property of two notes and cannot be attributed to either.
+struct IsolatedWindow
+{
+    double fromSeconds;
+    double keyUpSeconds;
+    double toSeconds;
+};
+
+std::optional<IsolatedWindow> isolatedWindowFor (const ReferenceCase& item,
+                                                 double availableSeconds)
+{
+    const auto stroke = std::find_if (item.strokes.begin(), item.strokes.end(),
+                                      [&item] (const Stroke& candidate)
+                                      { return candidate.note == item.analysisNote; });
+    if (stroke == item.strokes.end() || stroke->offSeconds <= stroke->onSeconds)
+        return std::nullopt;
+
+    double nextOnset = availableSeconds;
+    for (const auto& other : item.strokes)
+    {
+        if (&other == &*stroke)
+            continue;
+        // Anything already sounding when this stroke begins contaminates it.
+        if (other.onSeconds <= stroke->onSeconds && other.offSeconds > stroke->onSeconds)
+            return std::nullopt;
+        if (other.onSeconds > stroke->onSeconds)
+            nextOnset = std::min (nextOnset, other.onSeconds);
+    }
+    if (nextOnset <= stroke->offSeconds)
+        return std::nullopt; // the release runs into the next note
+
+    return IsolatedWindow { stroke->onSeconds, stroke->offSeconds,
+                            std::min (nextOnset, availableSeconds) };
+}
+
 struct Envelope
 {
     double attackMs = 0.0;   // to 90 % of the peak
@@ -576,52 +730,6 @@ struct Envelope
     double sustainDb = 0.0;  // the plateau, relative to the peak
     double releaseMs = 0.0;  // from key-up down to -40 dB of the peak
 };
-
-// Root-mean-square over a centred sliding window.
-//
-// A one-pole follower on the rectified signal is not usable here. The lowest
-// note a 16' patch plays has a period around 8 ms, and the two chorus lines
-// beat against each other on top of that, so any follower fast enough to
-// resolve a 2 ms attack also tracks the waveform and reports the next ripple
-// trough as the end of the decay. This window is long enough to ride both and
-// short enough that the envelope segments a Juno-106 produces are still
-// resolved; it is centred so the timings it yields are not biased late.
-constexpr double envelopeWindowSeconds = 0.05;
-
-std::vector<double> amplitudeEnvelope (std::span<const double> samples,
-                                       double sampleRate)
-{
-    const auto half = std::max<std::size_t> (
-        1, static_cast<std::size_t> (std::llround (0.5 * envelopeWindowSeconds * sampleRate)));
-    std::vector<double> envelope (samples.size(), 0.0);
-    if (samples.empty())
-        return envelope;
-
-    // Running sum of squares over the window, so the cost does not grow with it.
-    double sum = 0.0;
-    std::size_t from = 0;
-    std::size_t to = 0; // exclusive
-    for (std::size_t index = 0; index < samples.size(); ++index)
-    {
-        const auto wanted = index + half + 1 < samples.size() ? index + half + 1
-                                                              : samples.size();
-        const auto start = index > half ? index - half : 0u;
-        while (to < wanted)
-        {
-            sum += samples[to] * samples[to];
-            ++to;
-        }
-        while (from < start)
-        {
-            sum -= samples[from] * samples[from];
-            ++from;
-        }
-        const auto count = to - from;
-        envelope[index] = count > 0 ? std::sqrt (std::max (0.0, sum) / static_cast<double> (count))
-                                    : 0.0;
-    }
-    return envelope;
-}
 
 Envelope measureEnvelope (std::span<const double> samples, double sampleRate,
                           double keyUpSeconds)
@@ -698,22 +806,40 @@ double channelCorrelation (const Capture& capture)
     return denominator > 0.0 ? dot / denominator : 1.0;
 }
 
-// The quietest tenth of a second anywhere, which between and after notes is the
-// instrument's own floor rather than any note.
-double noiseFloorDb (const std::vector<double>& samples, double sampleRate)
+// The quietest tenth of a second of RECORDED audio, which between and after
+// notes is the instrument's own floor rather than any note.
+//
+// Digitally silent windows are excluded. The protocol permits an arbitrary
+// lead-in, and an edited capture routinely carries exact zeros there or at its
+// tail; those are the editor's silence, not the instrument's noise, and taking
+// the minimum over them would report the meter floor for every capture that
+// has been topped and tailed. Anything below this threshold cannot be an
+// analogue floor through any real converter.
+constexpr double digitalSilenceDb = -120.0;
+
+std::optional<double> noiseFloorDb (const std::vector<double>& samples,
+                                    double sampleRate)
 {
     const auto window = static_cast<std::size_t> (std::llround (0.1 * sampleRate));
     if (window == 0 || samples.size() < window)
-        return meterFloorDb;
+        return std::nullopt;
+    const auto silence =
+        youknow::oversampling_quality::decibelsToAmplitude (digitalSilenceDb);
+
     double quietest = std::numeric_limits<double>::max();
+    bool found = false;
     for (std::size_t start = 0; start + window <= samples.size(); start += window / 2)
     {
         double sum = 0.0;
         for (std::size_t index = start; index < start + window; ++index)
             sum += samples[index] * samples[index];
-        quietest = std::min (quietest, std::sqrt (sum / static_cast<double> (window)));
+        const auto rms = std::sqrt (sum / static_cast<double> (window));
+        if (rms < silence)
+            continue;
+        quietest = std::min (quietest, rms);
+        found = true;
     }
-    return toDecibels (quietest);
+    return found ? std::optional<double> (toDecibels (quietest)) : std::nullopt;
 }
 
 struct Comparison
@@ -732,11 +858,23 @@ struct Comparison
     double releaseErrorMs = 0.0;
     double noiseFloorErrorDb = 0.0;
     double correlationError = 0.0;
+    // A measure that could not be taken is reported as not taken. A zero here
+    // would read as perfect agreement, which is the one answer never earned.
+    bool spectrumMeasured = false;
+    bool envelopeMeasured = false;
+    bool noiseFloorMeasured = false;
+    bool widthMeasured = false;
 };
 
 // Compares an already-aligned, already-level-matched pair.
-Comparison compare (const ReferenceCase& item, const Capture& reference,
-                    const Capture& rendered, double lagFrames, double trimDb)
+//
+// Returns nothing when the case itself is unmeasurable - an analysis window
+// outside the audio, or a designated note the strokes do not contain. That is
+// a mistyped or truncated case rather than a finding about the engine, and
+// grading it would print a row of zeros that reads as perfect agreement.
+std::optional<Comparison> compare (const ReferenceCase& item, const Capture& reference,
+                                   const Capture& rendered, double lagFrames,
+                                   double trimDb, std::string& why)
 {
     Comparison result;
     result.id = item.id;
@@ -746,6 +884,11 @@ Comparison compare (const ReferenceCase& item, const Capture& reference,
     const auto referenceMono = monoOf (reference);
     const auto renderedMono = monoOf (rendered);
     const auto usable = std::min (referenceMono.size(), renderedMono.size());
+    if (usable == 0)
+    {
+        why = "the aligned pair has no overlap";
+        return std::nullopt;
+    }
 
     double dot = 0.0;
     double a2 = 0.0;
@@ -759,11 +902,25 @@ Comparison compare (const ReferenceCase& item, const Capture& reference,
     const auto denominator = std::sqrt (a2 * b2);
     result.correlation = denominator > 0.0 ? dot / denominator : 0.0;
 
+    // The spectral window has to lie inside both signals, in that order, and
+    // hold something. Falling through with zeros would claim a perfect
+    // 0-cent pitch error for a case whose window is simply mistyped.
+    if (! (item.analysisToSeconds > item.analysisFromSeconds)
+        || item.analysisFromSeconds < 0.0)
+    {
+        why = "the analysis window is empty or starts before the capture";
+        return std::nullopt;
+    }
     const auto from = static_cast<std::size_t> (
         std::llround (item.analysisFromSeconds * reference.sampleRate));
-    const auto to = std::min (usable, static_cast<std::size_t> (
-        std::llround (item.analysisToSeconds * reference.sampleRate)));
-    if (to > from)
+    const auto to = static_cast<std::size_t> (
+        std::llround (item.analysisToSeconds * reference.sampleRate));
+    if (to > usable)
+    {
+        why = "the analysis window ends past the audio the pair has in common";
+        return std::nullopt;
+    }
+
     {
         const std::span<const double> referenceWindow (referenceMono.data() + from, to - from);
         const std::span<const double> renderedWindow (renderedMono.data() + from, to - from);
@@ -789,22 +946,52 @@ Comparison compare (const ReferenceCase& item, const Capture& reference,
         result.centroidRatio = referenceSpectrum.centroidHz > 0.0
                                    ? renderedSpectrum.centroidHz / referenceSpectrum.centroidHz
                                    : 0.0;
+        result.spectrumMeasured = true;
     }
 
-    if (! item.strokes.empty())
+    // The envelope is measured on ONE stroke, in a window where nothing else is
+    // sounding. Measuring the whole recording against the first stroke's key-up
+    // reports a release that runs through every note that follows it, and reads
+    // the wrong note entirely whenever the designated note is not struck first.
+    if (const auto window = isolatedWindowFor (item, static_cast<double> (usable)
+                                                         / reference.sampleRate))
     {
-        const auto keyUp = item.strokes.front().offSeconds;
-        const auto referenceEnvelope = measureEnvelope (referenceMono, reference.sampleRate, keyUp);
-        const auto renderedEnvelope = measureEnvelope (renderedMono, rendered.sampleRate, keyUp);
-        result.attackErrorMs = renderedEnvelope.attackMs - referenceEnvelope.attackMs;
-        result.decayErrorMs = renderedEnvelope.decayMs - referenceEnvelope.decayMs;
-        result.sustainErrorDb = renderedEnvelope.sustainDb - referenceEnvelope.sustainDb;
-        result.releaseErrorMs = renderedEnvelope.releaseMs - referenceEnvelope.releaseMs;
+        const auto first = static_cast<std::size_t> (
+            std::llround (window->fromSeconds * reference.sampleRate));
+        const auto last = std::min (usable, static_cast<std::size_t> (
+            std::llround (window->toSeconds * reference.sampleRate)));
+        if (last > first)
+        {
+            const std::span<const double> referenceWindow (referenceMono.data() + first, last - first);
+            const std::span<const double> renderedWindow (renderedMono.data() + first, last - first);
+            const auto keyUp = window->keyUpSeconds - window->fromSeconds;
+            const auto referenceEnvelope = measureEnvelope (referenceWindow, reference.sampleRate, keyUp);
+            const auto renderedEnvelope = measureEnvelope (renderedWindow, rendered.sampleRate, keyUp);
+            result.attackErrorMs = renderedEnvelope.attackMs - referenceEnvelope.attackMs;
+            result.decayErrorMs = renderedEnvelope.decayMs - referenceEnvelope.decayMs;
+            result.sustainErrorDb = renderedEnvelope.sustainDb - referenceEnvelope.sustainDb;
+            result.releaseErrorMs = renderedEnvelope.releaseMs - referenceEnvelope.releaseMs;
+            result.envelopeMeasured = true;
+        }
     }
 
-    result.noiseFloorErrorDb = noiseFloorDb (renderedMono, rendered.sampleRate)
-                             - noiseFloorDb (referenceMono, reference.sampleRate);
-    result.correlationError = channelCorrelation (rendered) - channelCorrelation (reference);
+    const auto referenceFloor = noiseFloorDb (referenceMono, reference.sampleRate);
+    const auto renderedFloor = noiseFloorDb (renderedMono, rendered.sampleRate);
+    if (referenceFloor.has_value() && renderedFloor.has_value())
+    {
+        result.noiseFloorErrorDb = *renderedFloor - *referenceFloor;
+        result.noiseFloorMeasured = true;
+    }
+
+    // A mono capture carries no width. readWav copies its one channel into
+    // both, so its channel correlation is exactly 1.0 by construction, and
+    // subtracting that from a stereo render would report a chorus error for
+    // every case whose capture simply had one channel.
+    if (reference.stereo)
+    {
+        result.correlationError = channelCorrelation (rendered) - channelCorrelation (reference);
+        result.widthMeasured = true;
+    }
     return result;
 }
 } // namespace
@@ -842,12 +1029,22 @@ int runSelfTest()
 
     // Identity: the same render against itself must report no difference. Any
     // measure that cannot do this is measuring its own noise.
-    const auto identity = compare (item, baseline, baseline, 0.0, 0.0);
+    std::string why;
+    const auto identityResult = compare (item, baseline, baseline, 0.0, 0.0, why);
+    if (! identityResult.has_value())
+    {
+        std::fprintf (stderr, "self-test: the baseline case is unmeasurable (%s)\n",
+                      why.c_str());
+        return 1;
+    }
+    const auto identity = *identityResult;
     if (std::abs (identity.centsError) > 0.01 || std::abs (identity.worstHarmonicDb) > 0.01
         || std::abs (identity.attackErrorMs) > 0.01
         || std::abs (identity.releaseErrorMs) > 0.01
         || std::abs (identity.noiseFloorErrorDb) > 0.01
-        || identity.correlation < 0.999999)
+        || identity.correlation < 0.999999
+        || ! identity.spectrumMeasured || ! identity.envelopeMeasured
+        || ! identity.noiseFloorMeasured || ! identity.widthMeasured)
     {
         std::fprintf (stderr,
                       "self-test: a render does not compare equal to itself "
@@ -865,7 +1062,7 @@ int runSelfTest()
         auto detuned = *preset;
         detuned.controls.masterTune = 25.0f;
         const auto shifted = renderCase (item, detuned, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (std::abs (result.centsError - 25.0) > 3.0)
         {
             std::fprintf (stderr,
@@ -881,7 +1078,7 @@ int runSelfTest()
         auto darker = *preset;
         darker.patch.cutoff = std::max (0.05f, preset->patch.cutoff - 0.15f);
         const auto shifted = renderCase (item, darker, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (! (result.centroidRatio > 0.0 && result.centroidRatio < 0.95))
         {
             std::fprintf (stderr,
@@ -896,7 +1093,7 @@ int runSelfTest()
         auto slower = *preset;
         slower.patch.attack = 0.45f;
         const auto shifted = renderCase (item, slower, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (result.attackErrorMs < 50.0)
         {
             std::fprintf (stderr,
@@ -914,7 +1111,7 @@ int runSelfTest()
         pulsed.patch.saw = false;
         pulsed.patch.pulse = true;
         const auto shifted = renderCase (item, pulsed, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (std::abs (result.worstHarmonicDb) < 3.0)
         {
             std::fprintf (stderr,
@@ -931,7 +1128,7 @@ int runSelfTest()
         auto slower = *preset;
         slower.patch.decay = std::min (1.0f, preset->patch.decay + 0.35f);
         const auto shifted = renderCase (item, slower, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (result.decayErrorMs < 20.0)
         {
             std::fprintf (stderr,
@@ -944,7 +1141,7 @@ int runSelfTest()
         auto quieter = *preset;
         quieter.patch.sustain = std::max (0.05f, preset->patch.sustain - 0.30f);
         const auto shifted = renderCase (item, quieter, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (result.sustainErrorDb > -1.0)
         {
             std::fprintf (stderr,
@@ -959,7 +1156,7 @@ int runSelfTest()
         auto longer = *preset;
         longer.patch.release = std::min (1.0f, preset->patch.release + 0.40f);
         const auto shifted = renderCase (item, longer, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (result.releaseErrorMs < 20.0)
         {
             std::fprintf (stderr,
@@ -976,7 +1173,7 @@ int runSelfTest()
         auto hissier = *preset;
         hissier.controls.chorusNoise = 1.0f;
         const auto shifted = renderCase (item, hissier, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (result.noiseFloorErrorDb < 3.0)
         {
             std::fprintf (stderr,
@@ -993,7 +1190,7 @@ int runSelfTest()
         auto dry = *preset;
         dry.patch.chorus = youknow::ChorusMode::Off;
         const auto shifted = renderCase (item, dry, rate, 3.0);
-        const auto result = compare (item, baseline, shifted, 0.0, 0.0);
+        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
         if (result.correlationError < 0.05)
         {
             std::fprintf (stderr,
@@ -1048,6 +1245,75 @@ int runSelfTest()
         if (std::abs (trim - 6.0206) > 0.05)
         {
             std::fprintf (stderr, "self-test: a 6.02 dB trim measured %.3f dB\n", trim);
+            return 1;
+        }
+    }
+
+    // A mono capture carries no width, and must say so rather than reporting
+    // the difference between a duplicated channel pair and a real one.
+    {
+        auto mono = baseline;
+        mono.stereo = false;
+        for (std::size_t index = 0; index < mono.left.size(); ++index)
+            mono.left[index] = mono.right[index] = 0.5 * (mono.left[index] + mono.right[index]);
+        const auto result = compare (item, mono, baseline, 0.0, 0.0, why);
+        if (! result.has_value() || result->widthMeasured
+            || result->correlationError != 0.0)
+        {
+            std::fprintf (stderr,
+                          "self-test: a mono capture was still scored for width\n");
+            return 1;
+        }
+    }
+
+    // A window outside the audio is a mistyped case, not a perfect score.
+    {
+        auto broken = item;
+        broken.analysisFromSeconds = 10.0;
+        broken.analysisToSeconds = 11.0;
+        if (compare (broken, baseline, baseline, 0.0, 0.0, why).has_value())
+        {
+            std::fprintf (stderr,
+                          "self-test: an analysis window past the end was graded\n");
+            return 1;
+        }
+        broken = item;
+        broken.analysisToSeconds = broken.analysisFromSeconds;
+        if (compare (broken, baseline, baseline, 0.0, 0.0, why).has_value())
+        {
+            std::fprintf (stderr,
+                          "self-test: an empty analysis window was graded\n");
+            return 1;
+        }
+    }
+
+    // Digital silence is the editor's, not the instrument's. A capture topped
+    // and tailed with exact zeros must not report the meter floor.
+    {
+        auto padded = baseline;
+        const auto pad = static_cast<std::size_t> (rate);
+        padded.left.insert (padded.left.begin(), pad, 0.0);
+        padded.right.insert (padded.right.begin(), pad, 0.0);
+        const auto floor = noiseFloorDb (monoOf (padded), rate);
+        if (! floor.has_value() || *floor <= digitalSilenceDb)
+        {
+            std::fprintf (stderr,
+                          "self-test: a second of digital silence was reported as "
+                          "the noise floor (%.1f dB)\n",
+                          floor.has_value() ? *floor : meterFloorDb);
+            return 1;
+        }
+    }
+
+    // An envelope that cannot be attributed to one note must not be timed.
+    {
+        auto crowded = item;
+        crowded.strokes = { Stroke { 60, 0.0, 2.0 }, Stroke { 67, 1.0, 2.5 } };
+        const auto result = compare (crowded, baseline, baseline, 0.0, 0.0, why);
+        if (! result.has_value() || result->envelopeMeasured)
+        {
+            std::fprintf (stderr,
+                          "self-test: an overlapped note was still timed\n");
             return 1;
         }
     }
@@ -1156,8 +1422,15 @@ int main (int argc, char** argv)
         for (auto& sample : rendered.right)
             sample *= trim;
 
-        results.push_back (compare (item, *capture, rendered,
-                                    static_cast<double> (*lag), toDecibels (trim)));
+        std::string why;
+        auto comparison = compare (item, *capture, rendered,
+                                   static_cast<double> (*lag), toDecibels (trim), why);
+        if (! comparison.has_value())
+        {
+            std::fprintf (stderr, "%s: %s, so it cannot be graded\n", item.id, why.c_str());
+            return 1;
+        }
+        results.push_back (*comparison);
         const auto& last = results.back();
         // Every measure the protocol names, because a dimension that is
         // computed and not printed is a dimension this tool does not grade.
@@ -1171,13 +1444,25 @@ int main (int argc, char** argv)
         std::printf ("  brightness  centroid ratio %.4f (%+.2f dB)\n",
                      last.centroidRatio,
                      last.centroidRatio > 0.0 ? 20.0 * std::log10 (last.centroidRatio) : 0.0);
-        std::printf ("  envelope    attack %+.1f ms, decay %+.1f ms, "
-                     "sustain %+.2f dB, release %+.1f ms\n",
-                     last.attackErrorMs, last.decayErrorMs, last.sustainErrorDb,
-                     last.releaseErrorMs);
-        std::printf ("  noise floor %+.2f dB\n", last.noiseFloorErrorDb);
-        std::printf ("  chorus      channel correlation %+.4f\n",
-                     last.correlationError);
+        if (last.envelopeMeasured)
+            std::printf ("  envelope    attack %+.1f ms, decay %+.1f ms, "
+                         "sustain %+.2f dB, release %+.1f ms\n",
+                         last.attackErrorMs, last.decayErrorMs, last.sustainErrorDb,
+                         last.releaseErrorMs);
+        else
+            std::printf ("  envelope    not measured: no stroke of note %d is "
+                         "isolated enough to time\n", item.analysisNote);
+        if (last.noiseFloorMeasured)
+            std::printf ("  noise floor %+.2f dB\n", last.noiseFloorErrorDb);
+        else
+            std::printf ("  noise floor not measured: no window is quiet without "
+                         "being digitally silent\n");
+        if (last.widthMeasured)
+            std::printf ("  chorus      channel correlation %+.4f\n",
+                         last.correlationError);
+        else
+            std::printf ("  chorus      not measured: the capture is mono and "
+                         "carries no width\n");
     }
 
     std::printf ("Graded %zu capture(s).\n", results.size());
