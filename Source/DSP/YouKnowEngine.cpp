@@ -217,11 +217,20 @@ constexpr float commonVcaR31Ohms = 47.0f;
 constexpr float commonVcaR165Ohms = 15000.0f;
 constexpr float commonVcaBiasVolts = 15.0f;
 constexpr float commonVcaC7Farads = 10.0e-6f;
+// NEC 1983 data book p. 257: Vc = -5.9 mV/dB typical (-5.8 to -6.1) at
+// Ta = 25 C over Av = -30 to +30 dB. That is two thermal voltages per decibel,
+// 2 (kT/q) ln(10) / 20 = 5.916 mV/dB at 298.15 K -- the translinear gain-cell
+// law -- and p. 260's "voltage gain vs control constant voltage" graph draws
+// its Ta = -25/25/75 C lines fanning about 0 dB, the -25 C line steepest, so
+// the constant is proportional to absolute temperature: this figure times
+// T / 298.15 K (patchLevelGain).
+// https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262
 constexpr float commonVcaControlVoltsPerDecibel = -5.9e-3f;
 
 // Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1. The fixed
 // internal load is the complete selector ladder in parallel with IC7's input;
-// external jack loads, normaling and driven headphone behavior remain OQ-17.
+// external jack loads and driven headphone behavior remain OQ-17, and the mono
+// normaling is the host bus's fold (PluginProcessor.cpp, monoJackFoldGain).
 constexpr float outputCouplingCapacitanceF = 10.0e-6f;
 constexpr float outputCouplingSeriesOhms = 1500.0f;
 constexpr float outputCouplingPotOhms = 10000.0f;
@@ -230,6 +239,13 @@ constexpr float headphoneInputOhms = 1000.0f + 100000.0f;
 constexpr float outputWiperInternalLoadOhms =
     outputSelectorLadderOhms * headphoneInputOhms
     / (outputSelectorLadderOhms + headphoneInputOhms);
+
+// The jack network after the selector, identically R64/C22 into JA2 and
+// R65/C21 into JA1: 2.2 kOhm in series with each jack and 1 nF (".001x2")
+// from the jack node to ground. With the jack open (OQ-17) the pole's
+// resistance is the series part plus the wiper's own Thevenin resistance.
+constexpr float outputJackSeriesOhms = 2200.0f;
+constexpr float outputJackCapacitanceF = 1.0e-9f;
 
 // The card's own thermal floor at the filter input. This is not the shared
 // audible TP8 noise; it is what the voice card's own resistors do, and it is
@@ -375,6 +391,21 @@ OutputCouplingWiperNetwork outputCouplingWiperNetworkFor(
         : 0.0f;
     const float upperTrack = (1.0f - position) * outputCouplingPotOhms;
     return { loadedLower, outputCouplingSeriesOhms + upperTrack + loadedLower };
+}
+
+// The corner R64/R65 and C22/C21 make with the wiper's own Thevenin
+// resistance: the upper leg (R54/R57 plus the unused track) in parallel with
+// the loaded lower track -- the same two paths outputWiperNoiseResistance()
+// sums, read here off the one already-solved network. Full volume: 1.249 kOhm
+// + 2.2 kOhm against 1 nF is 46.15 kHz; half volume, 2.578 kOhm + 2.2 kOhm,
+// is 33.32 kHz.
+float outputJackCornerHzFor(
+    const OutputCouplingWiperNetwork& network) noexcept
+{
+    const float upperLeg = network.resistance - network.loadedLower;
+    const float wiperOhms =
+        upperLeg * network.loadedLower / network.resistance;
+    return rcCornerHz(outputJackCapacitanceF, outputJackSeriesOhms + wiperOhms);
 }
 
 } // namespace
@@ -1810,11 +1841,23 @@ float YouKnowEngine::commonVcaHoldTimeConstantSeconds() noexcept
 
 float YouKnowEngine::patchLevelGain(float dacFraction) noexcept
 {
-    // NEC's typical control constant is linear in dB. Installed rail, resistor,
-    // capacitor and IC spread remain measurement questions; they are not
-    // replaced here by synthetic random offsets.
-    const float decibels = commonVcaControlVolts(dacFraction)
-                         / commonVcaControlVoltsPerDecibel;
+    return patchLevelGain(dacFraction, 25.0f);
+}
+
+float YouKnowEngine::patchLevelGain(float dacFraction,
+                                    float jackBoardCelsius) noexcept
+{
+    // NEC's typical control constant is linear in dB and, being two thermal
+    // voltages per decibel (commonVcaControlVoltsPerDecibel), proportional to
+    // absolute temperature: a stored level's decibels shrink by 298.15 K / T
+    // as the jack board warms, towards the 0 dB the part gives at Vc = 0,
+    // which no temperature moves. At 25 C the ratio is exactly one and the
+    // law is the data book's. Installed rail, resistor, capacitor and IC
+    // spread remain measurement questions; they are not replaced here by
+    // synthetic random offsets.
+    const float voltsPerDecibel = commonVcaControlVoltsPerDecibel
+        * ((jackBoardCelsius + 273.15f) / 298.15f);
+    const float decibels = commonVcaControlVolts(dacFraction) / voltsPerDecibel;
     return std::pow(10.0f, decibels / 20.0f);
 }
 
@@ -2018,6 +2061,11 @@ float YouKnowEngine::outputCouplingHighGain(float volumePosition) noexcept
     if (!(network.loadedLower > 0.0f))
         return 0.0f;
     return network.loadedLower / network.resistance;
+}
+
+float YouKnowEngine::outputJackCornerHz(float volumePosition) noexcept
+{
+    return outputJackCornerHzFor(outputCouplingWiperNetworkFor(volumePosition));
 }
 
 // ---------------------------------------------------------------------------
@@ -5712,6 +5760,8 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputSlewStateRight_ = 0.0f;
     outputBandwidthStateLeft_ = 0.0f;
     outputBandwidthStateRight_ = 0.0f;
+    outputJackStateLeft_ = 0.0f;
+    outputJackStateRight_ = 0.0f;
     outputNoiseStateLeft_ = 0x91e10da5u;
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
@@ -7906,6 +7956,15 @@ float YouKnowEngine::dynamicOtaHeadroomVolts(
     return 2.0f * dynamicThermalVoltage / stageAttenuation;
 }
 
+float YouKnowEngine::jackBoardCelsius(
+    const EngineParameters& parameters) const noexcept
+{
+    // The 15 C rise the cards read, scaled by Unit Character as above, so
+    // Character 0 holds the part at NEC's 25 C condition for the whole
+    // session; no gradient term, because the jack board is not a card.
+    return 25.0f + 15.0f * parameters.calibration * thermalWarmupFraction_;
+}
+
 void YouKnowEngine::advanceDcoPitAndRamp(
     Voice& voice, DcoRange range, float previousThresholdVolts,
     float thresholdVolts, bool previousPinnedHigh, bool pinnedHigh,
@@ -8945,8 +9004,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const double resolvedTarget = static_cast<double>(target);
         return resolvedTarget + (state - resolvedTarget) * decay;
     };
+    // The common VCA's control constant is proportional to absolute
+    // temperature (patchLevelGain). The chassis warms over 900 s, so once per
+    // call is the same number to well under a millidecibel, and the
+    // temperature is folded into the level cache's key below.
+    const float jackBoardTemperature = jackBoardCelsius(parameters);
     bool patchLevelCacheValid = false;
-    std::uint32_t patchLevelCacheKey = 0u;
+    std::uint64_t patchLevelCacheKey = 0u;
     float patchLevelCacheValue = 0.0f;
     bool outputCouplingCacheValid = false;
     std::uint32_t outputCouplingCacheKey = 0u;
@@ -9576,10 +9640,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 shaped, commonVcaInputCouplingG_, 0.0f, 1.0f);
             const float patchLevelInput = static_cast<float>(sharedVca_);
             const auto patchLevelKey =
-                std::bit_cast<std::uint32_t>(patchLevelInput);
+                (static_cast<std::uint64_t>(
+                     std::bit_cast<std::uint32_t>(patchLevelInput)) << 32)
+                | std::bit_cast<std::uint32_t>(jackBoardTemperature);
             if (!patchLevelCacheValid || patchLevelCacheKey != patchLevelKey)
             {
-                patchLevelCacheValue = patchLevelGain(patchLevelInput);
+                patchLevelCacheValue =
+                    patchLevelGain(patchLevelInput, jackBoardTemperature);
                 patchLevelCacheKey = patchLevelKey;
                 patchLevelCacheValid = true;
             }
@@ -9737,6 +9804,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                    * outputCouplingNetwork.resistance);
             outputCouplingG_ = std::tan(
                 pi * outputCouplingCorner * inverseSampleRate_);
+            // R64/R65 with C22/C21 after the selector, at the host rate. The
+            // matched-Z blend the IC6 pole uses, not a tan() prewarp: the
+            // 46.15 kHz corner lies above Nyquist at 44.1/48 kHz hosts, where
+            // a bilinear map has no frequency to land it on. There the blend
+            // is nearly transparent (about -0.04 dB at 20 kHz) and the
+            // physical -0.75 dB at 20 kHz appears only as the host rate
+            // rises: -0.33 dB at 96 kHz, -0.61 dB at 192 kHz.
+            outputJackBlend_ = 1.0f - std::exp(
+                -twoPi * outputJackCornerHzFor(outputCouplingNetwork)
+                * inverseSampleRate_);
             outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
                 ? outputCouplingNetwork.loadedLower
                     / outputCouplingNetwork.resistance
@@ -9779,6 +9856,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     * parameters.calibration * outputWiperNoiseScale;
         outputRight += bipolarFromState(outputWiperNoiseStateRight_)
                      * parameters.calibration * outputWiperNoiseScale;
+        // C22/C21 with R64/R65: the jack node the plug sees. The coupling and
+        // the wiper's noise both sit behind the 2.2 kOhm, so the pole follows
+        // them. It is the nominal circuit's, so Unit Character does not scale
+        // it; see outputJackBlend_.
+        outputJackStateLeft_ +=
+            outputJackBlend_ * (outputLeft - outputJackStateLeft_);
+        outputJackStateRight_ +=
+            outputJackBlend_ * (outputRight - outputJackStateRight_);
+        outputLeft = outputJackStateLeft_;
+        outputRight = outputJackStateRight_;
 
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.

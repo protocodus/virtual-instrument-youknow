@@ -1469,6 +1469,12 @@ struct YouKnowTestAccess
         return engine.outputCouplingLeft_.state;
     }
 
+    // The R64/R65-C22/C21 blend the last render applied at the host rate.
+    static float outputJackBlend(const YouKnowEngine& engine) noexcept
+    {
+        return engine.outputJackBlend_;
+    }
+
     struct BandlimitedTrackState
     {
         std::array<float, YouKnowEngine::correctionRing> ring {};
@@ -1642,6 +1648,18 @@ struct YouKnowTestAccess
     static float thermalWarmupFraction(const YouKnowEngine& engine) noexcept
     {
         return engine.thermalWarmupFraction_;
+    }
+
+    // Places the chassis at a point on its own warm-up law -- the timer and
+    // the fraction the render reads off it, together -- so a fixture can
+    // compare the cold instrument with the warm one without rendering the
+    // 900 s between them.
+    static void setThermalWarmupSeconds(YouKnowEngine& engine,
+                                        double seconds) noexcept
+    {
+        engine.thermalWarmupSeconds_ = seconds;
+        engine.thermalWarmupFraction_ =
+            1.0f - std::exp(-static_cast<float>(seconds) / 900.0f);
     }
 
     static void startServiceCalibrationVoice(YouKnowEngine& engine,
@@ -12753,7 +12771,202 @@ void testInvertedEnvelopePolarityMirrorsTheCutoffModulation()
            "an Inverted envelope did not darken the sustained note ("
                + std::to_string(dark) + " against " + std::to_string(bright)
                + " high-band energy ratio)");
+
+void testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates()
+{
+    // R64/R65 with C22/C21 follow the coupling and the wiper noise at the
+    // host rate (outputJackCornerHz). Everything ahead of the VOLUME wiper is
+    // the same at two shaft positions -- the pot is passive, and the coupling
+    // corner it also moves (1.5-1.8 Hz) is flat at 1 kHz to 1e-5 dB -- so
+    // between two renders only the pot's gain, a scalar, and this pole's
+    // corner differ. The 20th harmonic of a B5 saw against its fundamental,
+    // one position against the other, is therefore the pole's own transfer
+    // ratio and nothing else, rendered through the shipping path. The
+    // 46.15 kHz and 33.32 kHz corners only tell apart at a high host rate:
+    // at 192 kHz they are 0.57 dB apart at 19.8 kHz, while at 48 kHz both
+    // blends sit within 0.04 dB of transparent, which is the numerical
+    // limitation the engine's comment states.
+    constexpr double hostRate = 192000.0;
+    constexpr int midiNote = 83; // B5, 987.8 Hz; harmonic 20 at 19.76 kHz
+    constexpr int harmonic = 20;
+    const int samples = static_cast<int>(hostRate);
+    const std::size_t analysisFrom = static_cast<std::size_t>(samples / 2);
+
+    struct Rendered
+    {
+        std::vector<float> left;
+        float blend;
+    };
+    const auto renderAt = [&](float volume) {
+        YouKnowEngine engine;
+        engine.prepare(hostRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.volume = volume;
+        engine.setParameters(parameters);
+        engine.noteOn(midiNote, 1.0f);
+        auto rendered = renderExact(engine, samples);
+        return Rendered { std::move(rendered.left),
+                          YouKnowTestAccess::outputJackBlend(engine) };
+    };
+    const auto full = renderAt(1.0f);
+    const auto half = renderAt(0.5f);
+
+    // Hann-windowed magnitude at one frequency over the settled second half.
+    // A fixed-frequency window is linear in the signal, so the ratio between
+    // the two renders does not depend on how exactly the bin sits on the
+    // harmonic; the search below only keeps it inside the main lobe.
+    const auto magnitudeAt = [&](const std::vector<float>& signal,
+                                 double frequency) {
+        const std::size_t count = signal.size() - analysisFrom;
+        std::complex<double> sum { 0.0, 0.0 };
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const double window = 0.5 - 0.5 * std::cos(
+                2.0 * pi * static_cast<double>(index)
+                / static_cast<double>(count));
+            const double phase = -2.0 * pi * frequency
+                               * static_cast<double>(index) / hostRate;
+            sum += window * static_cast<double>(signal[analysisFrom + index])
+                 * std::polar(1.0, phase);
+        }
+        return std::abs(sum);
+    };
+    const auto peakNear = [&](const std::vector<float>& signal, double centre,
+                              double halfSpan, double step) {
+        double best = centre;
+        double bestMagnitude = -1.0;
+        for (double frequency = centre - halfSpan; frequency <= centre + halfSpan;
+             frequency += step)
+        {
+            const double magnitude = magnitudeAt(signal, frequency);
+            if (magnitude > bestMagnitude)
+            {
+                bestMagnitude = magnitude;
+                best = frequency;
+            }
+        }
+        return best;
+    };
+    const double nominal = 440.0 * std::pow(2.0, (midiNote - 69) / 12.0);
+    const double fundamental =
+        peakNear(full.left, nominal, 0.02 * nominal, 0.25);
+    const double top = peakNear(full.left, harmonic * fundamental, 6.0, 0.25);
+    const auto ratioDb = [&](const std::vector<float>& signal) {
+        return 20.0 * std::log10(magnitudeAt(signal, top)
+                                 / magnitudeAt(signal, fundamental));
+    };
+    const double measured = ratioDb(full.left) - ratioDb(half.left);
+
+    // |b / (1 - (1 - b) z^-1)| of the blend at a frequency.
+    const auto blendMagnitudeDb = [](double blend, double frequency,
+                                     double rate) {
+        const double pole = 1.0 - blend;
+        const double omega = 2.0 * pi * frequency / rate;
+        return 10.0 * std::log10(
+            blend * blend / (1.0 - 2.0 * pole * std::cos(omega) + pole * pole));
+    };
+    const auto analyticBlend = [](float volume, double rate) {
+        return 1.0 - std::exp(-2.0 * pi
+                              * YouKnowEngine::outputJackCornerHz(volume)
+                              / rate);
+    };
+    expectNear(full.blend, analyticBlend(1.0f, hostRate), 1.0e-6,
+               "the full-volume jack blend is not 1 - exp(-2 pi fc / fs) at "
+               "a 192 kHz host");
+    expectNear(half.blend, analyticBlend(0.5f, hostRate), 1.0e-6,
+               "the half-volume jack blend is not 1 - exp(-2 pi fc / fs) at "
+               "a 192 kHz host");
+    const double expected =
+        (blendMagnitudeDb(full.blend, top, hostRate)
+         - blendMagnitudeDb(full.blend, fundamental, hostRate))
+        - (blendMagnitudeDb(half.blend, top, hostRate)
+           - blendMagnitudeDb(half.blend, fundamental, hostRate));
+    expect(expected > 0.4,
+           "fixture: the two jack corners are not telling apart at 192 kHz ("
+               + std::to_string(expected) + " dB)");
+    expectNear(measured, expected, 0.05,
+               "the rendered jack pole does not match its blend's analytic "
+               "magnitude at a 192 kHz host");
+    // The absolute figures the README quotes for the same blend.
+    expectNear(blendMagnitudeDb(full.blend, 20000.0, hostRate), -0.61, 0.01,
+               "a 192 kHz host does not roll off 0.61 dB at 20 kHz");
+    expectNear(blendMagnitudeDb(analyticBlend(1.0f, 96000.0), 20000.0, 96000.0),
+               -0.33, 0.01, "a 96 kHz host does not roll off 0.33 dB at 20 kHz");
+    {
+        YouKnowEngine engine;
+        engine.prepare(48000.0, blockSize, true);
+        engine.setParameters(plainPatch());
+        renderExact(engine, blockSize);
+        const double blend = YouKnowTestAccess::outputJackBlend(engine);
+        expectNear(blend, analyticBlend(1.0f, 48000.0), 1.0e-6,
+                   "the jack blend at a 48 kHz host is not the matched-Z "
+                   "blend of its above-Nyquist corner");
+        expectNear(blendMagnitudeDb(blend, 20000.0, 48000.0), -0.04, 0.01,
+                   "a 48 kHz host is not nearly transparent at 20 kHz");
+    }
 }
+
+void testVcaLevelGainWarmsWithTheChassis()
+{
+    // The common VCA's control constant is proportional to absolute
+    // temperature (patchLevelGain), and the jack board follows the chassis
+    // warm-up without the cards' spatial gradient. A quiet stored level
+    // therefore grows towards 0 dB as the instrument warms: stored byte 0,
+    // -16.32 dB at 25 C, reads -15.54 dB at the 40 C asymptote of Unit
+    // Character 1. The drive is a small sub alone, so the cascade the same
+    // warm-up also relaxes (dynamicOtaHeadroomVolts) stays linear to well
+    // under a millidecibel and the render measures the VCA. Unit Character 0
+    // holds the jack board at 25 C, so there the warm render is the cold one
+    // bit for bit.
+    constexpr double sampleRate = 48000.0;
+    const int samples = static_cast<int>(sampleRate);
+    const auto fixture = [](float calibration) {
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.subLevel = 0.1f;
+        parameters.vcaLevel = 0.0f;
+        parameters.calibration = calibration;
+        parameters.enableSpatialThermalGradient = false;
+        return parameters;
+    };
+    const auto renderWarmedTo = [&](float calibration, double warmupSeconds) {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        engine.setParameters(fixture(calibration));
+        YouKnowTestAccess::setThermalWarmupSeconds(engine, warmupSeconds);
+        engine.noteOn(45, 1.0f);
+        return renderExact(engine, samples);
+    };
+    const auto levelDb = [&](const Render& rendered) {
+        const std::size_t from = rendered.left.size() / 2;
+        double energy = 0.0;
+        for (std::size_t index = from; index < rendered.left.size(); ++index)
+            energy += static_cast<double>(rendered.left[index])
+                    * rendered.left[index];
+        return 10.0 * std::log10(
+            energy / static_cast<double>(rendered.left.size() - from));
+    };
+
+    // A million seconds is the asymptote: 1 - exp(-1111) is exactly one.
+    constexpr double asymptote = 1.0e6;
+    const double cold = levelDb(renderWarmedTo(1.0f, 0.0));
+    const double warm = levelDb(renderWarmedTo(1.0f, asymptote));
+    expect(cold > -90.0, "fixture: the quiet sub is not above the noise floor ("
+                             + std::to_string(cold) + " dBFS)");
+    const double expected = 20.0 * std::log10(
+        YouKnowEngine::patchLevelGain(0.0f, 40.0f)
+        / YouKnowEngine::patchLevelGain(0.0f, 25.0f));
+    expectNear(expected, 0.78, 0.01,
+               "fixture: the law does not put +0.78 dB on stored byte 0 at "
+               "40 C");
+    expectNear(warm - cold, expected, 0.02,
+               "a quiet VCA LEVEL does not grow by the warm control constant "
+               "between t = 0 and the warm-up asymptote");
+
+    const auto nominalCold = renderWarmedTo(0.0f, 0.0);
+    const auto nominalWarm = renderWarmedTo(0.0f, asymptote);
+    expect(maximumDifference(nominalCold.left, nominalWarm.left) == 0.0,
+           "Unit Character 0 let the chassis warm-up reach the VCA LEVEL");}
 
 void testEnvelopeAndGateModes()
 {
@@ -15642,6 +15855,8 @@ int main()
     testComponentDriftRateIsIndependentOfOversampling();
     testRailDroopTracksLoadAtOneWallClockRate();
     testThermalWarmupClockRunsToCompletionAtEveryRate();
+    testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates();
+    testVcaLevelGainWarmsWithTheChassis();
     testTransposeReachesSoundingVoices();
     testFirstGlidedNoteStartsAtItsOwnPitch();
     testVoicesRetireWithComponentToleranceApplied();

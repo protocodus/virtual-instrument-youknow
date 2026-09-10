@@ -18,6 +18,22 @@ constexpr int calibrationDefaultSchemaVersion = 1;
 constexpr int originalFactoryBankSchemaVersion = 3;
 constexpr float legacyCalibrationDefault = 0.35f;
 
+// The L/MONO jack. Service Notes p. 15: each output-selector wiper feeds its
+// own jack through 2.2 kOhm -- R64 into JA2, R65 into JA1 -- with 1 nF (C22,
+// C21) from each jack node to ground, and each jack's normally-closed contact
+// returns to the other jack's node. With one plug inserted the unplugged jack
+// therefore ties the two nodes together, and the plugged jack carries the two
+// wipers weighted R65 / (R64 + R65) and R64 / (R64 + R65) from a 1.1 kOhm
+// source (external load nominal-open, OQ-17). The instrument never delivers
+// one channel alone on a mono output, so neither does a mono host bus. Equal
+// resistors give both channels the same weight, so one constant folds them.
+constexpr float monoJackR64Ohms = 2200.0f;
+constexpr float monoJackR65Ohms = 2200.0f;
+constexpr float monoJackFoldGain =
+    monoJackR65Ohms / (monoJackR64Ohms + monoJackR65Ohms);
+static_assert (monoJackFoldGain == 0.5f,
+               "R64 and R65 are equal, so the mono jack is the channel mean");
+
 // JUCE's AudioParameterBool deliberately retains fractional normalised values
 // written by a host. The switch reads correctly, but that fractional value can
 // remain visible to the host after a state restore when the logical value did
@@ -928,6 +944,7 @@ void YouKnowAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
         youknow::YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine.prepare (sampleRate, samplesPerBlock,
                     oversamplingFactorForChoice (getQualityChoice()));
+    monoFoldScratch.setSize (2, std::max (1, samplesPerBlock));
     (void) updateEngineParameters();
     queuePitchBend (valueOf (ParameterIndex::pitchBend));
     queueModulation (valueOf (ParameterIndex::modulation));
@@ -1012,8 +1029,11 @@ bool YouKnowAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
 {
     if (layouts.getMainInputChannels() != 0)
         return false;
+    // Stereo is the pair of jacks; mono is what the L/MONO jack carries on its
+    // own (monoJackFoldGain).
     const auto output = layouts.getMainOutputChannelSet();
-    return output == juce::AudioChannelSet::stereo();
+    return output == juce::AudioChannelSet::stereo()
+        || output == juce::AudioChannelSet::mono();
 }
 
 bool YouKnowAudioProcessor::updateEngineParameters() noexcept
@@ -1216,11 +1236,39 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         return;
     }
 
-    // process() overwrites every sample in both supported stereo channels,
-    // including all spans split around MIDI events. Only defensive extra host
-    // channels need clearing; pre-clearing left and right writes them twice.
+    // renderSpan() below overwrites every sample of the supported channels --
+    // both of a stereo bus, the one of a mono bus -- including all spans split
+    // around MIDI events. Only defensive extra host channels need clearing;
+    // pre-clearing the rendered ones writes them twice.
     for (int channel = 2; channel < buffer.getNumChannels(); ++channel)
         buffer.clear (channel, 0, numSamples);
+
+    // The engine renders the jack board's two channels. A stereo bus takes
+    // them directly; a mono bus takes the L/MONO jack's fold of the two
+    // (monoJackFoldGain), rendered through the stereo scratch in pieces no
+    // larger than it, so a block beyond the prepared size allocates nothing.
+    const bool monoBus = buffer.getNumChannels() < 2;
+    const auto renderSpan = [this, &buffer, monoBus] (int from, int count)
+    {
+        if (! monoBus)
+        {
+            engine.process (buffer.getWritePointer (0, from),
+                            buffer.getWritePointer (1, from), count);
+            return;
+        }
+        auto* mono = buffer.getWritePointer (0, from);
+        while (count > 0)
+        {
+            const int piece = std::min (count, monoFoldScratch.getNumSamples());
+            auto* left = monoFoldScratch.getWritePointer (0);
+            auto* right = monoFoldScratch.getWritePointer (1);
+            engine.process (left, right, piece);
+            for (int i = 0; i < piece; ++i)
+                mono[i] = monoJackFoldGain * (left[i] + right[i]);
+            mono += piece;
+            count -= piece;
+        }
+    };
 
     // If a previous block overflowed the reflection-history FIFO, publish its
     // final tone before any newer events from this block. This preserves FIFO
@@ -1281,9 +1329,7 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                               : 0;
         if (eventSample > renderedTo)
         {
-            engine.process (buffer.getWritePointer (0, renderedTo),
-                            buffer.getWritePointer (1, renderedTo),
-                            eventSample - renderedTo);
+            renderSpan (renderedTo, eventSample - renderedTo);
             renderedTo = eventSample;
         }
 
@@ -1424,9 +1470,7 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     if (renderedTo < numSamples)
-        engine.process (buffer.getWritePointer (0, renderedTo),
-                        buffer.getWritePointer (1, renderedTo),
-                        numSamples - renderedTo);
+        renderSpan (renderedTo, numSamples - renderedTo);
 
     // Nothing this instrument plays goes back out, so the incoming events stop
     // here rather than passing through.

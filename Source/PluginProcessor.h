@@ -396,6 +396,12 @@ private:
     int choiceOf (ParameterIndex parameter, int maximum) const noexcept;
 
     youknow::YouKnowEngine engine;
+    // Render target for a mono main output. The engine is the jack board's two
+    // channels; processBlock folds them the way the L/MONO jack does (see
+    // monoJackFoldGain). Sized in prepareToPlay for the host's block, and a
+    // larger block is rendered through it in pieces, so the audio thread never
+    // allocates.
+    juce::AudioBuffer<float> monoFoldScratch;
     // The last complete APVTS/performance snapshot accepted by the audio
     // thread. Incoming patch MIDI overlays only its stored-tone fields on this
     // base, so volume, bend, assign mode and product controls remain live.

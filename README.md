@@ -352,7 +352,22 @@ forty-year-old unit will null against the plug-in.
   at the existing internal rate (anchored/derived). Its provisional
   ±13.5 V loaded-swing asymptote sits inside the ±15 V supplies; output AC
   coupling and the nominal-linear dual 10K volume law with its real internal
-  loading follow (anchored/derived). Its nominal 1.0 V/µs slew is Toshiba's
+  loading follow (anchored/derived). A mono host bus receives what the L/MONO
+  jack carries: each jack's normally-closed contact returns to the other
+  jack's node, so one plug ties the two 2.2 kΩ-fed nodes together and the
+  jack delivers the mean of the two channels from 1.1 kΩ — never line 1
+  alone. Chorus Off leaves it unchanged; I and II fold their two BBD lines to
+  the exact mid, as I+II already does (derived for the nominal open load,
+  OQ-17). After the selector, R64/R65 (2.2 kΩ) and C22/C21 (1 nF) put one
+  pole on each jack whose resistance is the series part plus the wiper's own
+  Thévenin source: 46.1 kHz at full volume, 33.3 kHz at half, so −0.20/−0.75
+  dB at 10/20 kHz at full volume and −0.37/−1.34 dB at half (anchored parts;
+  jack open, OQ-17). It runs at the host rate as a matched-Z blend, which at
+  44.1/48 kHz hosts is nearly transparent (about −0.04 dB at 20 kHz) and
+  delivers the physical roll-off only as the host rate rises (−0.33 dB at
+  96 kHz, −0.61 dB at 192 kHz, at 20 kHz); it is the nominal circuit's, so
+  Unit Character does not scale it, and a mono bus leaves its time constant
+  unchanged (2.2 kΩ‖2.2 kΩ into 2 nF). Its nominal 1.0 V/µs slew is Toshiba's
   [typical value](https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3)
   at unity gain and 2 kΩ, not a guaranteed installed-unit limit.
   Five previously ideal resistor groups now contribute their derived 25 °C
@@ -833,7 +848,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled. The gate-drive parts are read from p. 15 — Tr5/R50/C16 into R48/C13 against R49+R42 into Tr4, whose collector pulls the D4/D5 gate node down. The coupled C16/C13 solution includes bidirectional R48 loading and, with the existing 0.6 V junction prior, predicts about 84.5 ms to mute and 113.2 ms to open. An independent component-node RK4 reference agrees within 0.37 µV across tested rates. Tr4 base-current effects on C13's resting charge still require hardware validation. Fast bypass now preserves the same capacitor evolution as continuous processing. The same C16 node also feeds the clock clamp — D3 with R41 10 kΩ, R47 330 kΩ across them and C15 2.2 µF to −15 V, whose junction runs to R130 330 kΩ / R131 33 kΩ on Tr23 (R146/R145 on Tr28 for line 2), whose collector holds the MN3101 oscillator node — so with the same junction prior the BBD clocks stop about 0.2–0.26 s after the button goes off (C15 charging through R47 against the base divider) and restart about 35 ms after it comes on (C15 discharging through D3/R41), both hidden behind the return's own 84.5/113 ms; the engine keeps the lines clocked through that inaudible interval. Tr5 itself reaches the C16 node through R46 330 Ω rather than as a bare short, so the on-state node rests at −14.0 V and C16 empties with a 0.73 ms time constant; the C13 decay then reaches Tr4's threshold about 121 ms after the button instead of the 113 ms the ideal-short solve gives, an 8 ms shift of a silent interval that the model does not yet carry. Also open are the 2SK30A pair's pinch-off spread (the transition keeps its declared 5 ms glide), gate-diode leakage, and an original-unit switching capture | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. The Boost leg now runs as its three real stores (C9, C8, C6) in both configurations, so its departing tail (C8 back through R22‖C9 and R25 while IC4b keeps amplifying node N — the exact undriven pair has a 2.77 ms slow mode, longer than the earlier 940 µs single-pole reading), its re-entry charge redistribution and IC4b's finite swing are derived rather than estimated. The comparison-only `configureHighPassSwitch` path now solves C14, all selected and deselected passive legs, and IC4b feedback with finite TC4052 resistance and preserved capacitor charge. Independent component-node MNA and continuous-time switching checks qualify the implementation. The 110/240 Ω audition coordinates are Toshiba’s 10 V/5 V typical table points, not measured bounds for the installed +5 V/Tr3 supply. Nominal remains unchanged; actual Ron versus signal voltage, charge injection, leakage, rail clipping and an original-unit switch capture remain open | P2 |
 | OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model retains zero inter-voice spread and drift; seeded Unit Character remains voiced sound design. The optional `useServiced439522VcfCalibration` profile instead assigns fixed FREQ/WIDTH and effective upper-current coordinates fitted to six card slots from one identified sweep. It is a serviced unit with Borish replacement VCF/VCA cards, and card identity is confounded with sweep direction. Complementary held-out cutoff codes test interpolation within that capture; they do not establish original 80017A population tolerances, independent-unit accuracy, repeatability or thermal drift | P3 |
-| OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law is settled and the ladder's ideal taps land within 1.2 dB of the published steps | P3 |
+| OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law is settled, the ladder's ideal taps land within 1.2 dB of the published steps, the R64/R65–C21/C22 jack pole is derived for the open jack and the L/MONO normalling for the nominal open load; external jack loads and driven headphone behaviour remain open | P3 |
 
 OQ-08's `T-389`, `T-334` and `T-323` values are proven no-interrupt
 **instruction-start** anchors, not external-pin timestamps. NEC specifies
@@ -1296,6 +1311,16 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   block sizes, concurrent state saves and synchronous state-save callbacks.
 - Finalized the Protocodus bundle and package identifiers for v1 and
   documented migration from the earlier public Pluto Audio nightly builds.
+- A mono host output bus is accepted and carries what the L/MONO jack does:
+  the mean of the two channels, which is what the jack board's normalling
+  contacts deliver with one plug inserted, never line 1 alone. Chorus Off is
+  unchanged on it; I and II fold their two lines to the exact mid, as I+II
+  already did.
+- The output jack network — R64/R65 with C21/C22 — is modelled as one pole
+  per channel at the host rate: 46.1 kHz at full volume, 33.3 kHz at half.
+  At 44.1/48 kHz hosts it is nearly transparent (−0.04 dB at 20 kHz); at
+  96/192 kHz the top of the band rolls off by 0.33/0.61 dB at 20 kHz, as the
+  instrument's own does. A mono bus leaves its time constant unchanged.
 
 ## Build
 
