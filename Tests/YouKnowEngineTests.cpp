@@ -12943,8 +12943,14 @@ void testMainNoiseDensityIsProcessingRateInvariant()
         engine.setParameters(parameters);
         engine.noteOn(60, 1.0f);
 
+        // Four seconds, not the half-second an earlier revision used: the
+        // source is Gaussian, so its RMS estimator converges more slowly than
+        // a uniform one's and a quarter-second window scatters the rungs by
+        // up to 0.7 dB on its own. At this window every rung lands inside
+        // 0.09 dB, which is what makes the 0.25 dB gate below a statement
+        // about density rather than about the estimator.
         const auto rendered = renderExact(
-            engine, static_cast<int>(sampleRate * 0.5));
+            engine, static_cast<int>(sampleRate * 4.0));
         const std::size_t from = rendered.left.size() / 2;
         double energy = 0.0;
         for (std::size_t index = from; index < rendered.left.size(); ++index)
@@ -12966,7 +12972,7 @@ void testMainNoiseDensityIsProcessingRateInvariant()
             const double measured = levelAt(sampleRate, oversampled);
             const double relativeDb =
                 20.0 * std::log10((measured + 1.0e-30) / reference);
-            expectNear(relativeDb, 0.0, 0.5,
+            expectNear(relativeDb, 0.0, 0.25,
                        "main-noise RMS moves with sample rate/HQ at "
                            + std::to_string(static_cast<int>(sampleRate))
                            + " Hz, HQ " + (oversampled ? "on" : "off"));

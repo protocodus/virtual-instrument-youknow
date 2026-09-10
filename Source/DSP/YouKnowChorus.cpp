@@ -673,12 +673,13 @@ Chorus::ModeSettings Chorus::settingsFor(
         case ChorusMode::Off:
         default:
             // Bypass mutes the wet return and the modulator free-runs. The
-            // button line also reaches both MN3101 oscillators through the
-            // D3/R41/R47/C15/R46 branch on the C16 node into Tr23/Tr28
-            // (p. 15), which clamps the clocks about 0.17 s after the return
-            // has muted and releases them about 35 ms after the button comes
-            // on, 78 ms before the return opens -- inaudible either way, so
-            // the lines keep clocking here and an effect prepared while off
+            // button line also reaches both MN3101 oscillators: the C16 node
+            // feeds D3/R41 with R47 across them into C15, whose junction
+            // drives Tr23/Tr28 on the oscillator nodes (p. 15), clamping the
+            // clocks about 0.2-0.26 s after the return has muted and
+            // releasing them about 35 ms after the button comes on, some
+            // 80 ms before the return opens -- inaudible either way, so the
+            // lines keep clocking here and an effect prepared while off
             // still needs a real clock programme and sweep depth.
             return { rateOne, centre, sweep, 0.0f };
     }
