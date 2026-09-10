@@ -243,7 +243,13 @@ std::optional<Capture> readWav (const std::filesystem::path& path)
         cursor = body + size + (size & 1u); // chunks are word-aligned
     }
 
-    if (channels == 0 || channels > 2 || rate <= 0.0 || dataBytes == 0)
+    // The engine clamps its own rate into a supported range, and renderCase
+    // would then size and label the render with the capture's original figure:
+    // a 4 kHz capture would be compared against an 8 kHz timeline read as
+    // 4 kHz, corrupting alignment and every measure derived from time.
+    if (channels == 0 || channels > 2 || rate <= 0.0 || dataBytes == 0
+        || rate < YouKnowEngine::minimumSupportedSampleRate
+        || rate > YouKnowEngine::maximumSupportedSampleRate)
         return std::nullopt;
 
     const std::size_t bytesPerSample = bits / 8u;
@@ -269,7 +275,11 @@ std::optional<Capture> readWav (const std::filesystem::path& path)
             const auto raw = readLittleEndian (bytes, offset, 4);
             float value = 0.0f;
             std::memcpy (&value, &raw, 4);
-            return std::isfinite (value) ? static_cast<double> (value) : 0.0;
+            // Substituting a zero for a NaN would manufacture a sample and let
+            // the capture through; it would then move the alignment, the level
+            // match, the spectra and the floor while the run presented itself
+            // as a valid hardware comparison.
+            return static_cast<double> (value);
         }
         const auto raw = readLittleEndian (bytes, offset, static_cast<int> (bytesPerSample));
         const auto signBit = std::uint32_t { 1u } << (bits - 1u);
@@ -286,6 +296,8 @@ std::optional<Capture> readWav (const std::filesystem::path& path)
         capture.left[frame] = sampleAt (base);
         capture.right[frame] = channels == 2 ? sampleAt (base + bytesPerSample)
                                              : capture.left[frame];
+        if (! std::isfinite (capture.left[frame]) || ! std::isfinite (capture.right[frame]))
+            return std::nullopt;
     }
     return capture;
 }
@@ -805,6 +817,13 @@ Spectrum measureSpectrum (std::span<const double> samples, double sampleRate,
 // note is never struck, when another note is already sounding as it begins, or
 // when the next note arrives before this one has been released. In those cases
 // the envelope is a property of two notes and cannot be attributed to either.
+// How long a previous note is assumed to keep sounding after its key-up. The
+// longest release this instrument offers runs a little over two seconds at the
+// top of the slider, and this is the quiet side of that: a case whose strokes
+// are closer together than this is one whose envelopes cannot be attributed to
+// a single note anyway.
+constexpr double releaseTailSeconds = 2.5;
+
 struct IsolatedWindow
 {
     double fromSeconds;
@@ -826,8 +845,13 @@ std::optional<IsolatedWindow> isolatedWindowFor (const ReferenceCase& item,
     {
         if (&other == &*stroke)
             continue;
-        // Anything already sounding when this stroke begins contaminates it.
-        if (other.onSeconds <= stroke->onSeconds && other.offSeconds > stroke->onSeconds)
+        // A key-up is not the end of a note. The release keeps the previous
+        // one audible through this stroke's attack and decay, and the summed
+        // envelope would then be timed as if it belonged to this note alone,
+        // so an earlier stroke must have been released long enough ago for its
+        // tail to have gone.
+        if (other.onSeconds <= stroke->onSeconds
+            && other.offSeconds + releaseTailSeconds > stroke->onSeconds)
             return std::nullopt;
         if (other.onSeconds > stroke->onSeconds)
             nextOnset = std::min (nextOnset, other.onSeconds);
@@ -842,9 +866,15 @@ std::optional<IsolatedWindow> isolatedWindowFor (const ReferenceCase& item,
 struct Envelope
 {
     double attackMs = 0.0;   // to 90 % of the peak
-    double decayMs = 0.0;    // from the peak down to the sustain plateau
+    double decayMs = 0.0;    // from the peak down to 3 dB below it
     double sustainDb = 0.0;  // the plateau, relative to the peak
     double releaseMs = 0.0;  // from key-up down to -40 dB of the peak
+    // A segment that ran out of window before it finished is not a measurement
+    // of that segment. Both signals would otherwise be capped at the same
+    // window length and report a perfect zero difference between two releases
+    // neither of which was seen to end.
+    bool sustainSettled = false;
+    bool releaseCompleted = false;
 };
 
 Envelope measureEnvelope (std::span<const double> samples, double sampleRate,
@@ -880,6 +910,24 @@ Envelope measureEnvelope (std::span<const double> samples, double sampleRate,
         plateau /= static_cast<double> (keyUp - plateauFrom);
     }
     result.sustainDb = toDecibels (plateau / peak);
+    // The plateau is only a sustain level if the envelope had stopped moving by
+    // the time it was taken. On a short held note, or a patch whose decay is
+    // longer than the note, that stretch is still the decay, and reporting it
+    // would let a decay-rate difference masquerade as a sustain-level one.
+    if (keyUp > plateauFrom)
+    {
+        double lowest = envelope[plateauFrom];
+        double highest = envelope[plateauFrom];
+        for (std::size_t index = plateauFrom; index < keyUp; ++index)
+        {
+            lowest = std::min (lowest, envelope[index]);
+            highest = std::max (highest, envelope[index]);
+        }
+        // Half a decibel of drift across the stretch, which is below what any
+        // of these comparisons resolve.
+        result.sustainSettled = highest <= 0.0
+            || toDecibels (highest) - toDecibels (std::max (lowest, 1.0e-12)) < 0.5;
+    }
 
     // Time from the peak down to 3 dB below it.
     //
@@ -903,6 +951,7 @@ Envelope measureEnvelope (std::span<const double> samples, double sampleRate,
     std::size_t releaseIndex = keyUp;
     while (releaseIndex < envelope.size() && envelope[releaseIndex] > releaseTarget)
         ++releaseIndex;
+    result.releaseCompleted = releaseIndex < envelope.size();
     result.releaseMs = 1000.0 * static_cast<double> (releaseIndex - keyUp) / sampleRate;
     return result;
 }
@@ -939,23 +988,31 @@ double channelCorrelation (const Capture& capture, std::size_t from, std::size_t
 // analogue floor through any real converter.
 constexpr double digitalSilenceDb = -120.0;
 
-std::optional<double> noiseFloorDb (const std::vector<double>& samples,
+//
+// Over both channels' combined power, for the same reason the level match is:
+// the bucket-brigade lines are clocked in antiphase, so folding to mono lets
+// their noise cancel or add, and a difference in cross-channel noise
+// correlation between the hardware and the model would be reported as a
+// difference in noise amplitude.
+std::optional<double> noiseFloorDb (const std::vector<double>& left,
+                                    const std::vector<double>& right,
                                     double sampleRate)
 {
+    const auto frames = std::min (left.size(), right.size());
     const auto window = static_cast<std::size_t> (std::llround (0.1 * sampleRate));
-    if (window == 0 || samples.size() < window)
+    if (window == 0 || frames < window)
         return std::nullopt;
     const auto silence =
         youknow::oversampling_quality::decibelsToAmplitude (digitalSilenceDb);
 
     double quietest = std::numeric_limits<double>::max();
     bool found = false;
-    for (std::size_t start = 0; start + window <= samples.size(); start += window / 2)
+    for (std::size_t start = 0; start + window <= frames; start += window / 2)
     {
         double sum = 0.0;
         for (std::size_t index = start; index < start + window; ++index)
-            sum += samples[index] * samples[index];
-        const auto rms = std::sqrt (sum / static_cast<double> (window));
+            sum += left[index] * left[index] + right[index] * right[index];
+        const auto rms = std::sqrt (sum / static_cast<double> (2 * window));
         if (rms < silence)
             continue;
         quietest = std::min (quietest, rms);
@@ -980,6 +1037,8 @@ struct Comparison
     double releaseErrorMs = 0.0;
     double noiseFloorErrorDb = 0.0;
     double correlationError = 0.0;
+    bool sustainMeasured = false;
+    bool releaseMeasured = false;
     // A measure that could not be taken is reported as not taken. A zero here
     // would read as perfect agreement, which is the one answer never earned.
     bool spectrumMeasured = false;
@@ -1102,7 +1161,22 @@ std::optional<Comparison> compare (const ReferenceCase& item, const Preset& pres
         result.centroidRatio = referenceSpectrum.centroidHz > 0.0
                                    ? renderedSpectrum.centroidHz / referenceSpectrum.centroidHz
                                    : 0.0;
-        result.spectrumMeasured = true;
+        // A window with no signal in it projects to nothing: the fundamental
+        // search returns whichever candidate it started from and every harmonic
+        // sits at the meter floor, so a muted capture or a mistimed note would
+        // report a flawless zero. Gate on the window actually carrying sound.
+        const auto energyOf = [] (std::span<const double> window)
+        {
+            double sum = 0.0;
+            for (const auto sample : window)
+                sum += sample * sample;
+            return window.empty() ? 0.0
+                                  : std::sqrt (sum / static_cast<double> (window.size()));
+        };
+        constexpr double silentWindowDb = -80.0;
+        result.spectrumMeasured =
+            toDecibels (energyOf (referenceWindow)) > silentWindowDb
+            && toDecibels (energyOf (renderedWindow)) > silentWindowDb;
     }
 
     // The envelope is measured on ONE stroke, in a window where nothing else is
@@ -1128,11 +1202,17 @@ std::optional<Comparison> compare (const ReferenceCase& item, const Preset& pres
             result.sustainErrorDb = renderedEnvelope.sustainDb - referenceEnvelope.sustainDb;
             result.releaseErrorMs = renderedEnvelope.releaseMs - referenceEnvelope.releaseMs;
             result.envelopeMeasured = true;
+            result.sustainMeasured = referenceEnvelope.sustainSettled
+                                  && renderedEnvelope.sustainSettled;
+            result.releaseMeasured = referenceEnvelope.releaseCompleted
+                                  && renderedEnvelope.releaseCompleted;
         }
     }
 
-    const auto referenceFloor = noiseFloorDb (referenceMono, reference.sampleRate);
-    const auto renderedFloor = noiseFloorDb (renderedMono, rendered.sampleRate);
+    const auto referenceFloor = noiseFloorDb (reference.left, reference.right,
+                                              reference.sampleRate);
+    const auto renderedFloor = noiseFloorDb (rendered.left, rendered.right,
+                                             rendered.sampleRate);
     if (referenceFloor.has_value() && renderedFloor.has_value())
     {
         result.noiseFloorErrorDb = *renderedFloor - *referenceFloor;
@@ -1465,7 +1545,7 @@ int runSelfTest()
         const auto pad = static_cast<std::size_t> (rate);
         padded.left.insert (padded.left.begin(), pad, 0.0);
         padded.right.insert (padded.right.begin(), pad, 0.0);
-        const auto floor = noiseFloorDb (monoOf (padded), rate);
+        const auto floor = noiseFloorDb (padded.left, padded.right, rate);
         if (! floor.has_value() || *floor <= digitalSilenceDb)
         {
             std::fprintf (stderr,
@@ -1552,6 +1632,86 @@ int runSelfTest()
             std::fprintf (stderr,
                           "self-test: full noise moved the centroid ratio only to "
                           "%.4f\n", result.centroidRatio);
+            return 1;
+        }
+    }
+
+    // A silent window is not a measurement, however well-formed the case.
+    {
+        auto muted = baseline;
+        std::fill (muted.left.begin(), muted.left.end(), 0.0);
+        std::fill (muted.right.begin(), muted.right.end(), 0.0);
+        const auto result = compare (item, *preset, muted, baseline, 0.0, 0.0, why);
+        if (! result.has_value() || result->spectrumMeasured)
+        {
+            std::fprintf (stderr,
+                          "self-test: a silent capture was graded for pitch\n");
+            return 1;
+        }
+    }
+
+    // A release that runs into the end of its window has not been seen to end,
+    // and two such releases must not report a perfect zero difference.
+    {
+        auto lingering = *preset;
+        lingering.patch.release = 1.0f;
+        ReferenceCase brief = item;
+        brief.strokes = { Stroke { 60, 0.0, 2.0 } };
+        const auto shifted = renderCase (brief, lingering, rate, 2.4);
+        const auto result = compare (brief, lingering, shifted, shifted, 0.0, 0.0, why);
+        if (! result.has_value() || result->releaseMeasured)
+        {
+            std::fprintf (stderr,
+                          "self-test: a release cut off by the window was still "
+                          "reported\n");
+            return 1;
+        }
+    }
+
+    // A note whose predecessor is still releasing into it cannot be timed.
+    {
+        auto trailing = item;
+        trailing.strokes = { Stroke { 55, 0.0, 0.2 }, Stroke { 60, 0.5, 2.5 } };
+        trailing.analysisNote = 60;
+        const auto result = compare (trailing, *preset, baseline, baseline, 0.0, 0.0, why);
+        if (! result.has_value() || result->envelopeMeasured)
+        {
+            std::fprintf (stderr,
+                          "self-test: a note was timed through the previous "
+                          "note's release tail\n");
+            return 1;
+        }
+    }
+
+    // A capture at a rate the engine cannot run at is not comparable, because
+    // the render would be built on a clamped timeline and read as the
+    // capture's own.
+    {
+        std::error_code error;
+        const auto path =
+            std::filesystem::temp_directory_path (error) / "youknow-unsupported-rate.wav";
+        std::vector<std::uint8_t> wav;
+        const auto tag = [&wav] (const char* text)
+        { for (int i = 0; i < 4; ++i) wav.push_back (static_cast<std::uint8_t> (text[i])); };
+        const auto le = [&wav] (std::uint32_t value, int count)
+        { for (int i = 0; i < count; ++i) wav.push_back (static_cast<std::uint8_t> ((value >> (8 * i)) & 0xffu)); };
+        constexpr std::uint32_t frames = 400;
+        tag ("RIFF"); le (36u + frames * 4u, 4); tag ("WAVE");
+        tag ("fmt "); le (16u, 4); le (1u, 2); le (2u, 2);
+        le (4000u, 4); le (4000u * 4u, 4); le (4u, 2); le (16u, 2);
+        tag ("data"); le (frames * 4u, 4);
+        for (std::uint32_t frame = 0; frame < frames * 2u; ++frame)
+            le (1000u, 2);
+        std::ofstream out (path, std::ios::binary);
+        out.write (reinterpret_cast<const char*> (wav.data()),
+                   static_cast<std::streamsize> (wav.size()));
+        out.close();
+        const auto read = readWav (path);
+        std::filesystem::remove (path, error);
+        if (read.has_value())
+        {
+            std::fprintf (stderr,
+                          "self-test: a 4 kHz capture was accepted\n");
             return 1;
         }
     }
@@ -1697,10 +1857,20 @@ int main (int argc, char** argv)
             std::printf ("  brightness  not measured, for the same reason\n");
         }
         if (last.envelopeMeasured)
-            std::printf ("  envelope    attack %+.1f ms, decay %+.1f ms, "
-                         "sustain %+.2f dB, release %+.1f ms\n",
-                         last.attackErrorMs, last.decayErrorMs, last.sustainErrorDb,
-                         last.releaseErrorMs);
+        {
+            std::printf ("  envelope    attack %+.1f ms, decay %+.1f ms\n",
+                         last.attackErrorMs, last.decayErrorMs);
+            if (last.sustainMeasured)
+                std::printf ("              sustain %+.2f dB\n", last.sustainErrorDb);
+            else
+                std::printf ("              sustain not measured: the envelope was "
+                             "still moving at key-up\n");
+            if (last.releaseMeasured)
+                std::printf ("              release %+.1f ms\n", last.releaseErrorMs);
+            else
+                std::printf ("              release not measured: it had not reached "
+                             "-40 dB before the window ended\n");
+        }
         else
             std::printf ("  envelope    not measured: no stroke of note %d is "
                          "isolated enough to time\n", item.analysisNote);
