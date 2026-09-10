@@ -1201,6 +1201,12 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   hosts that end playback with an omni or poly message rather than CC 123.
 - Fixed the pitch-bend lever so holding one axis with the keyboard survives
   releasing the other.
+- Fixed the settled-chorus work skip so it engages without the host's
+  flush-to-zero mode. The 5 ms wet-mute glide only ever decayed towards zero
+  and parked on a denormal, so the skip's exact-zero test passed under the
+  plug-in's own denormal guard and never in the JUCE-free renderers and
+  audits. The glide now lands on zero at FLT_MIN, the same threshold that
+  guard flushes at; the plug-in's output is unchanged.
 - Panel and layout fixes: text that could truncate (monitor voice readout,
   PANIC key, voice-lamp numbers above nine voices), dimmed disabled keys, knob
   tick marks kept inside their controls at large editor sizes, help text that
