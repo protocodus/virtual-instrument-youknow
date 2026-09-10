@@ -719,13 +719,13 @@ through the same DSP engine used by the plug-in.
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
 | `01-chorus-pad.wav` | Saw and sub through the mode-I chorus: the classic pad, hiss and all | 21.9 s | −10.5 dBFS | +7.5 dB |
-| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −12.7 dBFS | +9.7 dB |
+| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −12.3 dBFS | +9.3 dB |
 | `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −24.9 dBFS | +21.9 dB |
-| `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −22.5 dBFS | +19.5 dB |
+| `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −22.2 dBFS | +19.2 dB |
 | `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −25.6 dBFS | +22.6 dB |
-| `06-chorus-modes.wav` | The same pad with the effect off, in mode I, mode II, then I+II | 20.5 s | −13.1 dBFS | +10.1 dB |
+| `06-chorus-modes.wav` | The same pad with the effect off, in mode I, mode II, then I+II | 20.5 s | −13.0 dBFS | +10.0 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −8.2 dBFS | +5.2 dB |
-| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −19.4 dBFS | +16.4 dB |
+| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −19.5 dBFS | +16.5 dB |
 | `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −11.7 dBFS | +8.7 dB |
 | `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −19.5 dBFS | +16.5 dB |
 <!-- peaks-table-end -->
