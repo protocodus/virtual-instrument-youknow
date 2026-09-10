@@ -274,7 +274,7 @@ if(YOUKNOW_BUILD_TOOLS)
     target_compile_features(YouKnowBenchmarkReference PRIVATE cxx_std_20)
 
     add_executable(YouKnowRenderComposition Tools/RenderComposition.cpp)
-    target_link_libraries(YouKnowRenderComposition PRIVATE YouKnowDSP)
+    target_link_libraries(YouKnowRenderComposition PRIVATE YouKnowDSP Threads::Threads)
     target_compile_features(YouKnowRenderComposition PRIVATE cxx_std_20)
 
     add_executable(YouKnowRenderSota Tools/RenderSotaComparisons.cpp)

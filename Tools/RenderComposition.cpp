@@ -28,6 +28,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -408,7 +409,7 @@ Composition composition()
         // the keyboard. Attack 0.38 is a bow, not a hit; decay 0.51 to sustain
         // 0.71 with release 0.27 is a sustained bowed note that settles
         // slightly.
-        Part { "B83", "counter-melody, single line,", 0.62f,
+        Part { "B83", "counter-melody", 0.62f,
                {
                  { 32, 2, { 65 } },
                  { 34, 2, { 69 } },
@@ -445,7 +446,7 @@ Composition composition()
         // note, and a measured crest factor of 27.7 dB confirms it is nearly all
         // transient. That is why it can play in the same octaves as the pads
         // without adding any sustained energy to them.
-        Part { "A37", "the only rhythm in the piece", 1.00f,
+        Part { "A37", "pizzicato rhythm", 1.00f,
                {
                  { 48, 0.5, { 62 } },
                  { 49.5, 0.5, { 65 } },
@@ -500,7 +501,7 @@ Composition composition()
         // ringing: a near-sine ping. Attack 0.00, decay 0.20, sustain 0.00,
         // release 0.47 gives a strike with a long ring-out, which is why one
         // note can occupy a whole bar of silence.
-        Part { "B21", "single high pings", 0.95f,
+        Part { "B21", "high pings", 0.95f,
                {
                  { 16, 1, { 69 } },
                  { 22, 1, { 74 } },
@@ -552,7 +553,7 @@ Composition composition()
         // and a short 0.09 release gives a note that speaks instantly, softens,
         // and stops cleanly - so a line of two- and three-beat notes articulates
         // rather than blurs.
-        Part { "A53", "the melody", 0.75f,
+        Part { "A53", "melody", 0.75f,
                {
                  { 79, 1, { 69 } },
                  { 80, 3, { 74 } },
@@ -1075,12 +1076,14 @@ int main (int argc, char** argv)
     const auto totalFrames = static_cast<std::int64_t> (
         std::llround (totalBeats * compositionSampleRate * 60.0 / piece.tempo));
 
-    std::vector<float> mixLeft (static_cast<std::size_t> (totalFrames), 0.0f);
-    std::vector<float> mixRight (static_cast<std::size_t> (totalFrames), 0.0f);
-    std::vector<PartLevel> levels;
-
-    for (const auto& part : piece.parts)
+    // Everything that can refuse the piece is checked before anything is
+    // rendered, so a mistyped score fails in a second rather than after the
+    // parts that happened to precede it have been computed.
+    std::vector<const Preset*> presets (piece.parts.size(), nullptr);
+    std::vector<int> peakNotes (piece.parts.size(), 0);
+    for (std::size_t index = 0; index < piece.parts.size(); ++index)
     {
+        const auto& part = piece.parts[index];
         const auto* preset = youknow::presets::findByNumber (part.slot);
         if (preset == nullptr)
         {
@@ -1094,35 +1097,84 @@ int main (int argc, char** argv)
         const int limit = preset->controls.keyMode == KeyMode::Unison
                               ? 1
                               : preset->controls.polyphony;
-        const int peakNotes = peakSimultaneousNotes (part);
-        if (peakNotes > limit)
+        const int peak = peakSimultaneousNotes (part);
+        if (peak > limit)
         {
             std::fprintf (stderr,
                           "part %s (%s) needs %d simultaneous notes but the "
                           "preset plays %d\n",
-                          part.slot, preset->name, peakNotes, limit);
+                          part.slot, preset->name, peak, limit);
             return 1;
         }
+        presets[index] = preset;
+        peakNotes[index] = peak;
+    }
 
-        const auto rendered = renderPart (part, *preset, piece.tempo, totalFrames);
-        for (std::size_t index = 0; index < mixLeft.size(); ++index)
+    std::vector<float> mixLeft (static_cast<std::size_t> (totalFrames), 0.0f);
+    std::vector<float> mixRight (static_cast<std::size_t> (totalFrames), 0.0f);
+    std::vector<PartLevel> levels;
+
+    // The parts are rendered concurrently. Each is its own engine instance
+    // holding no state in common with any other - the two tables the engine
+    // builds lazily are function-local statics, whose initialisation the
+    // language already serialises - so this changes only how long the render
+    // takes, not what it produces. Rendering the whole piece serially at the
+    // deepest oversampling rung takes about half an hour, which is a long time
+    // to hold a build for a file that is the same either way.
+    //
+    // Parts are rendered in batches rather than all at once because each one
+    // holds a full-length stereo buffer; the cap bounds that at a few hundred
+    // megabytes however many cores the machine turns out to have. They are
+    // summed in score order after each batch, so the mix does not depend on
+    // which part finished first.
+    const auto lanes = std::max<std::size_t> (
+        1, std::min<std::size_t> ({ piece.parts.size(),
+                                    std::thread::hardware_concurrency() != 0u
+                                        ? std::thread::hardware_concurrency()
+                                        : 1u,
+                                    8u }));
+
+    for (std::size_t base = 0; base < piece.parts.size(); base += lanes)
+    {
+        const auto count = std::min (lanes, piece.parts.size() - base);
+        std::vector<Rendered> batch (count);
+        std::vector<std::thread> workers;
+        workers.reserve (count);
+        for (std::size_t lane = 0; lane < count; ++lane)
+            workers.emplace_back (
+                [&piece, &presets, &batch, base, lane, totalFrames]
+                {
+                    batch[lane] = renderPart (piece.parts[base + lane],
+                                              *presets[base + lane], piece.tempo,
+                                              totalFrames);
+                });
+        for (auto& worker : workers)
+            worker.join();
+
+        for (std::size_t lane = 0; lane < count; ++lane)
         {
-            mixLeft[index] += rendered.left[index];
-            mixRight[index] += rendered.right[index];
+            const auto& part = piece.parts[base + lane];
+            const auto& rendered = batch[lane];
+            for (std::size_t index = 0; index < mixLeft.size(); ++index)
+            {
+                mixLeft[index] += rendered.left[index];
+                mixRight[index] += rendered.right[index];
+            }
+
+            const auto partPeak = peakOf (rendered.left, rendered.right);
+            PartLevel level;
+            level.slot = part.slot;
+            level.name = presets[base + lane]->name;
+            level.role = part.role;
+            level.peakDb = 20.0 * std::log10 (std::max (partPeak, 1.0e-9));
+            level.peakNotes = peakNotes[base + lane];
+            levels.push_back (level);
+
+            std::printf ("Rendered %-4s %-26s %-20s peak %6.3f, %d notes\n",
+                         part.slot, presets[base + lane]->name, part.role,
+                         partPeak, peakNotes[base + lane]);
+            std::fflush (stdout);
         }
-
-        PartLevel level;
-        level.slot = part.slot;
-        level.name = preset->name;
-        level.role = part.role;
-        level.peakDb = 20.0 * std::log10 (std::max (peakOf (rendered.left, rendered.right),
-                                                    1.0e-9));
-        level.peakNotes = peakNotes;
-        levels.push_back (level);
-
-        std::printf ("Rendered %-4s %-26s %-14s peak %6.3f, %d notes\n", part.slot,
-                     preset->name, part.role,
-                     peakOf (rendered.left, rendered.right), peakNotes);
     }
 
     for (std::size_t index = 0; index < mixLeft.size(); ++index)
