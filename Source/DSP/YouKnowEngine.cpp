@@ -217,11 +217,20 @@ constexpr float commonVcaR31Ohms = 47.0f;
 constexpr float commonVcaR165Ohms = 15000.0f;
 constexpr float commonVcaBiasVolts = 15.0f;
 constexpr float commonVcaC7Farads = 10.0e-6f;
+// NEC 1983 data book p. 257: Vc = -5.9 mV/dB typical (-5.8 to -6.1) at
+// Ta = 25 C over Av = -30 to +30 dB. That is two thermal voltages per decibel,
+// 2 (kT/q) ln(10) / 20 = 5.916 mV/dB at 298.15 K -- the translinear gain-cell
+// law -- and p. 260's "voltage gain vs control constant voltage" graph draws
+// its Ta = -25/25/75 C lines fanning about 0 dB, the -25 C line steepest, so
+// the constant is proportional to absolute temperature: this figure times
+// T / 298.15 K (patchLevelGain).
+// https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262
 constexpr float commonVcaControlVoltsPerDecibel = -5.9e-3f;
 
 // Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1. The fixed
 // internal load is the complete selector ladder in parallel with IC7's input;
-// external jack loads, normaling and driven headphone behavior remain OQ-17.
+// external jack loads and driven headphone behavior remain OQ-17, and the mono
+// normaling is the host bus's fold (PluginProcessor.cpp, monoJackFoldGain).
 constexpr float outputCouplingCapacitanceF = 10.0e-6f;
 constexpr float outputCouplingSeriesOhms = 1500.0f;
 constexpr float outputCouplingPotOhms = 10000.0f;
@@ -230,6 +239,13 @@ constexpr float headphoneInputOhms = 1000.0f + 100000.0f;
 constexpr float outputWiperInternalLoadOhms =
     outputSelectorLadderOhms * headphoneInputOhms
     / (outputSelectorLadderOhms + headphoneInputOhms);
+
+// The jack network after the selector, identically R64/C22 into JA2 and
+// R65/C21 into JA1: 2.2 kOhm in series with each jack and 1 nF (".001x2")
+// from the jack node to ground. With the jack open (OQ-17) the pole's
+// resistance is the series part plus the wiper's own Thevenin resistance.
+constexpr float outputJackSeriesOhms = 2200.0f;
+constexpr float outputJackCapacitanceF = 1.0e-9f;
 
 // The card's own thermal floor at the filter input. This is not the shared
 // audible TP8 noise; it is what the voice card's own resistors do, and it is
@@ -377,6 +393,21 @@ OutputCouplingWiperNetwork outputCouplingWiperNetworkFor(
     return { loadedLower, outputCouplingSeriesOhms + upperTrack + loadedLower };
 }
 
+// The corner R64/R65 and C22/C21 make with the wiper's own Thevenin
+// resistance: the upper leg (R54/R57 plus the unused track) in parallel with
+// the loaded lower track -- the same two paths outputWiperNoiseResistance()
+// sums, read here off the one already-solved network. Full volume: 1.249 kOhm
+// + 2.2 kOhm against 1 nF is 46.15 kHz; half volume, 2.578 kOhm + 2.2 kOhm,
+// is 33.32 kHz.
+float outputJackCornerHzFor(
+    const OutputCouplingWiperNetwork& network) noexcept
+{
+    const float upperLeg = network.resistance - network.loadedLower;
+    const float wiperOhms =
+        upperLeg * network.loadedLower / network.resistance;
+    return rcCornerHz(outputJackCapacitanceF, outputJackSeriesOhms + wiperOhms);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -494,6 +525,22 @@ std::int32_t YouKnowEngine::dcoPitchBendWordOffset(
         dcoBendCommand(normalisedBipolar), controlAdcByte(depth));
 }
 
+std::int32_t YouKnowEngine::vcfBendCountsWord(
+    std::int16_t command, std::uint8_t sensitivity) noexcept
+{
+    // The serial handler stores a zero command as zero and any other as twice
+    // its magnitude plus one (0x022a..0x0232). B-2 multiplies that byte by
+    // the VCF sensitivity ADC and shifts right four times (0x0674..0x0687)
+    // before the same value feeds the DCO's 1.75x path, so the filter shares
+    // the DCO's two-bin centre dead zone and tops out at 255 * 255 >> 4.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L379-L384
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1021-L1031
+    const std::uint32_t magnitude = command == 0
+        ? 0u : static_cast<std::uint32_t>(2 * std::abs(static_cast<int>(command)) + 1);
+    const auto word = static_cast<std::int32_t>((magnitude * sensitivity) >> 4u);
+    return command < 0 ? -word : word;
+}
+
 std::uint8_t YouKnowEngine::dcoLfoDepthScale(
     std::uint8_t storedDepth) noexcept
 {
@@ -531,6 +578,25 @@ std::int32_t YouKnowEngine::dcoLfoPitchWordOffset(
     const std::uint32_t depth = std::min(255u, panel + controller);
     const std::uint32_t word =
         (std::min<std::uint32_t>(accumulator, 0x1fffu) * depth) >> 11u;
+    return positivePolarity ? static_cast<std::int32_t>(word)
+                            : -static_cast<std::int32_t>(word);
+}
+
+std::int32_t YouKnowEngine::vcfLfoCountsWord(
+    std::uint16_t accumulator, bool positivePolarity,
+    std::uint8_t delayByte, std::uint8_t storedDepth) noexcept
+{
+    // The VCF-LFO panel byte is stored doubled at 0x01b3..0x01bd. Right after
+    // the pitch word, 0x0352..0x0356 takes the high byte of that doubled byte
+    // times the same onset byte, and the 16x8 multiply at 0x0357..0x0365 then
+    // shifts once, so the cutoff term is (accumulator * depth) >> 9: 4047
+    // counts at full depth and onset, and only 15 at panel byte 1.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L306-L313
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L562-L574
+    const std::uint32_t depth =
+        (2u * std::min<std::uint32_t>(storedDepth, 127u) * delayByte) >> 8u;
+    const std::uint32_t word =
+        (std::min<std::uint32_t>(accumulator, 0x1fffu) * depth) >> 9u;
     return positivePolarity ? static_cast<std::int32_t>(word)
                             : -static_cast<std::int32_t>(word);
 }
@@ -858,6 +924,13 @@ float YouKnowEngine::VoicedResonanceCompatibilityProfile::frequencyTrim(
 
 float YouKnowEngine::vcfConverterCarryCounts(float counts) noexcept
 {
+    // One R-2R ladder serves all 23 holds, so its carry error reaches the
+    // other 22 destinations too; it is applied only here as a matter of
+    // scope. In volts the major carry is 5.55 codes, 13.5 mV of the 10 V
+    // branch (0.14 % of full scale): 0.012 dB on the voice-VCA tail current
+    // or a sub/noise/resonance level, 0.08 % of duty on the PWM threshold,
+    // 0.012 dB of ramp amplitude at one pitch -- all below audibility, where
+    // the cutoff's exponential law turns the same 0.14 % into 23 cents.
     // Cents to counts: 1143 counts is an octave and 1200 cents is an octave.
     constexpr float perCent = vcfCountsPerOctave / 1200.0f;
     // Cumulative excess step at each of the three top bit boundaries. The
@@ -1624,6 +1697,13 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts) noexcept
 float YouKnowEngine::pwmDutyCycle(float controlVolts,
                                      float rampAmplitudeScale) noexcept
 {
+    return pwmDutyCycle(controlVolts, rampAmplitudeScale, 6.0f);
+}
+
+float YouKnowEngine::pwmDutyCycle(float controlVolts,
+                                     float rampAmplitudeScale,
+                                     float holdCeilingVolts) noexcept
+{
     // Pulse Off writes -0.8 V. That sits below the ramp and leaves the
     // comparator permanently high while the oscillator itself keeps running.
     if (std::isfinite(controlVolts) && controlVolts < 0.0f)
@@ -1636,8 +1716,12 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts,
     // B-2 accepts all seven-bit SysEx values. That digital overrange can ask
     // for 0..+0.6 V before finally crossing below zero and pinning the output,
     // so retain the established +6 V / 50% floor but move the lower clamp from
-    // the physical slider stop to the comparator ramp's zero-volt rail.
-    const float volts = std::clamp(sanitised(controlVolts, 6.0f), 0.0f, 6.0f);
+    // the physical slider stop to the comparator ramp's zero-volt rail. The
+    // floor is the shared hold's; a card threshold carrying its own offset
+    // passes the ceiling that offset moves it to.
+    const float ceiling = std::max(sanitised(holdCeilingVolts, 6.0f), 0.0f);
+    const float volts = std::clamp(
+        sanitised(controlVolts, 6.0f), 0.0f, ceiling);
     const float scale = std::clamp(
         sanitised(rampAmplitudeScale, 1.0f), 0.25f, 4.0f);
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
@@ -1757,11 +1841,23 @@ float YouKnowEngine::commonVcaHoldTimeConstantSeconds() noexcept
 
 float YouKnowEngine::patchLevelGain(float dacFraction) noexcept
 {
-    // NEC's typical control constant is linear in dB. Installed rail, resistor,
-    // capacitor and IC spread remain measurement questions; they are not
-    // replaced here by synthetic random offsets.
-    const float decibels = commonVcaControlVolts(dacFraction)
-                         / commonVcaControlVoltsPerDecibel;
+    return patchLevelGain(dacFraction, 25.0f);
+}
+
+float YouKnowEngine::patchLevelGain(float dacFraction,
+                                    float jackBoardCelsius) noexcept
+{
+    // NEC's typical control constant is linear in dB and, being two thermal
+    // voltages per decibel (commonVcaControlVoltsPerDecibel), proportional to
+    // absolute temperature: a stored level's decibels shrink by 298.15 K / T
+    // as the jack board warms, towards the 0 dB the part gives at Vc = 0,
+    // which no temperature moves. At 25 C the ratio is exactly one and the
+    // law is the data book's. Installed rail, resistor, capacitor and IC
+    // spread remain measurement questions; they are not replaced here by
+    // synthetic random offsets.
+    const float voltsPerDecibel = commonVcaControlVoltsPerDecibel
+        * ((jackBoardCelsius + 273.15f) / 298.15f);
+    const float decibels = commonVcaControlVolts(dacFraction) / voltsPerDecibel;
     return std::pow(10.0f, decibels / 20.0f);
 }
 
@@ -1967,6 +2063,11 @@ float YouKnowEngine::outputCouplingHighGain(float volumePosition) noexcept
     return network.loadedLower / network.resistance;
 }
 
+float YouKnowEngine::outputJackCornerHz(float volumePosition) noexcept
+{
+    return outputJackCornerHzFor(outputCouplingWiperNetworkFor(volumePosition));
+}
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -1997,6 +2098,46 @@ std::uint32_t YouKnowEngine::xorshift32(std::uint32_t state) noexcept
 float YouKnowEngine::bipolarFromState(std::uint32_t state) noexcept
 {
     return static_cast<float>(state & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
+}
+
+float YouKnowEngine::gaussianFromNoiseState() noexcept
+{
+    // Tr21's reverse-biased emitter-base junction is an avalanche source:
+    // each internal sample sums a great many independent carrier events, so
+    // the rail's amplitude statistics are Gaussian by the central limit
+    // theorem -- the same reading the TP8 crest-factor interpretation in the
+    // decision log already assumes. A uniform draw has a crest factor that
+    // the C42/C41 shaping then moves with the internal rate (about 3.1 at
+    // 44.1 kHz/1x against 4.35 at 192 kHz/4x for the same RMS), so the peak
+    // reaching the transconductor and BA662 pairs changed with the quality
+    // rung. Marsaglia's polar method draws pairs of uniforms through the
+    // same xorshift32 state; the result is unit-variance and scaled below to
+    // the uniform's 1/sqrt(3) RMS so every established level coordinate,
+    // rate normalisation and RMS-based calibration stays put. Clamped at six
+    // sigma (two draws in a billion) so no finite quantity downstream sees an
+    // unbounded sample.
+    if (noiseGaussianSpareValid_)
+    {
+        noiseGaussianSpareValid_ = false;
+        return noiseGaussianSpare_;
+    }
+    constexpr float unitVarianceToUniformRms = 0.57735027f; // 1/sqrt(3)
+    constexpr float clamp = 6.0f * unitVarianceToUniformRms;
+    for (;;)
+    {
+        noiseState_ = xorshift32(noiseState_);
+        const float u = bipolarFromState(noiseState_);
+        noiseState_ = xorshift32(noiseState_);
+        const float v = bipolarFromState(noiseState_);
+        const float radius = u * u + v * v;
+        if (radius >= 1.0f || radius <= 1.0e-12f)
+            continue;
+        const float scale = std::sqrt(-2.0f * std::log(radius) / radius)
+                          * unitVarianceToUniformRms;
+        noiseGaussianSpare_ = std::clamp(v * scale, -clamp, clamp);
+        noiseGaussianSpareValid_ = true;
+        return std::clamp(u * scale, -clamp, clamp);
+    }
 }
 
 float YouKnowEngine::hashBipolar(std::uint32_t value) noexcept
@@ -2160,7 +2301,7 @@ float YouKnowEngine::interpolatedCorrectionSample(
 }
 
 // `samplesAgo` is how far back inside the sample just rendered the event sits,
-// in [0, 1). Output sample `j` of the correction ring is `j - halfWidth`
+// in [0, 1]. Output sample `j` of the correction ring is `j - halfWidth`
 // samples away from the sample just rendered, so the residual is read at
 // `j - halfWidth + samplesAgo` and the table is offset by the half width.
 //
@@ -2168,6 +2309,17 @@ float YouKnowEngine::interpolatedCorrectionSample(
 // neighbour. The ideal step is then evaluated exactly at the query time.
 // Keeping the discontinuity out of the interpolated data is essential: even a
 // dense table otherwise blends across the unit jump immediately before t=0.
+//
+// A query time of exactly zero is the naive sample sitting on the event, and
+// which side of the step that sample holds depends on where the event was
+// found. Inside the sample just rendered (samplesAgo < 1) that sample already
+// carries the new level, so the ideal step is subtracted from it. At
+// samplesAgo == 1 -- eventSamplesAgo(0.0), the left-boundary comparator
+// reconciliation and the two control-word sub flips -- the event sits on the
+// previous sample's instant, and that sample was rendered before the event at
+// the old level: subtracting the step there wrote h * (0.5 - 1) into slot
+// halfWidth - 1 instead of h * 0.5, a full-swing one-sample spike on every
+// such edge (-2.0 against -0.002 one 1/64 grid step earlier for a +2 step).
 void YouKnowEngine::addStep(BandlimitedTrack& track, float height,
                                float samplesAgo) const noexcept
 {
@@ -2186,7 +2338,9 @@ void YouKnowEngine::addStep(BandlimitedTrack& track, float height,
         const float response = interpolatedCorrectionSample(table, j, offset);
         const float queryTime = static_cast<float>(j - correctionHalfWidth)
                               + offset;
-        const float residual = response - (queryTime >= 0.0f ? 1.0f : 0.0f);
+        const bool afterEvent = queryTime > 0.0f
+                             || (queryTime == 0.0f && offset < 1.0f);
+        const float residual = response - (afterEvent ? 1.0f : 0.0f);
         track.ring[static_cast<std::size_t>(slot)] += height * residual;
         slot = slot + 1 < correctionRing ? slot + 1 : 0;
     }
@@ -2240,13 +2394,29 @@ float YouKnowEngine::Envelope::tick(std::uint16_t attackIncrement,
     switch (stage)
     {
         case EnvelopeStage::Attack:
-            level = envelopeAttackLevel(level, attackIncrement);
-            if (level >= envelopePeak)
+        {
+            // B-2 adds the increment and tests only bits 14 and 15 of the
+            // sum (ONI A,$C0 at 0x057c): a sum that lands exactly on 0x3FFF
+            // is stored and the voice stays in attack for one more pass, and
+            // only the pass that overshoots clamps and sets the decay bits.
+            // 0x3FFF is 3 x 43 x 127, so the increments of attack bytes 64
+            // (127) and 100 (43) divide it exactly and reach the peak on a
+            // pass boundary; testing level >= peak handed those two over one
+            // 4.2 ms pass early.
+            // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L897-L910
+            const std::uint32_t next =
+                static_cast<std::uint32_t>(level) + attackIncrement;
+            if (next > envelopePeak)
             {
                 level = envelopePeak;
                 stage = EnvelopeStage::Decay;
             }
+            else
+            {
+                level = static_cast<std::uint16_t>(next);
+            }
             break;
+        }
 
         case EnvelopeStage::Decay:
         case EnvelopeStage::Sustain:
@@ -5293,9 +5463,13 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
     // one, must not be able to put a zero, a negative or a NaN on the internal
-    // grid: every coefficient below divides by it. NaN fails both clamp
-    // comparisons, so it is caught explicitly rather than passed through.
-    sampleRate_ = std::isfinite(sampleRate)
+    // grid: every coefficient below divides by it. Zero, negative, NaN and
+    // infinite reports all mean "no rate yet", so they share one 48 kHz
+    // default; an earlier revision clamped zero to the 8 kHz floor and built
+    // a 32 kHz internal grid (VCF ceiling 3.6 kHz) that the panel readout
+    // published until the real prepare arrived. A positive finite rate
+    // outside the supported span is clamped into it.
+    sampleRate_ = std::isfinite(sampleRate) && sampleRate > 0.0
                     ? std::clamp(sampleRate, minimumSupportedSampleRate,
                                  maximumSupportedSampleRate)
                     : 48000.0;
@@ -5602,6 +5776,8 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputSlewStateRight_ = 0.0f;
     outputBandwidthStateLeft_ = 0.0f;
     outputBandwidthStateRight_ = 0.0f;
+    outputJackStateLeft_ = 0.0f;
+    outputJackStateRight_ = 0.0f;
     outputNoiseStateLeft_ = 0x91e10da5u;
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
@@ -5653,7 +5829,14 @@ double YouKnowEngine::totalLatencySamples(int factor) noexcept
     // or the two configurations do not line up.
     double latency = static_cast<double>(correctionHalfWidth)
                    / static_cast<double>(limited);
-    constexpr double half = (halfbandTaps - 1) / 2.0;
+    // downsamplePair() writes the pair and reads its kernel back from the
+    // second sample, so the 47-tap half width is measured from one input
+    // sample after the pair's first, and each stage delays the first sample
+    // of its pair by 46 of its inputs, not 47. 4x therefore sits at 34.5 host
+    // samples before the residual delay (40.5 with it), which is what
+    // testDecimatorGroupDelayMatchesTheLatencyFormula measures; the report
+    // still rounds to 41 and the 2x/1x pads stay 6 and 17.
+    constexpr double half = (halfbandTaps - 1) / 2.0 - 1.0;
     for (int step = limited; step > 1; step /= 2)
         latency += half / static_cast<double>(step);
     return latency;
@@ -5721,6 +5904,7 @@ void YouKnowEngine::reset()
 
     thermalWarmupSeconds_ = 0.0;
     thermalWarmupFraction_ = 0.0f;
+    jackBoardCelsius_ = 25.0f;
     powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
     lfoRising_ = true;
@@ -5751,7 +5935,6 @@ void YouKnowEngine::reset()
     activeConverterTimingProfile_ = converterTimingProfile_;
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
-    converterPassLfoGated_ = 0.0f;
     passiveHoldEventLatch_ = {};
     exactVcfControlInterval_.fill(false);
     assignmentRescanPending_ = false;
@@ -5759,17 +5942,19 @@ void YouKnowEngine::reset()
     rescanPreviousUnisonMembers_.fill(false);
     rescanUnisonMidiValid_ = false;
     rescanUnisonMidi_ = 60.0f;
-    anyKeyDown_ = false;
     noiseState_ = 0x6d2b79f5u;
+    noiseGaussianSpare_ = 0.0f;
+    noiseGaussianSpareValid_ = false;
     // Both the live value and the target, or a run that stopped with the bender
     // pushed over would start the next one there: hosts are not obliged to
     // resend a neutral controller when the transport restarts, and nothing
     // would bring it back until the player touched the wheel.
     pitchBendTarget_ = 0.0f;
     modWheelTarget_ = 0.0f;
-    pitchBend_ = 0.0f;
     dcoPitchBendWord_ = 0;
+    vcfBendCountsWord_ = 0;
     dcoLfoPitchWord_ = 0;
+    vcfLfoCountsWord_ = 0;
     sustainPedalDown_ = false;
     generation_ = 0;
     activeVoiceCount_ = 0;
@@ -6150,6 +6335,16 @@ void YouKnowEngine::dropFromUnison(Voice& voice) noexcept
         releaseVoiceKey(voice);
 }
 
+bool YouKnowEngine::anyVoiceRunning() const noexcept
+{
+    // B-2's $FF11_voiceRun: a voice is running while its gate is set, and
+    // while the sustain latch holds a gate that has since been released.
+    for (const auto& voice : voices_)
+        if (voice.active && (voice.keyDown || voice.sustained))
+            return true;
+    return false;
+}
+
 bool YouKnowEngine::anyVoiceSounding() const noexcept
 {
     for (const auto& voice : voices_)
@@ -6222,7 +6417,6 @@ void YouKnowEngine::completeVoiceAssignmentRescan() noexcept
     // The physical matrix is scanned from its high address down. Solo Unison
     // consumes the first set bit once; the poly modes continue descending and
     // therefore give a limited pool to the highest held keys.
-    anyKeyDown_ = highestHeldNote() >= 0;
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
         const int note = highestHeldNote();
@@ -6455,15 +6649,6 @@ void YouKnowEngine::noteOnInternal(int midiNote, float velocity) noexcept
     if (!rememberHeldNote(midiNote, velocity))
         return;
 
-    // A phrase starts when no key was down -- release tails still ringing do
-    // not count, because the firmware's retrigger latch watches the key-gate
-    // mask, not envelope activity. A note played over ringing releases
-    // therefore restarts the delay, which the previous
-    // wait-for-silence condition got wrong.
-    if (!anyKeyDown_)
-        rearmLfoDelay();
-
-    anyKeyDown_ = true;
     // A POLY handler has cleared the allocator and is waiting for the keyboard
     // scan. This new bit will be discovered by that same descending pass.
     if (assignmentRescanPending_)
@@ -6481,8 +6666,7 @@ void YouKnowEngine::finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept
     {
         const float target = passiveHoldEventLatch_.target;
         performConverterWrite(
-            passiveHoldEventLatch_.write, activeParameters_,
-            converterPassLfoGated_, &target);
+            passiveHoldEventLatch_.write, activeParameters_, &target);
         passiveHoldEventLatch_ = {};
     }
 
@@ -6551,7 +6735,9 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
             storedControlByte(activeParameters_.dcoLfoDepth),
             storedControlByte(modWheelTarget_),
             controlAdcByte(activeParameters_.benderLfoDepth));
-        converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
+        vcfLfoCountsWord_ = vcfLfoCountsWord(
+            lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
+            storedControlByte(activeParameters_.vcfLfoDepth));
     }
     controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
     nextConverterWrite_ = 0;
@@ -6603,6 +6789,23 @@ void YouKnowEngine::refreshFirmwareDcoTiming() noexcept
 
 void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
 {
+    // The LFO delay re-arms on the first voice-on that follows a pass with no
+    // voice running, not on the first key of a phrase. B-2 rebuilds
+    // $FF11_voiceRun each pass as the gate mask, OR-ed with its previous value
+    // while the sustain flag is set (0x02f2..0x02ff); a pass that finds it
+    // zero sets the hangtime flag (0x030d, 0x036b), and the next pass that
+    // finds it non-zero with that flag set clears the holdoff and the fade
+    // (0x0312..0x0320). Three consequences the key mask cannot express: with
+    // HOLD down and every key lifted the sustained voices keep voiceRun
+    // non-zero, so a new key does not restart the delay; a Solo Unison key-up
+    // or a POLY press gates all six off, so the re-trigger that follows does;
+    // and a seventh key still held after the six sounding ones are released
+    // does too. A releasing voice has its gate bit clear and so does not
+    // count, which is the behaviour the key mask already had.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L510-L535
+    if (!anyVoiceRunning())
+        rearmLfoDelay();
+
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
         finishProtectedPitWritesBeforeSerialVoiceCommand();
@@ -6694,7 +6897,6 @@ void YouKnowEngine::noteOffInternal(int midiNote) noexcept
         return;
 
     const int remaining = highestHeldNote();
-    anyKeyDown_ = remaining >= 0;
 
     // The old assignments have already been gated. Only the held-key table
     // needs changing before the pending descending scan reaches it.
@@ -6741,7 +6943,6 @@ void YouKnowEngine::noteOffInternal(int midiNote) noexcept
 void YouKnowEngine::releaseAllNotes()
 {
     clearHeldNotes();
-    anyKeyDown_ = false;
     assignmentRescanPending_ = false;
     assignmentRescanPassArmed_ = false;
     rescanPreviousUnisonMembers_.fill(false);
@@ -6765,7 +6966,6 @@ void YouKnowEngine::releaseAllNotes()
 void YouKnowEngine::allNotesOff()
 {
     clearHeldNotes();
-    anyKeyDown_ = false;
     assignmentRescanPending_ = false;
     assignmentRescanPassArmed_ = false;
     rescanPreviousUnisonMembers_.fill(false);
@@ -6917,11 +7117,11 @@ void YouKnowEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
 }
 
 std::uint32_t YouKnowEngine::updateVoiceScan(
-    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
+    Voice& voice, const EngineParameters& parameters) noexcept
 {
     const std::uint32_t count = updateVoiceEnvelopeAndPitch(
         voice, parameters);
-    updateVoiceVcfTarget(voice, parameters, lfoGated);
+    updateVoiceVcfTarget(voice, parameters);
     updateVoiceVcaTarget(voice, parameters);
     return count;
 }
@@ -7037,15 +7237,13 @@ std::uint32_t YouKnowEngine::updateVoiceEnvelopeAndPitch(
 }
 
 void YouKnowEngine::updateVoiceVcfTarget(
-    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
+    Voice& voice, const EngineParameters& parameters) noexcept
 {
-    voice.cutoffCountsTarget = voiceVcfTarget(
-        voice, parameters, lfoGated);
+    voice.cutoffCountsTarget = voiceVcfTarget(voice, parameters);
 }
 
 float YouKnowEngine::voiceVcfTarget(
-    const Voice& voice, const EngineParameters& parameters,
-    float lfoGated) const noexcept
+    const Voice& voice, const EngineParameters& parameters) const noexcept
 {
     const auto byte7 = [](float value) { return storedControlFraction(value); };
     const float envelope = voice.envelope.value;
@@ -7063,8 +7261,15 @@ float YouKnowEngine::voiceVcfTarget(
     // for, exactly as it multiplies the amplifier's own control.
     counts += envelopeSign * byte7(parameters.envDepth) * vcfEnvelopeCounts
             * envelope * velocityGain(parameters, voice);
-    counts += byte7(parameters.vcfLfoDepth) * vcfLfoCounts * lfoGated;
-    counts += byte7(parameters.benderVcfDepth) * vcfBenderCounts * pitchBend_;
+    // The LFO term is the pass-held B-2 word, not a fraction of its maximum:
+    // the doubled panel byte and the onset byte truncate to one depth byte
+    // before the accumulator multiply, so panel byte 1 reaches 15 counts
+    // where a proportional 4047/127 would give 32.
+    counts += static_cast<float>(vcfLfoCountsWord_);
+    // Likewise the bender: the assigner's command times the sensitivity ADC,
+    // formed once per pass, so the filter is still inside the two-bin centre
+    // dead zone where the old 255-step magnitude already added 16 counts.
+    counts += static_cast<float>(vcfBendCountsWord_);
     counts += byte7(parameters.keyFollow) * vcfCountsPerOctave
             * (voice.currentMidi - vcfKeyFollowCentreMidi) / 12.0f;
     // The firmware clamps the sum to its 14-bit accumulator -- so the digital
@@ -7131,7 +7336,7 @@ void YouKnowEngine::updateSharedScan(
 
 void YouKnowEngine::performConverterWrite(
     const ConverterWrite& write, const EngineParameters& parameters,
-    float lfoGated, const float* passiveHoldTargetOverride) noexcept
+    const float* passiveHoldTargetOverride) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(converterWrites, 1);
@@ -7212,7 +7417,7 @@ void YouKnowEngine::performConverterWrite(
                 if (passiveHoldTargetOverride != nullptr)
                     voice.cutoffCountsTarget = *passiveHoldTargetOverride;
                 else
-                    updateVoiceVcfTarget(voice, parameters, lfoGated);
+                    updateVoiceVcfTarget(voice, parameters);
             }
             break;
         case ConverterDestination::VoiceVca:
@@ -7252,8 +7457,8 @@ bool YouKnowEngine::isPassiveHoldWrite(
 }
 
 float YouKnowEngine::passiveHoldWriteTarget(
-    const ConverterWrite& write, const EngineParameters& parameters,
-    float lfoGated) const noexcept
+    const ConverterWrite& write,
+    const EngineParameters& parameters) const noexcept
 {
     switch (write.destination)
     {
@@ -7269,7 +7474,7 @@ float YouKnowEngine::passiveHoldWriteTarget(
             if (write.voice >= 0 && write.voice < hardwareVoices)
                 return voiceVcfTarget(
                     voices_[static_cast<std::size_t>(write.voice)],
-                    parameters, lfoGated);
+                    parameters);
             break;
         case ConverterDestination::VoiceVca:
             if (write.voice >= 0 && write.voice < hardwareVoices)
@@ -7375,7 +7580,7 @@ bool YouKnowEngine::latchUpcomingPassiveHoldEvent(
     passiveHoldEventLatch_.ordinal = ordinal;
     passiveHoldEventLatch_.write = write;
     passiveHoldEventLatch_.target = passiveHoldWriteTarget(
-        write, parameters, converterPassLfoGated_);
+        write, parameters);
     passiveHoldEventLatch_.eventPosition = std::clamp(
         (eventPhase - phase) / phasePerInternalSample, 0.0, 1.0);
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -7486,7 +7691,10 @@ float YouKnowEngine::rampCurrentScaleFor(
     // and VCA OFFSET only. What bounds it is the drawing: module board
     // p. 13 prints the integrator as "C54 .001G" -- the G code is +/-2 % --
     // and the three range resistors as "399K MF / 200K MF / 100K MF",
-    // metal film. The +/-2 % capacitor class is therefore the anchored
+    // metal film -- 399 kOhm, not the 400 kOhm an exact 2:1 against 200 kOhm
+    // would need, so the 16' ramp is 400/399 (+0.02 dB) taller than the
+    // range-independent code x divider product assumes; below audibility and
+    // left as the ledger's approximation. The +/-2 % capacitor class is therefore the anchored
     // bound the dispersion sits inside (a 1 % film resistor adds 2.24 %
     // in quadrature); the former 0.03 was a voiced class with no part
     // behind it. Anchored bound, point at the bound's own class.
@@ -7632,7 +7840,18 @@ void YouKnowEngine::updatePulseComparator(
     const float threshold = static_cast<float>(pwmVolts_) + thresholdOffset;
     voice.pulseThresholdVolts = sanitised(threshold, 6.0f);
     voice.pulsePinnedHigh = voice.pulseThresholdVolts < 0.0f;
-    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
+    // The event walk crosses this threshold as it stands, so the duty it
+    // reports has to be the one the walk solves. pwmDutyCycle's +6 V / 50 %
+    // floor is the shared hold's; on a card whose offset lifts the threshold
+    // above 6 V (6.12 V at rampCurrentScale 1.02) clamping the sum back to
+    // 6 V reported 0.5098 where the render holds exactly 0.5, and
+    // pulseWaveNodeMean then primed C56/C50 and drove the freewheel mean with
+    // 0.118 V of DC the rendered comparator never carries -- a false C56 step
+    // at note-on and on resume. The floor therefore moves with the offset:
+    // 6 V * rampCurrentScale * (1 - 2 netDuty), which is 6 V again at Unit
+    // Character 0.
+    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale,
+                                   6.0f + thresholdOffset);
 }
 
 void YouKnowEngine::primeStartupVoiceWaveNodes(
@@ -7765,6 +7984,15 @@ float YouKnowEngine::dynamicOtaHeadroomVolts(
         25.0f + psuThermalOffset + tempRise * thermalWarmupFraction_;
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     return 2.0f * dynamicThermalVoltage / stageAttenuation;
+}
+
+float YouKnowEngine::jackBoardCelsius(
+    const EngineParameters& parameters) const noexcept
+{
+    // The 15 C rise the cards read, scaled by Unit Character as above, so
+    // Character 0 holds the part at NEC's 25 C condition for the whole
+    // session; no gradient term, because the jack board is not a card.
+    return 25.0f + 15.0f * parameters.calibration * thermalWarmupFraction_;
 }
 
 void YouKnowEngine::advanceDcoPitAndRamp(
@@ -8755,9 +8983,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         && oversamplingRequested_ != oversamplingApplied_
         && rateTransitionGain_ > 0.0f)
     {
+        // The decrement below snaps to zero once less than half a step is
+        // left, so the sample that reaches zero is round(gain / step) from
+        // here; ceil() used to disagree with the float crumb the subtraction
+        // leaves at 8, 48, 192, 384 and 768 kHz and split a second time.
         const int samplesUntilZero = std::max(
-            1, static_cast<int>(std::ceil(
-                   rateTransitionGain_ / rateTransitionStep_)));
+            1, static_cast<int>(std::floor(
+                   rateTransitionGain_ / rateTransitionStep_ + 0.5f)));
         if (samplesUntilZero < numSamples)
         {
             process(left, right, samplesUntilZero);
@@ -8803,7 +9035,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         return resolvedTarget + (state - resolvedTarget) * decay;
     };
     bool patchLevelCacheValid = false;
-    std::uint32_t patchLevelCacheKey = 0u;
+    std::uint64_t patchLevelCacheKey = 0u;
     float patchLevelCacheValue = 0.0f;
     bool outputCouplingCacheValid = false;
     std::uint32_t outputCouplingCacheKey = 0u;
@@ -8881,22 +9113,31 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 #endif
                 controlScanPhase_ -= 1.0;
                 nextConverterWrite_ = 0;
+                // The common VCA's control constant is proportional to
+                // absolute temperature (patchLevelGain), and the chassis
+                // warms on a 900 s exponential. Resample it here, with the
+                // pass that writes the VCA's own control byte: reading it
+                // once per callback instead would make the level depend on
+                // how the host partitions its blocks, and reading it every
+                // internal sample would spend a power for a number that
+                // moves by microdecibels across a pass.
+                jackBoardCelsius_ = jackBoardCelsius(parameters);
                 if (assignmentRescanPending_)
                     assignmentRescanPassArmed_ = true;
-                const float bendMagnitude = std::floor(
-                    std::abs(pitchBendTarget_) * 255.0f + 0.5f) / 255.0f;
-                pitchBend_ = pitchBendTarget_ < 0.0f ? -bendMagnitude
-                                                     : bendMagnitude;
+                const std::int16_t bendCommand = dcoBendCommand(pitchBendTarget_);
                 dcoPitchBendWord_ = dcoBendWordForCommand(
-                    dcoBendCommand(pitchBendTarget_),
-                    controlAdcByte(parameters.benderDcoDepth));
+                    bendCommand, controlAdcByte(parameters.benderDcoDepth));
+                vcfBendCountsWord_ = vcfBendCountsWord(
+                    bendCommand, controlAdcByte(parameters.benderVcfDepth));
                 advanceLfo(parameters);
                 dcoLfoPitchWord_ = dcoLfoPitchWordOffset(
                     lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
                     storedControlByte(parameters.dcoLfoDepth),
                     storedControlByte(modWheelTarget_),
                     controlAdcByte(parameters.benderLfoDepth));
-                converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
+                vcfLfoCountsWord_ = vcfLfoCountsWord(
+                    lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
+                    storedControlByte(parameters.vcfLfoDepth));
                 converterPassPwmDacCode_ = parameters.pulseEnabled
                     ? pwmDacCode(parameters.pwmDepth, parameters.pwmSource,
                                  lfoAccumulator_, lfoPolarity_ >= 0.0f)
@@ -8913,7 +9154,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     YOUKNOW_COUNT_DOMAIN_WORK(extensionScanUpdates, 1);
 #endif
                     const std::uint32_t count = updateVoiceScan(
-                        voice, parameters, converterPassLfoGated_);
+                        voice, parameters);
                     programDcoCount(voice, count, voice.dcoResetPending);
                     voice.dcoResetPending = false;
                 }
@@ -8937,7 +9178,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 const float latchedTarget = consumesLatch
                     ? passiveHoldEventLatch_.target : 0.0f;
                 performConverterWrite(
-                    write, parameters, converterPassLfoGated_,
+                    write, parameters,
                     consumesLatch ? &latchedTarget : nullptr);
                 if (relevant && !consumesLatch && !physicalHoldEvent.active)
                 {
@@ -9065,14 +9306,17 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // band-shapes the rail: C42 into the level OTA's 4.7 kOhm input
             // bias high-passes at 33.9 Hz, the BA662 applies the scanned level,
             // and C41 against R79 low-passes that controlled output at
-            // 4.82 kHz. One state still serves every voice; the passband stays
-            // at unity, so in-band density keeps its established rate
-            // normalisation.
+            // 4.82 kHz. One state still serves every voice; the passband below
+            // that corner stays at unity, so in-band density keeps its
+            // established rate normalisation there. Above it the bilinear
+            // one-pole's zero at Nyquist thins the coarse grids against the
+            // analogue pole -- about -1.2 dB at 10 kHz and -4 dB at 16 kHz
+            // on a 48 kHz/1x grid, -0.5 dB over 0-20 kHz -- a numerical
+            // limitation of the HQ-off rungs, not a modelled mechanism.
             if (noiseState_ == 0u)
                 noiseState_ = 0x6d2b79f5u;
-            noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
-                bipolarFromState(noiseState_) * noiseRateScale_
+                gaussianFromNoiseState() * noiseRateScale_
                 * mainNoiseSourceScale;
             // The hold voltage is what moves; Tr22 converts it to control
             // current instantaneously, so the onset law is applied after the
@@ -9430,10 +9674,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 shaped, commonVcaInputCouplingG_, 0.0f, 1.0f);
             const float patchLevelInput = static_cast<float>(sharedVca_);
             const auto patchLevelKey =
-                std::bit_cast<std::uint32_t>(patchLevelInput);
+                (static_cast<std::uint64_t>(
+                     std::bit_cast<std::uint32_t>(patchLevelInput)) << 32)
+                | std::bit_cast<std::uint32_t>(jackBoardCelsius_);
             if (!patchLevelCacheValid || patchLevelCacheKey != patchLevelKey)
             {
-                patchLevelCacheValue = patchLevelGain(patchLevelInput);
+                patchLevelCacheValue =
+                    patchLevelGain(patchLevelInput, jackBoardCelsius_);
                 patchLevelCacheKey = patchLevelKey;
                 patchLevelCacheValid = true;
             }
@@ -9591,6 +9838,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                    * outputCouplingNetwork.resistance);
             outputCouplingG_ = std::tan(
                 pi * outputCouplingCorner * inverseSampleRate_);
+            // R64/R65 with C22/C21 after the selector, at the host rate. The
+            // matched-Z blend the IC6 pole uses, not a tan() prewarp: the
+            // 46.15 kHz corner lies above Nyquist at 44.1/48 kHz hosts, where
+            // a bilinear map has no frequency to land it on. There the blend
+            // is nearly transparent (about -0.04 dB at 20 kHz) and the
+            // physical -0.75 dB at 20 kHz appears only as the host rate
+            // rises: -0.33 dB at 96 kHz, -0.61 dB at 192 kHz.
+            outputJackBlend_ = 1.0f - std::exp(
+                -twoPi * outputJackCornerHzFor(outputCouplingNetwork)
+                * inverseSampleRate_);
             outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
                 ? outputCouplingNetwork.loadedLower
                     / outputCouplingNetwork.resistance
@@ -9633,6 +9890,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     * parameters.calibration * outputWiperNoiseScale;
         outputRight += bipolarFromState(outputWiperNoiseStateRight_)
                      * parameters.calibration * outputWiperNoiseScale;
+        // C22/C21 with R64/R65: the jack node the plug sees. The coupling and
+        // the wiper's noise both sit behind the 2.2 kOhm, so the pole follows
+        // them. It is the nominal circuit's, so Unit Character does not scale
+        // it; see outputJackBlend_.
+        outputJackStateLeft_ +=
+            outputJackBlend_ * (outputLeft - outputJackStateLeft_);
+        outputJackStateRight_ +=
+            outputJackBlend_ * (outputRight - outputJackStateRight_);
+        outputLeft = outputJackStateLeft_;
+        outputRight = outputJackStateRight_;
 
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.
@@ -9653,8 +9920,14 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
         if (rateTransition_ == RateTransition::FadingOut)
         {
-            rateTransitionGain_ = std::max(
-                0.0f, rateTransitionGain_ - rateTransitionStep_);
+            // Land exactly on zero at the round(gain / step) sample the split
+            // in process() scheduled. Subtracting the step in float leaves a
+            // crumb of about 1e-6 at the rates where 0.005 * fs is an integer
+            // (8, 48, 192, 384, 768 kHz), which used to cost one more split
+            // and put the rebuild one host sample after the boundary.
+            rateTransitionGain_ -= rateTransitionStep_;
+            if (rateTransitionGain_ < 0.5f * rateTransitionStep_)
+                rateTransitionGain_ = 0.0f;
         }
         else if (rateTransition_ == RateTransition::FadingIn)
         {

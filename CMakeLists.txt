@@ -286,6 +286,17 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderDemos PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderDemos PRIVATE cxx_std_20)
 
+    add_executable(YouKnowBenchmarkReference
+        Tools/BenchmarkReference.cpp
+        Tools/OversamplingQualitySupport.h)
+    target_link_libraries(YouKnowBenchmarkReference PRIVATE YouKnowDSP)
+    target_include_directories(YouKnowBenchmarkReference PRIVATE Tools)
+    target_compile_features(YouKnowBenchmarkReference PRIVATE cxx_std_20)
+
+    add_executable(YouKnowRenderComposition Tools/RenderComposition.cpp)
+    target_link_libraries(YouKnowRenderComposition PRIVATE YouKnowDSP Threads::Threads)
+    target_compile_features(YouKnowRenderComposition PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderSota Tools/RenderSotaComparisons.cpp)
     target_link_libraries(YouKnowRenderSota PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderSota PRIVATE cxx_std_20)
@@ -490,6 +501,8 @@ if(YOUKNOW_BUILD_TOOLS)
 
     if(MSVC)
         target_compile_options(YouKnowRenderDemos PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowBenchmarkReference PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderTanhAuditions
             PRIVATE /W4 /permissive-)
@@ -521,6 +534,10 @@ if(YOUKNOW_BUILD_TOOLS)
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnowRenderDemos PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowBenchmarkReference PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowRenderComposition PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderSota PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -635,6 +652,26 @@ if(BUILD_TESTING)
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(YouKnow.RenderDemos PROPERTIES TIMEOUT 60)
 
+        # Guards the renderer that produces the committed composition. It
+        # checks the whole score against each preset's polyphony and key mode,
+        # then renders one part at the shipping quality rung and checks that
+        # the audio is finite, audible and written as a readable 24-bit WAV.
+        add_test(NAME YouKnow.RenderComposition
+                 COMMAND YouKnowRenderComposition --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/composition-smoke")
+        set_tests_properties(YouKnow.RenderComposition PROPERTIES TIMEOUT 120)
+
+        # Proves the hardware-benchmark measures can see the differences they
+        # exist to report: a render must compare equal to itself, and a known
+        # detune, a closed filter, a slowed attack, a known lag and a known
+        # level trim must each be recovered. It runs whether or not any capture
+        # is committed, because a table of small errors from measures that
+        # cannot see anything looks exactly like agreement.
+        add_test(NAME YouKnow.BenchmarkReference
+                 COMMAND YouKnowBenchmarkReference --self-test)
+        # Eleven renders at the deepest rung, which is minutes on a slow runner.
+        set_tests_properties(YouKnow.BenchmarkReference PROPERTIES TIMEOUT 900)
+
         # Fast integration coverage for the long-form factory gain auditor. It
         # uses the same mappings, meters, ownership guard and fixed preview
         # path as a full run, with a two-preset shortened score.
@@ -707,7 +744,32 @@ if(BUILD_TESTING)
     # Address/undefined sanitizers make both substantially slower; retain
     # runaway guards with enough margin for universal macOS builds and loaded
     # CI workers instead of intermittently timing out valid coverage.
-    if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
+    # The sanitizer can arrive through a configuration's own flags, the linker
+    # flags or an explicit option as well as CMAKE_CXX_FLAGS, so every
+    # configuration this tree can build is examined. A multi-config generator
+    # picks its configuration at build time and ignores CMAKE_BUILD_TYPE
+    # entirely, so reading only the flags that variable names would miss a
+    # sanitized Debug under Xcode, Visual Studio or Ninja Multi-Config.
+    option(YOUKNOW_SANITIZER_BUILD
+        "Widen test timeouts and tell the suites the build is instrumented" OFF)
+    get_property(YOUKNOW_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(YOUKNOW_MULTI_CONFIG)
+        set(YOUKNOW_CANDIDATE_CONFIGS ${CMAKE_CONFIGURATION_TYPES})
+    else()
+        set(YOUKNOW_CANDIDATE_CONFIGS "${CMAKE_BUILD_TYPE}")
+    endif()
+    set(YOUKNOW_SANITIZED_CONFIGS "")
+    foreach(config IN LISTS YOUKNOW_CANDIDATE_CONFIGS)
+        string(TOUPPER "${config}" YOUKNOW_CONFIG_UPPER)
+        if("${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${YOUKNOW_CONFIG_UPPER}} ${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_EXE_LINKER_FLAGS_${YOUKNOW_CONFIG_UPPER}}"
+           MATCHES "fsanitize")
+            list(APPEND YOUKNOW_SANITIZED_CONFIGS "${config}")
+        endif()
+    endforeach()
+    if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS)
+        # A timeout is per-test, not per-configuration, and CTest runs one
+        # configuration at a time: widen whenever any of them is instrumented,
+        # because a longer bound never turns a healthy run red.
         set(YOUKNOW_ENGINE_TEST_TIMEOUT 600)
         set(YOUKNOW_CIRCUIT_TEST_TIMEOUT 900)
         # The suites also have to know, because one of them asserts the engine
@@ -715,9 +777,17 @@ if(BUILD_TESTING)
         # Compiler macros do not cover the cases this branch does -- GCC with
         # only -fsanitize=undefined defines nothing a test can see -- so the
         # build system tells them directly and the two decisions cannot drift
-        # apart.
+        # apart. The definition is per-configuration, so a Release build in a
+        # tree that also carries a sanitized Debug keeps that assertion.
+        if(YOUKNOW_SANITIZER_BUILD)
+            set(YOUKNOW_SANITIZER_DEFINITION YOUKNOW_SANITIZER_BUILD=1)
+        else()
+            set(YOUKNOW_SANITIZER_DEFINITION
+                "$<$<IN_LIST:$<CONFIG>,${YOUKNOW_SANITIZED_CONFIGS}>:YOUKNOW_SANITIZER_BUILD=1>")
+        endif()
         foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowSysExTests)
-            target_compile_definitions(${target} PRIVATE YOUKNOW_SANITIZER_BUILD=1)
+            target_compile_definitions(${target} PRIVATE
+                "${YOUKNOW_SANITIZER_DEFINITION}")
         endforeach()
     else()
         # The engine bound was 300 s. The warm-up fixture added in the

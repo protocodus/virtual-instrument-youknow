@@ -6833,6 +6833,141 @@ void testCorrectionResidualsVanishAtTheEdges()
     expectNear(measured, programmed, 0.5,
                "the rendered ramp is not at the frequency the timer was given");
 }
+void testOutputJackPoleFollowsTheWiperSourceResistance()
+{
+    // Service Notes p. 15: each selector wiper reaches its jack through
+    // 2.2 kOhm (R64 into JA2, R65 into JA1) with 1 nF (C22, C21) from the
+    // jack node to ground. With the jack open, the pole's resistance is that
+    // 2.2 kOhm plus the wiper's own Thevenin resistance -- R54/R57 plus the
+    // unused track, in parallel with the loaded lower track -- solved here
+    // independently of the engine's shared wiper network.
+    constexpr double pot = 10000.0;
+    constexpr double series = 1500.0;
+    constexpr double selector = 41300.0;
+    constexpr double headphone = 101000.0;
+    constexpr double load = selector * headphone / (selector + headphone);
+    constexpr double jackSeries = 2200.0;
+    constexpr double jackCapacitance = 1.0e-9;
+    const auto reference = [=](double position) {
+        const double upper = series + (1.0 - position) * pot;
+        const double lower = position * pot;
+        const double loadedLower =
+            lower > 0.0 ? lower * load / (lower + load) : 0.0;
+        const double wiper = loadedLower > 0.0
+            ? upper * loadedLower / (upper + loadedLower) : 0.0;
+        return 1.0 / (2.0 * pi * jackCapacitance * (jackSeries + wiper));
+    };
+    for (const double position : { 0.0, 0.25, 0.5, 0.75, 1.0 })
+        expectNear(YouKnowEngine::outputJackCornerHz(
+                       static_cast<float>(position)),
+                   reference(position), 1.0,
+                   "the jack pole does not follow the wiper's source "
+                   "resistance at shaft position "
+                       + std::to_string(position));
+
+    // The corners the README quotes -- 1.249 kOhm of wiper at full volume,
+    // 2.578 kOhm at half, 2.396 kOhm at three quarters -- and the roll-off
+    // they put on the top of the band with the jack open.
+    const double full = YouKnowEngine::outputJackCornerHz(1.0f);
+    const double half = YouKnowEngine::outputJackCornerHz(0.5f);
+    expectNear(full, 46150.0, 10.0, "the full-volume jack corner is not 46.15 kHz");
+    expectNear(half, 33316.0, 10.0, "the half-volume jack corner is not 33.32 kHz");
+    expectNear(YouKnowEngine::outputJackCornerHz(0.75f), 34635.0, 10.0,
+               "the three-quarter-volume jack corner is not 34.63 kHz");
+    const auto rollOffDb = [](double corner, double frequency) {
+        const double ratio = frequency / corner;
+        return -10.0 * std::log10(1.0 + ratio * ratio);
+    };
+    expectNear(rollOffDb(full, 10000.0), -0.20, 0.01,
+               "full volume does not roll off 0.20 dB at 10 kHz");
+    expectNear(rollOffDb(full, 20000.0), -0.75, 0.01,
+               "full volume does not roll off 0.75 dB at 20 kHz");
+    expectNear(rollOffDb(half, 10000.0), -0.37, 0.01,
+               "half volume does not roll off 0.37 dB at 10 kHz");
+    expectNear(rollOffDb(half, 20000.0), -1.34, 0.01,
+               "half volume does not roll off 1.34 dB at 20 kHz");
+}
+
+void testCommonVcaControlConstantIsProportionalToAbsoluteTemperature()
+{
+    // NEC p. 257 specifies -5.9 mV/dB at Ta = 25 C, and p. 260's gain-vs-
+    // control graph draws the -25/25/75 C lines fanning about 0 dB: the
+    // translinear gain cell's two thermal voltages per decibel, so the
+    // constant scales with absolute temperature and a stored level's
+    // decibels shrink by 298.15 K / T as the jack board warms.
+    constexpr double boltzmann = 1.380649e-23;
+    constexpr double electronCharge = 1.602176634e-19;
+    const double twoThermalVoltsPerDecibel =
+        2.0 * (boltzmann * 298.15 / electronCharge) * std::log(10.0) / 20.0;
+    expectNear(twoThermalVoltsPerDecibel, 5.9e-3, 0.02e-3,
+               "two thermal voltages per decibel at 25 C is not NEC's "
+               "5.9 mV/dB");
+
+    // The one-argument law is the 25 C law, bit for bit.
+    for (int storedByte = 0; storedByte <= 127; ++storedByte)
+    {
+        const float position = static_cast<float>(storedByte) / 127.0f;
+        expect(YouKnowEngine::patchLevelGain(position)
+                   == YouKnowEngine::patchLevelGain(position, 25.0f),
+               "patchLevelGain at 25 C is not the data-book law bit for bit "
+               "at stored byte " + std::to_string(storedByte));
+    }
+
+    // Full warm-up at Unit Character 1 is 25 + 15 C: 313.15 / 298.15.
+    constexpr float warm = 40.0f;
+    constexpr double warmRatio = 313.15 / 298.15;
+    const auto decibels = [](double gain) { return 20.0 * std::log10(gain); };
+    const auto coldDb = [&](float position) {
+        return decibels(YouKnowEngine::patchLevelGain(position));
+    };
+    const auto warmDb = [&](float position) {
+        return decibels(YouKnowEngine::patchLevelGain(position, warm));
+    };
+    for (const float position : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+        expectNear(warmDb(position), coldDb(position) / warmRatio, 1.0e-4,
+                   "the warm law is not the cold decibels over 313.15/298.15 "
+                   "at position " + std::to_string(position));
+    expectNear(coldDb(0.0f), -16.32, 0.01, "stored byte 0 is not -16.3 dB cold");
+    expectNear(warmDb(0.0f), -15.54, 0.01,
+               "stored byte 0 does not read -15.5 dB at full warm-up");
+    expectNear(warmDb(0.0f) - coldDb(0.0f), 0.78, 0.01,
+               "stored byte 0 does not gain 0.78 dB at full warm-up");
+    expectNear(coldDb(1.0f), 4.71, 0.01, "full travel is not +4.7 dB cold");
+    expectNear(warmDb(1.0f), 4.48, 0.01,
+               "full travel does not read +4.48 dB at full warm-up");
+
+    // The gain is monotone in position, so bisect the cold law for the
+    // position reading -10 dB and the position where Vc = 0: the first warms
+    // to -9.52 dB, the second is 0 dB at every temperature.
+    const auto bisect = [](auto belowTarget) {
+        double low = 0.0;
+        double high = 1.0;
+        for (int step = 0; step < 60; ++step)
+        {
+            const double middle = 0.5 * (low + high);
+            if (belowTarget(static_cast<float>(middle)))
+                low = middle;
+            else
+                high = middle;
+        }
+        return static_cast<float>(0.5 * (low + high));
+    };
+    const float minusTen = bisect([&](float position) {
+        return coldDb(position) < -10.0;
+    });
+    expectNear(coldDb(minusTen), -10.0, 1.0e-3, "fixture: -10 dB cold");
+    expectNear(warmDb(minusTen), -9.52, 0.01,
+               "a -10 dB stored level does not read -9.52 dB at full warm-up");
+    const float unity = bisect([](float position) {
+        return YouKnowEngine::commonVcaControlVolts(position) > 0.0f;
+    });
+    expectNear(coldDb(unity), 0.0, 1.0e-3, "fixture: Vc = 0 is not 0 dB cold");
+    expectNear(warmDb(unity), 0.0, 1.0e-3,
+               "0 dB moved with temperature, but Vc = 0 is 0 dB at any T");
+    expectNear(warmDb(unity) - coldDb(unity), 0.0, 1.0e-5,
+               "temperature moved the 0 dB point");
+}
+
 void testOutputSummerIsLinearBelowItsAsymptote()
 {
     // IC6 runs on +/-15 V and the audio it carries is a few volts, so the stage
@@ -7082,6 +7217,8 @@ int main()
     testOutputSummerBandwidthFollowsNoiseGain();
     testOutputResistorNoiseFollowsJohnsonNyquistLaw();
     testOutputSummerSlewMatchesDatasheetTypical();
+    testOutputJackPoleFollowsTheWiperSourceResistance();
+    testCommonVcaControlConstantIsProportionalToAbsoluteTemperature();
     testDecimatorProtectsTheTopOfTheBand();
     testFilterCoreDividerMatchesSchematic();
     testCascadeAgainstReferenceSolve();
@@ -7164,30 +7301,6 @@ int main()
         {
             std::cerr << "FAIL: OtaCascade stage offsets did not produce asymmetric response\n";
             ++failures;
-        }
-
-        // Test Op-Amp Slew-Rate Limiting
-        {
-            EngineParameters params;
-            params.enableOpAmpSlewLimiting = true;
-            YouKnowEngine engine;
-            engine.prepare(44100.0, 256, true);
-            engine.setParameters(params);
-
-            std::vector<float> left(256, 0.0f);
-            std::vector<float> right(256, 0.0f);
-            engine.noteOn(72, 1.0f);
-            engine.process(left.data(), right.data(), 256);
-
-            for (int i = 1; i < 256; ++i)
-            {
-                if (!std::isfinite(left[i]) || !std::isfinite(right[i]))
-                {
-                    std::cerr << "FAIL: Op-Amp slew limiting output not finite\n";
-                    ++failures;
-                    break;
-                }
-            }
         }
 
     }

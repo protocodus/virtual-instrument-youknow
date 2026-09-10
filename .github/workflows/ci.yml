@@ -73,9 +73,30 @@ jobs:
           fi
           echo "YouKnow: rendered all $rendered demo WAVs"
 
+      # The composition is one file rather than a counted set, so the check is
+      # that this run wrote it and that it is a plausible length: a 24-bit
+      # stereo minute is about 16 MB, and a score that silently lost its parts
+      # would still write a valid but tiny WAV.
+      - name: Render and verify the composition
+        run: |
+          set -euo pipefail
+          cmake --build build-dsp --target YouKnowRenderComposition --parallel
+          rm -f Docs/audio/composition/*.wav
+          ./build-dsp/YouKnowRenderComposition Docs/audio/composition
+          piece=Docs/audio/composition/youknow-composition.wav
+          test -f "$piece"
+          bytes=$(stat -c%s "$piece")
+          if (( bytes < 10000000 )); then
+            echo "error: the composition is only $bytes bytes" >&2
+            exit 1
+          fi
+          echo "YouKnow: rendered the composition ($bytes bytes)"
+
       - name: Archive the refreshed audio demos and peak table
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: tar -czf audio-previews.tar.gz README.md Docs/audio/*.wav
+        run: |
+          tar -czf audio-previews.tar.gz README.md Docs/audio/*.wav \
+            Docs/audio/composition/youknow-composition.wav
 
       - name: Upload the refreshed audio demos
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

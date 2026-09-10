@@ -264,7 +264,7 @@ struct YouKnowTestAccess
         engine.activeParameters_ = parametersFor(pwmMode, vcaMode);
         engine.targetParameters_ = engine.activeParameters_;
         engine.refreshVoiceRampCurrentScales();
-        engine.converterPassLfoGated_ = -0.37f;
+        engine.vcfLfoCountsWord_ = -1497;
         engine.lfoAccumulator_ = 0x0bd7u;
         engine.lfoPolarity_ = -1.0f;
         stagePwmPassCode(engine, engine.activeParameters_);
@@ -357,12 +357,10 @@ struct YouKnowTestAccess
 
     static float eventTarget(const YouKnowEngine& engine,
                              std::size_t ordinal,
-                             const EngineParameters& parameters,
-                             float lfoGated) noexcept
+                             const EngineParameters& parameters) noexcept
     {
         return engine.passiveHoldWriteTarget(
-            YouKnowEngine::converterWriteOrder()[ordinal], parameters,
-            lfoGated);
+            YouKnowEngine::converterWriteOrder()[ordinal], parameters);
     }
 
     static float heldTarget(const YouKnowEngine& engine,
@@ -480,8 +478,7 @@ struct YouKnowTestAccess
     }
 
     static void setAutomationAfterPeek(YouKnowEngine& engine,
-                                       EngineParameters& parameters,
-                                       float& lfoGated) noexcept
+                                       EngineParameters& parameters) noexcept
     {
         parameters.resonance = 0.94f;
         parameters.vcaLevel = 0.07f;
@@ -491,7 +488,6 @@ struct YouKnowTestAccess
         parameters.cutoff = 0.84f;
         parameters.envDepth = 0.73f;
         parameters.keyFollow = 0.81f;
-        lfoGated = 0.79f;
         for (int voice = 0; voice < YouKnowEngine::hardwareVoices; ++voice)
         {
             auto& item = engine.voices_[static_cast<std::size_t>(voice)];
@@ -501,17 +497,17 @@ struct YouKnowTestAccess
         }
         engine.activeParameters_ = parameters;
         engine.targetParameters_ = parameters;
-        engine.converterPassLfoGated_ = lfoGated;
+        engine.vcfLfoCountsWord_ = 3197;
     }
 
     static void commitOverride(YouKnowEngine& engine,
                                std::size_t ordinal,
                                const EngineParameters& parameters,
-                               float lfoGated, float target) noexcept
+                               float target) noexcept
     {
         engine.performConverterWrite(
             YouKnowEngine::converterWriteOrder()[ordinal], parameters,
-            lfoGated, &target);
+            &target);
     }
 
     static constexpr bool scalarLatchIsAllocationFree() noexcept
@@ -1242,9 +1238,8 @@ void runProcessWiringAudit(Metrics& metrics)
                     const Coordinates initial = Access::coordinates(engine);
                     Targets targets = Access::targets(engine);
                     const auto parameters = Access::parametersFor(mode, vcaMode);
-                    const float lfo = -0.37f;
                     const float eventTarget = Access::eventTarget(
-                        engine, ordinal, parameters, lfo);
+                        engine, ordinal, parameters);
                     Access::setCursor(engine, ordinal, requestedPosition);
                     const double eventPosition = Access::geometricEventPosition(
                         engine, ordinal, 0);
@@ -1383,9 +1378,8 @@ void runBlockWrapAutomationAudit(Metrics& metrics)
             Coordinates reference = Access::coordinates(engine);
             Targets targets = Access::targets(engine);
             const auto parameters = Access::parametersFor(mode, vcaMode);
-            const float lfo = -0.37f;
             const float eventTarget = Access::eventTarget(
-                engine, ordinal, parameters, lfo);
+                engine, ordinal, parameters);
             Access::setCursor(engine, ordinal, 0.5, rate.factor - 1);
             const double eventPosition = Access::geometricEventPosition(
                 engine, ordinal, rate.factor - 1);
@@ -1412,12 +1406,10 @@ void runBlockWrapAutomationAudit(Metrics& metrics)
                 ++metrics.schedulerPayloadFailures;
 
             EngineParameters after = parameters;
-            float afterLfo = lfo;
-            Access::setAutomationAfterPeek(engine, after, afterLfo);
+            Access::setAutomationAfterPeek(engine, after);
             if (ordinal == 9u)
                 Access::mutateStagedPwmPayloadAfterPeek(engine);
-            const float changed = Access::eventTarget(
-                engine, ordinal, after, afterLfo);
+            const float changed = Access::eventTarget(engine, ordinal, after);
             if (changed == eventTarget)
                 ++metrics.schedulerPayloadFailures;
 
@@ -1455,14 +1447,13 @@ void runSchedulerAudit(Metrics& metrics)
         ++destinationCounts[static_cast<std::size_t>(writes[ordinal].destination)];
         auto engine = Access::fixture(hostRate, hq, PwmMode::Manual);
         auto parameters = Access::parametersFor(PwmMode::Manual);
-        const float lfoAtEvent = -0.37f;
         Access::setSchedulerCursor(engine, ordinal);
         const float targetBefore = Access::heldTarget(engine, ordinal);
         const bool expectedRelevant = expectedPassive(writes[ordinal]);
         if (Access::isPassive(ordinal) != expectedRelevant)
             ++metrics.schedulerClassificationFailures;
         const float expected = expectedRelevant
-            ? Access::eventTarget(engine, ordinal, parameters, lfoAtEvent)
+            ? Access::eventTarget(engine, ordinal, parameters)
             : 0.0f;
         const double phase = phases[ordinal] - 0.5 * delta;
         const std::size_t cursorBefore = Access::schedulerCursor(engine);
@@ -1498,14 +1489,11 @@ void runSchedulerAudit(Metrics& metrics)
         if (Access::schedulerCursor(engine) != cursorBefore)
             ++metrics.schedulerCursorFailures;
 
-        float afterLfo = lfoAtEvent;
-        Access::setAutomationAfterPeek(engine, parameters, afterLfo);
+        Access::setAutomationAfterPeek(engine, parameters);
         if (writes[ordinal].destination == Destination::Pwm)
             Access::mutateStagedPwmPayloadAfterPeek(engine);
-        const float changed = Access::eventTarget(
-            engine, ordinal, parameters, afterLfo);
-        Access::commitOverride(
-            engine, ordinal, parameters, afterLfo, latch.target);
+        const float changed = Access::eventTarget(engine, ordinal, parameters);
+        Access::commitOverride(engine, ordinal, parameters, latch.target);
         if (Access::heldTarget(engine, ordinal) != expected
             || changed == expected)
             ++metrics.schedulerPayloadFailures;
@@ -1524,7 +1512,7 @@ void runSchedulerAudit(Metrics& metrics)
     auto parameters = Access::parametersFor(PwmMode::Manual);
     Access::setSchedulerCursor(wrap, Access::writeCount());
     const double phase = 1.0 - 0.5 * delta;
-    const float expected = Access::eventTarget(wrap, 0u, parameters, -0.37f);
+    const float expected = Access::eventTarget(wrap, 0u, parameters);
     const bool peeked = Access::peek(wrap, phase, delta, parameters);
     const auto latch = Access::latch(wrap);
     if (!peeked || !latch.valid || !latch.nextPass || latch.ordinal != 0u
@@ -1532,9 +1520,8 @@ void runSchedulerAudit(Metrics& metrics)
         || std::abs(latch.eventPosition - 0.5) > 2.0e-12
         || Access::schedulerCursor(wrap) != Access::writeCount())
         ++metrics.schedulerPassWrapFailures;
-    float afterLfo = -0.37f;
-    Access::setAutomationAfterPeek(wrap, parameters, afterLfo);
-    Access::commitOverride(wrap, 0u, parameters, afterLfo, latch.target);
+    Access::setAutomationAfterPeek(wrap, parameters);
+    Access::commitOverride(wrap, 0u, parameters, latch.target);
     if (Access::heldTarget(wrap, 0u) != expected)
         ++metrics.schedulerPassWrapFailures;
 }

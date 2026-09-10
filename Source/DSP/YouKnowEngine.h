@@ -280,11 +280,12 @@ struct EngineParameters
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
     bool enableChorusClockBleed { false };
-    // Off by default: the only trajectory measurement in existence (KR-106's
-    // ~50-point click-timing series, 16 us RMS residual against a straight
-    // line) reads the 106's delay as linear in time, so the linear sweep
-    // ships and the frequency-linear hypothesis waits behind this switch for
-    // the calibrated capture OQ-01 still requests.
+    // Comparison-only, off by default. The shipped linear-in-time delay is
+    // derived from the p. 15 threshold oscillator (a fixed Tr19 charge current
+    // into C53 against an LFO-set threshold gives a clock period affine in
+    // the triangle), corroborated by KR-106's click-timing series; this
+    // switch substitutes a current-modulated oscillator the board does not
+    // have, for A/B renders only.
     bool enableChorusHyperbolicSweep { false };
     // The reported approximately 3.95 dB II-I output-floor delta ships as the
     // empirical default. This internal switch substitutes the rate-proportional
@@ -547,6 +548,12 @@ public:
     // 3063 pitch units (11.96484375 semitones), not an ideal twelve.
     [[nodiscard]] static std::int32_t dcoPitchBendWordOffset(
         float normalisedBipolar, float depth) noexcept;
+    // The bender's filter axis from the same assigner command: the one-sided
+    // bend byte (zero at rest, otherwise twice the magnitude plus one) times
+    // the VCF sensitivity ADC byte, shifted right four times, signed by the
+    // command. 4064 counts at full deflection and full sensitivity.
+    [[nodiscard]] static std::int32_t vcfBendCountsWord(
+        std::int16_t command, std::uint8_t sensitivity) noexcept;
     // The stored DCO-LFO slider selects a byte from B-2's nonlinear depth
     // table. A compact generator preserves that table's exact observable law
     // without distributing a ROM dump.
@@ -559,6 +566,13 @@ public:
         std::uint16_t accumulator, bool positivePolarity,
         std::uint8_t delayByte, std::uint8_t storedDepth,
         std::uint8_t modWheel, std::uint8_t benderSensitivity) noexcept;
+    // The VCF axis of the same onset-scaled LFO: B-2 keeps the high byte of
+    // the doubled panel byte times the delay byte, then multiplies the 13-bit
+    // accumulator into it and halves, so the cutoff term is
+    // (accumulator * depth) >> 9 counts, signed by the polarity bit.
+    [[nodiscard]] static std::int32_t vcfLfoCountsWord(
+        std::uint16_t accumulator, bool positivePolarity,
+        std::uint8_t delayByte, std::uint8_t storedDepth) noexcept;
 
     // Convenience adapter for a requested middle-range frequency. Production
     // constructs the 8.8 coordinate directly; this keeps the circuit-law seam
@@ -1217,6 +1231,13 @@ public:
     // calibrated nominal 12 Vpp ramp.
     [[nodiscard]] static float pwmDutyCycle(float controlVolts,
                                             float rampAmplitudeScale) noexcept;
+    // The same law with the +6 V / 50 % floor placed where a card's own
+    // threshold puts it: updatePulseComparator forms each threshold as the
+    // shared hold plus a per-card offset, so the hold's 6 V ceiling lands at
+    // 6 V + that offset for the card, not at 6 V.
+    [[nodiscard]] static float pwmDutyCycle(float controlVolts,
+                                            float rampAmplitudeScale,
+                                            float holdCeilingVolts) noexcept;
     // The ramp's constant-current rising segment: 0..1 across the rise and
     // -1..+1 out. The reset that follows it is a straight fall back to the
     // negative rail over the remainder of the cycle.
@@ -1417,11 +1438,17 @@ public:
     // +4..-6 V hold crosses R30/R32 into the R31/R165-biased GC1 node, and NEC
     // specifies -5.9 mV/dB typical. The two helpers expose the intermediate
     // voltage and C7's derived time constant so the suite can check the
-    // resistor solve independently of the final gain conversion.
+    // resistor solve independently of the final gain conversion. NEC's figure
+    // is the part's 25 C value and is proportional to absolute temperature
+    // (commonVcaControlVoltsPerDecibel): the one-argument gain is the 25 C
+    // law, and the render reads the two-argument form at the jack board's
+    // temperature (jackBoardCelsius).
     [[nodiscard]] static float commonVcaControlVolts(
         float dacFraction) noexcept;
     [[nodiscard]] static float commonVcaHoldTimeConstantSeconds() noexcept;
     [[nodiscard]] static float patchLevelGain(float dacFraction) noexcept;
+    [[nodiscard]] static float patchLevelGain(
+        float dacFraction, float jackBoardCelsius) noexcept;
     // Single-pole high-pass corner for a panel position, the gain the leg
     // returns the low band with, and the gain it returns the high band with.
     // The bass-boost position's shelf is derived from the jack-board branch
@@ -1441,10 +1468,17 @@ public:
     [[nodiscard]] static float outputCouplingHighGain() noexcept;
     // Loaded transfer at a shaft position. The fixed per-wiper internal load
     // is the 41.3 kOhm selector ladder in parallel with the 101 kOhm headphone
-    // input. External jack loads and mono normaling remain outside this scope.
+    // input. External jack loads remain outside this scope; the mono
+    // normaling is the host bus's fold (PluginProcessor.cpp, monoJackFoldGain).
     [[nodiscard]] static float outputCouplingCornerHz(
         float volumePosition) noexcept;
     [[nodiscard]] static float outputCouplingHighGain(
+        float volumePosition) noexcept;
+    // The jack network after the selector: R64/R65 2.2 kOhm into JA2/JA1 with
+    // C22/C21 1 nF from each jack node to ground, driven through the wiper's
+    // own Thevenin resistance at a shaft position -- 46.15 kHz at full volume,
+    // 33.32 kHz at half, with the jack open (OQ-17).
+    [[nodiscard]] static float outputJackCornerHz(
         float volumePosition) noexcept;
 
     // The instrument has six voice cards; the engine will run more of them for
@@ -1706,12 +1740,14 @@ private:
     // Modulation budgets, in converter counts, taken from the instrument's own
     // control tables. 1143 counts is one octave.
     static constexpr float vcfEnvelopeCounts = 16255.0f;
+    // The maximum of vcfLfoCountsWord: depth byte 253 (2 * 127 * 255 >> 8)
+    // against the full 8191 accumulator, 253 * 8191 >> 9. The live term is
+    // that integer law, not a fraction of this figure.
     static constexpr float vcfLfoCounts = 4047.0f;
-    // The bender's filter axis at maximum: the firmware multiplies the
-    // sensitivity byte by the bend byte and keeps the top bits, topping out at
-    // 4064 counts -- just over three and a half octaves each way. An earlier
-    // account claimed the whole cutoff range; the firmware arithmetic settles
-    // it.
+    // The maximum of vcfBendCountsWord: bend byte 255 (2 * 127 + 1) times
+    // sensitivity 255, shifted right four times -- just over three and a half
+    // octaves each way. An earlier account claimed the whole cutoff range;
+    // the firmware arithmetic settles it. The live term is that integer law.
     static constexpr float vcfBenderCounts = 4064.0f;
     // Hold-capacitor slew after the converter. VCF and voice-VCA use the
     // 522us VCF value and retained 687us linear VCA reference. The default VCA
@@ -2326,7 +2362,8 @@ private:
     // but the untrimmed legs now have an anchored bound: the module-board
     // legend (p. 12) prints every plain resistor as "R20J" -- J is +/-5 % --
     // and only the DCO range resistors as 1 % metal-oxide film, so the 3 %
-    // classes on the sub leg (R101/R102), the noise leg (R102) and the
+    // classes on the sub leg (R101/R102), the noise leg (its series part is
+    // unread on p. 13; R102 is Tr19's collector load, not this leg) and the
     // per-voice summer leg (R3) sit inside that 5 %; the ramp uses C54's own
     // G class (rampCapacitorToleranceClass).
     struct VoiceCard
@@ -2543,6 +2580,7 @@ private:
     // read local to updateVoiceCardDrift, which is the only place that
     // resolution is used.
     [[nodiscard]] static float bipolarFromState(std::uint32_t state) noexcept;
+    [[nodiscard]] float gaussianFromNoiseState() noexcept;
     // The oversampled lookup addStep and addSlope both walk: same ring index,
     // same subsample offset, same clamp/lerp arithmetic, only the table
     // differs. Solved once here so the two callers stop repeating the
@@ -2612,6 +2650,16 @@ private:
     // clock has reached, plus this card's place in the spatial gradient.
     [[nodiscard]] float dynamicOtaHeadroomVolts(
         const EngineParameters& parameters, int cardIndex) const noexcept;
+    // The jack board's temperature: the chassis warm-up the cards read,
+    // without their spatial gradient, because it is not a voice card. Unit
+    // Character scales the rise exactly as dynamicOtaHeadroomVolts does.
+    // Resampled once per converter pass, so the level it drives is a
+    // function of the internal sample grid rather than of the host's block
+    // partition. 25 C until the first pass boundary, which is the data
+    // book's own condition.
+    float jackBoardCelsius_ { 25.0f };
+    [[nodiscard]] float jackBoardCelsius(
+        const EngineParameters& parameters) const noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;
     // Assigns a note already present in the held-key table. Kept separate from
     // noteOnInternal so a POLY-mode rebuild does not count the physical key a
@@ -2630,6 +2678,7 @@ private:
     void initialiseVoice(Voice& voice, int slot, int midiNote,
                          float velocity) noexcept;
     void silenceVoice(Voice& voice) noexcept;
+    [[nodiscard]] bool anyVoiceRunning() const noexcept;
     [[nodiscard]] bool anyVoiceSounding() const noexcept;
     void rearmLfoDelay() noexcept;
     // Empties only the blocks whose state depends on the internal processing
@@ -2676,16 +2725,13 @@ private:
     // processing calls the split destination methods through the recovered
     // converter queue below.
     [[nodiscard]] std::uint32_t updateVoiceScan(
-        Voice& voice, const EngineParameters& parameters,
-        float lfoGated) noexcept;
+        Voice& voice, const EngineParameters& parameters) noexcept;
     [[nodiscard]] std::uint32_t updateVoiceEnvelopeAndPitch(
         Voice& voice, const EngineParameters& parameters) noexcept;
     void updateVoiceVcfTarget(Voice& voice,
-                              const EngineParameters& parameters,
-                              float lfoGated) noexcept;
+                              const EngineParameters& parameters) noexcept;
     [[nodiscard]] float voiceVcfTarget(
-        const Voice& voice, const EngineParameters& parameters,
-        float lfoGated) const noexcept;
+        const Voice& voice, const EngineParameters& parameters) const noexcept;
     void updateVoiceVcaTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
     [[nodiscard]] float voiceVcaTarget(
@@ -2700,13 +2746,12 @@ private:
         const EngineParameters& parameters, const Voice& voice) noexcept;
     void performConverterWrite(const ConverterWrite& write,
                                const EngineParameters& parameters,
-                               float lfoGated,
                                const float* passiveHoldTargetOverride = nullptr) noexcept;
     [[nodiscard]] static bool isPassiveHoldWrite(
         const ConverterWrite& write) noexcept;
     [[nodiscard]] float passiveHoldWriteTarget(
-        const ConverterWrite& write, const EngineParameters& parameters,
-        float lfoGated) const noexcept;
+        const ConverterWrite& write,
+        const EngineParameters& parameters) const noexcept;
     [[nodiscard]] bool latchUpcomingPassiveHoldEvent(
         double phase, double phasePerInternalSample,
         const EngineParameters& parameters) noexcept;
@@ -2897,11 +2942,10 @@ private:
         ConverterTimingProfile::NormalizedServiceChart };
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
-    // Delayed float path for VCF and extension-voice scans. DCO pitch uses its
-    // exact integer word. PWM has its own exact FF4F-derived DAC code, computed
-    // beside the late-loop LFO update and held until the next PWM converter
-    // write so a host edit cannot splice two firmware passes together.
-    float converterPassLfoGated_ { 0.0f };
+    // PWM has its own exact FF4F-derived DAC code, computed beside the
+    // late-loop LFO update and held until the next PWM converter write so a
+    // host edit cannot splice two firmware passes together. The DCO and VCF
+    // LFO words below are likewise held for the pass.
     std::uint16_t converterPassPwmDacCode_ { 0x0fffu };
     PassiveHoldEventLatch passiveHoldEventLatch_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};
@@ -2943,7 +2987,6 @@ private:
     // rather than a continuous triangle.
     std::uint32_t lfoDelayHoldoff_ { 0u }; // 0..0x4000
     std::uint32_t lfoDelayFade_ { 0u };    // 0..0x10000
-    bool anyKeyDown_ { false };
     // The resonance control voltage: one converter output shared by every
     // voice's regeneration amplifier, quantised to the panel byte and slewed
     // on its own hold capacitor like the rest of the scanned points.
@@ -2973,19 +3016,25 @@ private:
     // run at the internal rate; their states are physical node voltages, so
     // they survive a quality change like the coupling capacitors do.
     std::uint32_t noiseState_ { 0x6d2b79f5u };
+    // Marsaglia's polar method yields two Gaussian deviates per accepted
+    // pair; the second waits here for the next internal sample.
+    float noiseGaussianSpare_ { 0.0f };
+    bool noiseGaussianSpareValid_ { false };
     HighPass noiseSourceHighPass_;
     HighPass noiseSourceLowPass_;
     float noiseSourceHighPassG_ { 0.01f };
     float noiseSourceLowPassG_ { 0.1f };
 
     // The lever is read by the converter, not wired to the voices: its value
-    // is sampled once per scan pass, quantised to the converter's byte, and
-    // whatever smoothing the player hears is the hold capacitors' own. A fast
-    // flick therefore steps at the scan rate, as the hardware's does.
+    // is sampled once per scan pass, reduced to the assigner's signed command
+    // and formed into the DCO and VCF words there, and whatever smoothing the
+    // player hears is the hold capacitors' own. A fast flick therefore steps
+    // at the scan rate, as the hardware's does.
     float pitchBendTarget_ { 0.0f };
-    float pitchBend_ { 0.0f };
     std::int32_t dcoPitchBendWord_ { 0 };
+    std::int32_t vcfBendCountsWord_ { 0 };
     std::int32_t dcoLfoPitchWord_ { 0 };
+    std::int32_t vcfLfoCountsWord_ { 0 };
     float modWheelTarget_ { 0.0f };
     bool sustainPedalDown_ { false };
 
@@ -3111,6 +3160,13 @@ private:
     HighPass outputCouplingLeft_ {};
     HighPass outputCouplingRight_ {};
     float outputCouplingG_ { 0.0001f };
+    // One C22/C21 charge state per jack, at the host rate. The pole sits after
+    // the coupling and the wiper noise, and its corner moves with the wiper's
+    // source resistance, so its blend is recomputed beside the coupling
+    // coefficient when Volume moves.
+    float outputJackStateLeft_ { 0.0f };
+    float outputJackStateRight_ { 0.0f };
+    float outputJackBlend_ { 1.0f };
 
     // VCA LEVEL controls the single jack-board VCA after the six voice cards
     // and shared HPF. It is not part of each voice's envelope VCA.

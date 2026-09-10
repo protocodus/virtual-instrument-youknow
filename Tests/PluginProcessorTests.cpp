@@ -2862,10 +2862,13 @@ void testBusLayoutsAndTail()
     expect (processor.isBusesLayoutSupported (stereoInstrument),
             "the declared zero-input/stereo-output layout was rejected");
 
+    // The L/MONO jack is a real output of the instrument, so a mono host bus
+    // is a supported layout; what it carries is checked in
+    // testMonoBusCarriesTheLMonoJackFold.
     auto monoInstrument = stereoInstrument;
     monoInstrument.outputBuses.set (0, juce::AudioChannelSet::mono());
-    expect (! processor.isBusesLayoutSupported (monoInstrument),
-            "the instrument accepted an unsupported mono output");
+    expect (processor.isBusesLayoutSupported (monoInstrument),
+            "the instrument rejected the mono output the L/MONO jack provides");
 
     auto audioInput = stereoInstrument;
     audioInput.inputBuses.add (juce::AudioChannelSet::stereo());
@@ -2876,6 +2879,71 @@ void testBusLayoutsAndTail()
             "the continuous modelled chorus noise is not reported as an infinite tail");
     expect (processor.acceptsMidi() && ! processor.producesMidi(),
             "the instrument's MIDI input/output capabilities are wrong");
+}
+
+void testMonoBusCarriesTheLMonoJackFold()
+{
+    // Service Notes p. 15: with one plug inserted, the unplugged jack's
+    // normally-closed contact ties the two 2.2 kOhm-fed jack nodes together,
+    // so the L/MONO jack carries the mean of the two channels and never one
+    // of them alone. Chorus I is what makes the two channels differ, so a fold
+    // that took either side by itself would show against the stereo render.
+    // The final block is larger than the prepared size, which is the case the
+    // mono path has to render in pieces.
+    YouKnowAudioProcessor stereo;
+    YouKnowAudioProcessor mono;
+    const auto configure = [] (YouKnowAudioProcessor& processor, int outputs)
+    {
+        setParameterValue (processor, parameters::chorusI, 1.0f);
+        setParameterValue (processor, parameters::chorusII, 0.0f);
+        processor.setPlayConfigDetails (0, outputs, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+    };
+    configure (stereo, 2);
+    configure (mono, 1);
+    expect (mono.getTotalNumOutputChannels() == 1,
+            "the mono main output bus was not adopted");
+
+    float channelDifference = 0.0f;
+    float foldDifference = 0.0f;
+    float peak = 0.0f;
+    constexpr int blocks = 24;
+    for (int block = 0; block < blocks; ++block)
+    {
+        const int samples = block == blocks - 1 ? 3 * blockSize + 17 : blockSize;
+        juce::AudioBuffer<float> stereoAudio (2, samples);
+        juce::AudioBuffer<float> monoAudio (1, samples);
+        juce::MidiBuffer stereoMidi;
+        juce::MidiBuffer monoMidi;
+        if (block == 0)
+        {
+            stereoMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+            monoMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        }
+        stereo.processBlock (stereoAudio, stereoMidi);
+        mono.processBlock (monoAudio, monoMidi);
+        expect (bufferIsFinite (stereoAudio) && bufferIsFinite (monoAudio),
+                "a mono-bus fixture emitted non-finite audio");
+        for (int i = 0; i < samples; ++i)
+        {
+            const float left = stereoAudio.getSample (0, i);
+            const float right = stereoAudio.getSample (1, i);
+            channelDifference = std::max (channelDifference,
+                                          std::abs (left - right));
+            foldDifference = std::max (
+                foldDifference,
+                std::abs (monoAudio.getSample (0, i) - 0.5f * (left + right)));
+            peak = std::max (peak, std::abs (monoAudio.getSample (0, i)));
+        }
+    }
+    expect (peak > 1.0e-3f, "the mono bus produced silence");
+    expect (channelDifference > 1.0e-3f,
+            "the chorus fixture did not separate the two channels, so the fold "
+            "was not tested");
+    expect (foldDifference <= 1.0e-6f,
+            "the mono bus is not the mean of the two jack-board channels");
+    stereo.releaseResources();
+    mono.releaseResources();
 }
 
 void testBypassSilencesOutputAndKeepsMidiStateMoving()
@@ -7879,6 +7947,7 @@ int main()
     testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls();
     testRandomizerPreservesQualityAndLevel();
     testBusLayoutsAndTail();
+    testMonoBusCarriesTheLMonoJackFold();
     testBypassSilencesOutputAndKeepsMidiStateMoving();
     testHostResetClearsRuntimeStateWithoutUnpreparing();
     testHostResetKeepsTheModelledChassisWarm();
