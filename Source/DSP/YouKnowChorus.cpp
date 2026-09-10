@@ -608,7 +608,7 @@ float Chorus::deterministicToneStep(double& phase, float frequencyHz,
 }
 
 Chorus::ModeSettings Chorus::settingsFor(
-    ChorusMode mode, bool useA11EffectiveTimingProfile) noexcept
+    ChorusMode mode, ChorusTimingProfile timingProfile) noexcept
 {
     // The rates are this instrument's own, straight from its circuit:
     // derivedRateHz() evaluates f = 1/(4 * beta * R_eff * C3) with the
@@ -657,8 +657,24 @@ Chorus::ModeSettings Chorus::settingsFor(
             // measurements, a population nominal, or a Mode-II calibration.
             // AIFF SHA256: b235ba2236c1a509627ce1e84fa35004b0d7c3e99eb36899c4c5de63cc668662
             // https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/16#issuecomment-4184997000
-            if (useA11EffectiveTimingProfile)
-                return { 0.5159334275f, 0.00338027575f, 0.00176176683f, lineGain };
+            // The three comparison candidates OQ-01 brackets this mode with.
+            // Each is a published reading rather than a fitted parameter; see
+            // ChorusTimingProfile for what stands behind each one.
+            switch (timingProfile)
+            {
+                case ChorusTimingProfile::A11Spectral:
+                    return { 0.5159334275f, 0.00338027575f, 0.00176176683f, lineGain };
+                case ChorusTimingProfile::A11ClickTiming:
+                    return { 0.514f, 0.00330f, 0.00213f, lineGain };
+                case ChorusTimingProfile::DerivedNominal:
+                    // Centre at the bracket's own nominal 3.02 ms and half-depth
+                    // at the middle of 1.72-1.94 ms, so this reads as the
+                    // oscillator's central case and not as either extreme.
+                    return { rateOne, 0.00302f, 0.00183f, lineGain };
+                case ChorusTimingProfile::Shipping:
+                default:
+                    break;
+            }
             return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
         // Product compatibility policy, not a claim about a third resistance
@@ -1355,7 +1371,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableNarrowOneTwo,
                      bool enableMuteDrive,
                      bool enableLineGainSpread,
-                     bool useA11EffectiveTimingProfile) noexcept
+                     ChorusTimingProfile timingProfile) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -1374,7 +1390,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         clockSpurPhaseB_ = 0.0;
     }
 
-    const auto target = settingsFor(mode, useA11EffectiveTimingProfile);
+    const auto target = settingsFor(mode, timingProfile);
 
     const bool commandMute = mode == ChorusMode::Off;
     if (!primed_)

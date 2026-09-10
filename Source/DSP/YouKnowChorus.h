@@ -33,6 +33,34 @@ namespace youknow
 // JUNO-106 exposes only Off/I/II and therefore supplies no I+II precedent.
 enum class ChorusMode { Off, One, Two, OneTwo };
 
+// Which Mode I timing coordinates the chorus runs on.
+//
+// Comparison-only. Shipping is the default and the only one a product build
+// selects; the rest exist so the four candidates OQ-01 names can be rendered
+// against each other, which is what that decision needs and what no amount of
+// further derivation can supply. None of them is a fit: each is a figure some
+// evidence already stands behind.
+//
+//   Shipping        The third-party scope measurement of a designator-faithful
+//                   clone board: 3.9 ms centre, +/-2.5 ms, at the schematic's
+//                   own derived 0.5533 Hz. Below the project's anchoring bar,
+//                   which is why the question is open at all.
+//   A11Spectral     Effective coordinates fitted to the verified A11 recording
+//                   of identified unit #439522, holding out C2/C4.
+//   A11ClickTiming  The same unit read by a different estimator entirely, the
+//                   clock-click series, whose 16 us straight-line residual is
+//                   independent of the spectral fit's assumptions.
+//   DerivedNominal  The p. 15 oscillator's own parts: Tr19's 195-203 uA into
+//                   C53 against the TP4 threshold, taken at the middle of the
+//                   stacked-tolerance bracket rather than at either edge.
+enum class ChorusTimingProfile
+{
+    Shipping,
+    A11Spectral,
+    A11ClickTiming,
+    DerivedNominal
+};
+
 // The four parameter states map one-to-one to the four button combinations.
 [[nodiscard]] constexpr ChorusMode chorusModeFor(bool one, bool two) noexcept
 {
@@ -247,7 +275,7 @@ public:
                  bool enableNarrowOneTwo = true,
                  bool enableMuteDrive = false,
                  bool enableLineGainSpread = false,
-                 bool useA11EffectiveTimingProfile = false) noexcept;
+                 ChorusTimingProfile timingProfile = ChorusTimingProfile::Shipping) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -492,7 +520,7 @@ public:
     // Optional offline comparison of the identified A11 Mode-I timing.
     // Off/II/I+II keep their ordinary programs; nothing is inferred for them.
     [[nodiscard]] static ModeSettings settingsFor(
-        ChorusMode mode, bool useA11EffectiveTimingProfile = false) noexcept;
+        ChorusMode mode, ChorusTimingProfile timingProfile = ChorusTimingProfile::Shipping) noexcept;
 
     // The legacy low-rate input fallback, exposed as a coefficient and a
     // single step so the suites can measure where its corner actually lands
