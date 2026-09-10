@@ -139,6 +139,20 @@ struct YouKnowTestAccess
         return engine.lfoDelayFade_;
     }
 
+    // Runs an envelope's attack stage for `passes` boundary ticks from
+    // silence and reports its level and whether it is still attacking.
+    static std::pair<std::uint16_t, bool> runAttack(
+        std::uint16_t increment, int passes) noexcept
+    {
+        YouKnowEngine::Envelope envelope;
+        envelope.stage = YouKnowEngine::EnvelopeStage::Attack;
+        envelope.level = 0;
+        for (int pass = 0; pass < passes; ++pass)
+            envelope.tick(increment, 0u, 0u, 0u);
+        return { envelope.level,
+                 envelope.stage == YouKnowEngine::EnvelopeStage::Attack };
+    }
+
     static std::uint8_t lfoDelayByte(
         const YouKnowEngine& engine) noexcept
     {
@@ -12695,6 +12709,133 @@ void testThermalWarmupClockRunsToCompletionAtEveryRate()
     }
 }
 
+void testLfoDelayRearmsOnTheFirmwaresRunningVoiceMask()
+{
+    // B-2 re-arms the delay on the first voice-on that follows a pass with
+    // $FF11_voiceRun clear, and voiceRun keeps a sustained voice while HOLD is
+    // down (0x02f2..0x02ff, 0x030d, 0x036b). Three cases the held-key mask
+    // this engine used to test cannot express.
+    constexpr double sampleRate = 48000.0;
+    constexpr int passSamples = static_cast<int>(sampleRate * 0.0042);
+    const auto makeEngine = [](YouKnowEngine& engine) {
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.lfoDelay = 0.6f;
+        parameters.dcoLfoDepth = 1.0f;
+        engine.setParameters(parameters);
+    };
+    // The fade byte only leaves zero once the holdoff has been crossed, so a
+    // fully faded delay reads 255 and a re-armed one reads 0.
+    const auto faded = [&](YouKnowEngine& engine) {
+        return YouKnowTestAccess::lfoDelayByte(engine);
+    };
+
+    // (a) HOLD down, every key lifted: the sustained voice keeps voiceRun
+    // non-zero, so the next key must not restart the delay.
+    {
+        YouKnowEngine engine;
+        makeEngine(engine);
+        engine.setSustainPedal(true);
+        engine.noteOn(60, 1.0f);
+        renderExact(engine, static_cast<int>(sampleRate * 5.0));
+        expect(faded(engine) == 255u,
+               "the delay fixture did not reach full depth before the pedal test");
+        engine.noteOff(60);
+        renderExact(engine, passSamples * 2);
+        engine.noteOn(67, 1.0f);
+        renderExact(engine, passSamples * 2);
+        expect(faded(engine) == 255u,
+               "a key played over HOLD-sustained voices restarted the LFO delay");
+
+        // Pedal up, voices retired: the next key does re-arm.
+        engine.noteOff(67);
+        engine.setSustainPedal(false);
+        renderExact(engine, static_cast<int>(sampleRate * 2.0));
+        engine.noteOn(72, 1.0f);
+        renderExact(engine, passSamples);
+        expect(faded(engine) == 0u,
+               "the delay did not re-arm once every voice had stopped running");
+    }
+
+    // (b) Solo Unison key-up with keys remaining gates all six off, so the
+    // re-trigger that follows re-arms.
+    {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.lfoDelay = 0.6f;
+        parameters.dcoLfoDepth = 1.0f;
+        parameters.keyMode = KeyMode::Unison;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        engine.noteOn(67, 1.0f);
+        renderExact(engine, static_cast<int>(sampleRate * 5.0));
+        expect(faded(engine) == 255u,
+               "the unison delay fixture did not reach full depth");
+        engine.noteOff(67);
+        renderExact(engine, passSamples * 4);
+        expect(faded(engine) == 0u,
+               "a Solo Unison key-up did not re-arm the LFO delay");
+    }
+
+    // (c) A seventh key still held after the six sounding ones are released:
+    // voiceRun is clear even though the key table is not, so the next key
+    // re-arms.
+    {
+        YouKnowEngine engine;
+        makeEngine(engine);
+        constexpr std::array sounding { 60, 62, 64, 65, 67, 69 };
+        for (const int note : sounding)
+            engine.noteOn(note, 1.0f);
+        engine.noteOn(71, 1.0f); // dropped: the assigner has no voice left
+        renderExact(engine, static_cast<int>(sampleRate * 5.0));
+        expect(faded(engine) == 255u,
+               "the dropped-key fixture did not reach full depth");
+        for (const int note : sounding)
+            engine.noteOff(note);
+        renderExact(engine, static_cast<int>(sampleRate * 2.0));
+        engine.noteOn(72, 1.0f);
+        renderExact(engine, passSamples);
+        expect(faded(engine) == 0u,
+               "a key played while only a dropped key was held did not re-arm "
+               "the LFO delay");
+    }
+}
+
+void testAttackHandsOverOnTheOvershootingPass()
+{
+    // B-2 tests bits 14/15 of the sum (0x057c), so a sum that lands exactly
+    // on 0x3FFF stays in attack one more pass. 0x3FFF = 3 x 43 x 127, so the
+    // increments of attack bytes 100 (43) and 64 (127) divide it exactly.
+    for (const std::uint16_t increment : { std::uint16_t { 43 },
+                                           std::uint16_t { 127 } })
+    {
+        const int exactPasses = 0x3fff / increment;
+        const auto atPeak =
+            YouKnowTestAccess::runAttack(increment, exactPasses);
+        expect(atPeak.first == 0x3fffu,
+               "increment " + std::to_string(increment)
+                   + " did not land exactly on the peak");
+        expect(atPeak.second,
+               "increment " + std::to_string(increment)
+                   + " left attack on the pass that reached the peak exactly");
+        const auto afterPeak =
+            YouKnowTestAccess::runAttack(increment, exactPasses + 1);
+        expect(afterPeak.first == 0x3fffu && !afterPeak.second,
+               "increment " + std::to_string(increment)
+                   + " did not hand over on the overshooting pass");
+    }
+
+    // An increment that does not divide the peak still hands over on the pass
+    // that clamps, exactly as before.
+    constexpr std::uint16_t increment = 42;
+    constexpr int clampingPass = 0x3fff / increment + 1;
+    const auto before = YouKnowTestAccess::runAttack(increment, clampingPass - 1);
+    const auto after = YouKnowTestAccess::runAttack(increment, clampingPass);
+    expect(before.second && !after.second && after.first == 0x3fffu,
+           "a non-dividing increment did not hand over on its clamping pass");
+}
+
 void testInvertedEnvelopePolarityMirrorsTheCutoffModulation()
 {
     // ENV polarity reaches the engine as one sign on the envelope's cutoff
@@ -15864,6 +16005,8 @@ int main()
     testUnisonReturnsToAHeldKey();
     testAllNotesOffReleasesRatherThanCutting();
     testLoweringTheVoiceCountLetsNotesFinish();
+    testLfoDelayRearmsOnTheFirmwaresRunningVoiceMask();
+    testAttackHandsOverOnTheOvershootingPass();
     testInvertedEnvelopePolarityMirrorsTheCutoffModulation();
     testEnvelopeAndGateModes();
     testChorusWidthAndSilence();

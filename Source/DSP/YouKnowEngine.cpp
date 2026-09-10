@@ -2394,13 +2394,29 @@ float YouKnowEngine::Envelope::tick(std::uint16_t attackIncrement,
     switch (stage)
     {
         case EnvelopeStage::Attack:
-            level = envelopeAttackLevel(level, attackIncrement);
-            if (level >= envelopePeak)
+        {
+            // B-2 adds the increment and tests only bits 14 and 15 of the
+            // sum (ONI A,$C0 at 0x057c): a sum that lands exactly on 0x3FFF
+            // is stored and the voice stays in attack for one more pass, and
+            // only the pass that overshoots clamps and sets the decay bits.
+            // 0x3FFF is 3 x 43 x 127, so the increments of attack bytes 64
+            // (127) and 100 (43) divide it exactly and reach the peak on a
+            // pass boundary; testing level >= peak handed those two over one
+            // 4.2 ms pass early.
+            // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L897-L910
+            const std::uint32_t next =
+                static_cast<std::uint32_t>(level) + attackIncrement;
+            if (next > envelopePeak)
             {
                 level = envelopePeak;
                 stage = EnvelopeStage::Decay;
             }
+            else
+            {
+                level = static_cast<std::uint16_t>(next);
+            }
             break;
+        }
 
         case EnvelopeStage::Decay:
         case EnvelopeStage::Sustain:
@@ -5925,7 +5941,6 @@ void YouKnowEngine::reset()
     rescanPreviousUnisonMembers_.fill(false);
     rescanUnisonMidiValid_ = false;
     rescanUnisonMidi_ = 60.0f;
-    anyKeyDown_ = false;
     noiseState_ = 0x6d2b79f5u;
     noiseGaussianSpare_ = 0.0f;
     noiseGaussianSpareValid_ = false;
@@ -6319,6 +6334,16 @@ void YouKnowEngine::dropFromUnison(Voice& voice) noexcept
         releaseVoiceKey(voice);
 }
 
+bool YouKnowEngine::anyVoiceRunning() const noexcept
+{
+    // B-2's $FF11_voiceRun: a voice is running while its gate is set, and
+    // while the sustain latch holds a gate that has since been released.
+    for (const auto& voice : voices_)
+        if (voice.active && (voice.keyDown || voice.sustained))
+            return true;
+    return false;
+}
+
 bool YouKnowEngine::anyVoiceSounding() const noexcept
 {
     for (const auto& voice : voices_)
@@ -6391,7 +6416,6 @@ void YouKnowEngine::completeVoiceAssignmentRescan() noexcept
     // The physical matrix is scanned from its high address down. Solo Unison
     // consumes the first set bit once; the poly modes continue descending and
     // therefore give a limited pool to the highest held keys.
-    anyKeyDown_ = highestHeldNote() >= 0;
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
         const int note = highestHeldNote();
@@ -6624,15 +6648,6 @@ void YouKnowEngine::noteOnInternal(int midiNote, float velocity) noexcept
     if (!rememberHeldNote(midiNote, velocity))
         return;
 
-    // A phrase starts when no key was down -- release tails still ringing do
-    // not count, because the firmware's retrigger latch watches the key-gate
-    // mask, not envelope activity. A note played over ringing releases
-    // therefore restarts the delay, which the previous
-    // wait-for-silence condition got wrong.
-    if (!anyKeyDown_)
-        rearmLfoDelay();
-
-    anyKeyDown_ = true;
     // A POLY handler has cleared the allocator and is waiting for the keyboard
     // scan. This new bit will be discovered by that same descending pass.
     if (assignmentRescanPending_)
@@ -6773,6 +6788,23 @@ void YouKnowEngine::refreshFirmwareDcoTiming() noexcept
 
 void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
 {
+    // The LFO delay re-arms on the first voice-on that follows a pass with no
+    // voice running, not on the first key of a phrase. B-2 rebuilds
+    // $FF11_voiceRun each pass as the gate mask, OR-ed with its previous value
+    // while the sustain flag is set (0x02f2..0x02ff); a pass that finds it
+    // zero sets the hangtime flag (0x030d, 0x036b), and the next pass that
+    // finds it non-zero with that flag set clears the holdoff and the fade
+    // (0x0312..0x0320). Three consequences the key mask cannot express: with
+    // HOLD down and every key lifted the sustained voices keep voiceRun
+    // non-zero, so a new key does not restart the delay; a Solo Unison key-up
+    // or a POLY press gates all six off, so the re-trigger that follows does;
+    // and a seventh key still held after the six sounding ones are released
+    // does too. A releasing voice has its gate bit clear and so does not
+    // count, which is the behaviour the key mask already had.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L510-L535
+    if (!anyVoiceRunning())
+        rearmLfoDelay();
+
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
         finishProtectedPitWritesBeforeSerialVoiceCommand();
@@ -6864,7 +6896,6 @@ void YouKnowEngine::noteOffInternal(int midiNote) noexcept
         return;
 
     const int remaining = highestHeldNote();
-    anyKeyDown_ = remaining >= 0;
 
     // The old assignments have already been gated. Only the held-key table
     // needs changing before the pending descending scan reaches it.
@@ -6911,7 +6942,6 @@ void YouKnowEngine::noteOffInternal(int midiNote) noexcept
 void YouKnowEngine::releaseAllNotes()
 {
     clearHeldNotes();
-    anyKeyDown_ = false;
     assignmentRescanPending_ = false;
     assignmentRescanPassArmed_ = false;
     rescanPreviousUnisonMembers_.fill(false);
@@ -6935,7 +6965,6 @@ void YouKnowEngine::releaseAllNotes()
 void YouKnowEngine::allNotesOff()
 {
     clearHeldNotes();
-    anyKeyDown_ = false;
     assignmentRescanPending_ = false;
     assignmentRescanPassArmed_ = false;
     rescanPreviousUnisonMembers_.fill(false);

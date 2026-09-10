@@ -2673,6 +2673,7 @@ private:
     void initialiseVoice(Voice& voice, int slot, int midiNote,
                          float velocity) noexcept;
     void silenceVoice(Voice& voice) noexcept;
+    [[nodiscard]] bool anyVoiceRunning() const noexcept;
     [[nodiscard]] bool anyVoiceSounding() const noexcept;
     void rearmLfoDelay() noexcept;
     // Empties only the blocks whose state depends on the internal processing
@@ -2981,7 +2982,6 @@ private:
     // rather than a continuous triangle.
     std::uint32_t lfoDelayHoldoff_ { 0u }; // 0..0x4000
     std::uint32_t lfoDelayFade_ { 0u };    // 0..0x10000
-    bool anyKeyDown_ { false };
     // The resonance control voltage: one converter output shared by every
     // voice's regeneration amplifier, quantised to the panel byte and slewed
     // on its own hold capacitor like the rest of the scanned points.

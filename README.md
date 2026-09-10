@@ -959,6 +959,32 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### Changes in 1.1.0
 
+- The LFO delay re-arms on the firmware's running-voice mask rather than on
+  the held keys. B-2 rebuilds that mask each pass as the gate bits, OR-ed
+  with their previous value while HOLD is down, and re-arms on the first
+  voice-on after a pass that found it clear. So a key played over
+  pedal-sustained voices no longer restarts the delay, while a Solo Unison
+  key-up, a POLY press and a key played while only a dropped key is held now
+  do. Release tails still do not count, as before.
+- The envelope hands attack over to decay on the pass that overshoots the
+  peak, not the one that reaches it. The firmware tests only the sum's top
+  two bits, and 0x3FFF divides exactly by the increments of attack bytes 64
+  and 100, so those two settings used to start their decay one 4.2 ms pass
+  early.
+- The common VCA's control constant follows absolute temperature. NEC's
+  −5.9 mV/dB for the µPC1252H2 is two thermal voltages per decibel — the
+  translinear gain cell's own law, and the data book's gain-versus-control
+  graph draws its −25/25/75 °C lines fanning about 0 dB — so a stored VCA
+  LEVEL's decibels shrink as the jack board warms over the chassis law's
+  900 s: a level reading −16.3 dB cold reads −15.5 dB at the asymptote,
+  +4.7 dB reads +4.5 dB, and 0 dB never moves. Unit Character 0 holds the
+  part at the data book's 25 °C condition.
+- The reported pulse duty is now the duty the comparator walk solves. Each
+  card's threshold is the shared PWM hold plus its own offset, and the duty
+  helper clamped that sum back to the hold's 6 V ceiling: a card at the
+  +2 % end of the ramp capacitor's class reported 50.98 % where the render
+  holds exactly 50 %, and the mixer coupling was primed with 0.118 V of DC
+  the comparator never carries. Unit Character 0 is unchanged.
 - The shared noise source draws Gaussian deviates instead of uniform ones.
   Tr21 is an avalanche junction, whose statistics are Gaussian by the central
   limit theorem — the reading the TP8 crest-factor interpretation already
