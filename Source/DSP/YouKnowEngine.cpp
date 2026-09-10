@@ -217,6 +217,14 @@ constexpr float commonVcaR31Ohms = 47.0f;
 constexpr float commonVcaR165Ohms = 15000.0f;
 constexpr float commonVcaBiasVolts = 15.0f;
 constexpr float commonVcaC7Farads = 10.0e-6f;
+// NEC 1983 data book p. 257: Vc = -5.9 mV/dB typical (-5.8 to -6.1) at
+// Ta = 25 C over Av = -30 to +30 dB. That is two thermal voltages per decibel,
+// 2 (kT/q) ln(10) / 20 = 5.916 mV/dB at 298.15 K -- the translinear gain-cell
+// law -- and p. 260's "voltage gain vs control constant voltage" graph draws
+// its Ta = -25/25/75 C lines fanning about 0 dB, the -25 C line steepest, so
+// the constant is proportional to absolute temperature: this figure times
+// T / 298.15 K (patchLevelGain).
+// https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262
 constexpr float commonVcaControlVoltsPerDecibel = -5.9e-3f;
 
 // Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1. The fixed
@@ -1780,11 +1788,23 @@ float YouKnowEngine::commonVcaHoldTimeConstantSeconds() noexcept
 
 float YouKnowEngine::patchLevelGain(float dacFraction) noexcept
 {
-    // NEC's typical control constant is linear in dB. Installed rail, resistor,
-    // capacitor and IC spread remain measurement questions; they are not
-    // replaced here by synthetic random offsets.
-    const float decibels = commonVcaControlVolts(dacFraction)
-                         / commonVcaControlVoltsPerDecibel;
+    return patchLevelGain(dacFraction, 25.0f);
+}
+
+float YouKnowEngine::patchLevelGain(float dacFraction,
+                                    float jackBoardCelsius) noexcept
+{
+    // NEC's typical control constant is linear in dB and, being two thermal
+    // voltages per decibel (commonVcaControlVoltsPerDecibel), proportional to
+    // absolute temperature: a stored level's decibels shrink by 298.15 K / T
+    // as the jack board warms, towards the 0 dB the part gives at Vc = 0,
+    // which no temperature moves. At 25 C the ratio is exactly one and the
+    // law is the data book's. Installed rail, resistor, capacitor and IC
+    // spread remain measurement questions; they are not replaced here by
+    // synthetic random offsets.
+    const float voltsPerDecibel = commonVcaControlVoltsPerDecibel
+        * ((jackBoardCelsius + 273.15f) / 298.15f);
+    const float decibels = commonVcaControlVolts(dacFraction) / voltsPerDecibel;
     return std::pow(10.0f, decibels / 20.0f);
 }
 
@@ -7808,6 +7828,15 @@ float YouKnowEngine::dynamicOtaHeadroomVolts(
     return 2.0f * dynamicThermalVoltage / stageAttenuation;
 }
 
+float YouKnowEngine::jackBoardCelsius(
+    const EngineParameters& parameters) const noexcept
+{
+    // The 15 C rise the cards read, scaled by Unit Character as above, so
+    // Character 0 holds the part at NEC's 25 C condition for the whole
+    // session; no gradient term, because the jack board is not a card.
+    return 25.0f + 15.0f * parameters.calibration * thermalWarmupFraction_;
+}
+
 void YouKnowEngine::advanceDcoPitAndRamp(
     Voice& voice, DcoRange range, float previousThresholdVolts,
     float thresholdVolts, bool previousPinnedHigh, bool pinnedHigh,
@@ -8847,8 +8876,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const double resolvedTarget = static_cast<double>(target);
         return resolvedTarget + (state - resolvedTarget) * decay;
     };
+    // The common VCA's control constant is proportional to absolute
+    // temperature (patchLevelGain). The chassis warms over 900 s, so once per
+    // call is the same number to well under a millidecibel, and the
+    // temperature is folded into the level cache's key below.
+    const float jackBoardTemperature = jackBoardCelsius(parameters);
     bool patchLevelCacheValid = false;
-    std::uint32_t patchLevelCacheKey = 0u;
+    std::uint64_t patchLevelCacheKey = 0u;
     float patchLevelCacheValue = 0.0f;
     bool outputCouplingCacheValid = false;
     std::uint32_t outputCouplingCacheKey = 0u;
@@ -9479,10 +9513,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 shaped, commonVcaInputCouplingG_, 0.0f, 1.0f);
             const float patchLevelInput = static_cast<float>(sharedVca_);
             const auto patchLevelKey =
-                std::bit_cast<std::uint32_t>(patchLevelInput);
+                (static_cast<std::uint64_t>(
+                     std::bit_cast<std::uint32_t>(patchLevelInput)) << 32)
+                | std::bit_cast<std::uint32_t>(jackBoardTemperature);
             if (!patchLevelCacheValid || patchLevelCacheKey != patchLevelKey)
             {
-                patchLevelCacheValue = patchLevelGain(patchLevelInput);
+                patchLevelCacheValue =
+                    patchLevelGain(patchLevelInput, jackBoardTemperature);
                 patchLevelCacheKey = patchLevelKey;
                 patchLevelCacheValid = true;
             }

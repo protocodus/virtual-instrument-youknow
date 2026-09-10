@@ -1417,11 +1417,17 @@ public:
     // +4..-6 V hold crosses R30/R32 into the R31/R165-biased GC1 node, and NEC
     // specifies -5.9 mV/dB typical. The two helpers expose the intermediate
     // voltage and C7's derived time constant so the suite can check the
-    // resistor solve independently of the final gain conversion.
+    // resistor solve independently of the final gain conversion. NEC's figure
+    // is the part's 25 C value and is proportional to absolute temperature
+    // (commonVcaControlVoltsPerDecibel): the one-argument gain is the 25 C
+    // law, and the render reads the two-argument form at the jack board's
+    // temperature (jackBoardCelsius).
     [[nodiscard]] static float commonVcaControlVolts(
         float dacFraction) noexcept;
     [[nodiscard]] static float commonVcaHoldTimeConstantSeconds() noexcept;
     [[nodiscard]] static float patchLevelGain(float dacFraction) noexcept;
+    [[nodiscard]] static float patchLevelGain(
+        float dacFraction, float jackBoardCelsius) noexcept;
     // Single-pole high-pass corner for a panel position, the gain the leg
     // returns the low band with, and the gain it returns the high band with.
     // The bass-boost position's shelf is derived from the jack-board branch
@@ -2620,6 +2626,11 @@ private:
     // clock has reached, plus this card's place in the spatial gradient.
     [[nodiscard]] float dynamicOtaHeadroomVolts(
         const EngineParameters& parameters, int cardIndex) const noexcept;
+    // The jack board's temperature: the chassis warm-up the cards read,
+    // without their spatial gradient, because it is not a voice card. Unit
+    // Character scales the rise exactly as dynamicOtaHeadroomVolts does.
+    [[nodiscard]] float jackBoardCelsius(
+        const EngineParameters& parameters) const noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;
     // Assigns a note already present in the held-key table. Kept separate from
     // noteOnInternal so a POLY-mode rebuild does not count the physical key a

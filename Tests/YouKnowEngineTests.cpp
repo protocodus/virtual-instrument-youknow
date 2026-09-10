@@ -1582,6 +1582,18 @@ struct YouKnowTestAccess
         return engine.thermalWarmupFraction_;
     }
 
+    // Places the chassis at a point on its own warm-up law -- the timer and
+    // the fraction the render reads off it, together -- so a fixture can
+    // compare the cold instrument with the warm one without rendering the
+    // 900 s between them.
+    static void setThermalWarmupSeconds(YouKnowEngine& engine,
+                                        double seconds) noexcept
+    {
+        engine.thermalWarmupSeconds_ = seconds;
+        engine.thermalWarmupFraction_ =
+            1.0f - std::exp(-static_cast<float>(seconds) / 900.0f);
+    }
+
     static void startServiceCalibrationVoice(YouKnowEngine& engine,
                                              int card, int note) noexcept
     {
@@ -12419,6 +12431,69 @@ void testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates()
     }
 }
 
+void testVcaLevelGainWarmsWithTheChassis()
+{
+    // The common VCA's control constant is proportional to absolute
+    // temperature (patchLevelGain), and the jack board follows the chassis
+    // warm-up without the cards' spatial gradient. A quiet stored level
+    // therefore grows towards 0 dB as the instrument warms: stored byte 0,
+    // -16.32 dB at 25 C, reads -15.54 dB at the 40 C asymptote of Unit
+    // Character 1. The drive is a small sub alone, so the cascade the same
+    // warm-up also relaxes (dynamicOtaHeadroomVolts) stays linear to well
+    // under a millidecibel and the render measures the VCA. Unit Character 0
+    // holds the jack board at 25 C, so there the warm render is the cold one
+    // bit for bit.
+    constexpr double sampleRate = 48000.0;
+    const int samples = static_cast<int>(sampleRate);
+    const auto fixture = [](float calibration) {
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.subLevel = 0.1f;
+        parameters.vcaLevel = 0.0f;
+        parameters.calibration = calibration;
+        parameters.enableSpatialThermalGradient = false;
+        return parameters;
+    };
+    const auto renderWarmedTo = [&](float calibration, double warmupSeconds) {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        engine.setParameters(fixture(calibration));
+        YouKnowTestAccess::setThermalWarmupSeconds(engine, warmupSeconds);
+        engine.noteOn(45, 1.0f);
+        return renderExact(engine, samples);
+    };
+    const auto levelDb = [&](const Render& rendered) {
+        const std::size_t from = rendered.left.size() / 2;
+        double energy = 0.0;
+        for (std::size_t index = from; index < rendered.left.size(); ++index)
+            energy += static_cast<double>(rendered.left[index])
+                    * rendered.left[index];
+        return 10.0 * std::log10(
+            energy / static_cast<double>(rendered.left.size() - from));
+    };
+
+    // A million seconds is the asymptote: 1 - exp(-1111) is exactly one.
+    constexpr double asymptote = 1.0e6;
+    const double cold = levelDb(renderWarmedTo(1.0f, 0.0));
+    const double warm = levelDb(renderWarmedTo(1.0f, asymptote));
+    expect(cold > -90.0, "fixture: the quiet sub is not above the noise floor ("
+                             + std::to_string(cold) + " dBFS)");
+    const double expected = 20.0 * std::log10(
+        YouKnowEngine::patchLevelGain(0.0f, 40.0f)
+        / YouKnowEngine::patchLevelGain(0.0f, 25.0f));
+    expectNear(expected, 0.78, 0.01,
+               "fixture: the law does not put +0.78 dB on stored byte 0 at "
+               "40 C");
+    expectNear(warm - cold, expected, 0.02,
+               "a quiet VCA LEVEL does not grow by the warm control constant "
+               "between t = 0 and the warm-up asymptote");
+
+    const auto nominalCold = renderWarmedTo(0.0f, 0.0);
+    const auto nominalWarm = renderWarmedTo(0.0f, asymptote);
+    expect(maximumDifference(nominalCold.left, nominalWarm.left) == 0.0,
+           "Unit Character 0 let the chassis warm-up reach the VCA LEVEL");
+}
+
 void testEnvelopeAndGateModes()
 {
     constexpr double sampleRate = 48000.0;
@@ -15215,6 +15290,7 @@ int main()
     testRailDroopTracksLoadAtOneWallClockRate();
     testThermalWarmupClockRunsToCompletionAtEveryRate();
     testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates();
+    testVcaLevelGainWarmsWithTheChassis();
     testTransposeReachesSoundingVoices();
     testFirstGlidedNoteStartsAtItsOwnPitch();
     testVoicesRetireWithComponentToleranceApplied();
