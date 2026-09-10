@@ -535,6 +535,25 @@ std::int32_t YouKnowEngine::dcoLfoPitchWordOffset(
                             : -static_cast<std::int32_t>(word);
 }
 
+std::int32_t YouKnowEngine::vcfLfoCountsWord(
+    std::uint16_t accumulator, bool positivePolarity,
+    std::uint8_t delayByte, std::uint8_t storedDepth) noexcept
+{
+    // The VCF-LFO panel byte is stored doubled at 0x01b3..0x01bd. Right after
+    // the pitch word, 0x0352..0x0356 takes the high byte of that doubled byte
+    // times the same onset byte, and the 16x8 multiply at 0x0357..0x0365 then
+    // shifts once, so the cutoff term is (accumulator * depth) >> 9: 4047
+    // counts at full depth and onset, and only 15 at panel byte 1.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L306-L313
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L562-L574
+    const std::uint32_t depth =
+        (2u * std::min<std::uint32_t>(storedDepth, 127u) * delayByte) >> 8u;
+    const std::uint32_t word =
+        (std::min<std::uint32_t>(accumulator, 0x1fffu) * depth) >> 9u;
+    return positivePolarity ? static_cast<std::int32_t>(word)
+                            : -static_cast<std::int32_t>(word);
+}
+
 std::uint32_t YouKnowEngine::dcoDivider(double frequencyHz) noexcept
 {
     if (!(frequencyHz > 0.0) || !std::isfinite(frequencyHz))
@@ -5762,7 +5781,6 @@ void YouKnowEngine::reset()
     activeConverterTimingProfile_ = converterTimingProfile_;
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
-    converterPassLfoGated_ = 0.0f;
     passiveHoldEventLatch_ = {};
     exactVcfControlInterval_.fill(false);
     assignmentRescanPending_ = false;
@@ -5781,6 +5799,7 @@ void YouKnowEngine::reset()
     pitchBend_ = 0.0f;
     dcoPitchBendWord_ = 0;
     dcoLfoPitchWord_ = 0;
+    vcfLfoCountsWord_ = 0;
     sustainPedalDown_ = false;
     generation_ = 0;
     activeVoiceCount_ = 0;
@@ -6492,8 +6511,7 @@ void YouKnowEngine::finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept
     {
         const float target = passiveHoldEventLatch_.target;
         performConverterWrite(
-            passiveHoldEventLatch_.write, activeParameters_,
-            converterPassLfoGated_, &target);
+            passiveHoldEventLatch_.write, activeParameters_, &target);
         passiveHoldEventLatch_ = {};
     }
 
@@ -6562,7 +6580,9 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
             storedControlByte(activeParameters_.dcoLfoDepth),
             storedControlByte(modWheelTarget_),
             controlAdcByte(activeParameters_.benderLfoDepth));
-        converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
+        vcfLfoCountsWord_ = vcfLfoCountsWord(
+            lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
+            storedControlByte(activeParameters_.vcfLfoDepth));
     }
     controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
     nextConverterWrite_ = 0;
@@ -6928,11 +6948,11 @@ void YouKnowEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
 }
 
 std::uint32_t YouKnowEngine::updateVoiceScan(
-    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
+    Voice& voice, const EngineParameters& parameters) noexcept
 {
     const std::uint32_t count = updateVoiceEnvelopeAndPitch(
         voice, parameters);
-    updateVoiceVcfTarget(voice, parameters, lfoGated);
+    updateVoiceVcfTarget(voice, parameters);
     updateVoiceVcaTarget(voice, parameters);
     return count;
 }
@@ -7048,15 +7068,13 @@ std::uint32_t YouKnowEngine::updateVoiceEnvelopeAndPitch(
 }
 
 void YouKnowEngine::updateVoiceVcfTarget(
-    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
+    Voice& voice, const EngineParameters& parameters) noexcept
 {
-    voice.cutoffCountsTarget = voiceVcfTarget(
-        voice, parameters, lfoGated);
+    voice.cutoffCountsTarget = voiceVcfTarget(voice, parameters);
 }
 
 float YouKnowEngine::voiceVcfTarget(
-    const Voice& voice, const EngineParameters& parameters,
-    float lfoGated) const noexcept
+    const Voice& voice, const EngineParameters& parameters) const noexcept
 {
     const auto byte7 = [](float value) { return storedControlFraction(value); };
     const float envelope = voice.envelope.value;
@@ -7074,7 +7092,11 @@ float YouKnowEngine::voiceVcfTarget(
     // for, exactly as it multiplies the amplifier's own control.
     counts += envelopeSign * byte7(parameters.envDepth) * vcfEnvelopeCounts
             * envelope * velocityGain(parameters, voice);
-    counts += byte7(parameters.vcfLfoDepth) * vcfLfoCounts * lfoGated;
+    // The LFO term is the pass-held B-2 word, not a fraction of its maximum:
+    // the doubled panel byte and the onset byte truncate to one depth byte
+    // before the accumulator multiply, so panel byte 1 reaches 15 counts
+    // where a proportional 4047/127 would give 32.
+    counts += static_cast<float>(vcfLfoCountsWord_);
     counts += byte7(parameters.benderVcfDepth) * vcfBenderCounts * pitchBend_;
     counts += byte7(parameters.keyFollow) * vcfCountsPerOctave
             * (voice.currentMidi - vcfKeyFollowCentreMidi) / 12.0f;
@@ -7142,7 +7164,7 @@ void YouKnowEngine::updateSharedScan(
 
 void YouKnowEngine::performConverterWrite(
     const ConverterWrite& write, const EngineParameters& parameters,
-    float lfoGated, const float* passiveHoldTargetOverride) noexcept
+    const float* passiveHoldTargetOverride) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(converterWrites, 1);
@@ -7223,7 +7245,7 @@ void YouKnowEngine::performConverterWrite(
                 if (passiveHoldTargetOverride != nullptr)
                     voice.cutoffCountsTarget = *passiveHoldTargetOverride;
                 else
-                    updateVoiceVcfTarget(voice, parameters, lfoGated);
+                    updateVoiceVcfTarget(voice, parameters);
             }
             break;
         case ConverterDestination::VoiceVca:
@@ -7263,8 +7285,8 @@ bool YouKnowEngine::isPassiveHoldWrite(
 }
 
 float YouKnowEngine::passiveHoldWriteTarget(
-    const ConverterWrite& write, const EngineParameters& parameters,
-    float lfoGated) const noexcept
+    const ConverterWrite& write,
+    const EngineParameters& parameters) const noexcept
 {
     switch (write.destination)
     {
@@ -7280,7 +7302,7 @@ float YouKnowEngine::passiveHoldWriteTarget(
             if (write.voice >= 0 && write.voice < hardwareVoices)
                 return voiceVcfTarget(
                     voices_[static_cast<std::size_t>(write.voice)],
-                    parameters, lfoGated);
+                    parameters);
             break;
         case ConverterDestination::VoiceVca:
             if (write.voice >= 0 && write.voice < hardwareVoices)
@@ -7386,7 +7408,7 @@ bool YouKnowEngine::latchUpcomingPassiveHoldEvent(
     passiveHoldEventLatch_.ordinal = ordinal;
     passiveHoldEventLatch_.write = write;
     passiveHoldEventLatch_.target = passiveHoldWriteTarget(
-        write, parameters, converterPassLfoGated_);
+        write, parameters);
     passiveHoldEventLatch_.eventPosition = std::clamp(
         (eventPhase - phase) / phasePerInternalSample, 0.0, 1.0);
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -8911,7 +8933,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     storedControlByte(parameters.dcoLfoDepth),
                     storedControlByte(modWheelTarget_),
                     controlAdcByte(parameters.benderLfoDepth));
-                converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
+                vcfLfoCountsWord_ = vcfLfoCountsWord(
+                    lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
+                    storedControlByte(parameters.vcfLfoDepth));
                 converterPassPwmDacCode_ = parameters.pulseEnabled
                     ? pwmDacCode(parameters.pwmDepth, parameters.pwmSource,
                                  lfoAccumulator_, lfoPolarity_ >= 0.0f)
@@ -8928,7 +8952,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     YOUKNOW_COUNT_DOMAIN_WORK(extensionScanUpdates, 1);
 #endif
                     const std::uint32_t count = updateVoiceScan(
-                        voice, parameters, converterPassLfoGated_);
+                        voice, parameters);
                     programDcoCount(voice, count, voice.dcoResetPending);
                     voice.dcoResetPending = false;
                 }
@@ -8952,7 +8976,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 const float latchedTarget = consumesLatch
                     ? passiveHoldEventLatch_.target : 0.0f;
                 performConverterWrite(
-                    write, parameters, converterPassLfoGated_,
+                    write, parameters,
                     consumesLatch ? &latchedTarget : nullptr);
                 if (relevant && !consumesLatch && !physicalHoldEvent.active)
                 {

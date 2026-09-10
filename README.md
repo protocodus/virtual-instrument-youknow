@@ -175,12 +175,15 @@ forty-year-old unit will null against the plug-in.
   timestamps — with the normalised and phase-zero profiles still selectable
   for comparison).
 - Envelope recurrence, sustain mapping, DAC truncation, the onset-scaled LFO
-  reaching DCO and VCF, and the portamento glide law are the exact digital
-  behaviour of the hash-identified B-2 firmware. PWM separately reads the raw
-  accumulator, forms and pass-latches B-2's exact 12-bit DAC code, and preserves
-  its seven-bit overrange (ROM-resolved); key assignment — including note
-  dropping instead of stealing, the momentary POLY contacts and Solo Unison —
-  is ROM-resolved for the A-5 assigner image.
+  reaching DCO and VCF — the cutoff term is B-2's own pass-held word, the
+  doubled panel byte times the onset byte truncated to one depth byte and
+  multiplied into the 13-bit accumulator, so panel byte 1 sways the cutoff
+  by 15 counts rather than a proportional 32 — and the portamento glide law
+  are the exact digital behaviour of the hash-identified B-2 firmware. PWM
+  separately reads the raw accumulator, forms and pass-latches B-2's exact
+  12-bit DAC code, and preserves its seven-bit overrange (ROM-resolved); key
+  assignment — including note dropping instead of stealing, the momentary
+  POLY contacts and Solo Unison — is ROM-resolved for the A-5 assigner image.
 - The portamento knob passes through its loaded 50KB pot law (derived).
 
 **Oscillator**
@@ -1101,6 +1104,12 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   delay, the two paths saturate before a single scan-held pitch-word multiply,
   and combined vibrato tops out at +/-3.98046875 semitones instead of the old
   additive eight-semitone span.
+- VCF LFO depth now uses B-2's own cutoff word. The doubled panel byte times
+  the onset byte truncates to one depth byte before the accumulator multiply
+  and single shift, so the low end of the LFO fader is coarser than a
+  proportional law: panel byte 1 reaches 15 counts at the LFO peak (12 or 16
+  on the converter's 4-count grid) where the old 4047/127 fraction gave 32,
+  byte 2 reaches 47, and full depth keeps its 4047-count maximum.
 - The LFO delay fade now begins on the same 4.2 ms converter pass that crosses
   the holdoff threshold, matching B-2 instead of inserting a silent extra pass;
   its exact state-completion range is 8.4 ms to 4.3512 s.

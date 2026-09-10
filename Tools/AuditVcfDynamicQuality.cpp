@@ -339,7 +339,7 @@ struct YouKnowTestAccess
                 + 2u * static_cast<std::size_t>(card);
             engine.nextConverterWrite_ = ordinal;
             engine.passiveHoldEventLatch_ = {};
-            engine.converterPassLfoGated_ = -0.21f;
+            engine.vcfLfoCountsWord_ = -850;
             auto& voice = engine.voices_[static_cast<std::size_t>(card)];
             voice.envelope.value = 0.18f + 0.03f * static_cast<float>(card);
             voice.currentMidi = 43.0f + 5.0f * static_cast<float>(card);
@@ -353,7 +353,7 @@ struct YouKnowTestAccess
             atEvent.vcfLfoDepth = 0.38f;
             const auto& write = writes[ordinal];
             const float wanted = engine.passiveHoldWriteTarget(
-                write, atEvent, engine.converterPassLfoGated_);
+                write, atEvent);
             const float targetBefore = voice.cutoffCountsTarget;
             const auto lfoBefore = engine.lfoAccumulator_;
             const float envelopeBefore = voice.envelope.value;
@@ -391,11 +391,10 @@ struct YouKnowTestAccess
             afterEvent.vcfLfoDepth = 0.02f;
             voice.envelope.value = 0.93f;
             voice.currentMidi = 91.0f;
-            engine.converterPassLfoGated_ = 0.74f;
+            engine.vcfLfoCountsWord_ = 2995;
             const float changed = engine.passiveHoldWriteTarget(
-                write, afterEvent, engine.converterPassLfoGated_);
-            engine.performConverterWrite(
-                write, afterEvent, engine.converterPassLfoGated_, &latched);
+                write, afterEvent);
+            engine.performConverterWrite(write, afterEvent, &latched);
             ++engine.nextConverterWrite_;
             engine.passiveHoldEventLatch_ = {};
             ++result.commits;
@@ -424,7 +423,7 @@ struct YouKnowTestAccess
         const float envelopeBefore = engine.voices_[0].envelope.value;
         const float targetBefore = engine.resonanceCvTarget_;
         const float wanted = engine.passiveHoldWriteTarget(
-            writes[0], atEvent, engine.converterPassLfoGated_);
+            writes[0], atEvent);
         const bool peeked = engine.latchUpcomingPassiveHoldEvent(
             phase, delta, atEvent);
         ++result.peeks;
@@ -445,10 +444,9 @@ struct YouKnowTestAccess
         EngineParameters afterEvent = atEvent;
         afterEvent.resonance = 0.91f;
         const float changed = engine.passiveHoldWriteTarget(
-            writes[0], afterEvent, engine.converterPassLfoGated_);
+            writes[0], afterEvent);
         engine.nextConverterWrite_ = 0u;
-        engine.performConverterWrite(
-            writes[0], afterEvent, engine.converterPassLfoGated_, &latched);
+        engine.performConverterWrite(writes[0], afterEvent, &latched);
         engine.passiveHoldEventLatch_ = {};
         ++engine.nextConverterWrite_;
         ++result.commits;
