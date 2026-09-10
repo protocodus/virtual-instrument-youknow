@@ -1441,10 +1441,17 @@ public:
     [[nodiscard]] static float outputCouplingHighGain() noexcept;
     // Loaded transfer at a shaft position. The fixed per-wiper internal load
     // is the 41.3 kOhm selector ladder in parallel with the 101 kOhm headphone
-    // input. External jack loads and mono normaling remain outside this scope.
+    // input. External jack loads remain outside this scope; the mono
+    // normaling is the host bus's fold (PluginProcessor.cpp, monoJackFoldGain).
     [[nodiscard]] static float outputCouplingCornerHz(
         float volumePosition) noexcept;
     [[nodiscard]] static float outputCouplingHighGain(
+        float volumePosition) noexcept;
+    // The jack network after the selector: R64/R65 2.2 kOhm into JA2/JA1 with
+    // C22/C21 1 nF from each jack node to ground, driven through the wiper's
+    // own Thevenin resistance at a shaft position -- 46.15 kHz at full volume,
+    // 33.32 kHz at half, with the jack open (OQ-17).
+    [[nodiscard]] static float outputJackCornerHz(
         float volumePosition) noexcept;
 
     // The instrument has six voice cards; the engine will run more of them for
@@ -3112,6 +3119,13 @@ private:
     HighPass outputCouplingLeft_ {};
     HighPass outputCouplingRight_ {};
     float outputCouplingG_ { 0.0001f };
+    // One C22/C21 charge state per jack, at the host rate. The pole sits after
+    // the coupling and the wiper noise, and its corner moves with the wiper's
+    // source resistance, so its blend is recomputed beside the coupling
+    // coefficient when Volume moves.
+    float outputJackStateLeft_ { 0.0f };
+    float outputJackStateRight_ { 0.0f };
+    float outputJackBlend_ { 1.0f };
 
     // VCA LEVEL controls the single jack-board VCA after the six voice cards
     // and shared HPF. It is not part of each voice's envelope VCA.

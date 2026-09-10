@@ -221,7 +221,8 @@ constexpr float commonVcaControlVoltsPerDecibel = -5.9e-3f;
 
 // Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1. The fixed
 // internal load is the complete selector ladder in parallel with IC7's input;
-// external jack loads, normaling and driven headphone behavior remain OQ-17.
+// external jack loads and driven headphone behavior remain OQ-17, and the mono
+// normaling is the host bus's fold (PluginProcessor.cpp, monoJackFoldGain).
 constexpr float outputCouplingCapacitanceF = 10.0e-6f;
 constexpr float outputCouplingSeriesOhms = 1500.0f;
 constexpr float outputCouplingPotOhms = 10000.0f;
@@ -230,6 +231,13 @@ constexpr float headphoneInputOhms = 1000.0f + 100000.0f;
 constexpr float outputWiperInternalLoadOhms =
     outputSelectorLadderOhms * headphoneInputOhms
     / (outputSelectorLadderOhms + headphoneInputOhms);
+
+// The jack network after the selector, identically R64/C22 into JA2 and
+// R65/C21 into JA1: 2.2 kOhm in series with each jack and 1 nF (".001x2")
+// from the jack node to ground. With the jack open (OQ-17) the pole's
+// resistance is the series part plus the wiper's own Thevenin resistance.
+constexpr float outputJackSeriesOhms = 2200.0f;
+constexpr float outputJackCapacitanceF = 1.0e-9f;
 
 // The card's own thermal floor at the filter input. This is not the shared
 // audible TP8 noise; it is what the voice card's own resistors do, and it is
@@ -375,6 +383,21 @@ OutputCouplingWiperNetwork outputCouplingWiperNetworkFor(
         : 0.0f;
     const float upperTrack = (1.0f - position) * outputCouplingPotOhms;
     return { loadedLower, outputCouplingSeriesOhms + upperTrack + loadedLower };
+}
+
+// The corner R64/R65 and C22/C21 make with the wiper's own Thevenin
+// resistance: the upper leg (R54/R57 plus the unused track) in parallel with
+// the loaded lower track -- the same two paths outputWiperNoiseResistance()
+// sums, read here off the one already-solved network. Full volume: 1.249 kOhm
+// + 2.2 kOhm against 1 nF is 46.15 kHz; half volume, 2.578 kOhm + 2.2 kOhm,
+// is 33.32 kHz.
+float outputJackCornerHzFor(
+    const OutputCouplingWiperNetwork& network) noexcept
+{
+    const float upperLeg = network.resistance - network.loadedLower;
+    const float wiperOhms =
+        upperLeg * network.loadedLower / network.resistance;
+    return rcCornerHz(outputJackCapacitanceF, outputJackSeriesOhms + wiperOhms);
 }
 
 } // namespace
@@ -1965,6 +1988,11 @@ float YouKnowEngine::outputCouplingHighGain(float volumePosition) noexcept
     if (!(network.loadedLower > 0.0f))
         return 0.0f;
     return network.loadedLower / network.resistance;
+}
+
+float YouKnowEngine::outputJackCornerHz(float volumePosition) noexcept
+{
+    return outputJackCornerHzFor(outputCouplingWiperNetworkFor(volumePosition));
 }
 
 // ---------------------------------------------------------------------------
@@ -5606,6 +5634,8 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputSlewStateRight_ = 0.0f;
     outputBandwidthStateLeft_ = 0.0f;
     outputBandwidthStateRight_ = 0.0f;
+    outputJackStateLeft_ = 0.0f;
+    outputJackStateRight_ = 0.0f;
     outputNoiseStateLeft_ = 0x91e10da5u;
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
@@ -9610,6 +9640,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                    * outputCouplingNetwork.resistance);
             outputCouplingG_ = std::tan(
                 pi * outputCouplingCorner * inverseSampleRate_);
+            // R64/R65 with C22/C21 after the selector, at the host rate. The
+            // matched-Z blend the IC6 pole uses, not a tan() prewarp: the
+            // 46.15 kHz corner lies above Nyquist at 44.1/48 kHz hosts, where
+            // a bilinear map has no frequency to land it on. There the blend
+            // is nearly transparent (about -0.04 dB at 20 kHz) and the
+            // physical -0.75 dB at 20 kHz appears only as the host rate
+            // rises: -0.33 dB at 96 kHz, -0.61 dB at 192 kHz.
+            outputJackBlend_ = 1.0f - std::exp(
+                -twoPi * outputJackCornerHzFor(outputCouplingNetwork)
+                * inverseSampleRate_);
             outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
                 ? outputCouplingNetwork.loadedLower
                     / outputCouplingNetwork.resistance
@@ -9652,6 +9692,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     * parameters.calibration * outputWiperNoiseScale;
         outputRight += bipolarFromState(outputWiperNoiseStateRight_)
                      * parameters.calibration * outputWiperNoiseScale;
+        // C22/C21 with R64/R65: the jack node the plug sees. The coupling and
+        // the wiper's noise both sit behind the 2.2 kOhm, so the pole follows
+        // them. It is the nominal circuit's, so Unit Character does not scale
+        // it; see outputJackBlend_.
+        outputJackStateLeft_ +=
+            outputJackBlend_ * (outputLeft - outputJackStateLeft_);
+        outputJackStateRight_ +=
+            outputJackBlend_ * (outputRight - outputJackStateRight_);
+        outputLeft = outputJackStateLeft_;
+        outputRight = outputJackStateRight_;
 
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.

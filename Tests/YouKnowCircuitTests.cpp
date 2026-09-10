@@ -6833,6 +6833,61 @@ void testCorrectionResidualsVanishAtTheEdges()
     expectNear(measured, programmed, 0.5,
                "the rendered ramp is not at the frequency the timer was given");
 }
+void testOutputJackPoleFollowsTheWiperSourceResistance()
+{
+    // Service Notes p. 15: each selector wiper reaches its jack through
+    // 2.2 kOhm (R64 into JA2, R65 into JA1) with 1 nF (C22, C21) from the
+    // jack node to ground. With the jack open, the pole's resistance is that
+    // 2.2 kOhm plus the wiper's own Thevenin resistance -- R54/R57 plus the
+    // unused track, in parallel with the loaded lower track -- solved here
+    // independently of the engine's shared wiper network.
+    constexpr double pot = 10000.0;
+    constexpr double series = 1500.0;
+    constexpr double selector = 41300.0;
+    constexpr double headphone = 101000.0;
+    constexpr double load = selector * headphone / (selector + headphone);
+    constexpr double jackSeries = 2200.0;
+    constexpr double jackCapacitance = 1.0e-9;
+    const auto reference = [=](double position) {
+        const double upper = series + (1.0 - position) * pot;
+        const double lower = position * pot;
+        const double loadedLower =
+            lower > 0.0 ? lower * load / (lower + load) : 0.0;
+        const double wiper = loadedLower > 0.0
+            ? upper * loadedLower / (upper + loadedLower) : 0.0;
+        return 1.0 / (2.0 * pi * jackCapacitance * (jackSeries + wiper));
+    };
+    for (const double position : { 0.0, 0.25, 0.5, 0.75, 1.0 })
+        expectNear(YouKnowEngine::outputJackCornerHz(
+                       static_cast<float>(position)),
+                   reference(position), 1.0,
+                   "the jack pole does not follow the wiper's source "
+                   "resistance at shaft position "
+                       + std::to_string(position));
+
+    // The corners the README quotes -- 1.249 kOhm of wiper at full volume,
+    // 2.578 kOhm at half, 2.396 kOhm at three quarters -- and the roll-off
+    // they put on the top of the band with the jack open.
+    const double full = YouKnowEngine::outputJackCornerHz(1.0f);
+    const double half = YouKnowEngine::outputJackCornerHz(0.5f);
+    expectNear(full, 46150.0, 10.0, "the full-volume jack corner is not 46.15 kHz");
+    expectNear(half, 33316.0, 10.0, "the half-volume jack corner is not 33.32 kHz");
+    expectNear(YouKnowEngine::outputJackCornerHz(0.75f), 34635.0, 10.0,
+               "the three-quarter-volume jack corner is not 34.63 kHz");
+    const auto rollOffDb = [](double corner, double frequency) {
+        const double ratio = frequency / corner;
+        return -10.0 * std::log10(1.0 + ratio * ratio);
+    };
+    expectNear(rollOffDb(full, 10000.0), -0.20, 0.01,
+               "full volume does not roll off 0.20 dB at 10 kHz");
+    expectNear(rollOffDb(full, 20000.0), -0.75, 0.01,
+               "full volume does not roll off 0.75 dB at 20 kHz");
+    expectNear(rollOffDb(half, 10000.0), -0.37, 0.01,
+               "half volume does not roll off 0.37 dB at 10 kHz");
+    expectNear(rollOffDb(half, 20000.0), -1.34, 0.01,
+               "half volume does not roll off 1.34 dB at 20 kHz");
+}
+
 void testOutputSummerIsLinearBelowItsAsymptote()
 {
     // IC6 runs on +/-15 V and the audio it carries is a few volts, so the stage
@@ -7082,6 +7137,7 @@ int main()
     testOutputSummerBandwidthFollowsNoiseGain();
     testOutputResistorNoiseFollowsJohnsonNyquistLaw();
     testOutputSummerSlewMatchesDatasheetTypical();
+    testOutputJackPoleFollowsTheWiperSourceResistance();
     testDecimatorProtectsTheTopOfTheBand();
     testFilterCoreDividerMatchesSchematic();
     testCascadeAgainstReferenceSolve();
