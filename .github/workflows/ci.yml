@@ -73,24 +73,32 @@ jobs:
           fi
           echo "YouKnow: rendered all $rendered demo WAVs"
 
-      # The composition is one file rather than a counted set, so the check is
-      # that this run wrote it and that it is a plausible length: a 24-bit
-      # stereo minute is about 16 MB, and a score that silently lost its parts
-      # would still write a valid but tiny WAV.
+      # Two checks, because neither alone says the piece is whole. The byte
+      # count catches a render that stopped early, but it depends only on
+      # duration and format: dropping every part but the one that sets the last
+      # release would produce the same size. The part count is what holds the
+      # ten-overdub contract the README states. Changing the number of parts
+      # means changing the number here in the same commit.
       - name: Render and verify the composition
         run: |
           set -euo pipefail
           cmake --build build-dsp --target YouKnowRenderComposition --parallel
           rm -f Docs/audio/composition/*.wav
-          ./build-dsp/YouKnowRenderComposition Docs/audio/composition
+          ./build-dsp/YouKnowRenderComposition Docs/audio/composition | tee render.log
           piece=Docs/audio/composition/youknow-composition.wav
           test -f "$piece"
+          parts=$(grep -c '^Rendered [AB][0-9]' render.log)
+          if (( parts != 10 )); then
+            echo "error: the composition rendered $parts parts, expected 10" >&2
+            exit 1
+          fi
           bytes=$(stat -c%s "$piece")
           if (( bytes < 10000000 )); then
             echo "error: the composition is only $bytes bytes" >&2
             exit 1
           fi
-          echo "YouKnow: rendered the composition ($bytes bytes)"
+          rm -f render.log
+          echo "YouKnow: rendered the composition, $parts parts, $bytes bytes"
 
       - name: Archive the refreshed audio demos and peak table
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
