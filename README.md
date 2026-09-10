@@ -1201,6 +1201,18 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   hosts that end playback with an omni or poly message rather than CC 123.
 - Fixed the pitch-bend lever so holding one axis with the keyboard survives
   releasing the other.
+- Fixed a one-sample spike in the oscillator reconstruction for an edge found
+  exactly on the previous sample's instant. Each waveform track repairs its
+  discontinuities from a bandlimited step response, and an event one whole
+  sample back subtracted the ideal step from the sample rendered before it,
+  leaving that sample at the full opposite swing (−2.0 for a −1..+1 edge
+  whose own pre-ring reaches 1.18). It reached the WAVE node whenever a
+  card's stored comparator level was reconciled at an interval boundary — a
+  retrigger after the fast tanh modes' idle-card freewheel with the Pulse
+  Off WAVE-node coupling comparison switch off — when a ramp was found
+  already at the +15 V supply bound at the start of an interval after a
+  Unit Character edit, and on the control-word sub flip of a note command's
+  protected reset pre-stage. Every edge inside a sample is unchanged.
 - Fixed the settled-chorus work skip so it engages without the host's
   flush-to-zero mode. The 5 ms wet-mute glide only ever decayed towards zero
   and parked on a denormal, so the skip's exact-zero test passed under the

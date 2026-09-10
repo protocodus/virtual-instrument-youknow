@@ -2160,7 +2160,7 @@ float YouKnowEngine::interpolatedCorrectionSample(
 }
 
 // `samplesAgo` is how far back inside the sample just rendered the event sits,
-// in [0, 1). Output sample `j` of the correction ring is `j - halfWidth`
+// in [0, 1]. Output sample `j` of the correction ring is `j - halfWidth`
 // samples away from the sample just rendered, so the residual is read at
 // `j - halfWidth + samplesAgo` and the table is offset by the half width.
 //
@@ -2168,6 +2168,17 @@ float YouKnowEngine::interpolatedCorrectionSample(
 // neighbour. The ideal step is then evaluated exactly at the query time.
 // Keeping the discontinuity out of the interpolated data is essential: even a
 // dense table otherwise blends across the unit jump immediately before t=0.
+//
+// A query time of exactly zero is the naive sample sitting on the event, and
+// which side of the step that sample holds depends on where the event was
+// found. Inside the sample just rendered (samplesAgo < 1) that sample already
+// carries the new level, so the ideal step is subtracted from it. At
+// samplesAgo == 1 -- eventSamplesAgo(0.0), the left-boundary comparator
+// reconciliation and the two control-word sub flips -- the event sits on the
+// previous sample's instant, and that sample was rendered before the event at
+// the old level: subtracting the step there wrote h * (0.5 - 1) into slot
+// halfWidth - 1 instead of h * 0.5, a full-swing one-sample spike on every
+// such edge (-2.0 against -0.002 one 1/64 grid step earlier for a +2 step).
 void YouKnowEngine::addStep(BandlimitedTrack& track, float height,
                                float samplesAgo) const noexcept
 {
@@ -2186,7 +2197,9 @@ void YouKnowEngine::addStep(BandlimitedTrack& track, float height,
         const float response = interpolatedCorrectionSample(table, j, offset);
         const float queryTime = static_cast<float>(j - correctionHalfWidth)
                               + offset;
-        const float residual = response - (queryTime >= 0.0f ? 1.0f : 0.0f);
+        const bool afterEvent = queryTime > 0.0f
+                             || (queryTime == 0.0f && offset < 1.0f);
+        const float residual = response - (afterEvent ? 1.0f : 0.0f);
         track.ring[static_cast<std::size_t>(slot)] += height * residual;
         slot = slot + 1 < correctionRing ? slot + 1 : 0;
     }
