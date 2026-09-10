@@ -5293,9 +5293,13 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
     // one, must not be able to put a zero, a negative or a NaN on the internal
-    // grid: every coefficient below divides by it. NaN fails both clamp
-    // comparisons, so it is caught explicitly rather than passed through.
-    sampleRate_ = std::isfinite(sampleRate)
+    // grid: every coefficient below divides by it. Zero, negative, NaN and
+    // infinite reports all mean "no rate yet", so they share one 48 kHz
+    // default; an earlier revision clamped zero to the 8 kHz floor and built
+    // a 32 kHz internal grid (VCF ceiling 3.6 kHz) that the panel readout
+    // published until the real prepare arrived. A positive finite rate
+    // outside the supported span is clamped into it.
+    sampleRate_ = std::isfinite(sampleRate) && sampleRate > 0.0
                     ? std::clamp(sampleRate, minimumSupportedSampleRate,
                                  maximumSupportedSampleRate)
                     : 48000.0;
@@ -5653,7 +5657,14 @@ double YouKnowEngine::totalLatencySamples(int factor) noexcept
     // or the two configurations do not line up.
     double latency = static_cast<double>(correctionHalfWidth)
                    / static_cast<double>(limited);
-    constexpr double half = (halfbandTaps - 1) / 2.0;
+    // downsamplePair() writes the pair and reads its kernel back from the
+    // second sample, so the 47-tap half width is measured from one input
+    // sample after the pair's first, and each stage delays the first sample
+    // of its pair by 46 of its inputs, not 47. 4x therefore sits at 34.5 host
+    // samples before the residual delay (40.5 with it), which is what
+    // testDecimatorGroupDelayMatchesTheLatencyFormula measures; the report
+    // still rounds to 41 and the 2x/1x pads stay 6 and 17.
+    constexpr double half = (halfbandTaps - 1) / 2.0 - 1.0;
     for (int step = limited; step > 1; step /= 2)
         latency += half / static_cast<double>(step);
     return latency;
@@ -8755,9 +8766,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         && oversamplingRequested_ != oversamplingApplied_
         && rateTransitionGain_ > 0.0f)
     {
+        // The decrement below snaps to zero once less than half a step is
+        // left, so the sample that reaches zero is round(gain / step) from
+        // here; ceil() used to disagree with the float crumb the subtraction
+        // leaves at 8, 48, 192, 384 and 768 kHz and split a second time.
         const int samplesUntilZero = std::max(
-            1, static_cast<int>(std::ceil(
-                   rateTransitionGain_ / rateTransitionStep_)));
+            1, static_cast<int>(std::floor(
+                   rateTransitionGain_ / rateTransitionStep_ + 0.5f)));
         if (samplesUntilZero < numSamples)
         {
             process(left, right, samplesUntilZero);
@@ -9065,9 +9080,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // band-shapes the rail: C42 into the level OTA's 4.7 kOhm input
             // bias high-passes at 33.9 Hz, the BA662 applies the scanned level,
             // and C41 against R79 low-passes that controlled output at
-            // 4.82 kHz. One state still serves every voice; the passband stays
-            // at unity, so in-band density keeps its established rate
-            // normalisation.
+            // 4.82 kHz. One state still serves every voice; the passband below
+            // that corner stays at unity, so in-band density keeps its
+            // established rate normalisation there. Above it the bilinear
+            // one-pole's zero at Nyquist thins the coarse grids against the
+            // analogue pole -- about -1.2 dB at 10 kHz and -4 dB at 16 kHz
+            // on a 48 kHz/1x grid, -0.5 dB over 0-20 kHz -- a numerical
+            // limitation of the HQ-off rungs, not a modelled mechanism.
             if (noiseState_ == 0u)
                 noiseState_ = 0x6d2b79f5u;
             noiseState_ = xorshift32(noiseState_);
@@ -9653,8 +9672,14 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
         if (rateTransition_ == RateTransition::FadingOut)
         {
-            rateTransitionGain_ = std::max(
-                0.0f, rateTransitionGain_ - rateTransitionStep_);
+            // Land exactly on zero at the round(gain / step) sample the split
+            // in process() scheduled. Subtracting the step in float leaves a
+            // crumb of about 1e-6 at the rates where 0.005 * fs is an integer
+            // (8, 48, 192, 384, 768 kHz), which used to cost one more split
+            // and put the rebuild one host sample after the boundary.
+            rateTransitionGain_ -= rateTransitionStep_;
+            if (rateTransitionGain_ < 0.5f * rateTransitionStep_)
+                rateTransitionGain_ = 0.0f;
         }
         else if (rateTransition_ == RateTransition::FadingIn)
         {

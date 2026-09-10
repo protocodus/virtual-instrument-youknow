@@ -1380,6 +1380,71 @@ struct YouKnowTestAccess
         return engine.rateTransitionGain_;
     }
 
+    static float rateTransitionStep(const YouKnowEngine& engine) noexcept
+    {
+        return engine.rateTransitionStep_;
+    }
+
+    // Start the safety fade the idle-switch path starts, with the pending
+    // request that keeps it a fade-out rather than an immediate reversal.
+    static void armFadeOut(YouKnowEngine& engine, int factor) noexcept
+    {
+        engine.oversamplingRequested_ = factor;
+        engine.oversamplingIdleSamples_ = engine.oversamplingQuietSamples_;
+        engine.rateTransition_ = YouKnowEngine::RateTransition::FadingOut;
+        engine.rateTransitionGain_ = 1.0f;
+    }
+
+    // The energy centroid, in host frames, of an impulse placed on the first
+    // internal step of host frame 0 and taken through exactly the stage-to-
+    // host reduction process() performs for the running factor: the same
+    // downsamplePair() calls in the same order, then the latency pad.
+    static double measuredDecimatorCentre(YouKnowEngine& engine)
+    {
+        engine.firstDecimator_.reset();
+        engine.secondDecimator_.reset();
+        engine.latencyPadLeft_.fill(0.0f);
+        engine.latencyPadRight_.fill(0.0f);
+        engine.latencyPadWriteIndex_ = 0;
+        const int factor = engine.oversampling_;
+        double weighted = 0.0;
+        double total = 0.0;
+        for (int frame = 0; frame < 512; ++frame)
+        {
+            std::array<float, 4> stage {};
+            if (frame == 0)
+                stage[0] = 1.0f;
+            float outputLeft = 0.0f;
+            float outputRight = 0.0f;
+            if (factor == 4)
+            {
+                float firstLeft = 0.0f, firstRight = 0.0f;
+                float secondLeft = 0.0f, secondRight = 0.0f;
+                engine.downsamplePair(engine.firstDecimator_, stage[0], stage[0],
+                                      stage[1], stage[1], firstLeft, firstRight);
+                engine.downsamplePair(engine.firstDecimator_, stage[2], stage[2],
+                                      stage[3], stage[3], secondLeft, secondRight);
+                engine.downsamplePair(engine.secondDecimator_, firstLeft,
+                                      firstRight, secondLeft, secondRight,
+                                      outputLeft, outputRight);
+            }
+            else if (factor == 2)
+            {
+                engine.downsamplePair(engine.firstDecimator_, stage[0], stage[0],
+                                      stage[1], stage[1], outputLeft, outputRight);
+            }
+            else
+            {
+                outputLeft = stage[0];
+                outputRight = stage[0];
+            }
+            engine.applyLatencyPad(outputLeft, outputRight);
+            weighted += static_cast<double>(frame) * outputLeft;
+            total += outputLeft;
+        }
+        return weighted / total;
+    }
+
     static double outputCouplingState(const YouKnowEngine& engine) noexcept
     {
         return engine.outputCouplingLeft_.state;
@@ -1488,6 +1553,11 @@ struct YouKnowTestAccess
     static double numericalLatencyCentre(int factor) noexcept
     {
         return YouKnowEngine::totalLatencySamples(factor);
+    }
+
+    static constexpr int correctionHalfWidth() noexcept
+    {
+        return YouKnowEngine::correctionHalfWidth;
     }
 
     static int latencyPadSamples(const YouKnowEngine& engine) noexcept
@@ -2704,10 +2774,12 @@ void testFilterPolesAreStaggeredOnlyByUnitCharacter()
 void testMixerLevelIsContinuousInSubAndNoise()
 {
     // SUB LEVEL and NOISE LEVEL are sliders that vary an amplitude, not
-    // switches that connect a leg. Their 100 kOhm resistors are wired whatever
-    // the slider reads, so leaving the stop must not change how hard the other
-    // legs load the summing node. Counting them only above zero stepped the
-    // whole voice by 2.95 dB at the first non-zero byte.
+    // switches that connect a leg: the sub is the current its R101/D6/R102 leg
+    // passes from the held SUB rail and the noise arrives on its own fixed leg
+    // from the shared rail, so the WAVE node's loading is the same whatever
+    // either slider reads, and leaving the stop must not step the other
+    // sources. An earlier switchable-leg revision counted a leg only above
+    // zero and stepped the whole voice by 2.95 dB at the first non-zero byte.
     const auto levelAt = [](float subLevel, float noiseLevel) {
         YouKnowEngine engine;
         engine.prepare(48000.0, blockSize, true);
@@ -11138,6 +11210,17 @@ void testPrepareSurvivesAnUnusableHostSampleRate()
         expect(std::isfinite(running) && running >= 8000.0
                    && running <= YouKnowEngine::maximumSupportedSampleRate,
                "an unusable host rate reached the internal grid");
+        // Zero, negative and non-finite reports all mean the host has no rate
+        // yet; they share the 48 kHz default rather than splitting between
+        // it and the 8 kHz floor. A positive finite rate is clamped instead.
+        const bool unknown = !std::isfinite(rate) || rate <= 0.0;
+        const double expected = unknown ? 48000.0
+            : std::clamp(rate, YouKnowEngine::minimumSupportedSampleRate,
+                         YouKnowEngine::maximumSupportedSampleRate);
+        expect(running == expected,
+               "host rate " + std::to_string(rate) + " prepared "
+                   + std::to_string(running) + " Hz instead of "
+                   + std::to_string(expected));
         expect(engine.getOversamplingFactor() >= 1
                    && engine.getOversamplingFactor() <= 4,
                "an unusable host rate produced an impossible quality factor");
@@ -11152,6 +11235,96 @@ void testPrepareSurvivesAnUnusableHostSampleRate()
                 expect(false, "an unusable host rate produced non-finite audio");
                 break;
             }
+    }
+}
+
+void testRateTransitionFadeReachesExactZeroOnItsScheduledSample()
+{
+    // process() splits a block at round(gain / step) samples so the rebuild
+    // lands on the sample where the fade reaches zero. That only holds if the
+    // per-sample decrement actually reaches zero there: subtracting a float
+    // step 1/(0.005 fs) times leaves a crumb of about 1e-6 wherever
+    // 0.005 * fs is an integer, which used to cost a second split and put the
+    // rebuild one host sample late at 8, 48, 192, 384 and 768 kHz.
+    for (const double sampleRate : { 8000.0, 44100.0, 48000.0, 96000.0,
+                                     192000.0, 384000.0, 768000.0 })
+    {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, 4);
+        engine.setParameters(plainPatch());
+        const int deepFactor = engine.getOversamplingFactor();
+        if (deepFactor == 1)
+            continue;   // nothing to switch to on this host
+        YouKnowTestAccess::armFadeOut(engine, 1);
+        const float step = YouKnowTestAccess::rateTransitionStep(engine);
+        const int scheduled = static_cast<int>(std::floor(1.0f / step + 0.5f));
+        float left = 0.0f;
+        float right = 0.0f;
+        for (int sample = 0; sample < scheduled; ++sample)
+        {
+            expect(engine.getOversamplingFactor() == deepFactor,
+                   "the rate changed before the fade reached zero at "
+                       + std::to_string(sampleRate) + " Hz");
+            engine.process(&left, &right, 1);
+        }
+        expect(YouKnowTestAccess::rateTransitionGain(engine) == 0.0f,
+               "the fade-out did not reach exactly zero on its scheduled sample at "
+                   + std::to_string(sampleRate) + " Hz (gain "
+                   + std::to_string(YouKnowTestAccess::rateTransitionGain(engine))
+                   + ")");
+        engine.process(&left, &right, 1);
+        expect(engine.getOversamplingFactor() == 1,
+               "the rate did not change on the sample after the fade reached zero at "
+                   + std::to_string(sampleRate) + " Hz");
+    }
+}
+
+void testDecimatorGroupDelayMatchesTheLatencyFormula()
+{
+    // totalLatencySamples() is what the host is told and what sizes the 2x/1x
+    // pads, so it has to equal the delay the decimators actually impose.
+    // Measure that delay on an impulse through the shipping stage-to-host
+    // reduction and compare the centroid with the formula, rung by rung. An
+    // earlier formula credited each half-band stage with 47 input samples
+    // where its pair read gives 46, overstating 4x by 0.75 host samples.
+    for (const int factor : { 4, 2, 1 })
+    {
+        YouKnowEngine engine;
+        engine.prepare(48000.0, blockSize, factor);
+        expect(engine.getOversamplingFactor() == factor,
+               "48 kHz did not run at the requested factor");
+        const double measured =
+            YouKnowTestAccess::measuredDecimatorCentre(engine);
+        const double formula =
+            YouKnowTestAccess::numericalLatencyCentre(factor)
+            - static_cast<double>(YouKnowTestAccess::correctionHalfWidth())
+                  / factor
+            + YouKnowTestAccess::latencyPadSamples(engine);
+        expect(std::abs(measured - formula) < 1.0e-6,
+               "the decimator centroid at " + std::to_string(factor)
+                   + "x is " + std::to_string(measured)
+                   + " host samples against the formula's "
+                   + std::to_string(formula));
+    }
+    // Every rung ends up within half a host sample of the figure the host is
+    // told, and the two padded rungs land on it exactly.
+    for (const int factor : { 4, 2, 1 })
+    {
+        YouKnowEngine engine;
+        engine.prepare(48000.0, blockSize, factor);
+        const int reported = engine.getProcessingLatencySamples();
+        expect(reported == 41, "the reported DSP latency moved");
+        const double endToEnd =
+            YouKnowTestAccess::numericalLatencyCentre(factor)
+            + YouKnowTestAccess::latencyPadSamples(engine);
+        expect(std::abs(endToEnd - reported) <= 0.5 + 1.0e-9,
+               "rung " + std::to_string(factor) + "x sits "
+                   + std::to_string(endToEnd - reported)
+                   + " host samples off the reported latency");
+        if (factor != 4)
+            expect(endToEnd == reported,
+                   "the padded rung " + std::to_string(factor)
+                       + "x does not land exactly on the reported latency");
     }
 }
 
@@ -14889,6 +15062,8 @@ int main()
     testQualityChangeThatCannotBeHeardIsNotPaidFor();
     testQualityLadderKeepsTheSameOutputLevel();
     testPrepareSurvivesAnUnusableHostSampleRate();
+    testRateTransitionFadeReachesExactZeroOnItsScheduledSample();
+    testDecimatorGroupDelayMatchesTheLatencyFormula();
     testQualityChangeFadesRateDependentOutputPath();
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();

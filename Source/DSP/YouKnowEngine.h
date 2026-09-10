@@ -2326,7 +2326,8 @@ private:
     // but the untrimmed legs now have an anchored bound: the module-board
     // legend (p. 12) prints every plain resistor as "R20J" -- J is +/-5 % --
     // and only the DCO range resistors as 1 % metal-oxide film, so the 3 %
-    // classes on the sub leg (R101/R102), the noise leg (R102) and the
+    // classes on the sub leg (R101/R102), the noise leg (its series part is
+    // unread on p. 13; R102 is Tr19's collector load, not this leg) and the
     // per-voice summer leg (R3) sit inside that 5 %; the ramp uses C54's own
     // G class (rampCapacitorToleranceClass).
     struct VoiceCard
