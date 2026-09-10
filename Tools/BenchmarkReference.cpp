@@ -231,8 +231,14 @@ std::optional<Capture> readWav (const std::filesystem::path& path)
         else if (std::memcmp (bytes.data() + cursor, "data", 4) == 0
                  && body <= bytes.size())
         {
+            // Clamping a declared length to what survives would accept a
+            // truncated capture whose tail is simply missing, and the release
+            // and noise-floor measures would then report that truncation as a
+            // difference in the instrument.
+            if (! bodyPresent)
+                return std::nullopt;
             dataOffset = body;
-            dataBytes = std::min (static_cast<std::size_t> (size), bytes.size() - body);
+            dataBytes = static_cast<std::size_t> (size);
         }
         cursor = body + size + (size & 1u); // chunks are word-aligned
     }
@@ -332,6 +338,23 @@ EngineParameters parametersFor (const Preset& preset)
     parameters.chorusNoise = controls.chorusNoise;
     parameters.polyphony = controls.polyphony;
     return parameters;
+}
+
+// The frequency the case's analysis note actually sounds, which is not the
+// frequency of its MIDI number: the patch's octave selector and the preset's
+// stored transpose and master tune all move it, and 16' - which many factory
+// patches use - puts it a full octave below. Searching +/-100 cents around the
+// MIDI note would then be searching an octave away from the tone.
+double nominalFundamentalHz (const Preset& preset, int analysisNote)
+{
+    const auto octaves = preset.patch.range == youknow::DcoRange::Sixteen ? -1
+                       : preset.patch.range == youknow::DcoRange::Four    ? 1
+                                                                          : 0;
+    const auto semitones = static_cast<double> (analysisNote)
+                         + static_cast<double> (preset.controls.transpose)
+                         + 12.0 * octaves
+                         + static_cast<double> (preset.controls.masterTune) / 100.0;
+    return 440.0 * std::pow (2.0, (semitones - 69.0) / 12.0);
 }
 
 Capture renderCase (const ReferenceCase& item, const Preset& preset,
@@ -482,11 +505,35 @@ std::vector<double> amplitudeEnvelope (std::span<const double> samples,
 // reporting an unmeasured zero would quietly feed a misaligned pair into every
 // spectral and envelope measure below. The search span shrinks to fit what the
 // capture can support rather than being abandoned at the first short file.
-constexpr std::int64_t coarseDecimation = 32;
-// C0 is 16.35 Hz, so the longest period a 16' patch on the lowest key produces
-// is about 61 ms. The fine search stays inside half of that and cannot cross
-// into a neighbouring cycle.
-constexpr double fineSearchSeconds = 0.03;
+// Where the sound starts: the first sample at which the amplitude envelope
+// reaches a tenth of that signal's own peak.
+//
+// This needs the capture to begin before its first note does, which the
+// protocol's arbitrary lead-in already provides: the envelope window is
+// centred, so at a buffer edge it has only half its support, and a note
+// beginning at the very first sample is measured with a differently shaped
+// window than the same note beginning inside the capture.
+//
+// This is the coarse alignment, in place of correlating anything. An envelope
+// correlation over a long decaying note has a broad, nearly flat maximum whose
+// argmax drifts; an onset is a single well-defined instant in each signal, and
+// their difference is the lag directly. It is also O(n) rather than quadratic
+// in the capture length, which is what the exhaustive lag scan it replaces was.
+constexpr double onsetFraction = 0.1;
+
+std::optional<std::int64_t> onsetFrame (const std::vector<double>& envelope)
+{
+    if (envelope.empty())
+        return std::nullopt;
+    const auto peak = *std::max_element (envelope.begin(), envelope.end());
+    if (peak <= 0.0)
+        return std::nullopt;
+    const auto threshold = onsetFraction * peak;
+    for (std::size_t index = 0; index < envelope.size(); ++index)
+        if (envelope[index] >= threshold)
+            return static_cast<std::int64_t> (index);
+    return std::nullopt;
+}
 
 // Best lag by plain normalised cross-correlation of two series, searched over
 // [-search, +search] and evaluated on the overlap.
@@ -529,69 +576,61 @@ std::int64_t correlateForLag (const std::vector<double>& reference,
 
 std::optional<std::int64_t> bestLag (const std::vector<double>& reference,
                                      const std::vector<double>& candidate,
-                                     double sampleRate)
+                                     double sampleRate, double noteHz)
 {
     const auto usable = static_cast<std::int64_t> (
         std::min (reference.size(), candidate.size()));
     const auto wanted = static_cast<std::int64_t> (
         std::llround (alignmentSearchSeconds * sampleRate));
     // A quarter of the pair, so at least half of it always remains as the
-    // window the correlation is actually computed over.
+    // window the fine correlation is computed over.
     const auto search = std::min (wanted, usable / 4);
     if (search <= 0)
         return std::nullopt;
 
-    // Coarse: the envelopes, decimated. Mean-removed so the correlation
-    // responds to the shape of the attack rather than to the standing level.
-    const auto referenceEnvelope = amplitudeEnvelope (reference, sampleRate);
-    const auto candidateEnvelope = amplitudeEnvelope (candidate, sampleRate);
-    std::vector<double> coarseReference;
-    std::vector<double> coarseCandidate;
-    for (std::int64_t index = 0; index < usable; index += coarseDecimation)
-    {
-        coarseReference.push_back (referenceEnvelope[static_cast<std::size_t> (index)]);
-        coarseCandidate.push_back (candidateEnvelope[static_cast<std::size_t> (index)]);
-    }
-    if (coarseReference.size() < 2)
+    const auto referenceOnset = onsetFrame (amplitudeEnvelope (reference, sampleRate));
+    const auto candidateOnset = onsetFrame (amplitudeEnvelope (candidate, sampleRate));
+    if (! referenceOnset.has_value() || ! candidateOnset.has_value())
         return std::nullopt;
-    const auto removeMean = [] (std::vector<double>& series)
-    {
-        double sum = 0.0;
-        for (const auto value : series)
-            sum += value;
-        const auto mean = sum / static_cast<double> (series.size());
-        for (auto& value : series)
-            value -= mean;
-    };
-    removeMean (coarseReference);
-    removeMean (coarseCandidate);
 
-    const auto coarse = correlateForLag (coarseReference, coarseCandidate,
-                                         search / coarseDecimation, 0)
-                      * coarseDecimation;
+    const auto coarse = *candidateOnset - *referenceOnset;
+    if (std::abs (coarse) > search)
+        return std::nullopt; // further apart than the protocol admits
 
-    // Fine: samples, bounded to less than half a period of the lowest note.
-    const auto fine = std::max<std::int64_t> (
-        coarseDecimation,
-        static_cast<std::int64_t> (std::llround (fineSearchSeconds * sampleRate)));
+    // Fine: samples, inside one cycle of the note actually sounding. A held
+    // note is nearly stationary, so a wider sample search would have almost
+    // equal maxima one period apart and could settle a whole cycle away from
+    // the onset the stage above located honestly.
+    const auto halfPeriod = noteHz > 0.0
+                                ? static_cast<std::int64_t> (0.5 * sampleRate / noteHz)
+                                : static_cast<std::int64_t> (0.001 * sampleRate);
+    const auto fine = std::max<std::int64_t> (1, halfPeriod);
     return correlateForLag (reference, candidate, fine, coarse);
 }
 
 // RMS over the windows within `levelGateDb` of the loudest, so silence between
 // notes cannot drag the measurement toward the noise floor.
-double gatedRms (const std::vector<double>& samples, double sampleRate)
+//
+// Taken over the two channels' combined power rather than over their sum. The
+// chorus clocks its two delay lines in antiphase, so folding to mono lets them
+// cancel: a difference in chorus phase or delay would show up as a difference
+// in monitoring gain, and the trim derived from it would then be applied to
+// both rendered channels and contaminate every measure downstream.
+double gatedRms (const std::vector<double>& left, const std::vector<double>& right,
+                 double sampleRate)
 {
+    const auto frames = std::min (left.size(), right.size());
     const auto window = static_cast<std::size_t> (std::llround (0.05 * sampleRate));
-    if (samples.size() < window || window == 0)
+    if (frames < window || window == 0)
         return 0.0;
 
     std::vector<double> windows;
-    for (std::size_t start = 0; start + window <= samples.size(); start += window)
+    for (std::size_t start = 0; start + window <= frames; start += window)
     {
         double sum = 0.0;
         for (std::size_t index = start; index < start + window; ++index)
-            sum += samples[index] * samples[index];
-        windows.push_back (std::sqrt (sum / static_cast<double> (window)));
+            sum += left[index] * left[index] + right[index] * right[index];
+        windows.push_back (std::sqrt (sum / static_cast<double> (2 * window)));
     }
     if (windows.empty())
         return 0.0;
@@ -643,6 +682,87 @@ double measureFundamental (std::span<const double> samples, double sampleRate,
     return best;
 }
 
+// Radix-2 in place, on a power-of-two prefix of the analysis window. The
+// harmonic levels below are still taken by coherent projection at exact
+// multiples of the measured fundamental, which needs no transform and no bin
+// snapping; this exists only for the centroid, which has to see energy the
+// harmonic grid does not sit on.
+void forwardTransform (std::vector<std::complex<double>>& values)
+{
+    const auto size = values.size();
+    for (std::size_t index = 1, reverse = 0; index < size; ++index)
+    {
+        std::size_t bit = size >> 1;
+        for (; (reverse & bit) != 0; bit >>= 1)
+            reverse ^= bit;
+        reverse ^= bit;
+        if (index < reverse)
+            std::swap (values[index], values[reverse]);
+    }
+    for (std::size_t length = 2; length <= size; length <<= 1)
+    {
+        const auto step = std::polar (1.0, -2.0 * std::numbers::pi_v<double>
+                                               / static_cast<double> (length));
+        for (std::size_t start = 0; start < size; start += length)
+        {
+            std::complex<double> rotation { 1.0, 0.0 };
+            for (std::size_t offset = 0; offset < length / 2; ++offset)
+            {
+                const auto even = values[start + offset];
+                const auto odd = values[start + offset + length / 2] * rotation;
+                values[start + offset] = even + odd;
+                values[start + offset + length / 2] = even - odd;
+                rotation *= step;
+            }
+        }
+    }
+}
+
+// The power-weighted mean frequency of everything in the band, not of the
+// harmonic series alone.
+//
+// A centroid accumulated only at the first sixteen exact harmonics is blind to
+// precisely what moves the brightness of this instrument: the filter's own
+// noise contribution, the chorus's sidebands, and every part of a strongly
+// filtered spectrum that does not sit on a harmonic. Those presets could
+// change audibly and leave such a figure almost still.
+double spectralCentroidHz (std::span<const double> samples, double sampleRate)
+{
+    std::size_t size = 1;
+    while (size * 2 <= samples.size())
+        size *= 2;
+    if (size < 64)
+        return 0.0;
+
+    std::vector<std::complex<double>> spectrum (size);
+    for (std::size_t index = 0; index < size; ++index)
+    {
+        // Hann, so the analysis window's own edges do not smear energy across
+        // the band and drag the mean upward.
+        const auto phase = 2.0 * std::numbers::pi_v<double> * static_cast<double> (index)
+                         / static_cast<double> (size - 1);
+        spectrum[index] = samples[index] * 0.5 * (1.0 - std::cos (phase));
+    }
+    forwardTransform (spectrum);
+
+    // Below 20 Hz there is nothing this instrument produces, only any DC the
+    // capture chain left behind, and it would pull the mean toward zero.
+    constexpr double lowEdgeHz = 20.0;
+    double weighted = 0.0;
+    double total = 0.0;
+    for (std::size_t bin = 1; bin < size / 2; ++bin)
+    {
+        const auto frequency = static_cast<double> (bin) * sampleRate
+                             / static_cast<double> (size);
+        if (frequency < lowEdgeHz)
+            continue;
+        const auto power = std::norm (spectrum[bin]);
+        weighted += frequency * power;
+        total += power;
+    }
+    return total > 0.0 ? weighted / total : 0.0;
+}
+
 struct Spectrum
 {
     std::array<double, harmonicCount> harmonicDb {};
@@ -653,8 +773,6 @@ Spectrum measureSpectrum (std::span<const double> samples, double sampleRate,
                           double fundamentalHz)
 {
     Spectrum spectrum;
-    double weighted = 0.0;
-    double total = 0.0;
     std::array<double, harmonicCount> amplitude {};
 
     for (int index = 0; index < harmonicCount; ++index)
@@ -668,8 +786,6 @@ Spectrum measureSpectrum (std::span<const double> samples, double sampleRate,
         const auto projection =
             projectTone (samples, sampleRate, frequency, ProjectionWindow::Hann);
         amplitude[static_cast<std::size_t> (index)] = projection.amplitude;
-        weighted += frequency * projection.amplitude * projection.amplitude;
-        total += projection.amplitude * projection.amplitude;
     }
 
     const auto first = amplitude[0];
@@ -677,7 +793,7 @@ Spectrum measureSpectrum (std::span<const double> samples, double sampleRate,
         spectrum.harmonicDb[static_cast<std::size_t> (index)] =
             first > 0.0 ? toDecibels (amplitude[static_cast<std::size_t> (index)] / first)
                         : meterFloorDb;
-    spectrum.centroidHz = total > 0.0 ? weighted / total : 0.0;
+    spectrum.centroidHz = spectralCentroidHz (samples, sampleRate);
     return spectrum;
 }
 
@@ -791,12 +907,18 @@ Envelope measureEnvelope (std::span<const double> samples, double sampleRate,
     return result;
 }
 
-double channelCorrelation (const Capture& capture)
+// Over a stated window rather than the whole buffer. The protocol permits an
+// arbitrary lead-in and a long tail, and a capture's idle converter noise or a
+// render's silence there would otherwise dominate a measure that is supposed to
+// describe the chorus. The two buffers can also differ in length once the
+// render has been shifted into alignment.
+double channelCorrelation (const Capture& capture, std::size_t from, std::size_t to)
 {
+    to = std::min (to, std::min (capture.left.size(), capture.right.size()));
     double dot = 0.0;
     double leftEnergy = 0.0;
     double rightEnergy = 0.0;
-    for (std::size_t index = 0; index < capture.left.size(); ++index)
+    for (std::size_t index = from; index < to; ++index)
     {
         dot += capture.left[index] * capture.right[index];
         leftEnergy += capture.left[index] * capture.left[index];
@@ -872,9 +994,9 @@ struct Comparison
 // outside the audio, or a designated note the strokes do not contain. That is
 // a mistyped or truncated case rather than a finding about the engine, and
 // grading it would print a row of zeros that reads as perfect agreement.
-std::optional<Comparison> compare (const ReferenceCase& item, const Capture& reference,
-                                   const Capture& rendered, double lagFrames,
-                                   double trimDb, std::string& why)
+std::optional<Comparison> compare (const ReferenceCase& item, const Preset& preset,
+                                   const Capture& reference, const Capture& rendered,
+                                   double lagFrames, double trimDb, std::string& why)
 {
     Comparison result;
     result.id = item.id;
@@ -921,10 +1043,44 @@ std::optional<Comparison> compare (const ReferenceCase& item, const Capture& ref
         return std::nullopt;
     }
 
+    // The analysis window has to hold the designated note ALONE. Its harmonics
+    // are what the pitch, harmonic and centroid measures attribute to it, and a
+    // chord or an overlapping neighbour puts another note's partials inside the
+    // same projections - including, at the fundamental, another note that may
+    // simply be louder.
+    const auto sounding = [&item] (double when)
+    {
+        int count = 0;
+        for (const auto& stroke : item.strokes)
+            if (stroke.onSeconds <= when && stroke.offSeconds > when)
+                ++count;
+        return count;
+    };
+    const auto onlyNoteSounds =
+        sounding (item.analysisFromSeconds) == 1
+        && sounding (0.5 * (item.analysisFromSeconds + item.analysisToSeconds)) == 1
+        && std::none_of (item.strokes.begin(), item.strokes.end(),
+                         [&item] (const Stroke& stroke)
+                         {
+                             // Any stroke that starts or stops inside the window
+                             // changes what is sounding partway through it.
+                             return (stroke.onSeconds > item.analysisFromSeconds
+                                     && stroke.onSeconds < item.analysisToSeconds)
+                                 || (stroke.offSeconds > item.analysisFromSeconds
+                                     && stroke.offSeconds < item.analysisToSeconds);
+                         })
+        && std::any_of (item.strokes.begin(), item.strokes.end(),
+                        [&item] (const Stroke& stroke)
+                        {
+                            return stroke.note == item.analysisNote
+                                && stroke.onSeconds <= item.analysisFromSeconds
+                                && stroke.offSeconds >= item.analysisToSeconds;
+                        });
+    if (onlyNoteSounds)
     {
         const std::span<const double> referenceWindow (referenceMono.data() + from, to - from);
         const std::span<const double> renderedWindow (renderedMono.data() + from, to - from);
-        const auto nominal = 440.0 * std::pow (2.0, (item.analysisNote - 69) / 12.0);
+        const auto nominal = nominalFundamentalHz (preset, item.analysisNote);
 
         const auto referenceF0 = measureFundamental (referenceWindow, reference.sampleRate, nominal);
         const auto renderedF0 = measureFundamental (renderedWindow, rendered.sampleRate, nominal);
@@ -989,7 +1145,8 @@ std::optional<Comparison> compare (const ReferenceCase& item, const Capture& ref
     // every case whose capture simply had one channel.
     if (reference.stereo)
     {
-        result.correlationError = channelCorrelation (rendered) - channelCorrelation (reference);
+        result.correlationError = channelCorrelation (rendered, from, to)
+                                - channelCorrelation (reference, from, to);
         result.widthMeasured = true;
     }
     return result;
@@ -1030,7 +1187,7 @@ int runSelfTest()
     // Identity: the same render against itself must report no difference. Any
     // measure that cannot do this is measuring its own noise.
     std::string why;
-    const auto identityResult = compare (item, baseline, baseline, 0.0, 0.0, why);
+    const auto identityResult = compare (item, *preset, baseline, baseline, 0.0, 0.0, why);
     if (! identityResult.has_value())
     {
         std::fprintf (stderr, "self-test: the baseline case is unmeasurable (%s)\n",
@@ -1062,7 +1219,7 @@ int runSelfTest()
         auto detuned = *preset;
         detuned.controls.masterTune = 25.0f;
         const auto shifted = renderCase (item, detuned, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (std::abs (result.centsError - 25.0) > 3.0)
         {
             std::fprintf (stderr,
@@ -1078,7 +1235,7 @@ int runSelfTest()
         auto darker = *preset;
         darker.patch.cutoff = std::max (0.05f, preset->patch.cutoff - 0.15f);
         const auto shifted = renderCase (item, darker, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (! (result.centroidRatio > 0.0 && result.centroidRatio < 0.95))
         {
             std::fprintf (stderr,
@@ -1093,7 +1250,7 @@ int runSelfTest()
         auto slower = *preset;
         slower.patch.attack = 0.45f;
         const auto shifted = renderCase (item, slower, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (result.attackErrorMs < 50.0)
         {
             std::fprintf (stderr,
@@ -1111,7 +1268,7 @@ int runSelfTest()
         pulsed.patch.saw = false;
         pulsed.patch.pulse = true;
         const auto shifted = renderCase (item, pulsed, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (std::abs (result.worstHarmonicDb) < 3.0)
         {
             std::fprintf (stderr,
@@ -1128,7 +1285,7 @@ int runSelfTest()
         auto slower = *preset;
         slower.patch.decay = std::min (1.0f, preset->patch.decay + 0.35f);
         const auto shifted = renderCase (item, slower, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (result.decayErrorMs < 20.0)
         {
             std::fprintf (stderr,
@@ -1141,7 +1298,7 @@ int runSelfTest()
         auto quieter = *preset;
         quieter.patch.sustain = std::max (0.05f, preset->patch.sustain - 0.30f);
         const auto shifted = renderCase (item, quieter, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (result.sustainErrorDb > -1.0)
         {
             std::fprintf (stderr,
@@ -1156,7 +1313,7 @@ int runSelfTest()
         auto longer = *preset;
         longer.patch.release = std::min (1.0f, preset->patch.release + 0.40f);
         const auto shifted = renderCase (item, longer, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (result.releaseErrorMs < 20.0)
         {
             std::fprintf (stderr,
@@ -1173,7 +1330,7 @@ int runSelfTest()
         auto hissier = *preset;
         hissier.controls.chorusNoise = 1.0f;
         const auto shifted = renderCase (item, hissier, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (result.noiseFloorErrorDb < 3.0)
         {
             std::fprintf (stderr,
@@ -1190,7 +1347,7 @@ int runSelfTest()
         auto dry = *preset;
         dry.patch.chorus = youknow::ChorusMode::Off;
         const auto shifted = renderCase (item, dry, rate, 3.0);
-        const auto result = *compare (item, baseline, shifted, 0.0, 0.0, why);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
         if (result.correlationError < 0.05)
         {
             std::fprintf (stderr,
@@ -1200,23 +1357,37 @@ int runSelfTest()
         }
     }
 
-    // A known lag must be recovered by the alignment search.
+    // A known lag must be recovered by the alignment search, on a case shaped
+    // like a real capture: a lead-in before the note, which is what the
+    // protocol admits and what the onset stage needs.
+    const auto checkLag = [&] (int note, double delaySeconds, const char* what)
     {
-        const auto lagFrames = static_cast<std::size_t> (std::llround (0.037 * rate));
-        Capture delayed = baseline;
+        ReferenceCase lagCase = item;
+        lagCase.analysisNote = note;
+        lagCase.strokes = { Stroke { note, 0.3, 2.3 } };
+        const auto rendered = renderCase (lagCase, *preset, rate, 3.0);
+        const auto lagFrames = static_cast<std::size_t> (std::llround (delaySeconds * rate));
+        Capture delayed = rendered;
         delayed.left.insert (delayed.left.begin(), lagFrames, 0.0);
         delayed.right.insert (delayed.right.begin(), lagFrames, 0.0);
-        const auto found = bestLag (monoOf (baseline), monoOf (delayed), rate);
+        const auto found = bestLag (monoOf (rendered), monoOf (delayed), rate,
+                                    nominalFundamentalHz (*preset, note));
         if (! found.has_value()
             || std::abs (*found - static_cast<std::int64_t> (lagFrames)) > 2)
         {
-            std::fprintf (stderr,
-                          "self-test: a %zu-frame lag was found at %s\n",
-                          lagFrames,
+            std::fprintf (stderr, "self-test: a %zu-frame lag on %s was found at %s\n",
+                          lagFrames, what,
                           found.has_value() ? std::to_string (*found).c_str() : "nothing");
-            return 1;
+            return false;
         }
-    }
+        return true;
+    };
+    if (! checkLag (60, 0.037, "a low note"))
+        return 1;
+    // A high note is where a wider sample search would jump a cycle: its period
+    // is a fraction of a millisecond.
+    if (! checkLag (84, 0.021, "a high note"))
+        return 1;
 
     // A capture too short to align must say so rather than reporting a zero
     // lag it never measured.
@@ -1225,7 +1396,7 @@ int runSelfTest()
         stub.sampleRate = rate;
         stub.left.assign (3, 0.5);
         stub.right.assign (3, 0.5);
-        if (bestLag (monoOf (stub), monoOf (stub), rate).has_value())
+        if (bestLag (monoOf (stub), monoOf (stub), rate, 261.6).has_value())
         {
             std::fprintf (stderr,
                           "self-test: a three-frame pair reported an alignment\n");
@@ -1240,8 +1411,8 @@ int runSelfTest()
             sample *= 0.5;
         for (auto& sample : quieter.right)
             sample *= 0.5;
-        const auto trim = toDecibels (gatedRms (monoOf (baseline), rate)
-                                      / gatedRms (monoOf (quieter), rate));
+        const auto trim = toDecibels (gatedRms (baseline.left, baseline.right, rate)
+                                      / gatedRms (quieter.left, quieter.right, rate));
         if (std::abs (trim - 6.0206) > 0.05)
         {
             std::fprintf (stderr, "self-test: a 6.02 dB trim measured %.3f dB\n", trim);
@@ -1256,7 +1427,7 @@ int runSelfTest()
         mono.stereo = false;
         for (std::size_t index = 0; index < mono.left.size(); ++index)
             mono.left[index] = mono.right[index] = 0.5 * (mono.left[index] + mono.right[index]);
-        const auto result = compare (item, mono, baseline, 0.0, 0.0, why);
+        const auto result = compare (item, *preset, mono, baseline, 0.0, 0.0, why);
         if (! result.has_value() || result->widthMeasured
             || result->correlationError != 0.0)
         {
@@ -1271,7 +1442,7 @@ int runSelfTest()
         auto broken = item;
         broken.analysisFromSeconds = 10.0;
         broken.analysisToSeconds = 11.0;
-        if (compare (broken, baseline, baseline, 0.0, 0.0, why).has_value())
+        if (compare (broken, *preset, baseline, baseline, 0.0, 0.0, why).has_value())
         {
             std::fprintf (stderr,
                           "self-test: an analysis window past the end was graded\n");
@@ -1279,7 +1450,7 @@ int runSelfTest()
         }
         broken = item;
         broken.analysisToSeconds = broken.analysisFromSeconds;
-        if (compare (broken, baseline, baseline, 0.0, 0.0, why).has_value())
+        if (compare (broken, *preset, baseline, baseline, 0.0, 0.0, why).has_value())
         {
             std::fprintf (stderr,
                           "self-test: an empty analysis window was graded\n");
@@ -1309,11 +1480,78 @@ int runSelfTest()
     {
         auto crowded = item;
         crowded.strokes = { Stroke { 60, 0.0, 2.0 }, Stroke { 67, 1.0, 2.5 } };
-        const auto result = compare (crowded, baseline, baseline, 0.0, 0.0, why);
+        const auto result = compare (crowded, *preset, baseline, baseline, 0.0, 0.0, why);
         if (! result.has_value() || result->envelopeMeasured)
         {
             std::fprintf (stderr,
                           "self-test: an overlapped note was still timed\n");
+            return 1;
+        }
+    }
+
+    // The analysis note's own frequency, not its MIDI number's. A11 is a 16'
+    // patch, so its fundamental is an octave below the key.
+    {
+        const auto nominal = nominalFundamentalHz (*preset, 60);
+        const auto midiHz = 440.0 * std::pow (2.0, (60 - 69) / 12.0);
+        if (std::abs (nominal - 0.5 * midiHz) > 0.01)
+        {
+            std::fprintf (stderr,
+                          "self-test: a 16' patch's nominal came out at %.3f Hz "
+                          "against %.3f Hz for the key\n", nominal, midiHz);
+            return 1;
+        }
+    }
+
+    // A chord in the analysis window means the harmonics are not the note's.
+    {
+        auto chorded = item;
+        chorded.strokes = { Stroke { 60, 0.0, 2.0 }, Stroke { 64, 0.0, 2.0 } };
+        const auto result = compare (chorded, *preset, baseline, baseline, 0.0, 0.0, why);
+        if (! result.has_value() || result->spectrumMeasured)
+        {
+            std::fprintf (stderr,
+                          "self-test: a chord was still graded for pitch and "
+                          "harmonics\n");
+            return 1;
+        }
+    }
+
+    // Level matching must not read a phase difference as a gain difference.
+    // Inverting one channel is the extreme case: it leaves the stereo power
+    // untouched and annihilates the mono sum.
+    {
+        auto flipped = baseline;
+        for (auto& sample : flipped.right)
+            sample = -sample;
+        const auto straight = gatedRms (baseline.left, baseline.right, rate);
+        const auto inverted = gatedRms (flipped.left, flipped.right, rate);
+        if (std::abs (toDecibels (straight / inverted)) > 0.01)
+        {
+            std::fprintf (stderr,
+                          "self-test: inverting a channel moved the matched level "
+                          "by %.3f dB\n", toDecibels (straight / inverted));
+            return 1;
+        }
+    }
+
+    // Noise is energy off the harmonic grid, so a centroid accumulated only at
+    // the harmonics would barely see it. This is what the transform is for.
+    {
+        auto noisy = *preset;
+        noisy.patch.noise = 1.0f;
+        const auto shifted = renderCase (item, noisy, rate, 3.0);
+        const auto result = *compare (item, *preset, baseline, shifted, 0.0, 0.0, why);
+        // A modest shift, because A11's filter sits at 0.28 and removes most of
+        // what the noise generator contributes. The identity comparison above
+        // reports exactly 1.0 when nothing changes, so this is unambiguous
+        // movement rather than measurement slop - and a centroid taken only at
+        // the first sixteen harmonics would not have moved at all.
+        if (! (result.centroidRatio > 1.02))
+        {
+            std::fprintf (stderr,
+                          "self-test: full noise moved the centroid ratio only to "
+                          "%.4f\n", result.centroidRatio);
             return 1;
         }
     }
@@ -1388,7 +1626,8 @@ int main (int argc, char** argv)
         auto rendered = renderCase (item, *preset, capture->sampleRate, seconds);
 
         const auto lag = bestLag (monoOf (*capture), monoOf (rendered),
-                                  capture->sampleRate);
+                                  capture->sampleRate,
+                                  nominalFundamentalHz (*preset, item.analysisNote));
         if (! lag.has_value())
         {
             std::fprintf (stderr,
@@ -1414,8 +1653,10 @@ int main (int argc, char** argv)
             rendered.right.insert (rendered.right.begin(), pad, 0.0);
         }
 
-        const auto referenceLevel = gatedRms (monoOf (*capture), capture->sampleRate);
-        const auto renderedLevel = gatedRms (monoOf (rendered), rendered.sampleRate);
+        const auto referenceLevel = gatedRms (capture->left, capture->right,
+                                              capture->sampleRate);
+        const auto renderedLevel = gatedRms (rendered.left, rendered.right,
+                                             rendered.sampleRate);
         const auto trim = renderedLevel > 0.0 ? referenceLevel / renderedLevel : 1.0;
         for (auto& sample : rendered.left)
             sample *= trim;
@@ -1423,7 +1664,7 @@ int main (int argc, char** argv)
             sample *= trim;
 
         std::string why;
-        auto comparison = compare (item, *capture, rendered,
+        auto comparison = compare (item, *preset, *capture, rendered,
                                    static_cast<double> (*lag), toDecibels (trim), why);
         if (! comparison.has_value())
         {
@@ -1438,12 +1679,23 @@ int main (int argc, char** argv)
         std::printf ("  alignment   lag %+.2f ms, level trim %+.2f dB, "
                      "waveform correlation %+.3f\n",
                      last.lagMs, last.levelTrimDb, last.correlation);
-        std::printf ("  pitch       %+.2f cents\n", last.centsError);
-        std::printf ("  harmonics   worst H%d at %+.2f dB\n",
-                     last.worstHarmonic, last.worstHarmonicDb);
-        std::printf ("  brightness  centroid ratio %.4f (%+.2f dB)\n",
-                     last.centroidRatio,
-                     last.centroidRatio > 0.0 ? 20.0 * std::log10 (last.centroidRatio) : 0.0);
+        if (last.spectrumMeasured)
+        {
+            std::printf ("  pitch       %+.2f cents\n", last.centsError);
+            std::printf ("  harmonics   worst H%d at %+.2f dB\n",
+                         last.worstHarmonic, last.worstHarmonicDb);
+            std::printf ("  brightness  centroid ratio %.4f (%+.2f dB)\n",
+                         last.centroidRatio,
+                         last.centroidRatio > 0.0
+                             ? 20.0 * std::log10 (last.centroidRatio) : 0.0);
+        }
+        else
+        {
+            std::printf ("  pitch       not measured: note %d does not sound alone "
+                         "throughout the analysis window\n", item.analysisNote);
+            std::printf ("  harmonics   not measured, for the same reason\n");
+            std::printf ("  brightness  not measured, for the same reason\n");
+        }
         if (last.envelopeMeasured)
             std::printf ("  envelope    attack %+.1f ms, decay %+.1f ms, "
                          "sustain %+.2f dB, release %+.1f ms\n",
