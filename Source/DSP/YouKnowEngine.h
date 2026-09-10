@@ -548,6 +548,12 @@ public:
     // 3063 pitch units (11.96484375 semitones), not an ideal twelve.
     [[nodiscard]] static std::int32_t dcoPitchBendWordOffset(
         float normalisedBipolar, float depth) noexcept;
+    // The bender's filter axis from the same assigner command: the one-sided
+    // bend byte (zero at rest, otherwise twice the magnitude plus one) times
+    // the VCF sensitivity ADC byte, shifted right four times, signed by the
+    // command. 4064 counts at full deflection and full sensitivity.
+    [[nodiscard]] static std::int32_t vcfBendCountsWord(
+        std::int16_t command, std::uint8_t sensitivity) noexcept;
     // The stored DCO-LFO slider selects a byte from B-2's nonlinear depth
     // table. A compact generator preserves that table's exact observable law
     // without distributing a ROM dump.
@@ -560,6 +566,13 @@ public:
         std::uint16_t accumulator, bool positivePolarity,
         std::uint8_t delayByte, std::uint8_t storedDepth,
         std::uint8_t modWheel, std::uint8_t benderSensitivity) noexcept;
+    // The VCF axis of the same onset-scaled LFO: B-2 keeps the high byte of
+    // the doubled panel byte times the delay byte, then multiplies the 13-bit
+    // accumulator into it and halves, so the cutoff term is
+    // (accumulator * depth) >> 9 counts, signed by the polarity bit.
+    [[nodiscard]] static std::int32_t vcfLfoCountsWord(
+        std::uint16_t accumulator, bool positivePolarity,
+        std::uint8_t delayByte, std::uint8_t storedDepth) noexcept;
 
     // Convenience adapter for a requested middle-range frequency. Production
     // constructs the 8.8 coordinate directly; this keeps the circuit-law seam
@@ -1707,12 +1720,14 @@ private:
     // Modulation budgets, in converter counts, taken from the instrument's own
     // control tables. 1143 counts is one octave.
     static constexpr float vcfEnvelopeCounts = 16255.0f;
+    // The maximum of vcfLfoCountsWord: depth byte 253 (2 * 127 * 255 >> 8)
+    // against the full 8191 accumulator, 253 * 8191 >> 9. The live term is
+    // that integer law, not a fraction of this figure.
     static constexpr float vcfLfoCounts = 4047.0f;
-    // The bender's filter axis at maximum: the firmware multiplies the
-    // sensitivity byte by the bend byte and keeps the top bits, topping out at
-    // 4064 counts -- just over three and a half octaves each way. An earlier
-    // account claimed the whole cutoff range; the firmware arithmetic settles
-    // it.
+    // The maximum of vcfBendCountsWord: bend byte 255 (2 * 127 + 1) times
+    // sensitivity 255, shifted right four times -- just over three and a half
+    // octaves each way. An earlier account claimed the whole cutoff range;
+    // the firmware arithmetic settles it. The live term is that integer law.
     static constexpr float vcfBenderCounts = 4064.0f;
     // Hold-capacitor slew after the converter. VCF and voice-VCA use the
     // 522us VCF value and retained 687us linear VCA reference. The default VCA
@@ -2679,16 +2694,13 @@ private:
     // processing calls the split destination methods through the recovered
     // converter queue below.
     [[nodiscard]] std::uint32_t updateVoiceScan(
-        Voice& voice, const EngineParameters& parameters,
-        float lfoGated) noexcept;
+        Voice& voice, const EngineParameters& parameters) noexcept;
     [[nodiscard]] std::uint32_t updateVoiceEnvelopeAndPitch(
         Voice& voice, const EngineParameters& parameters) noexcept;
     void updateVoiceVcfTarget(Voice& voice,
-                              const EngineParameters& parameters,
-                              float lfoGated) noexcept;
+                              const EngineParameters& parameters) noexcept;
     [[nodiscard]] float voiceVcfTarget(
-        const Voice& voice, const EngineParameters& parameters,
-        float lfoGated) const noexcept;
+        const Voice& voice, const EngineParameters& parameters) const noexcept;
     void updateVoiceVcaTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
     [[nodiscard]] float voiceVcaTarget(
@@ -2703,13 +2715,12 @@ private:
         const EngineParameters& parameters, const Voice& voice) noexcept;
     void performConverterWrite(const ConverterWrite& write,
                                const EngineParameters& parameters,
-                               float lfoGated,
                                const float* passiveHoldTargetOverride = nullptr) noexcept;
     [[nodiscard]] static bool isPassiveHoldWrite(
         const ConverterWrite& write) noexcept;
     [[nodiscard]] float passiveHoldWriteTarget(
-        const ConverterWrite& write, const EngineParameters& parameters,
-        float lfoGated) const noexcept;
+        const ConverterWrite& write,
+        const EngineParameters& parameters) const noexcept;
     [[nodiscard]] bool latchUpcomingPassiveHoldEvent(
         double phase, double phasePerInternalSample,
         const EngineParameters& parameters) noexcept;
@@ -2900,11 +2911,10 @@ private:
         ConverterTimingProfile::NormalizedServiceChart };
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
-    // Delayed float path for VCF and extension-voice scans. DCO pitch uses its
-    // exact integer word. PWM has its own exact FF4F-derived DAC code, computed
-    // beside the late-loop LFO update and held until the next PWM converter
-    // write so a host edit cannot splice two firmware passes together.
-    float converterPassLfoGated_ { 0.0f };
+    // PWM has its own exact FF4F-derived DAC code, computed beside the
+    // late-loop LFO update and held until the next PWM converter write so a
+    // host edit cannot splice two firmware passes together. The DCO and VCF
+    // LFO words below are likewise held for the pass.
     std::uint16_t converterPassPwmDacCode_ { 0x0fffu };
     PassiveHoldEventLatch passiveHoldEventLatch_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};
@@ -2986,13 +2996,15 @@ private:
     float noiseSourceLowPassG_ { 0.1f };
 
     // The lever is read by the converter, not wired to the voices: its value
-    // is sampled once per scan pass, quantised to the converter's byte, and
-    // whatever smoothing the player hears is the hold capacitors' own. A fast
-    // flick therefore steps at the scan rate, as the hardware's does.
+    // is sampled once per scan pass, reduced to the assigner's signed command
+    // and formed into the DCO and VCF words there, and whatever smoothing the
+    // player hears is the hold capacitors' own. A fast flick therefore steps
+    // at the scan rate, as the hardware's does.
     float pitchBendTarget_ { 0.0f };
-    float pitchBend_ { 0.0f };
     std::int32_t dcoPitchBendWord_ { 0 };
+    std::int32_t vcfBendCountsWord_ { 0 };
     std::int32_t dcoLfoPitchWord_ { 0 };
+    std::int32_t vcfLfoCountsWord_ { 0 };
     float modWheelTarget_ { 0.0f };
     bool sustainPedalDown_ { false };
 

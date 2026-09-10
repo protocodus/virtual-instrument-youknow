@@ -63,7 +63,7 @@ struct YouKnowTestAccess
         const EngineParameters& parameters) noexcept
     {
         return engine.updateVoiceScan(
-            engine.voices_[static_cast<std::size_t>(slot)], parameters, 0.0f);
+            engine.voices_[static_cast<std::size_t>(slot)], parameters);
     }
 
     static float filterOmegaStep(const YouKnowEngine& engine,
@@ -109,10 +109,16 @@ struct YouKnowTestAccess
         return engine.dcoLfoPitchWord_;
     }
 
-    static float converterPassLfoGated(
+    static std::int32_t vcfLfoCountsWord(
         const YouKnowEngine& engine) noexcept
     {
-        return engine.converterPassLfoGated_;
+        return engine.vcfLfoCountsWord_;
+    }
+
+    static std::int32_t vcfBendCountsWord(
+        const YouKnowEngine& engine) noexcept
+    {
+        return engine.vcfBendCountsWord_;
     }
 
     // The single delay attenuator, read before it is multiplied into anything.
@@ -157,7 +163,7 @@ struct YouKnowTestAccess
         engine.lfoDelayLevel_ = 64.0f / 255.0f;
         engine.displayLfo_ = engine.lfoValue_ * engine.lfoDelayLevel_;
         engine.dcoLfoPitchWord_ = 0;
-        engine.converterPassLfoGated_ = engine.displayLfo_;
+        engine.vcfLfoCountsWord_ = 0;
         engine.converterPassPwmDacCode_ = 0x0123u;
     }
 
@@ -352,7 +358,14 @@ struct YouKnowTestAccess
     {
         engine.performConverterWrite(
             { YouKnowEngine::ConverterDestination::Pitch, slot },
-            parameters, 0.0f);
+            parameters);
+    }
+
+    static void performVcfWrite(YouKnowEngine& engine, int slot,
+                                const EngineParameters& parameters) noexcept
+    {
+        engine.performConverterWrite(
+            { YouKnowEngine::ConverterDestination::Vcf, slot }, parameters);
     }
 
     static void performPwmWrite(YouKnowEngine& engine,
@@ -360,7 +373,7 @@ struct YouKnowTestAccess
     {
         engine.performConverterWrite(
             { YouKnowEngine::ConverterDestination::Pwm, -1 },
-            parameters, 0.0f);
+            parameters);
     }
 
     static std::uint16_t converterPassPwmDacCode(
@@ -4210,6 +4223,7 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
     lfoParameters.pwmDepth = 0.1f;
     auto restartedLfoParameters = lfoParameters;
     restartedLfoParameters.dcoLfoDepth = 1.0f;
+    restartedLfoParameters.vcfLfoDepth = 1.0f;
     restartedLfoParameters.pwmDepth = 0.9f;
     const auto lfoFixture = [&](double phase) {
         auto engine = std::make_unique<YouKnowEngine>();
@@ -4241,11 +4255,8 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                       == midPassPwm
                && YouKnowTestAccess::dcoLfoPitchWord(*midPassLfo)
                       != midPassPitchWord
-               && std::abs(
-                      YouKnowTestAccess::converterPassLfoGated(*midPassLfo)
-                      - midPassLfoValue
-                          * YouKnowTestAccess::lfoDelayLevel(*midPassLfo))
-                      < 1.0e-7f,
+               // 0x1000 * ((2 * 127 * 0x41) >> 8) >> 9 with the rerun onset.
+               && YouKnowTestAccess::vcfLfoCountsWord(*midPassLfo) == 512,
            "a mid-pass Voice On did not rerun onset exactly once while preserving late LFO/PWM state");
 
     // At an already-due boundary the normal pass start owns that same onset
@@ -4261,7 +4272,8 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                && YouKnowTestAccess::lfoDelayByte(*dueLfo) == 0x40u
                && YouKnowTestAccess::lfoValue(*dueLfo) == dueValue
                && YouKnowTestAccess::converterPassPwmDacCode(*dueLfo)
-                      == duePwm,
+                      == duePwm
+               && YouKnowTestAccess::vcfLfoCountsWord(*dueLfo) == 0,
            "a due-boundary Voice On consumed onset or late state early");
     float dueLeft = 0.0f;
     float dueRight = 0.0f;
@@ -5192,6 +5204,112 @@ void testDcoLfoUsesRecoveredIntegerWord()
                       YouKnowTestAccess::dcoCvTarget(held, 0))
                       == controller.cvCode,
            "mid-pass automation split the shared DCO-LFO pitch word");
+}
+
+void testVcfLfoUsesRecoveredIntegerWord()
+{
+    const auto word = [](std::uint8_t delay, std::uint8_t panel,
+                         bool positive = true) {
+        return YouKnowEngine::vcfLfoCountsWord(0x1fffu, positive, delay, panel);
+    };
+    expect(word(255u, 1u) == 15 && word(255u, 2u) == 47,
+           "VCF-LFO panel bytes 1 and 2 lost B-2's 15 and 47-count words");
+    expect(word(255u, 127u) == 4047,
+           "full VCF-LFO depth left B-2's 4047-count endpoint");
+    expect(word(127u, 1u) == 0 && word(128u, 1u) == 15,
+           "VCF-LFO depth lost the doubled-byte times onset high-byte truncation");
+    expect(word(255u, 127u, false) == -4047 && word(255u, 1u, false) == -15,
+           "VCF-LFO polarity stopped signing the cutoff word");
+
+    // Panel byte 1 against byte 0, rendered in lockstep so both engines see
+    // the same accumulator on every pass. The peak word is 15 counts; on the
+    // converter's 4-count grid that is +12 above and -16 below the static
+    // cutoff, where the old proportional 4047/127 law gave +28 and -32.
+    constexpr double sampleRate = 48000.0;
+    YouKnowEngine silent;
+    YouKnowEngine byteOne;
+    auto parameters = plainPatch();
+    parameters.cutoff = 0.5f;
+    parameters.lfoRate = 1.0f;
+    parameters.lfoDelay = 0.0f;
+    silent.prepare(sampleRate, blockSize, false);
+    silent.setParameters(parameters);
+    parameters.vcfLfoDepth = 1.0f / 127.0f;
+    byteOne.prepare(sampleRate, blockSize, false);
+    byteOne.setParameters(parameters);
+    silent.noteOn(60, 1.0f);
+    byteOne.noteOn(60, 1.0f);
+
+    std::int32_t peakWord = 0;
+    float maximumRise = 0.0f;
+    float maximumFall = 0.0f;
+    for (int chunk = 0; chunk < 1500; ++chunk)
+    {
+        renderExact(silent, 32);
+        renderExact(byteOne, 32);
+        peakWord = std::max(
+            peakWord, std::abs(YouKnowTestAccess::vcfLfoCountsWord(byteOne)));
+        const float difference = YouKnowTestAccess::cutoffTarget(byteOne, 0)
+                               - YouKnowTestAccess::cutoffTarget(silent, 0);
+        maximumRise = std::max(maximumRise, difference);
+        maximumFall = std::min(maximumFall, difference);
+    }
+    expect(peakWord == 15,
+           "VCF-LFO panel byte 1 did not peak at B-2's 15-count word");
+    expect(maximumRise == 12.0f && maximumFall == -16.0f,
+           "VCF-LFO panel byte 1 did not move the cutoff by 15 counts on the "
+           "converter's 4-count grid");
+}
+
+void testVcfBendUsesRecoveredIntegerWord()
+{
+    expect(YouKnowEngine::vcfBendCountsWord(127, 255u) == 4064
+               && YouKnowEngine::vcfBendCountsWord(-127, 255u) == -4064,
+           "full VCF bend left B-2's 4064-count endpoint");
+    expect(YouKnowEngine::vcfBendCountsWord(1, 255u) == 47
+               && YouKnowEngine::vcfBendCountsWord(-1, 255u) == -47
+               && YouKnowEngine::vcfBendCountsWord(0, 255u) == 0,
+           "VCF bend lost the assigner's one-sided 2|cmd|+1 byte or its rest");
+    expect(YouKnowEngine::vcfBendCountsWord(127, 128u) == 2040
+               && YouKnowEngine::vcfBendCountsWord(127, 0u) == 0,
+           "VCF bend sensitivity stopped using the eight-bit ADC product");
+    // +0.4 % of travel is inside the assigner's two-bin centre: the command
+    // is zero, so neither axis moves. The old 255-step VCF magnitude read it
+    // as one step and added about 16 counts.
+    expect(YouKnowEngine::dcoPitchBendWordOffset(0.004f, 1.0f) == 0,
+           "the bend command left the assigner's two-bin centre dead zone");
+
+    const auto cutoffAfterBend = [](float bend) {
+        YouKnowEngine engine;
+        engine.prepare(192000.0, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.cutoff = 0.5f;
+        parameters.benderVcfDepth = 1.0f;
+        engine.setParameters(parameters);
+        engine.setPitchBend(bend);
+        engine.noteOn(60, 1.0f);
+        // The lever is sampled at the converter-pass boundary, not when the
+        // host event happens. Construction begins on exactly that boundary.
+        renderExact(engine, 1);
+        YouKnowTestAccess::performVcfWrite(engine, 0, parameters);
+        return std::pair {
+            YouKnowTestAccess::vcfBendCountsWord(engine),
+            YouKnowTestAccess::cutoffTarget(engine, 0)
+        };
+    };
+    const auto rest = cutoffAfterBend(0.0f);
+    const auto deadZone = cutoffAfterBend(0.004f);
+    const auto full = cutoffAfterBend(1.0f);
+    const auto fullDown = cutoffAfterBend(-1.0f);
+    // Byte 64 * 128 = 8192 counts; +/-4064 lands on the 4-count grid.
+    expect(rest.first == 0 && rest.second == 8192.0f,
+           "the VCF bend fixture did not start from the static cutoff");
+    expect(deadZone.first == 0 && deadZone.second == rest.second,
+           "a bend inside the two-bin centre dead zone moved the VCF");
+    expect(full.first == 4064 && full.second == 8192.0f + 4064.0f
+               && fullDown.first == -4064
+               && fullDown.second == 8192.0f - 4064.0f,
+           "production VCF bend did not add its scan-held word to the cutoff");
 }
 
 void testPwmUsesRecoveredIntegerDacWord()
@@ -15063,6 +15181,8 @@ int main()
         testMasterTuneUsesRecoveredSignedPitchWord();
         testPitchBendUsesRecoveredIntegerWord();
         testDcoLfoUsesRecoveredIntegerWord();
+        testVcfLfoUsesRecoveredIntegerWord();
+        testVcfBendUsesRecoveredIntegerWord();
         testPwmUsesRecoveredIntegerDacWord();
         testLfoDelayStartsFadeOnHoldoffCrossingPass();
         testPwmUsesRawLfoOutsideDelayEnvelope();
@@ -15157,6 +15277,8 @@ int main()
     testMasterTuneUsesRecoveredSignedPitchWord();
     testPitchBendUsesRecoveredIntegerWord();
     testDcoLfoUsesRecoveredIntegerWord();
+    testVcfLfoUsesRecoveredIntegerWord();
+    testVcfBendUsesRecoveredIntegerWord();
     testPwmUsesRecoveredIntegerDacWord();
     testLfoDelayStartsFadeOnHoldoffCrossingPass();
     testRangeDividerCompletesItsCurrentSynchronousCount();
