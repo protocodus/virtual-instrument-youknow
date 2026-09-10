@@ -280,11 +280,12 @@ struct EngineParameters
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
     bool enableChorusClockBleed { false };
-    // Off by default: the only trajectory measurement in existence (KR-106's
-    // ~50-point click-timing series, 16 us RMS residual against a straight
-    // line) reads the 106's delay as linear in time, so the linear sweep
-    // ships and the frequency-linear hypothesis waits behind this switch for
-    // the calibrated capture OQ-01 still requests.
+    // Comparison-only, off by default. The shipped linear-in-time delay is
+    // derived from the p. 15 threshold oscillator (a fixed Tr19 charge current
+    // into C53 against an LFO-set threshold gives a clock period affine in
+    // the triangle), corroborated by KR-106's click-timing series; this
+    // switch substitutes a current-modulated oscillator the board does not
+    // have, for A/B renders only.
     bool enableChorusHyperbolicSweep { false };
     // The reported approximately 3.95 dB II-I output-floor delta ships as the
     // empirical default. This internal switch substitutes the rate-proportional
@@ -2544,6 +2545,7 @@ private:
     // read local to updateVoiceCardDrift, which is the only place that
     // resolution is used.
     [[nodiscard]] static float bipolarFromState(std::uint32_t state) noexcept;
+    [[nodiscard]] float gaussianFromNoiseState() noexcept;
     // The oversampled lookup addStep and addSlope both walk: same ring index,
     // same subsample offset, same clamp/lerp arithmetic, only the table
     // differs. Solved once here so the two callers stop repeating the
@@ -2974,6 +2976,10 @@ private:
     // run at the internal rate; their states are physical node voltages, so
     // they survive a quality change like the coupling capacitors do.
     std::uint32_t noiseState_ { 0x6d2b79f5u };
+    // Marsaglia's polar method yields two Gaussian deviates per accepted
+    // pair; the second waits here for the next internal sample.
+    float noiseGaussianSpare_ { 0.0f };
+    bool noiseGaussianSpareValid_ { false };
     HighPass noiseSourceHighPass_;
     HighPass noiseSourceLowPass_;
     float noiseSourceHighPassG_ { 0.01f };

@@ -17,6 +17,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -1383,6 +1384,11 @@ struct YouKnowTestAccess
     static float rateTransitionStep(const YouKnowEngine& engine) noexcept
     {
         return engine.rateTransitionStep_;
+    }
+
+    static float mainNoiseDraw(YouKnowEngine& engine) noexcept
+    {
+        return engine.gaussianFromNoiseState();
     }
 
     // Start the safety fade the idle-switch path starts, with the pending
@@ -12279,6 +12285,84 @@ void testThermalWarmupClockRunsToCompletionAtEveryRate()
     }
 }
 
+void testInvertedEnvelopePolarityMirrorsTheCutoffModulation()
+{
+    // ENV polarity reaches the engine as one sign on the envelope's cutoff
+    // term. Every factory tone is Normal, so nothing else in the suite ever
+    // renders Inverted; pin the mirror image directly on the converter
+    // counts the voice targets, then on the sound: the inverted attack has
+    // to darken where the normal one brightens.
+    constexpr double sampleRate = 48000.0;
+    const auto targetFor = [&](EnvPolarity polarity, float depth) {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = 0.0f;
+        parameters.attack = 0.0f;
+        parameters.sustain = 1.0f;
+        // 500 Hz leaves room for the +/-4876-count excursion on both sides
+        // of the converter's 0..16383 range.
+        parameters.cutoff = YouKnowEngine::panelPositionForCutoff(500.0f);
+        parameters.envDepth = depth;
+        parameters.envPolarity = polarity;
+        parameters.vcfLfoDepth = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        renderExact(engine, static_cast<int>(sampleRate * 0.1));
+        return YouKnowTestAccess::cutoffTarget(engine, 0);
+    };
+    const float zero = targetFor(EnvPolarity::Normal, 0.0f);
+    const float normal = targetFor(EnvPolarity::Normal, 0.3f);
+    const float inverted = targetFor(EnvPolarity::Inverted, 0.3f);
+    expect(normal - zero > 4000.0f,
+           "a Normal envelope at full sustain did not open the cutoff");
+    // The two are the same product with opposite sign, quantised to the
+    // converter's 4-count step, so they mirror within one step.
+    expect(std::abs((normal - zero) + (inverted - zero)) <= 4.0f + 1.0e-3f,
+           "Inverted polarity is not the mirror image of Normal: +"
+               + std::to_string(normal - zero) + " against "
+               + std::to_string(inverted - zero) + " counts");
+
+    const auto brightness = [&](EnvPolarity polarity) {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = 0.0f;
+        parameters.attack = 0.0f;
+        parameters.sustain = 1.0f;
+        parameters.cutoff = YouKnowEngine::panelPositionForCutoff(500.0f);
+        parameters.envDepth = 0.3f;
+        parameters.envPolarity = polarity;
+        parameters.resonance = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        const auto rendered = render(engine, static_cast<int>(sampleRate * 0.5));
+        // Energy above about 2 kHz against the whole, through a one-pole
+        // high-pass: a coarse centroid that only has to order the two.
+        double total = 0.0;
+        double high = 0.0;
+        float state = 0.0f;
+        const float g = std::exp(-2.0f * std::numbers::pi_v<float> * 2000.0f
+                                 / static_cast<float>(sampleRate));
+        for (std::size_t index = rendered.left.size() / 2;
+             index < rendered.left.size(); ++index)
+        {
+            const float sample = rendered.left[index];
+            state = g * state + (1.0f - g) * sample;
+            const float highPassed = sample - state;
+            total += static_cast<double>(sample) * sample;
+            high += static_cast<double>(highPassed) * highPassed;
+        }
+        return total > 0.0 ? high / total : 0.0;
+    };
+    const double bright = brightness(EnvPolarity::Normal);
+    const double dark = brightness(EnvPolarity::Inverted);
+    expect(dark < 0.5 * bright,
+           "an Inverted envelope did not darken the sustained note ("
+               + std::to_string(dark) + " against " + std::to_string(bright)
+               + " high-band energy ratio)");
+}
+
 void testEnvelopeAndGateModes()
 {
     constexpr double sampleRate = 48000.0;
@@ -12598,7 +12682,8 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
 
     // With the chorus switched out this fixture carries only the modelled
     // output-resistor floors and the common uPC1252H2's datasheet output
-    // noise (about -109 dBFS RMS, output-referred so independent of VCA
+    // noise (110 dB below the summer asymptote, about -107.5 dBFS RMS under
+    // the 2.5 dB output policy, output-referred so independent of VCA
     // LEVEL). Keep it far enough below the BBD line noise that the chorus-on
     // figure remains determined by `independentLineRandomAmplitude`, rather
     // than requiring an unphysical exact zero from five warm resistors and a
@@ -12757,6 +12842,84 @@ void testCommonVcaCarriesItsDatasheetNoiseFloor()
         20.0 * std::log10(rms(on.left, on.right, nullptr, nullptr) + 1.0e-40);
     expect(idleDbfs < -100.0,
            "the idle dry floor rose to " + std::to_string(idleDbfs) + " dBFS");
+}
+
+void testMainNoiseSourceIsGaussianAcrossQualityRungs()
+{
+    // Tr21's avalanche junction sums many carrier events per sample, so its
+    // statistics are Gaussian; the generator has to be too, at the uniform
+    // draw's 1/sqrt(3) RMS so no level coordinate moves. First the raw draw:
+    // zero mean, that RMS, zero excess kurtosis, bounded at six sigma.
+    {
+        YouKnowEngine engine;
+        engine.prepare(48000.0, blockSize, true);
+        constexpr int draws = 1 << 20;
+        double sum = 0.0, square = 0.0, fourth = 0.0, peak = 0.0;
+        for (int index = 0; index < draws; ++index)
+        {
+            const double value = YouKnowTestAccess::mainNoiseDraw(engine);
+            sum += value;
+            square += value * value;
+            fourth += value * value * value * value;
+            peak = std::max(peak, std::abs(value));
+        }
+        const double mean = sum / draws;
+        const double variance = square / draws - mean * mean;
+        const double excessKurtosis = fourth / draws / (variance * variance) - 3.0;
+        expectNear(mean, 0.0, 0.005, "the main-noise draw is biased");
+        expectNear(std::sqrt(variance), 1.0 / std::sqrt(3.0), 0.005,
+                   "the main-noise draw does not keep the uniform's RMS");
+        expectNear(excessKurtosis, 0.0, 0.05,
+                   "the main-noise draw is not Gaussian (excess kurtosis "
+                       + std::to_string(excessKurtosis) + ")");
+        expect(peak <= 6.0 / std::sqrt(3.0) + 1.0e-6,
+               "the main-noise draw exceeded its six-sigma bound");
+    }
+
+    // Then the shaped rail through the whole instrument: the crest factor
+    // and kurtosis at the output must no longer depend on the quality rung,
+    // where the uniform source read 3.1 at 44.1 kHz/1x against 4.35 at
+    // 192 kHz/4x for the same RMS.
+    const auto statisticsAt = [](double sampleRate, bool oversampled) {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, oversampled);
+        auto parameters = plainPatch();
+        parameters.calibration = 0.0f;
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 1.0f;
+        parameters.cutoff = YouKnowEngine::panelPositionForCutoff(2000.0f);
+        parameters.resonance = 0.0f;
+        parameters.vcaMode = VcaMode::Gate;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        const auto rendered = renderExact(
+            engine, static_cast<int>(sampleRate * 3.0));
+        const std::size_t from = rendered.left.size() / 6;
+        double square = 0.0, fourth = 0.0, peak = 0.0;
+        for (std::size_t index = from; index < rendered.left.size(); ++index)
+        {
+            const double value = rendered.left[index];
+            square += value * value;
+            fourth += value * value * value * value;
+            peak = std::max(peak, std::abs(value));
+        }
+        const double count = static_cast<double>(rendered.left.size() - from);
+        const double variance = square / count;
+        return std::pair { fourth / count / (variance * variance) - 3.0,
+                           peak / std::sqrt(variance) };
+    };
+    const auto coarse = statisticsAt(44100.0, false);
+    const auto fine = statisticsAt(192000.0, true);
+    expectNear(coarse.first, fine.first, 0.15,
+               "the output's excess kurtosis depends on the quality rung ("
+                   + std::to_string(coarse.first) + " at 44.1 kHz/1x, "
+                   + std::to_string(fine.first) + " at 192 kHz/4x)");
+    expectNear(20.0 * std::log10(coarse.second / fine.second), 0.0, 0.75,
+               "the output's crest factor depends on the quality rung ("
+                   + std::to_string(coarse.second) + " against "
+                   + std::to_string(fine.second) + ")");
 }
 
 void testMainNoiseDensityIsProcessingRateInvariant()
@@ -15080,6 +15243,7 @@ int main()
     testUnisonReturnsToAHeldKey();
     testAllNotesOffReleasesRatherThanCutting();
     testLoweringTheVoiceCountLetsNotesFinish();
+    testInvertedEnvelopePolarityMirrorsTheCutoffModulation();
     testEnvelopeAndGateModes();
     testChorusWidthAndSilence();
     testGlideKeepsTheRampContinuous();
@@ -15089,6 +15253,7 @@ int main()
     testIdleOutputFloorCarriesTheHissProductPolicy();
     testCommonVcaCarriesItsDatasheetNoiseFloor();
     testChorusNoiseProfilesReproduceTheMeasuredModeDelta();
+    testMainNoiseSourceIsGaussianAcrossQualityRungs();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
     testFixedServiceTrimKeepsTheRenderedCorner();

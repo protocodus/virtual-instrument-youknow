@@ -858,6 +858,13 @@ float YouKnowEngine::VoicedResonanceCompatibilityProfile::frequencyTrim(
 
 float YouKnowEngine::vcfConverterCarryCounts(float counts) noexcept
 {
+    // One R-2R ladder serves all 23 holds, so its carry error reaches the
+    // other 22 destinations too; it is applied only here as a matter of
+    // scope. In volts the major carry is 5.55 codes, 13.5 mV of the 10 V
+    // branch (0.14 % of full scale): 0.012 dB on the voice-VCA tail current
+    // or a sub/noise/resonance level, 0.08 % of duty on the PWM threshold,
+    // 0.012 dB of ramp amplitude at one pitch -- all below audibility, where
+    // the cutoff's exponential law turns the same 0.14 % into 23 cents.
     // Cents to counts: 1143 counts is an octave and 1200 cents is an octave.
     constexpr float perCent = vcfCountsPerOctave / 1200.0f;
     // Cumulative excess step at each of the three top bit boundaries. The
@@ -1997,6 +2004,46 @@ std::uint32_t YouKnowEngine::xorshift32(std::uint32_t state) noexcept
 float YouKnowEngine::bipolarFromState(std::uint32_t state) noexcept
 {
     return static_cast<float>(state & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
+}
+
+float YouKnowEngine::gaussianFromNoiseState() noexcept
+{
+    // Tr21's reverse-biased emitter-base junction is an avalanche source:
+    // each internal sample sums a great many independent carrier events, so
+    // the rail's amplitude statistics are Gaussian by the central limit
+    // theorem -- the same reading the TP8 crest-factor interpretation in the
+    // decision log already assumes. A uniform draw has a crest factor that
+    // the C42/C41 shaping then moves with the internal rate (about 3.1 at
+    // 44.1 kHz/1x against 4.35 at 192 kHz/4x for the same RMS), so the peak
+    // reaching the transconductor and BA662 pairs changed with the quality
+    // rung. Marsaglia's polar method draws pairs of uniforms through the
+    // same xorshift32 state; the result is unit-variance and scaled below to
+    // the uniform's 1/sqrt(3) RMS so every established level coordinate,
+    // rate normalisation and RMS-based calibration stays put. Clamped at six
+    // sigma (two draws in a billion) so no finite quantity downstream sees an
+    // unbounded sample.
+    if (noiseGaussianSpareValid_)
+    {
+        noiseGaussianSpareValid_ = false;
+        return noiseGaussianSpare_;
+    }
+    constexpr float unitVarianceToUniformRms = 0.57735027f; // 1/sqrt(3)
+    constexpr float clamp = 6.0f * unitVarianceToUniformRms;
+    for (;;)
+    {
+        noiseState_ = xorshift32(noiseState_);
+        const float u = bipolarFromState(noiseState_);
+        noiseState_ = xorshift32(noiseState_);
+        const float v = bipolarFromState(noiseState_);
+        const float radius = u * u + v * v;
+        if (radius >= 1.0f || radius <= 1.0e-12f)
+            continue;
+        const float scale = std::sqrt(-2.0f * std::log(radius) / radius)
+                          * unitVarianceToUniformRms;
+        noiseGaussianSpare_ = std::clamp(v * scale, -clamp, clamp);
+        noiseGaussianSpareValid_ = true;
+        return std::clamp(u * scale, -clamp, clamp);
+    }
 }
 
 float YouKnowEngine::hashBipolar(std::uint32_t value) noexcept
@@ -5772,6 +5819,8 @@ void YouKnowEngine::reset()
     rescanUnisonMidi_ = 60.0f;
     anyKeyDown_ = false;
     noiseState_ = 0x6d2b79f5u;
+    noiseGaussianSpare_ = 0.0f;
+    noiseGaussianSpareValid_ = false;
     // Both the live value and the target, or a run that stopped with the bender
     // pushed over would start the next one there: hosts are not obliged to
     // resend a neutral controller when the transport restarts, and nothing
@@ -7497,7 +7546,10 @@ float YouKnowEngine::rampCurrentScaleFor(
     // and VCA OFFSET only. What bounds it is the drawing: module board
     // p. 13 prints the integrator as "C54 .001G" -- the G code is +/-2 % --
     // and the three range resistors as "399K MF / 200K MF / 100K MF",
-    // metal film. The +/-2 % capacitor class is therefore the anchored
+    // metal film -- 399 kOhm, not the 400 kOhm an exact 2:1 against 200 kOhm
+    // would need, so the 16' ramp is 400/399 (+0.02 dB) taller than the
+    // range-independent code x divider product assumes; below audibility and
+    // left as the ledger's approximation. The +/-2 % capacitor class is therefore the anchored
     // bound the dispersion sits inside (a 1 % film resistor adds 2.24 %
     // in quadrature); the former 0.03 was a voiced class with no part
     // behind it. Anchored bound, point at the bound's own class.
@@ -9089,9 +9141,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // limitation of the HQ-off rungs, not a modelled mechanism.
             if (noiseState_ == 0u)
                 noiseState_ = 0x6d2b79f5u;
-            noiseState_ = xorshift32(noiseState_);
             const float rawNoise =
-                bipolarFromState(noiseState_) * noiseRateScale_
+                gaussianFromNoiseState() * noiseRateScale_
                 * mainNoiseSourceScale;
             // The hold voltage is what moves; Tr22 converts it to control
             // current instantaneously, so the onset law is applied after the
