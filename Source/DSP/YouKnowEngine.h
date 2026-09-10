@@ -547,6 +547,12 @@ public:
     // 3063 pitch units (11.96484375 semitones), not an ideal twelve.
     [[nodiscard]] static std::int32_t dcoPitchBendWordOffset(
         float normalisedBipolar, float depth) noexcept;
+    // The bender's filter axis from the same assigner command: the one-sided
+    // bend byte (zero at rest, otherwise twice the magnitude plus one) times
+    // the VCF sensitivity ADC byte, shifted right four times, signed by the
+    // command. 4064 counts at full deflection and full sensitivity.
+    [[nodiscard]] static std::int32_t vcfBendCountsWord(
+        std::int16_t command, std::uint8_t sensitivity) noexcept;
     // The stored DCO-LFO slider selects a byte from B-2's nonlinear depth
     // table. A compact generator preserves that table's exact observable law
     // without distributing a ROM dump.
@@ -1717,11 +1723,10 @@ private:
     // against the full 8191 accumulator, 253 * 8191 >> 9. The live term is
     // that integer law, not a fraction of this figure.
     static constexpr float vcfLfoCounts = 4047.0f;
-    // The bender's filter axis at maximum: the firmware multiplies the
-    // sensitivity byte by the bend byte and keeps the top bits, topping out at
-    // 4064 counts -- just over three and a half octaves each way. An earlier
-    // account claimed the whole cutoff range; the firmware arithmetic settles
-    // it.
+    // The maximum of vcfBendCountsWord: bend byte 255 (2 * 127 + 1) times
+    // sensitivity 255, shifted right four times -- just over three and a half
+    // octaves each way. An earlier account claimed the whole cutoff range;
+    // the firmware arithmetic settles it. The live term is that integer law.
     static constexpr float vcfBenderCounts = 4064.0f;
     // Hold-capacitor slew after the converter. VCF and voice-VCA use the
     // 522us VCF value and retained 687us linear VCA reference. The default VCA
@@ -2985,12 +2990,13 @@ private:
     float noiseSourceLowPassG_ { 0.1f };
 
     // The lever is read by the converter, not wired to the voices: its value
-    // is sampled once per scan pass, quantised to the converter's byte, and
-    // whatever smoothing the player hears is the hold capacitors' own. A fast
-    // flick therefore steps at the scan rate, as the hardware's does.
+    // is sampled once per scan pass, reduced to the assigner's signed command
+    // and formed into the DCO and VCF words there, and whatever smoothing the
+    // player hears is the hold capacitors' own. A fast flick therefore steps
+    // at the scan rate, as the hardware's does.
     float pitchBendTarget_ { 0.0f };
-    float pitchBend_ { 0.0f };
     std::int32_t dcoPitchBendWord_ { 0 };
+    std::int32_t vcfBendCountsWord_ { 0 };
     std::int32_t dcoLfoPitchWord_ { 0 };
     std::int32_t vcfLfoCountsWord_ { 0 };
     float modWheelTarget_ { 0.0f };

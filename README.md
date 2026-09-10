@@ -575,10 +575,13 @@ bend, modulation (CC 1), hold (CC 64 — split at zero exactly as the owner's
 MIDI chart prints it, so any nonzero value holds), all-notes-off (mode
 messages 123–127 are all recognised, as the chart specifies) and the
 reference instrument's Patch Selection Program Changes (0..63 → A11..A88,
-64..127 → B11..B88, consumed rather than echoed). The modelled keybed is
-not velocity sensitive, so incoming velocity reaches the engine only
-through the VELOCITY extension. There are no MIDI CC assignments for the
-synthesis panel; use the plug-in's host automation parameters instead.
+64..127 → B11..B88, consumed rather than echoed). Pitch bend reaches the
+DCO and the VCF as the assigner's reduced signed byte times each axis's
+sensitivity ADC, so both axes share its two-bin centre dead zone. The
+modelled keybed is not velocity sensitive, so incoming velocity reaches the
+engine only through the VELOCITY extension. There are no MIDI CC
+assignments for the synthesis panel; use the plug-in's host automation
+parameters instead.
 YouKnow does not transmit performance data or Program Changes.
 
 #### Host automation
@@ -895,7 +898,10 @@ path ([assigner reduction](https://github.com/ErroneousBosh/j106roms/blob/26926a
 [B-2 arithmetic](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1006-L1059)).
 That gives the real two-high-byte centre dead zone and +/-3063 pitch units
 (+/-11.96484375 semitones) at full sensitivity instead of an ideal continuous
-12-semitone multiplier. DCO-LFO pitch now follows B-2's nonlinear
+12-semitone multiplier. The filter axis takes the same one-sided bend byte
+times the VCF sensitivity ADC, [shifted right four times](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1021-L1031):
+4064 counts at full deflection, and nothing inside that dead zone.
+DCO-LFO pitch now follows B-2's nonlinear
 [128-position depth law](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1765-L1773)
 and truncating [panel-delay/CC1 arithmetic](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L541-L560).
 A compact generator avoids distributing ROM bytes. The panel path is gated by
@@ -1097,8 +1103,11 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 - DCO pitch bend now uses the recovered assigner/B-2 integer path: the
   scan-held 14-bit wheel reduces to the hardware's signed command with its
   two-bin centre, and the sensitivity product tops out at +/-11.96484375
-  semitones rather than an ideal continuous twelve. VCF bend remains on its
-  existing independent path.
+  semitones rather than an ideal continuous twelve. VCF bend now takes the
+  same assigner command: the one-sided bend byte times the VCF sensitivity
+  ADC, shifted right four times, so the filter shares the DCO's two-bin
+  centre dead zone — where the old 255-step magnitude already added about
+  16 counts — and keeps its 4064-count maximum.
 - DCO LFO pitch now uses B-2's nonlinear 128-position depth law and exact
   truncating panel-delay/CC1 products. CC1 remains independent of the panel
   delay, the two paths saturate before a single scan-held pitch-word multiply,

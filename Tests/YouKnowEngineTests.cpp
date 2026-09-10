@@ -114,6 +114,12 @@ struct YouKnowTestAccess
         return engine.vcfLfoCountsWord_;
     }
 
+    static std::int32_t vcfBendCountsWord(
+        const YouKnowEngine& engine) noexcept
+    {
+        return engine.vcfBendCountsWord_;
+    }
+
     // The single delay attenuator, read before it is multiplied into anything.
     static float lfoDelayLevel(const YouKnowEngine& engine) noexcept
     {
@@ -352,6 +358,13 @@ struct YouKnowTestAccess
         engine.performConverterWrite(
             { YouKnowEngine::ConverterDestination::Pitch, slot },
             parameters);
+    }
+
+    static void performVcfWrite(YouKnowEngine& engine, int slot,
+                                const EngineParameters& parameters) noexcept
+    {
+        engine.performConverterWrite(
+            { YouKnowEngine::ConverterDestination::Vcf, slot }, parameters);
     }
 
     static void performPwmWrite(YouKnowEngine& engine,
@@ -5240,6 +5253,57 @@ void testVcfLfoUsesRecoveredIntegerWord()
     expect(maximumRise == 12.0f && maximumFall == -16.0f,
            "VCF-LFO panel byte 1 did not move the cutoff by 15 counts on the "
            "converter's 4-count grid");
+}
+
+void testVcfBendUsesRecoveredIntegerWord()
+{
+    expect(YouKnowEngine::vcfBendCountsWord(127, 255u) == 4064
+               && YouKnowEngine::vcfBendCountsWord(-127, 255u) == -4064,
+           "full VCF bend left B-2's 4064-count endpoint");
+    expect(YouKnowEngine::vcfBendCountsWord(1, 255u) == 47
+               && YouKnowEngine::vcfBendCountsWord(-1, 255u) == -47
+               && YouKnowEngine::vcfBendCountsWord(0, 255u) == 0,
+           "VCF bend lost the assigner's one-sided 2|cmd|+1 byte or its rest");
+    expect(YouKnowEngine::vcfBendCountsWord(127, 128u) == 2040
+               && YouKnowEngine::vcfBendCountsWord(127, 0u) == 0,
+           "VCF bend sensitivity stopped using the eight-bit ADC product");
+    // +0.4 % of travel is inside the assigner's two-bin centre: the command
+    // is zero, so neither axis moves. The old 255-step VCF magnitude read it
+    // as one step and added about 16 counts.
+    expect(YouKnowEngine::dcoPitchBendWordOffset(0.004f, 1.0f) == 0,
+           "the bend command left the assigner's two-bin centre dead zone");
+
+    const auto cutoffAfterBend = [](float bend) {
+        YouKnowEngine engine;
+        engine.prepare(192000.0, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.cutoff = 0.5f;
+        parameters.benderVcfDepth = 1.0f;
+        engine.setParameters(parameters);
+        engine.setPitchBend(bend);
+        engine.noteOn(60, 1.0f);
+        // The lever is sampled at the converter-pass boundary, not when the
+        // host event happens. Construction begins on exactly that boundary.
+        renderExact(engine, 1);
+        YouKnowTestAccess::performVcfWrite(engine, 0, parameters);
+        return std::pair {
+            YouKnowTestAccess::vcfBendCountsWord(engine),
+            YouKnowTestAccess::cutoffTarget(engine, 0)
+        };
+    };
+    const auto rest = cutoffAfterBend(0.0f);
+    const auto deadZone = cutoffAfterBend(0.004f);
+    const auto full = cutoffAfterBend(1.0f);
+    const auto fullDown = cutoffAfterBend(-1.0f);
+    // Byte 64 * 128 = 8192 counts; +/-4064 lands on the 4-count grid.
+    expect(rest.first == 0 && rest.second == 8192.0f,
+           "the VCF bend fixture did not start from the static cutoff");
+    expect(deadZone.first == 0 && deadZone.second == rest.second,
+           "a bend inside the two-bin centre dead zone moved the VCF");
+    expect(full.first == 4064 && full.second == 8192.0f + 4064.0f
+               && fullDown.first == -4064
+               && fullDown.second == 8192.0f - 4064.0f,
+           "production VCF bend did not add its scan-held word to the cutoff");
 }
 
 void testPwmUsesRecoveredIntegerDacWord()
@@ -14949,6 +15013,7 @@ int main()
         testPitchBendUsesRecoveredIntegerWord();
         testDcoLfoUsesRecoveredIntegerWord();
         testVcfLfoUsesRecoveredIntegerWord();
+        testVcfBendUsesRecoveredIntegerWord();
         testPwmUsesRecoveredIntegerDacWord();
         testLfoDelayStartsFadeOnHoldoffCrossingPass();
         testPwmUsesRawLfoOutsideDelayEnvelope();
@@ -15044,6 +15109,7 @@ int main()
     testPitchBendUsesRecoveredIntegerWord();
     testDcoLfoUsesRecoveredIntegerWord();
     testVcfLfoUsesRecoveredIntegerWord();
+    testVcfBendUsesRecoveredIntegerWord();
     testPwmUsesRecoveredIntegerDacWord();
     testLfoDelayStartsFadeOnHoldoffCrossingPass();
     testRangeDividerCompletesItsCurrentSynchronousCount();

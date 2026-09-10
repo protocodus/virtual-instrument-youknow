@@ -494,6 +494,22 @@ std::int32_t YouKnowEngine::dcoPitchBendWordOffset(
         dcoBendCommand(normalisedBipolar), controlAdcByte(depth));
 }
 
+std::int32_t YouKnowEngine::vcfBendCountsWord(
+    std::int16_t command, std::uint8_t sensitivity) noexcept
+{
+    // The serial handler stores a zero command as zero and any other as twice
+    // its magnitude plus one (0x022a..0x0232). B-2 multiplies that byte by
+    // the VCF sensitivity ADC and shifts right four times (0x0674..0x0687)
+    // before the same value feeds the DCO's 1.75x path, so the filter shares
+    // the DCO's two-bin centre dead zone and tops out at 255 * 255 >> 4.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L379-L384
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1021-L1031
+    const std::uint32_t magnitude = command == 0
+        ? 0u : static_cast<std::uint32_t>(2 * std::abs(static_cast<int>(command)) + 1);
+    const auto word = static_cast<std::int32_t>((magnitude * sensitivity) >> 4u);
+    return command < 0 ? -word : word;
+}
+
 std::uint8_t YouKnowEngine::dcoLfoDepthScale(
     std::uint8_t storedDepth) noexcept
 {
@@ -5796,8 +5812,8 @@ void YouKnowEngine::reset()
     // would bring it back until the player touched the wheel.
     pitchBendTarget_ = 0.0f;
     modWheelTarget_ = 0.0f;
-    pitchBend_ = 0.0f;
     dcoPitchBendWord_ = 0;
+    vcfBendCountsWord_ = 0;
     dcoLfoPitchWord_ = 0;
     vcfLfoCountsWord_ = 0;
     sustainPedalDown_ = false;
@@ -7097,7 +7113,10 @@ float YouKnowEngine::voiceVcfTarget(
     // before the accumulator multiply, so panel byte 1 reaches 15 counts
     // where a proportional 4047/127 would give 32.
     counts += static_cast<float>(vcfLfoCountsWord_);
-    counts += byte7(parameters.benderVcfDepth) * vcfBenderCounts * pitchBend_;
+    // Likewise the bender: the assigner's command times the sensitivity ADC,
+    // formed once per pass, so the filter is still inside the two-bin centre
+    // dead zone where the old 255-step magnitude already added 16 counts.
+    counts += static_cast<float>(vcfBendCountsWord_);
     counts += byte7(parameters.keyFollow) * vcfCountsPerOctave
             * (voice.currentMidi - vcfKeyFollowCentreMidi) / 12.0f;
     // The firmware clamps the sum to its 14-bit accumulator -- so the digital
@@ -8920,13 +8939,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 nextConverterWrite_ = 0;
                 if (assignmentRescanPending_)
                     assignmentRescanPassArmed_ = true;
-                const float bendMagnitude = std::floor(
-                    std::abs(pitchBendTarget_) * 255.0f + 0.5f) / 255.0f;
-                pitchBend_ = pitchBendTarget_ < 0.0f ? -bendMagnitude
-                                                     : bendMagnitude;
+                const std::int16_t bendCommand = dcoBendCommand(pitchBendTarget_);
                 dcoPitchBendWord_ = dcoBendWordForCommand(
-                    dcoBendCommand(pitchBendTarget_),
-                    controlAdcByte(parameters.benderDcoDepth));
+                    bendCommand, controlAdcByte(parameters.benderDcoDepth));
+                vcfBendCountsWord_ = vcfBendCountsWord(
+                    bendCommand, controlAdcByte(parameters.benderVcfDepth));
                 advanceLfo(parameters);
                 dcoLfoPitchWord_ = dcoLfoPitchWordOffset(
                     lfoAccumulator_, lfoPolarity_ >= 0.0f, lfoDelayByte_,
