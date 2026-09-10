@@ -34,8 +34,12 @@ for attempt in 1 2 3; do
     rm -f Docs/audio/*.wav
     tar -xzf "${PREVIEW_DIR}/audio-previews.tar.gz"
     tar -xzf "${PREVIEW_DIR}/editor-preview.tar.gz"
-    # Frozen review/listening evidence in subdirectories is never staged.
+    # Frozen review/listening evidence in subdirectories is never staged. The
+    # composition is the one exception: it lives in a subdirectory only so the
+    # demo renderer's stale-file sweep cannot reach it, and it is maintained,
+    # not frozen, so it is named explicitly rather than by a directory glob.
     git add -A -- README.md ':(glob)Docs/audio/*.wav' \
+        Docs/audio/composition/youknow-composition.wav \
         Docs/screenshots/youknow-standalone.png
     if git diff --cached --quiet; then
         echo "Screenshot and audio demos are unchanged."

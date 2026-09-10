@@ -266,6 +266,10 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderDemos PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderDemos PRIVATE cxx_std_20)
 
+    add_executable(YouKnowRenderComposition Tools/RenderComposition.cpp)
+    target_link_libraries(YouKnowRenderComposition PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderComposition PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderSota Tools/RenderSotaComparisons.cpp)
     target_link_libraries(YouKnowRenderSota PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderSota PRIVATE cxx_std_20)
@@ -470,6 +474,7 @@ if(YOUKNOW_BUILD_TOOLS)
 
     if(MSVC)
         target_compile_options(YouKnowRenderDemos PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderTanhAuditions
             PRIVATE /W4 /permissive-)
@@ -501,6 +506,8 @@ if(YOUKNOW_BUILD_TOOLS)
             PRIVATE /W4 /permissive-)
     else()
         target_compile_options(YouKnowRenderDemos PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowRenderComposition PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderSota PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -614,6 +621,15 @@ if(BUILD_TESTING)
                  COMMAND YouKnowRenderDemos --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(YouKnow.RenderDemos PROPERTIES TIMEOUT 60)
+
+        # Guards the renderer that produces the committed composition. It
+        # checks the whole score against each preset's polyphony and key mode,
+        # then renders one part at the shipping quality rung and checks that
+        # the audio is finite, audible and written as a readable 24-bit WAV.
+        add_test(NAME YouKnow.RenderComposition
+                 COMMAND YouKnowRenderComposition --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/composition-smoke")
+        set_tests_properties(YouKnow.RenderComposition PROPERTIES TIMEOUT 120)
 
         # Fast integration coverage for the long-form factory gain auditor. It
         # uses the same mappings, meters, ownership guard and fixed preview
