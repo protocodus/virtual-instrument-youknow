@@ -1074,6 +1074,19 @@ new defaults stand. Chosen by ear, not settled by a measurement.
 
 ## Pending
 
+- **Chorus Mode I timing (OQ-01), an A–Z question.** The sweep *law* is now
+  derived rather than borrowed: the p. 15 oscillator charges C53 at Tr19's
+  fixed 195–203 µA against a threshold the TP4 triangle sets, so the delay is
+  linear in the LFO and the shipped trajectory is the circuit's own. What the
+  derivation does not fix is where the sweep sits. Its own parts bracket the
+  half-depth at 1.72–1.94 ms and the centre at 2.79–3.43 ms; the identified
+  unit reads 3.38 ms / 1.76 ms spectrally and 3.30 ms / 2.13 ms by click
+  timing; the shipping values are a designator-faithful clone's 3.9 ms /
+  2.5 ms, outside the derived bracket on both counts. Three candidates are
+  each defensible, so the direction is a listening decision, not a fit:
+  A the shipping clone endpoints, B the identified unit's spectral fit
+  (already selectable as `useA11EffectiveChorusTimingProfile`), C its
+  click-timing coordinates. Nothing moves until the owner has heard them.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.

@@ -260,19 +260,45 @@ int main(int argc, char** argv)
             continue;
         }
 
+        // A baseline of a different length is an older revision of this
+        // demo. diffWith would silently truncate to the common prefix and the
+        // manifest would present that fragment as a whole-take comparison;
+        // refuse instead, as RenderRealismFixes does, so the stale before
+        // file gets re-rendered deliberately.
+        if (beforeLeft.size() != take.left().size()
+            || beforeRight.size() != take.right().size())
+        {
+            std::printf("%-30s %12s %12s\n", demo.slug,
+                        "(before take is a different length; re-render it)",
+                        "");
+            continue;
+        }
         const Take before(std::move(beforeLeft), std::move(beforeRight));
-        const auto diff = take.diffWith(before);
+        auto diff = take.diffWith(before);
         const auto diffLevel = diff.measure();
         const auto reference = std::max(before.measure().rms, 1.0e-12);
         const double peakDbc = decibels(diffLevel.peak / reference);
         const double rmsDbc = decibels(diffLevel.rms / reference);
+        // Two independently normalised takes can differ by up to twice one
+        // take's peak and the file writer clamps at full scale. The metrics
+        // above come from the unclipped difference; scale the written file
+        // just under full scale and record the gain so it stays reversible.
+        double diffGainDb = 0.0;
+        if (diffLevel.peak > 0.999)
+        {
+            const double scale = 0.999 / diffLevel.peak;
+            diff.applyGain(scale);
+            diffGainDb = decibels(scale);
+        }
 
         writeWav(outputDir / (slug + "-diff.wav"), diff.left(), diff.right());
-        std::printf("%-30s %+12.1f %+12.1f\n", demo.slug, peakDbc, rmsDbc);
+        std::printf("%-30s %+12.1f %+12.1f %+10.1f\n", demo.slug, peakDbc,
+                    rmsDbc, diffGainDb);
 
         std::array<char, 256> row {};
-        std::snprintf(row.data(), row.size(), "| `%s` | %+.1f | %+.1f |\n",
-                      demo.slug, peakDbc, rmsDbc);
+        std::snprintf(row.data(), row.size(),
+                      "| `%s` | %+.1f | %+.1f | %+.1f |\n",
+                      demo.slug, peakDbc, rmsDbc, diffGainDb);
         manifestRows += row.data();
     }
 
@@ -294,8 +320,8 @@ int main(int argc, char** argv)
             "still measures about -80 to -90 dBc. That is the floor of this measurement,\n"
             "not a difference -- and it is below audibility, so a change that lands in it\n"
             "is a change nobody can hear.\n\n"
-            "| Take | Diff peak (dBc) | Diff RMS (dBc) |\n"
-            "| --- | ---: | ---: |\n";
+            "| Take | Diff peak (dBc) | Diff RMS (dBc) | Diff file gain (dB) |\n"
+            "| --- | ---: | ---: | ---: |\n";
         manifest += manifestRows;
         std::filesystem::create_directories(outputDir);
         std::ofstream readme(outputDir / "README.md");
