@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -794,6 +795,7 @@ YouKnowAudioProcessor::YouKnowAudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       parameters (*this, nullptr, "YOUKNOW_STATE", createParameterLayout())
 {
+    youknow::ProductFidelityProfile::configureBeforePrepare (engine);
     using namespace youknow::parameters;
     // Bind by named index, not table position: reordering either side cannot
     // silently make the audio snapshot read a different control.
@@ -1054,6 +1056,7 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
         toneRecallGeneration.load (std::memory_order_acquire);
 
     EngineParameters engineParameters;
+    ProductFidelityProfile::applyTo (engineParameters);
     engineParameters.volume = valueOf (P::volume);
     engineParameters.benderDcoDepth = valueOf (P::benderDco);
     engineParameters.benderVcfDepth = valueOf (P::benderVcf);

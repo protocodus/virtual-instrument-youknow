@@ -15,6 +15,7 @@
 // it.
 
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowProductFidelity.h"
 #include "DSP/YouKnowPresets.h"
 
 #include <algorithm>
@@ -1401,6 +1402,7 @@ EngineParameters parametersFor (const Preset& preset, float volume)
     const auto& patch = preset.patch;
     const auto& controls = preset.controls;
     EngineParameters parameters;
+    youknow::ProductFidelityProfile::applyTo (parameters);
 
     parameters.lfoRate = patch.lfoRate;
     parameters.lfoDelay = patch.lfoDelay;
@@ -1523,6 +1525,7 @@ Rendered renderPart (const Part& part, const Preset& preset, double tempo,
                       });
 
     auto engine = std::make_unique<YouKnowEngine>();
+    youknow::ProductFidelityProfile::configureBeforePrepare (*engine);
     engine->selectConverterTimingProfile (
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine->prepare (compositionSampleRate, renderBlockSize,

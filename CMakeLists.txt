@@ -84,6 +84,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
+    Source/DSP/YouKnowProductFidelity.h
     Source/DSP/YouKnowVcaControl.h
     Source/DSP/YouKnowCoupledMixer.h
     Source/DSP/YouKnowSubLevel.h

@@ -5,6 +5,7 @@
 // the chorus hiss, which is part of the instrument.
 
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -127,16 +128,18 @@ public:
     explicit Take (EngineParameters parameters)
         : engine_ (std::make_unique<YouKnowEngine>())
     {
+        youknow::ProductFidelityProfile::configureBeforePrepare (*engine_);
         // The product's converter placement (Docs/decisions.md, 2026-09-04),
         // selected exactly as the plug-in selects it before prepare().
         engine_->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
         engine_->prepare (demoSampleRate, renderBlockSize, true);
-        engine_->setParameters (parameters);
+        setParameters (parameters);
     }
 
-    void setParameters (const EngineParameters& parameters)
+    void setParameters (EngineParameters parameters)
     {
+        youknow::ProductFidelityProfile::applyTo (parameters);
         engine_->setParameters (parameters);
     }
 
