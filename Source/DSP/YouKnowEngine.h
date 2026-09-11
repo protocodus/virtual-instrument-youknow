@@ -271,11 +271,12 @@ struct EngineParameters
     // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
     // keeps the two returns identical for controlled A/B renders.
     bool enableChorusLineGainSpread { true };
-    // Comparison-only, off by default: Mode I uses the effective timing
-    // identified from Lewis Francis's A11 capture (Chorus::settingsFor).
-    // The engine still uses its ordinary gains, noise, mute circuit and
-    // other chorus modes. Not a host parameter or a saved factory setting.
-    bool useA11EffectiveChorusTimingProfile { false };
+    // Comparison-only: which of OQ-01's Mode I timing candidates the chorus
+    // runs on (Chorus::settingsFor). Shipping is the default and the only one
+    // a product build selects. The engine still uses its ordinary gains,
+    // noise, mute circuit and other chorus modes whichever is chosen. Not a
+    // host parameter and not a saved factory setting.
+    ChorusTimingProfile chorusTimingProfile { ChorusTimingProfile::Shipping };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
@@ -913,10 +914,17 @@ public:
     // fitted to a measured code-to-frequency curve with this ceiling already
     // standing, so the pair moves together or not at all, and the 248 Hz
     // self-oscillation anchor pins absolute cutoff either way. What changes is
-    // its classification: voiced, bracketed by 64.8 kHz (270 pF) and 72.9 kHz
-    // (240 pF), no longer presented as derived from 700 uA on 240 pF.
-    // Refitting the pair belongs to OQ-18, beside the 240-vs-270 pF
-    // integrator question it shares a cause with.
+    // its classification: voiced, and no longer presented as derived from
+    // 700 uA on 240 pF.
+    //
+    // It is NOT bracketed by 64.8 kHz and 72.9 kHz, as this comment used to
+    // say. That bracket's lower end rests on 270 pF, which is the Open80017a
+    // reconstruction's integrator value; `poleCapacitorFarads` below records
+    // 240 pF as Anchored and gives the reasons, so offering the 270 pF branch
+    // as a live alternative contradicted the same file. The honest residue is
+    // that 64 kHz has no recorded derivation at all: on the settled 240 pF it
+    // implies 614 uA, which is neither the teardown's 700 uA nor any other
+    // figure the sources carry. Refitting the pair belongs to OQ-18.
     //
     // The shape is the generalized algebraic clip above, shared with the
     // output summer and the BBD write: numerically linear through the whole

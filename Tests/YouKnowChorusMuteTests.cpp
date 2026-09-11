@@ -169,12 +169,39 @@ void checkEffectiveProfileIsolation()
 {
     using youknow::Chorus;
     using youknow::ChorusMode;
-    require(!youknow::EngineParameters {}.useA11EffectiveChorusTimingProfile,
+    using youknow::ChorusTimingProfile;
+    require(youknow::EngineParameters {}.chorusTimingProfile
+                == youknow::ChorusTimingProfile::Shipping,
             "effective A11 timing was enabled in shipping defaults");
+    // Every comparison candidate must differ from shipping in Mode I and in
+    // nothing else: these exist to let OQ-01 be decided by ear, not to invent a
+    // second chorus.
+    for (const auto profile : { ChorusTimingProfile::A11Spectral,
+                                ChorusTimingProfile::A11ClickTiming,
+                                ChorusTimingProfile::DerivedNominal })
+    {
+        for (const auto mode : { ChorusMode::Off, ChorusMode::One,
+                                 ChorusMode::Two, ChorusMode::OneTwo })
+        {
+            const auto shipping = Chorus::settingsFor(mode);
+            const auto candidate = Chorus::settingsFor(mode, profile);
+            require(shipping.wetGain == candidate.wetGain,
+                    "a timing candidate changed chorus gain");
+            const auto same = shipping.centreDelaySeconds == candidate.centreDelaySeconds
+                           && shipping.sweepSeconds == candidate.sweepSeconds
+                           && shipping.rateHz == candidate.rateHz;
+            require(mode == ChorusMode::One ? !same : same,
+                    mode == ChorusMode::One
+                        ? "a timing candidate left Mode I where shipping has it"
+                        : "a timing candidate reached a mode other than Mode I");
+        }
+    }
+
     for (const auto mode : { ChorusMode::Off, ChorusMode::One, ChorusMode::Two, ChorusMode::OneTwo })
     {
         const auto nominal = Chorus::settingsFor(mode);
-        const auto effective = Chorus::settingsFor(mode, true);
+        const auto effective =
+            Chorus::settingsFor(mode, ChorusTimingProfile::A11Spectral);
         require(nominal.wetGain == effective.wetGain,
                 "timing comparison also changed chorus gain");
         if (mode != ChorusMode::One)
@@ -196,9 +223,11 @@ void checkEffectiveProfileIsolation()
             const float input = static_cast<float>(0.1 * std::sin(2.0 * 3.141592653589793 * 173.0 * frame / 48000.0));
             float leftA {}, rightA {}, leftB {}, rightB {};
             ordinary.process(input, mode, 0.0f, leftA, rightA, false, false,
-                             1.0f, false, true, true, true, false);
+                             1.0f, false, true, true, true,
+                             ChorusTimingProfile::Shipping);
             candidate.process(input, mode, 0.0f, leftB, rightB, false, false,
-                              1.0f, false, true, true, true, true);
+                              1.0f, false, true, true, true,
+                              ChorusTimingProfile::A11Spectral);
             require(ordinary.muteDriveMuted() == candidate.muteDriveMuted(),
                     "timing-profile comparison changed the mute circuit state");
             error = std::max({ error, std::abs(static_cast<double>(leftA) - leftB),

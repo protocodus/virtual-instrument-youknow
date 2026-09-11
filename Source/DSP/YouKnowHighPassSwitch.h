@@ -15,9 +15,14 @@ namespace youknow
 // Toshiba TC4052BP's current data gives 240/110/80 ohms typical at
 // 5/10/15V total supply, 25C; those are comparison coordinates, not an
 // installed-part measurement. The Juno uses +5V and the Tr3 negative rail,
-// not +/-7.5V. R13/R14 put Tr3's base near -2.63V; its emitter rail depends
-// on the junction. Therefore this API requires an explicit resistance and
-// never silently installs one of the published supply points as the Juno's.
+// not +/-7.5V. R13 is 4.7K and R14 10K on p.15, dividing ground against the
+// -15V rail, so Tr3's base sits at -15 * 10/14.7 = -10.2V; its emitter rail
+// depends on the junction. This read -2.63V until 2026-09-11, which is what
+// the same divider returns if R13 is misread as 47K; the printed value is
+// 4.7K on p.15 and on the HS-60's drawing of the same network. Nothing
+// computed here ever used the figure -- so only the description was wrong.
+// Therefore this API requires an explicit resistance and never silently
+// installs one of the published supply points as the Juno's.
 // https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP
 // Charge injection, voltage-dependent Ron, leakage and rail clipping are
 // deliberately uncalibrated. All deselected capacitor stores remain live.
