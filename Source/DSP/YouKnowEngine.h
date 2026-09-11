@@ -914,10 +914,17 @@ public:
     // fitted to a measured code-to-frequency curve with this ceiling already
     // standing, so the pair moves together or not at all, and the 248 Hz
     // self-oscillation anchor pins absolute cutoff either way. What changes is
-    // its classification: voiced, bracketed by 64.8 kHz (270 pF) and 72.9 kHz
-    // (240 pF), no longer presented as derived from 700 uA on 240 pF.
-    // Refitting the pair belongs to OQ-18, beside the 240-vs-270 pF
-    // integrator question it shares a cause with.
+    // its classification: voiced, and no longer presented as derived from
+    // 700 uA on 240 pF.
+    //
+    // It is NOT bracketed by 64.8 kHz and 72.9 kHz, as this comment used to
+    // say. That bracket's lower end rests on 270 pF, which is the Open80017a
+    // reconstruction's integrator value; `poleCapacitorFarads` below records
+    // 240 pF as Anchored and gives the reasons, so offering the 270 pF branch
+    // as a live alternative contradicted the same file. The honest residue is
+    // that 64 kHz has no recorded derivation at all: on the settled 240 pF it
+    // implies 614 uA, which is neither the teardown's 700 uA nor any other
+    // figure the sources carry. Refitting the pair belongs to OQ-18.
     //
     // The shape is the generalized algebraic clip above, shared with the
     // output summer and the BBD write: numerically linear through the whole
