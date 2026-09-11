@@ -5,6 +5,25 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-11 — Confirm the three adopted round-two B defaults
+
+After reviewing the explanation of the circuit and measurement evidence,
+the owner confirmed: "ok then, use B then". This confirms the three B
+corrections already enabled in the September 8 fidelity round:
+
+- PWM smoothing: A used the previous two control time constants; B uses
+  the corrected feedback and output resistor/capacitor assignments.
+- Chorus noise: A omitted random held steps from BBD reconstruction;
+  B reconstructs those steps with the deterministic signal.
+- Filter service trim: A changed the cutoff correction with live RES;
+  B keeps each card's full-RES service calibration fixed as RES changes.
+
+The approval retains these defaults. It followed the evidence explanation;
+the owner did not report a blind listening result, so this entry records no
+by-ear preference or new measurement. The optional serviced six-card VCF
+profile and finite-resistance HPF comparisons were outside those three
+adopted defaults and remain opt-in. No DSP or preset change is needed.
+
 ## 2026-09-05 — Release defaults: Quality 1× and Aging 50%
 
 At the product owner's request, new plug-in instances use Quality 1× and
