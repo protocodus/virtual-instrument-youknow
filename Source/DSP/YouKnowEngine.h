@@ -271,11 +271,12 @@ struct EngineParameters
     // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
     // keeps the two returns identical for controlled A/B renders.
     bool enableChorusLineGainSpread { true };
-    // Comparison-only, off by default: Mode I uses the effective timing
-    // identified from Lewis Francis's A11 capture (Chorus::settingsFor).
-    // The engine still uses its ordinary gains, noise, mute circuit and
-    // other chorus modes. Not a host parameter or a saved factory setting.
-    bool useA11EffectiveChorusTimingProfile { false };
+    // Comparison-only: which of OQ-01's Mode I timing candidates the chorus
+    // runs on (Chorus::settingsFor). Shipping is the default and the only one
+    // a product build selects. The engine still uses its ordinary gains,
+    // noise, mute circuit and other chorus modes whichever is chosen. Not a
+    // host parameter and not a saved factory setting.
+    ChorusTimingProfile chorusTimingProfile { ChorusTimingProfile::Shipping };
     // Only the heterodyne clock-bleed tone is implemented (see
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.

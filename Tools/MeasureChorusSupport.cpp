@@ -5,20 +5,40 @@
 #include "DSP/YouKnowChorus.h"
 
 #include <iomanip>
+#include <string_view>
 #include <iostream>
 #include <string>
 
 int main(int argc, char** argv)
 {
     using youknow::Chorus;
-    if (argc > 2 || (argc == 2 && std::string(argv[1]) != "a11-effective"))
+    if (argc > 2)
     {
-        std::cerr << "usage: YouKnowMeasureChorusSupport [a11-effective]\n";
+        std::cerr << "usage: YouKnowMeasureChorusSupport "
+                     "[shipping|a11-spectral|a11-click|derived]\n";
         return 2;
     }
     constexpr float rate = 192000.0f;
     const auto support = Chorus::supportChainFor(rate);
-    const auto mode = Chorus::settingsFor(youknow::ChorusMode::One, argc == 2);
+    // Any of OQ-01's Mode I candidates can be measured, not just the shipping
+    // value and the A11 spectral fit the flag used to choose between.
+    auto profile = youknow::ChorusTimingProfile::Shipping;
+    if (argc == 2)
+    {
+        const std::string_view selected { argv[1] };
+        if (selected == "a11-spectral" || selected == "a11-effective")
+            profile = youknow::ChorusTimingProfile::A11Spectral;
+        else if (selected == "a11-click")
+            profile = youknow::ChorusTimingProfile::A11ClickTiming;
+        else if (selected == "derived")
+            profile = youknow::ChorusTimingProfile::DerivedNominal;
+        else if (selected != "shipping")
+        {
+            std::cerr << "unknown timing profile: " << selected << '\n';
+            return 2;
+        }
+    }
+    const auto mode = Chorus::settingsFor(youknow::ChorusMode::One, profile);
     std::cout << std::setprecision(17)
               << "{\"sample_rate\":" << rate
               << ",\"mode_one\":{\"centre_s\":" << mode.centreDelaySeconds

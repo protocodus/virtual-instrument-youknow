@@ -148,7 +148,9 @@ EngineParameters parametersFor(const sysex::Patch& patch, float character,
     // output gain. Keep it ahead of the actual filter/VCA/nonlinearities,
     // exactly where the shared noise rail enters the shipping engine.
     p.mainNoiseLevelScale = noiseScale;
-    p.useA11EffectiveChorusTimingProfile = a11EffectiveChorus;
+    p.chorusTimingProfile = a11EffectiveChorus
+                          ? ChorusTimingProfile::A11Spectral
+                          : ChorusTimingProfile::Shipping;
     p.useFixedVcfServiceFrequencyTrim = fixedServiceTrim;
     p.useServiced439522VcfCalibration = referenceVcf;
     // Match fresh plug-in instances, including the inactive-card/chorus skips.
@@ -298,8 +300,8 @@ void selfTest()
         throw std::runtime_error("unknown kernel was accepted");
     const auto profile = parametersFor(sysex::Patch {}, 1.0f, true, 1.0f,
                                        effectiveChorusProfile("a11-effective"));
-    if (!profile.useA11EffectiveChorusTimingProfile
-        || shipping.useA11EffectiveChorusTimingProfile
+    if (profile.chorusTimingProfile != ChorusTimingProfile::A11Spectral
+        || shipping.chorusTimingProfile != ChorusTimingProfile::Shipping
         || effectiveChorusProfile("nominal"))
         throw std::runtime_error("chorus profile selection changed the nominal default");
     bool invalidProfileRejected = false;
@@ -318,7 +320,8 @@ void selfTest()
     EngineParameters changed;
     const auto checkSelection = [&] {
         if (changed.mainNoiseLevelScale != selected.noiseScale
-            || changed.useA11EffectiveChorusTimingProfile != selected.a11EffectiveChorus
+            || (changed.chorusTimingProfile == ChorusTimingProfile::A11Spectral)
+                   != selected.a11EffectiveChorus
             || changed.calibration != selected.character
             || changed.vcfTanhMode != VcfTanhMode::PolyZoned
             || changed.cutoff != decoded.cutoff || changed.chorus != decoded.chorus)
