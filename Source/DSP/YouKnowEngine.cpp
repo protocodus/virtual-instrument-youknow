@@ -304,11 +304,6 @@ std::uint8_t storedControlByte(float value) noexcept
         std::floor(clamp01(sanitised(value, 0.0f)) * 127.0f + 0.5f));
 }
 
-float storedControlFraction(float value) noexcept
-{
-    return static_cast<float>(storedControlByte(value)) / 127.0f;
-}
-
 // The 0-1 fraction a converter destination's stored panel value maps to at
 // the physical DAC, shared by updateSharedScan, performConverterWrite and
 // passiveHoldWriteTarget alike (RESONANCE, common VCA, SUB and NOISE all read
@@ -599,6 +594,40 @@ std::int32_t YouKnowEngine::vcfLfoCountsWord(
         (std::min<std::uint32_t>(accumulator, 0x1fffu) * depth) >> 9u;
     return positivePolarity ? static_cast<std::int32_t>(word)
                             : -static_cast<std::int32_t>(word);
+}
+
+std::uint16_t YouKnowEngine::vcfEnvelopeCountsWord(
+    std::uint16_t envelopeLevel, std::uint8_t storedDepth) noexcept
+{
+    // B-2's two MULs and EADD at 05C5..05D2 calculate
+    // floor(envelope_RAM * doubled_ENV_byte / 256). Unlike the VCA write,
+    // this path sees all fourteen envelope bits; multiplying its 12-bit DAC
+    // fraction by a normalized 16255 endpoint loses partial-product carries and can move
+    // the final cutoff by a DAC step during a slow envelope.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L926-L938
+    const std::uint32_t level = std::min<std::uint32_t>(envelopeLevel, 0x3fffu);
+    const std::uint32_t depth = 2u * std::min<std::uint32_t>(storedDepth, 127u);
+    return static_cast<std::uint16_t>((level * depth) >> 8u);
+}
+
+std::int32_t YouKnowEngine::vcfKeyFollowCountsWord(
+    std::int32_t voicePitchWord, std::uint8_t storedDepth) noexcept
+{
+    // 05E1..05EA forms floor(pitch/4) + floor(pitch/8), not a continuous
+    // 3/8 multiply. 05EC..0633 subtracts C4 (0x1680), multiplies the absolute
+    // distance by the doubled KEY byte and discards the low product byte
+    // before restoring the sign. The maximum slope is still 1143 counts per
+    // octave, but fractional glide positions have the firmware's own steps.
+    // The signed divisions extend the same law to the host's below-zero
+    // transpose range; actual unsigned 8.8 voice words divide exactly as DSLR.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L944-L992
+    const std::int64_t coordinate = static_cast<std::int64_t>(voicePitchWord) / 4
+                                  + static_cast<std::int64_t>(voicePitchWord) / 8
+                                  - 0x1680;
+    const std::int64_t depth = 2 * std::min<int>(storedDepth, 127);
+    // Truncation toward zero is the positive magnitude's >>8 followed by its
+    // original sign, including sub-count distances immediately below C4.
+    return static_cast<std::int32_t>((coordinate * depth) / 256);
 }
 
 std::uint32_t YouKnowEngine::dcoDivider(double frequencyHz) noexcept
@@ -7245,9 +7274,6 @@ void YouKnowEngine::updateVoiceVcfTarget(
 float YouKnowEngine::voiceVcfTarget(
     const Voice& voice, const EngineParameters& parameters) const noexcept
 {
-    const auto byte7 = [](float value) { return storedControlFraction(value); };
-    const float envelope = voice.envelope.value;
-
     // --- Filter cutoff, summed in converter counts ------------------------
     float counts = vcfPanelCounts(parameters.cutoff);
     const float envelopeSign =
@@ -7259,8 +7285,9 @@ float YouKnowEngine::voiceVcfTarget(
     // -- with no new law and no new constant. The panel byte is still the
     // byte the firmware stored; the extension multiplies what that byte asks
     // for, exactly as it multiplies the amplifier's own control.
-    counts += envelopeSign * byte7(parameters.envDepth) * vcfEnvelopeCounts
-            * envelope * velocityGain(parameters, voice);
+    counts += envelopeSign * static_cast<float>(vcfEnvelopeCountsWord(
+                  voice.envelope.level, storedControlByte(parameters.envDepth)))
+            * velocityGain(parameters, voice);
     // The LFO term is the pass-held B-2 word, not a fraction of its maximum:
     // the doubled panel byte and the onset byte truncate to one depth byte
     // before the accumulator multiply, so panel byte 1 reaches 15 counts
@@ -7270,8 +7297,9 @@ float YouKnowEngine::voiceVcfTarget(
     // formed once per pass, so the filter is still inside the two-bin centre
     // dead zone where the old 255-step magnitude already added 16 counts.
     counts += static_cast<float>(vcfBendCountsWord_);
-    counts += byte7(parameters.keyFollow) * vcfCountsPerOctave
-            * (voice.currentMidi - vcfKeyFollowCentreMidi) / 12.0f;
+    counts += static_cast<float>(vcfKeyFollowCountsWord(
+        static_cast<std::int32_t>(std::lround(voice.currentMidi * 256.0f)),
+        storedControlByte(parameters.keyFollow)));
     // The firmware clamps the sum to its 14-bit accumulator -- so the digital
     // part of the control voltage can never ask for less than the law's base
     // frequency -- and hands the converter the top twelve bits, so it moves

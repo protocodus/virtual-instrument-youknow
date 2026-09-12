@@ -767,6 +767,16 @@ struct YouKnowTestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].envelope.level;
     }
 
+    static void setVcfControlOperands(YouKnowEngine& engine, int slot,
+                                     std::uint16_t envelopeLevel,
+                                     std::uint16_t voicePitchWord) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.envelope.level = envelopeLevel;
+        voice.envelope.value = YouKnowEngine::envelopeDacFraction(envelopeLevel);
+        voice.currentMidi = static_cast<float>(voicePitchWord) / 256.0f;
+    }
+
     static bool forceQualitySwitchAtZero(
         YouKnowEngine& engine, int factor) noexcept
     {
@@ -5616,6 +5626,106 @@ void testVcfBendUsesRecoveredIntegerWord()
                && fullDown.first == -4064
                && fullDown.second == 8192.0f - 4064.0f,
            "production VCF bend did not add its scan-held word to the cutoff");
+}
+
+void testVcfEnvelopeAndKeyFollowKeepFirmwarePrecision()
+{
+    // Independent byte-partial-product oracle: the CPU multiplies the low
+    // byte, keeps its high byte, then adds that carry to high_byte * depth.
+    const auto product = [](std::uint16_t word, unsigned depth) {
+        return (word >> 8u) * depth + (((word & 255u) * depth) >> 8u);
+    };
+    bool envelopeMatches = true;
+    bool keyMatches = true;
+    for (unsigned depth = 0; depth < 128; ++depth)
+    {
+        for (unsigned level = 0; level <= 0x3fff; ++level)
+            envelopeMatches &= YouKnowEngine::vcfEnvelopeCountsWord(
+                static_cast<std::uint16_t>(level), static_cast<std::uint8_t>(depth))
+                == product(static_cast<std::uint16_t>(level), depth * 2);
+        for (unsigned word = 0; word <= 0xffff; ++word)
+        {
+            const unsigned quarter = word >> 2u;
+            const int distance = static_cast<int>(quarter + (quarter >> 1u))
+                               - 0x1680;
+            const int magnitude = static_cast<int>(product(
+                static_cast<std::uint16_t>(std::abs(distance)), depth * 2));
+            const int expected = distance < 0 ? -magnitude : magnitude;
+            keyMatches &= YouKnowEngine::vcfKeyFollowCountsWord(
+                static_cast<std::int32_t>(word), static_cast<std::uint8_t>(depth))
+                == expected;
+        }
+    }
+    expect(envelopeMatches, "VCF ENV did not preserve the full envelope RAM product");
+    expect(keyMatches, "VCF KEY did not preserve the firmware's shifts and carries");
+    expect(YouKnowEngine::vcfEnvelopeCountsWord(0x3fffu, 127u) == 16255u
+               && YouKnowEngine::vcfEnvelopeCountsWord(0xffffu, 255u) == 16255u,
+           "VCF ENV lost its full-scale endpoint or bounded input guard");
+    expect(YouKnowEngine::vcfKeyFollowCountsWord(72 * 256, 127u) == 1143
+               && YouKnowEngine::vcfKeyFollowCountsWord(48 * 256, 127u) == -1143
+               && YouKnowEngine::vcfKeyFollowCountsWord(60 * 256 + 7, 127u) == 0,
+           "VCF KEY lost its octave calibration or fractional glide truncation");
+
+    YouKnowEngine engine;
+    engine.prepare(48000.0, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.cutoff = 0.5f;
+    parameters.envDepth = 1.0f;
+    parameters.keyFollow = 1.0f;
+    parameters.calibration = 0.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+
+    // Levels four and five have the same VCA DAC value, but their ENV
+    // products are three and four counts. The latter must cross the VCF DAC
+    // boundary: the old normalized-VCA-fraction path produced 8192 for both.
+    const auto cutoff = [&](std::uint16_t level, std::uint16_t pitch) {
+        YouKnowTestAccess::setVcfControlOperands(engine, 0, level, pitch);
+        YouKnowTestAccess::performVcfWrite(engine, 0, parameters);
+        return YouKnowTestAccess::cutoffTarget(engine, 0);
+    };
+    expect(YouKnowEngine::envelopeDacFraction(4u)
+               == YouKnowEngine::envelopeDacFraction(5u)
+               && cutoff(4u, 60 * 256) == 8192.0f
+               && cutoff(5u, 60 * 256) == 8196.0f,
+           "the VCF reused the VCA's already-truncated envelope fraction");
+    parameters.envPolarity = EnvPolarity::Inverted;
+    expect(cutoff(5u, 60 * 256) == 8188.0f,
+           "inverted ENV did not negate the exact product before DAC truncation");
+    // Here the old continuous terms combined to 7312 after conversion;
+    // the firmware yields 8192 - 888 + 3, then 7304. Two DAC steps are
+    // 8.40 cents at the filter's 1143-count/octave law, with no tuning change
+    // to its unchanged octave/full-scale anchors.
+    expect(cutoff(895u, 15374u) == 7304.0f,
+           "ENV/KEY partial-product carries still miss the two-code fixture");
+
+    // The production sum retains sub-DAC carries from *both* operands. Cover
+    // partial depths, fractional notes either side of C4 and both polarities
+    // rather than validating only isolated helpers or the full-scale endpoint.
+    bool productionMatches = true;
+    for (const unsigned depth : { 1u, 31u, 64u, 95u, 127u })
+        for (const std::uint16_t level : { 4u, 5u, 4095u, 8187u, 16260u, 16383u })
+            for (const std::uint16_t pitch : { 15103u, 15353u, 15360u, 15367u, 15617u })
+                for (const auto polarity : { EnvPolarity::Normal, EnvPolarity::Inverted })
+                {
+                    parameters.envDepth = static_cast<float>(depth) / 127.0f;
+                    parameters.keyFollow = parameters.envDepth;
+                    parameters.envPolarity = polarity;
+                    const int envelope = static_cast<int>(product(level, 2 * depth));
+                    const unsigned quarter = pitch >> 2u;
+                    const int distance = static_cast<int>(quarter + (quarter >> 1u))
+                                       - 0x1680;
+                    const int keyMagnitude = static_cast<int>(product(
+                        static_cast<std::uint16_t>(std::abs(distance)), 2 * depth));
+                    const int signedKey = distance < 0 ? -keyMagnitude : keyMagnitude;
+                    const int signedEnvelope = polarity == EnvPolarity::Normal
+                                             ? envelope : -envelope;
+                    const int word = std::clamp(8192 + signedEnvelope + signedKey,
+                                                0, 16383);
+                    productionMatches &= cutoff(level, pitch) == (word >> 2) * 4;
+                }
+    expect(productionMatches,
+           "production ENV/KEY sum discarded firmware carries before the VCF DAC");
 }
 
 void testPwmUsesRecoveredIntegerDacWord()
@@ -15819,6 +15929,7 @@ int main()
         testDcoLfoUsesRecoveredIntegerWord();
         testVcfLfoUsesRecoveredIntegerWord();
         testVcfBendUsesRecoveredIntegerWord();
+        testVcfEnvelopeAndKeyFollowKeepFirmwarePrecision();
         testPwmUsesRecoveredIntegerDacWord();
         testLfoDelayStartsFadeOnHoldoffCrossingPass();
         testPwmUsesRawLfoOutsideDelayEnvelope();
@@ -15915,6 +16026,7 @@ int main()
     testDcoLfoUsesRecoveredIntegerWord();
     testVcfLfoUsesRecoveredIntegerWord();
     testVcfBendUsesRecoveredIntegerWord();
+    testVcfEnvelopeAndKeyFollowKeepFirmwarePrecision();
     testPwmUsesRecoveredIntegerDacWord();
     testLfoDelayStartsFadeOnHoldoffCrossingPass();
     testRangeDividerCompletesItsCurrentSynchronousCount();

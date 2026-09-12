@@ -574,6 +574,16 @@ public:
     [[nodiscard]] static std::int32_t vcfLfoCountsWord(
         std::uint16_t accumulator, bool positivePolarity,
         std::uint8_t delayByte, std::uint8_t storedDepth) noexcept;
+    // Envelope RAM retains 14 bits until the doubled ENV byte is multiplied
+    // into it. The separate voice-VCA DAC has already discarded two bits and
+    // is not a valid source for this product.
+    [[nodiscard]] static std::uint16_t vcfEnvelopeCountsWord(
+        std::uint16_t envelopeLevel, std::uint8_t storedDepth) noexcept;
+    // Key follow consumes the voice's 8.8 portamento word, before master tune,
+    // bend and DCO-LFO. Signed input also preserves the host transpose extension
+    // below note zero; actual voice-CPU words are unsigned.
+    [[nodiscard]] static std::int32_t vcfKeyFollowCountsWord(
+        std::int32_t voicePitchWord, std::uint8_t storedDepth) noexcept;
 
     // Convenience adapter for a requested middle-range frequency. Production
     // constructs the 8.8 coordinate directly; this keeps the circuit-law seam
@@ -1747,7 +1757,6 @@ private:
 
     // Modulation budgets, in converter counts, taken from the instrument's own
     // control tables. 1143 counts is one octave.
-    static constexpr float vcfEnvelopeCounts = 16255.0f;
     // The maximum of vcfLfoCountsWord: depth byte 253 (2 * 127 * 255 >> 8)
     // against the full 8191 accumulator, 253 * 8191 >> 9. The live term is
     // that integer law, not a fraction of this figure.
@@ -1846,7 +1855,6 @@ private:
     // the droop has one transfer rather than an unlabelled number at the
     // summing point. Voiced, like the droop coefficient it multiplies.
     static constexpr float railToCutoffCountsPerVolt = 35.0f;
-    static constexpr float vcfKeyFollowCentreMidi = 60.0f; // C4
     enum class EnvelopeStage { Idle, Attack, Decay, Sustain, Release };
 
     // Hash-matched B-2 firmware mechanics: a 14-bit integer advanced once per
