@@ -5805,8 +5805,8 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputSlewStateRight_ = 0.0f;
     outputBandwidthStateLeft_ = 0.0f;
     outputBandwidthStateRight_ = 0.0f;
-    outputJackStateLeft_ = 0.0f;
-    outputJackStateRight_ = 0.0f;
+    outputJackLeft_.reset();
+    outputJackRight_.reset();
     outputNoiseStateLeft_ = 0x91e10da5u;
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
@@ -9866,16 +9866,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                    * outputCouplingNetwork.resistance);
             outputCouplingG_ = std::tan(
                 pi * outputCouplingCorner * inverseSampleRate_);
-            // R64/R65 with C22/C21 after the selector, at the host rate. The
-            // matched-Z blend the IC6 pole uses, not a tan() prewarp: the
-            // 46.15 kHz corner lies above Nyquist at 44.1/48 kHz hosts, where
-            // a bilinear map has no frequency to land it on. There the blend
-            // is nearly transparent (about -0.04 dB at 20 kHz) and the
-            // physical -0.75 dB at 20 kHz appears only as the host rate
-            // rises: -0.33 dB at 96 kHz, -0.61 dB at 192 kHz.
-            outputJackBlend_ = 1.0f - std::exp(
-                -twoPi * outputJackCornerHzFor(outputCouplingNetwork)
-                * inverseSampleRate_);
+            // Preserve the above-Nyquist circuit's in-band magnitude at
+            // ordinary host rates; derivation in YouKnowOutputJack.h.
+            outputJackCoefficients_ = OutputJackLowPass::coefficients(
+                outputJackCornerHzFor(outputCouplingNetwork), sampleRate_);
             outputCouplingGain = outputCouplingNetwork.loadedLower > 0.0f
                 ? outputCouplingNetwork.loadedLower
                     / outputCouplingNetwork.resistance
@@ -9921,13 +9915,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         // C22/C21 with R64/R65: the jack node the plug sees. The coupling and
         // the wiper's noise both sit behind the 2.2 kOhm, so the pole follows
         // them. It is the nominal circuit's, so Unit Character does not scale
-        // it; see outputJackBlend_.
-        outputJackStateLeft_ +=
-            outputJackBlend_ * (outputLeft - outputJackStateLeft_);
-        outputJackStateRight_ +=
-            outputJackBlend_ * (outputRight - outputJackStateRight_);
-        outputLeft = outputJackStateLeft_;
-        outputRight = outputJackStateRight_;
+        // it; see OutputJackLowPass for the numerical matching policy.
+        outputLeft = outputJackLeft_.process(outputLeft, outputJackCoefficients_);
+        outputRight = outputJackRight_.process(outputRight, outputJackCoefficients_);
 
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.

@@ -93,6 +93,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowNoiseCalibration.h
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
+    Source/DSP/YouKnowOutputJack.h
     Source/DSP/YouKnowPanel.h)
 
 add_library(YouKnowDSP STATIC
@@ -581,6 +582,11 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.ChorusInputLoading COMMAND YouKnowChorusInputLoadingTests)
     set_tests_properties(YouKnow.ChorusInputLoading PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowOutputJackTests Tests/YouKnowOutputJackTests.cpp)
+    target_link_libraries(YouKnowOutputJackTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.OutputJack COMMAND YouKnowOutputJackTests)
+    set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
+
     add_executable(YouKnowVcfCalibrationTests Tests/YouKnowVcfCalibrationTests.cpp)
     target_link_libraries(YouKnowVcfCalibrationTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcfCalibration COMMAND YouKnowVcfCalibrationTests)
@@ -626,7 +632,7 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowSysExTests PRIVATE cxx_std_20)
 
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
-                   YouKnowChorusInputLoadingTests
+                   YouKnowChorusInputLoadingTests YouKnowOutputJackTests
                    YouKnowVcfIntegratorTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)

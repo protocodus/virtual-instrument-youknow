@@ -1493,12 +1493,6 @@ struct YouKnowTestAccess
         return engine.outputCouplingLeft_.state;
     }
 
-    // The R64/R65-C22/C21 blend the last render applied at the host rate.
-    static float outputJackBlend(const YouKnowEngine& engine) noexcept
-    {
-        return engine.outputJackBlend_;
-    }
-
     struct BandlimitedTrackState
     {
         std::array<float, YouKnowEngine::correctionRing> ring {};
@@ -13041,10 +13035,9 @@ void testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates()
     // corner differ. The 20th harmonic of a B5 saw against its fundamental,
     // one position against the other, is therefore the pole's own transfer
     // ratio and nothing else, rendered through the shipping path. The
-    // 46.15 kHz and 33.32 kHz corners only tell apart at a high host rate:
-    // at 192 kHz they are 0.57 dB apart at 19.8 kHz, while at 48 kHz both
-    // blends sit within 0.04 dB of transparent, which is the numerical
-    // limitation the engine's comment states.
+    // 46.15 kHz and 33.32 kHz corners now remain audible at ordinary host
+    // rates too (the independent OutputJack test covers those). This high-rate
+    // integration fixture isolates a clean 20th harmonic from the DCO path.
     constexpr double hostRate = 192000.0;
     constexpr int midiNote = 83; // B5, 987.8 Hz; harmonic 20 at 19.76 kHz
     constexpr int harmonic = 20;
@@ -13054,7 +13047,7 @@ void testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates()
     struct Rendered
     {
         std::vector<float> left;
-        float blend;
+        double corner;
     };
     const auto renderAt = [&](float volume) {
         YouKnowEngine engine;
@@ -13065,7 +13058,7 @@ void testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates()
         engine.noteOn(midiNote, 1.0f);
         auto rendered = renderExact(engine, samples);
         return Rendered { std::move(rendered.left),
-                          YouKnowTestAccess::outputJackBlend(engine) };
+                          YouKnowEngine::outputJackCornerHz(volume) };
     };
     const auto full = renderAt(1.0f);
     const auto half = renderAt(0.5f);
@@ -13116,53 +13109,20 @@ void testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates()
     };
     const double measured = ratioDb(full.left) - ratioDb(half.left);
 
-    // |b / (1 - (1 - b) z^-1)| of the blend at a frequency.
-    const auto blendMagnitudeDb = [](double blend, double frequency,
-                                     double rate) {
-        const double pole = 1.0 - blend;
-        const double omega = 2.0 * pi * frequency / rate;
-        return 10.0 * std::log10(
-            blend * blend / (1.0 - 2.0 * pole * std::cos(omega) + pole * pole));
+    // Compare the actual audio against the continuous RC transfer, not a
+    // second copy of the new coefficient expression.
+    const auto magnitudeDb = [](double corner, double frequency) {
+        const double ratio = frequency / corner;
+        return -10.0 * std::log10(1.0 + ratio * ratio);
     };
-    const auto analyticBlend = [](float volume, double rate) {
-        return 1.0 - std::exp(-2.0 * pi
-                              * YouKnowEngine::outputJackCornerHz(volume)
-                              / rate);
-    };
-    expectNear(full.blend, analyticBlend(1.0f, hostRate), 1.0e-6,
-               "the full-volume jack blend is not 1 - exp(-2 pi fc / fs) at "
-               "a 192 kHz host");
-    expectNear(half.blend, analyticBlend(0.5f, hostRate), 1.0e-6,
-               "the half-volume jack blend is not 1 - exp(-2 pi fc / fs) at "
-               "a 192 kHz host");
     const double expected =
-        (blendMagnitudeDb(full.blend, top, hostRate)
-         - blendMagnitudeDb(full.blend, fundamental, hostRate))
-        - (blendMagnitudeDb(half.blend, top, hostRate)
-           - blendMagnitudeDb(half.blend, fundamental, hostRate));
+        (magnitudeDb(full.corner, top) - magnitudeDb(full.corner, fundamental))
+        - (magnitudeDb(half.corner, top) - magnitudeDb(half.corner, fundamental));
     expect(expected > 0.4,
            "fixture: the two jack corners are not telling apart at 192 kHz ("
                + std::to_string(expected) + " dB)");
     expectNear(measured, expected, 0.05,
-               "the rendered jack pole does not match its blend's analytic "
-               "magnitude at a 192 kHz host");
-    // The absolute figures the README quotes for the same blend.
-    expectNear(blendMagnitudeDb(full.blend, 20000.0, hostRate), -0.61, 0.01,
-               "a 192 kHz host does not roll off 0.61 dB at 20 kHz");
-    expectNear(blendMagnitudeDb(analyticBlend(1.0f, 96000.0), 20000.0, 96000.0),
-               -0.33, 0.01, "a 96 kHz host does not roll off 0.33 dB at 20 kHz");
-    {
-        YouKnowEngine engine;
-        engine.prepare(48000.0, blockSize, true);
-        engine.setParameters(plainPatch());
-        renderExact(engine, blockSize);
-        const double blend = YouKnowTestAccess::outputJackBlend(engine);
-        expectNear(blend, analyticBlend(1.0f, 48000.0), 1.0e-6,
-                   "the jack blend at a 48 kHz host is not the matched-Z "
-                   "blend of its above-Nyquist corner");
-        expectNear(blendMagnitudeDb(blend, 20000.0, 48000.0), -0.04, 0.01,
-                   "a 48 kHz host is not nearly transparent at 20 kHz");
-    }
+               "the rendered jack pole does not match the analog RC magnitude");
 }
 
 void testVcaLevelGainWarmsWithTheChassis()

@@ -6,6 +6,7 @@
 #include "YouKnowNoiseCalibration.h"
 #include "YouKnowHighPassSwitch.h"
 #include "YouKnowPwmControl.h"
+#include "YouKnowOutputJack.h"
 
 #include <array>
 #include <bit>
@@ -3176,13 +3177,12 @@ private:
     HighPass outputCouplingLeft_ {};
     HighPass outputCouplingRight_ {};
     float outputCouplingG_ { 0.0001f };
-    // One C22/C21 charge state per jack, at the host rate. The pole sits after
-    // the coupling and the wiper noise, and its corner moves with the wiper's
-    // source resistance, so its blend is recomputed beside the coupling
-    // coefficient when Volume moves.
-    float outputJackStateLeft_ { 0.0f };
-    float outputJackStateRight_ { 0.0f };
-    float outputJackBlend_ { 1.0f };
+    // Magnitude-matched C22/C21 pole after coupling and wiper noise, at the
+    // host rate. Recompute the coefficients as VOLUME changes the source
+    // resistance; retain signal histories (not a claimed capacitor voltage).
+    OutputJackLowPass outputJackLeft_ {};
+    OutputJackLowPass outputJackRight_ {};
+    OutputJackLowPass::Coefficients outputJackCoefficients_ {};
 
     // VCA LEVEL controls the single jack-board VCA after the six voice cards
     // and shared HPF. It is not part of each voice's envelope VCA.
