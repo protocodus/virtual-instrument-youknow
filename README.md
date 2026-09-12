@@ -108,6 +108,10 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 - The measured six-card filter profile and coupled HPF circuit now run in
   the product, including restored sessions, following the owner's choice
   of candidate B. Their unit-specific calibration limits remain documented.
+- Restored firmware precision in filter envelopes/key follow, corrected the
+  chorus input's electrical loading, and preserved the output circuit's gentle
+  treble roll-off at ordinary sample rates. The [fidelity research](#juno-106-fidelity-research)
+  gives the evidence, measured gains and listening implications.
 
 [Full changes and compatibility details](#detailed-release-notes).
 
@@ -435,10 +439,15 @@ forty-year-old unit will null against the plug-in.
   pole on each jack whose resistance is the series part plus the wiper's own
   Thévenin source: 46.1 kHz at full volume, 33.3 kHz at half, so −0.20/−0.75
   dB at 10/20 kHz at full volume and −0.37/−1.34 dB at half (anchored parts;
-  jack open, OQ-17). It runs at the host rate as a matched-Z blend, which at
-  44.1/48 kHz hosts is nearly transparent (about −0.04 dB at 20 kHz) and
-  delivers the physical roll-off only as the host rate rises (−0.33 dB at
-  96 kHz, −0.61 dB at 192 kHz, at 20 kHz); it is the nominal circuit's, so
+  jack open, OQ-17). The former host-rate matched-Z blend lost most of that
+  physical roll-off at ordinary rates. The jack now uses a
+  [magnitude-matched one-pole approximation](https://vicanek.de/articles/ShelvingFits.pdf)
+  with the matching point at min(20 kHz, 0.9 Nyquist): the output-jack test's
+  worst audio-band magnitude error falls from 1.172 to 0.098 dB over 8–768 kHz
+  host rates. At 48 kHz/full volume, the 20 kHz attenuation is −0.75 dB;
+  at half volume it is −1.34 dB. Phase remains approximate: at 48 kHz/full
+  volume/20 kHz the model is −1.76° against the circuit's −23.43°, so this
+  does not establish a complex-transfer or capacitor-charge match. It is the nominal circuit's, so
   Unit Character does not scale it, and a mono bus leaves its time constant
   unchanged (2.2 kΩ‖2.2 kΩ into 2 nF). Its nominal 1.0 V/µs slew is Toshiba's
   [typical value](https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3)
@@ -477,6 +486,13 @@ forty-year-old unit will null against the plug-in.
   point and approximately 2%/2 Vrms curve while retaining its 2.5% input-swing
   guarantee and saturation rail; explicit zero-order hold plus residual
   charge-transfer loss at the datasheet anchor; and full support-filter chains.
+  At the input, C44/C47 (100 nF), R120/R114 (100 kΩ), R122/R115 (10 kΩ)
+  and C52/C56 (2.2 nF) now form one coupled capacitor network. The unbuffered
+  low-pass branch loads the coupling node, reducing the wet input by about
+  0.19 dB through the low/mid band against the former isolated HP×LP cascade.
+  Independent two-node AC checks qualify both the continuous HQ path and the
+  established low-rate prewarping policy. Bias-source and follower impedance
+  remain the existing ideal boundaries, pending installed-unit measurements.
   The two continuously connected MN3009 output followers now use the
   [Panasonic Gi–RL curve's](https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf)
   local ≈3.7 kΩ typical source estimate, each through Roland's 3.3 kΩ leg.
@@ -526,6 +542,172 @@ from a fresh service along one documented recalibration; Velocity,
 Transpose, Master Tune, Chorus Noise (HISS), Polyphony 1–16, the Quality
 ladder and the VCF numerical-kernel settings described under
 [performance controls](#performance-and-quality).
+
+### Juno-106 fidelity research
+
+Three corrections improve agreement with the documented circuit and B-2
+firmware: the filter-control arithmetic, the chorus input's mutual loading,
+and the digital approximation of the output jack's treble attenuation.
+They correct identifiable implementation errors without fitting a new
+instrument character to an unrelated recording. Their expected listening
+impact is modest; the measurements below are local numerical and circuit
+comparisons, not a new blind listening result or an overall hardware-fidelity
+score.
+
+The useful form of novelty here is applying established methods to previously
+unqualified boundaries of this particular model. A more complex oscillator,
+larger oversampling multiplier or neural replacement is not automatically
+more accurate. The existing engine already represents integer note timers,
+nonlinear OTA feedback, scanned control holds, physical BBD sampling and
+coupled output reconstruction. The remaining question is which discrepancy
+can be independently identified and reduced.
+
+#### Implemented findings
+
+| Improvement | Evidence and independent check | Measured change | What a listener can expect |
+| --- | --- | --- | --- |
+| Filter ENV/KEY precision | Pinned B-2 instructions; exhaustive byte-product oracles and actual converter-write fixtures | 10,485,760 operand/depth combinations now agree; an exposed combined case corrects two DAC codes, equivalent to 8.40 cents of cutoff | Small changes in resonant attacks, decays and portamento stepping; no general brightness boost |
+| Coupled chorus input | Service-note topology; two-node complex-admittance reference separate from the production state matrix | Former maximum error 0.18856 dB; new 56-case maximum 0.003474 dB / 0.007079° against the declared reference at each rate | Slightly less low/mid wet contribution and correspondingly less BBD drive; same modulation timing and routing |
+| Output-jack discretization | Existing component-derived RC corner; independent impulse-response comparison with the analog transfer | Worst tested audio-band magnitude error 1.17177 → 0.09743 dB across twelve host rates and five volume positions | A little less excess top-end on bright material, with closer tonal agreement between sample rates |
+
+**Filter control.** The [B-2 listing at `$05C5–$05D2` and
+`$05E1–$0637`](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L923-L992)
+establishes the ENV partial products and KEY shifts. The implementation now
+uses `floor(envelope14 * (2 * ENVbyte) / 256)` and forms KEY from the two
+separately shifted 8.8 pitch terms before signed multiplication. Both retain
+their low-order carries until the final summed cutoff word reaches the DAC.
+This is ROM-resolved for the named revision, not a statement about every
+possible firmware revision.
+
+The former path reused the VCA's already-truncated envelope fraction and
+continuous key-follow scaling. Its individual ENV and KEY terms could differ
+by up to 3.916 and 2.604 internal counts in the audited domains. Those errors
+can combine across a final four-count DAC boundary. For panel base 8192,
+inverted full ENV, envelope RAM 895 and pitch word 15374, the former result
+was 7312; the recovered arithmetic yields 7304. Octave scaling and the full
+ENV endpoint are unchanged. Velocity remains the documented software
+extension, applied after the firmware ENV product.
+
+**Chorus input.** On [Roland's jack-board drawing, p. 15](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15),
+the coupling node is connected to both its bias return and the downstream
+RC branch. There is no buffer separating those two sections. Solving their
+currents together adds the loading term missing from the earlier cascade.
+With coupling capacitor `Cc`, bias resistor `Rb`, series resistor `Rs` and
+shunt capacitor `Cp`, the derived transfer is
+`s*Rb*Cc / (1 + s*(Rb*Cc + Rs*Cp + Rb*Cp) + s²*Rb*Rs*Cc*Cp)`.
+
+The continuous six-state support model now includes that connection. The
+lower-rate implementation solves the same two capacitor currents together
+while keeping its previously qualified prewarping policy; its state carries
+use double precision to avoid persistent numerical DC remnants. The
+independent reference uses node admittances rather than reproducing the
+production matrix. The resulting nominal wet correction is −0.18856 dB at
+400 Hz, −0.18590 dB at 1 kHz and −0.06601 dB at 10 kHz. These values describe
+the signal entering the BBD; final stereo-output changes depend on the dry/wet
+sum and nonlinear drive. They do not calibrate absolute chorus gain, bias
+trimmers, clock endpoints or hiss.
+
+**Output jack.** A corner above Nyquist can still attenuate audible frequencies.
+The former exponential recursion reproduced a sampled decay but largely
+missed that attenuation at normal host rates. The replacement applies the
+low-pass limit of [Vicanek's matched one-pole design, equations 3–12](https://vicanek.de/articles/ShelvingFits.pdf).
+It matches DC, low-frequency magnitude curvature and one upper-band point;
+the matching point is capped at 20 kHz to keep high-rate approximation
+accuracy within the audited audio band. This cap is numerical policy.
+
+At 48 kHz and full volume, 20 kHz now receives the modelled −0.75 dB
+attenuation instead of approximately −0.04 dB. Half volume receives −1.34 dB
+instead of approximately −0.21 dB because the pot changes source resistance.
+The filter follows the glided volume position, retains signal histories,
+adds no sample delay and preserves unity DC while coefficients move. The
+test compares actual impulse output with a separately reduced analog RC
+network, checks host-rate wiring at 1×/2×/4×, and exercises reset and
+block-boundary invariance during volume automation. This is a magnitude
+improvement; the remaining phase mismatch stated above is substantial near
+Nyquist. External output loading remains outside the nominal model.
+
+#### Other methods assessed
+
+The following decisions distinguish a useful research method from evidence
+that it should replace a shipping block. The method summaries are sourced;
+their adoption decisions are engineering judgments for this repository.
+
+| Method and primary research | Relevance | Decision |
+| --- | --- | --- |
+| [Differentiable white-box modeling — Esqueda, Kuznetsov & Parker, 2021](https://dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_39.pdf) | Learns circuit parameters from measured input/output while retaining the circuit equations | Appropriate for future bounded identification of uncertain component values. No new fit is justified without suitable original-unit captures and held-out controls. |
+| [Differentiable all-pole filters — Yu et al., 2024](https://diffapf.github.io/web/) | Gives sample-wise gradients for time-varying recursive filters | Useful for offline envelope/filter identification. Its synth example is not evidence that a simplified filter should replace this nonlinear four-stage model. |
+| [BBD antialiasing with BLEP — Gabrielli, D'Angelo & Squartini, 2025](https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_29.pdf) | Separates physical BBD aliasing from additional artifacts introduced by digital simulation | Already represented by the clock-event reconstruction and existing audits. Preserve physical clock folding; qualify the corrected input network through those same audits. |
+| [Interpolation filters for ADAA — Zheleznov & Bilbao, 2024](https://dafx.de/paper-archive/2024/papers/DAFx24_paper_33.pdf) | Shows gains from cubic interpolation for memoryless nonlinearities, with different stability/results for stateful systems | No blanket insertion into OTA feedback. A feedback-loop modification must requalify resonance, amplitude, modulation and stability; a memoryless result does not supply that evidence. |
+| [Neural multi-port elements in wave-digital structures — Massi et al., 2025](https://dafx.de/paper-archive/2025/DAFx25_paper_69.pdf) | Trains a nonlinear element within a physical circuit structure | A possible residual model after a level-dependent hardware discrepancy is identified. No training data here establishes such a residual for original 80017A cards. |
+
+A local continuous-time VCF probe also examined the linear interpolation used
+between successive cutoff-hold endpoints during RC settling. Supplying exact exponential control
+trajectories reduced numerical error, but would require six cutoff mappings
+per settling sample. At 48 kHz host/4×, the measured waveform corrections in
+the tested non-self-oscillating upward/downward cases (feedback 0 and 3.5)
+were approximately −85 to −110 dB relative to signal. Self-oscillating cases
+had phase-sensitive differences that cannot support the same bound. These
+are circuit-probe differences, not perceptual thresholds.
+
+A cheaper bounded cubic candidate improved one 1× musical-sweep oracle error
+from −71.87 to −81.66 dBr. However, sending those trajectories through the
+current interface disables the multi-voice SIMD path; an extreme upward
+case remained dominated by the solver and showed no useful improvement.
+Neither candidate is adopted. A future implementation needs a bounded
+scalar/pair/quad method with state continuity and measured callback cost,
+not merely a lower offline residual. This leaves a measured
+numerical research opportunity without introducing an unqualified CPU
+regression into the product.
+
+#### Limits and next hardware evidence
+
+Numerical agreement with a circuit equation proves that the implementation
+solves that model more accurately. It does not prove that all uncertain
+component values describe a particular forty-year-old instrument. The
+existing [identified-unit report](Docs/hardware-validation.md) uses a serviced
+Juno-106 with replacement voice cards, and the approved product profile
+retains that scope. None of this pass's numerical improvements changes that
+calibration into an original-card population measurement.
+
+The next experiments with the strongest potential to change audible fidelity
+remain original-card noise/source balance, chorus delay/level/noise, and
+filter transfer versus input level. Each needs exact patch bytes, an
+unchanged recording gain, a documented output connection, warm-up state and
+separate control settings reserved for validation. A fitting method should
+first recover nuisance gain and alignment without letting per-patch EQ hide
+model error. Repeat captures are needed to separate measurement variation,
+unit condition and a wrong nominal law. These are evidence requirements,
+not additional unimplemented sound-design choices.
+
+#### Reproduction and listening
+
+Build with the existing DSP-only recipe and run `ctest --output-on-failure`.
+`YouKnowOutputJackTests` reports the magnitude comparison;
+`YouKnowChorusInputLoadingTests` reports AC errors and the loading correction;
+`YOUKNOW_PIT_TESTS_ONLY=1 YouKnowEngineTests` includes the exhaustive ENV/KEY
+oracle and production control-write fixtures. The general engine, circuit,
+oversampling and rendering suites check their integration. All references
+and derivations needed by the implementation are also beside the code.
+
+The maintained ten demos and *Low Sun* composition are re-rendered from the
+combined changes with the existing product profile and renderer settings.
+Their tables below are generated by the renderers. Frozen historical
+comparison recordings remain historical evidence. For listening, bright
+upper-register material exposes the output correction, chorus pads expose
+the small wet-balance change, and resonant envelopes or portamento expose
+the firmware correction. Small corrections can disappear in a dense mix;
+no new blind audibility or preference verdict is claimed.
+
+#### Research sources
+
+1. Roland Corporation. [JUNO-106 Service Notes, first edition](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15), July 31, 1984, printed p. 15. Original circuit topology and component values; the scan is hosted by KiwiTechnics.
+2. ErroneousBosh. [Juno-106 voice-CPU B-2 disassembly, `ic29.txt`](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L923-L992), immutable revision `26926a04ff1939106820313e71e34b4ca2f67070`, accessed September 12, 2026. ENV/KEY instruction order and integer arithmetic; a reverse-engineered primary technical artifact, not an official firmware specification.
+3. Martin Vicanek. [Matched One-Pole Digital Shelving Filters](https://vicanek.de/articles/ShelvingFits.pdf), September 7, 2019, revised September 24, 2019, equations 3–12. Magnitude-matching method, applied here in its low-pass limit.
+4. Fabián Esqueda, Boris Kuznetsov and Julian D. Parker. [Differentiable White-Box Virtual Analog Modeling](https://dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_39.pdf), DAFx20in21, September 8–10, 2021, pp. 41–48. Parameter identification through circuit simulation.
+5. Chin-Yun Yu and collaborators. [Differentiable All-pole Filters for Time-varying Audio Systems](https://diffapf.github.io/web/), 2024, paper and accompanying research examples. Time-varying recursive-filter gradients.
+6. Leonardo Gabrielli, Stefano D'Angelo and Stefano Squartini. [Antialiasing in BBD Chips Using BLEP](https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_29.pdf), DAFx25, September 2–5, 2025, pp. 71–77. Physical versus simulation-generated BBD aliases.
+7. Victor Zheleznov and Stefan Bilbao. [Interpolation Filters for Antiderivative Antialiasing](https://dafx.de/paper-archive/2024/papers/DAFx24_paper_33.pdf), DAFx24, September 3–7, 2024. Memoryless and stateful interpolation results and stability qualifications.
+8. Oliviero Massi, Alessandro Ilic Mezza, Riccardo Giampiccolo and Alberto Bernardini. [Training Neural Models of Nonlinear Multi-Port Elements Within Wave Digital Structures Through Discrete-Time Simulation](https://dafx.de/paper-archive/2025/DAFx25_paper_69.pdf), DAFx25, September 2–5, 2025. Learned circuit-element models; no Juno-106 calibration result is claimed.
 
 ### Voices, character and aging
 
@@ -1084,6 +1266,19 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### Changes in 1.1.0
 
+- Filter ENV/KEY calculations now retain the B-2 firmware's operand precision
+  and partial-product carries through the final VCF DAC sum. The correction
+  changes fine envelope/glide steps while preserving octave and full ENV
+  endpoints; the velocity extension remains available.
+- The chorus input coupling and passive low-pass branch now load each other
+  in one capacitor solve, removing about 0.19 dB of excess wet midrange under
+  the existing ideal bias/follower boundaries. Both quality paths are covered
+  by independent node-admittance tests.
+- The output jack's magnitude approximation now preserves its component-derived
+  high-frequency attenuation at ordinary host rates. Existing sessions inherit
+  the gentle treble correction; there are no new parameters or state-format
+  changes. Its phase and external-load limitations remain documented in the
+  [research assessment](#juno-106-fidelity-research).
 - The LFO delay re-arms on the firmware's running-voice mask rather than on
   the held keys. B-2 rebuilds that mask each pass as the gate bits, OR-ed
   with their previous value while HOLD is down, and re-arms on the first
