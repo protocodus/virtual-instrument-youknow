@@ -538,6 +538,26 @@ std::vector<Take> buildTakes()
         take.endMs = 28000;
         takes.push_back(take);
     }
+    {
+        // 10b. Chorus switching transients in isolation. Long settle windows
+        // around each step make return/clock leak timing easier to read than 10.
+        Take take;
+        take.id = "10b-chorus-transients";
+        take.purpose = "Chorus wet-switch transient timing and leakage (OQ-20), "
+                       "with OFF->I, I->OFF, OFF->II and II->OFF transitions and "
+                       "seconds of context around each edge. Rate, depth and hiss "
+                       "metrics remain as in 10-chorus.";
+        take.panel = "SAW on, SUB at 64, VCF FREQ at 90/127, RES 0, ENV 0, "
+                     "VCA GATE, VCA LEVEL max, HPF flat. Chorus stepped "
+                     "off -> I -> off -> II -> off by SysEx.";
+        take.patch = openPanel();
+        take.patch.saw = true;
+        take.patch.sub = 64.0f / 127.0f;
+        take.patch.cutoff = 90.0f / 127.0f;
+        take.notes = { { 60, 500, 48500 } };
+        take.endMs = 50000;
+        takes.push_back(take);
+    }
 
     // 11. The four high-pass positions on one held chord. Relative transfer
     // between the positions of the same take: entirely chain-free.
@@ -645,12 +665,20 @@ std::vector<Take> buildTakes()
 // the only thing modulating is the effect under test.
 std::vector<Take> buildLongTakes()
 {
-    struct LongTake { const char* id; ChorusMode chorus; const char* label; };
+    struct LongTake
+    {
+        const char* id;
+        ChorusMode chorus;
+        const char* label;
+        bool unencodable = false;
+    };
     std::vector<Take> takes;
     for (const auto& entry : {
              LongTake { "L1-chorus-off", ChorusMode::Off, "CHORUS off" },
              LongTake { "L2-chorus-one", ChorusMode::One, "CHORUS I" },
-             LongTake { "L3-chorus-two", ChorusMode::Two, "CHORUS II" } })
+             LongTake { "L3-chorus-two", ChorusMode::Two, "CHORUS II" },
+             LongTake { "L4-chorus-one-two", ChorusMode::OneTwo,
+                        "CHORUS I+II", true } })
     {
         Take take;
         take.id = entry.id;
@@ -669,7 +697,10 @@ std::vector<Take> buildLongTakes()
             std::string("SAW on, PULSE off, SUB 0, NOISE 0, RANGE 8', "
                         "VCF FREQ max, RES 0, ENV 0, LFO 0, KYBD 0, HPF flat, "
                         "VCA GATE, VCA LEVEL max, and ") + entry.label
-            + ". Set it once; nothing moves during the take.";
+            + (entry.unencodable ? ". Press both chorus buttons on the panel "
+                                 "for this state and hold; SysEx patches "
+                                 "encode only OFF/I/II."
+                                 : ". Set it once; nothing moves during the take.");
         take.patch = openPanel();
         take.patch.saw = true;
         take.patch.chorus = entry.chorus;
@@ -722,6 +753,17 @@ std::vector<ParameterStep> parameterStepsFor(const std::string& id)
         const int two = base;
         return { { 200, switchesOne, off }, { 6000, switchesOne, one },
                  { 12000, switchesOne, two }, { 18000, switchesOne, off } };
+    }
+    if (id == "10b-chorus-transients")
+    {
+        // Long windows around each edge for OQ-20 timing and leakage.
+        const int base = (1 << 1) | (1 << 4);
+        const int off = base | (1 << 5);
+        const int one = base | (1 << 6);
+        const int two = base;
+        return { { 200, switchesOne, off }, { 7000, switchesOne, one },
+                 { 22000, switchesOne, off }, { 30000, switchesOne, two },
+                 { 43000, switchesOne, off } };
     }
     if (id == "11-high-pass")
     {
@@ -1141,7 +1183,8 @@ int main(int argc, char** argv)
     const std::filesystem::path longDirectory = root / "long";
     std::filesystem::create_directories(longDirectory, error);
     manifest << "\n== long takes (for a reference that corrupts at random) ==\n";
-    for (const auto& take : buildLongTakes())
+    const auto longTakes = buildLongTakes();
+    for (const auto& take : longTakes)
     {
         std::vector<MidiEvent> longEvents;
         for (const auto& note : take.notes)
@@ -1168,9 +1211,9 @@ int main(int argc, char** argv)
     }
 
     std::printf("\nWrote %zu takes to %s, %zu static-panel files to %s, "
-                "and 3 long takes to %s\n",
+                "and %zu long takes to %s\n",
                 takes.size(), outputDirectory.string().c_str(), manualFiles,
-                manualDirectory.string().c_str(),
+                manualDirectory.string().c_str(), longTakes.size(),
                 longDirectory.string().c_str());
     return 0;
 }

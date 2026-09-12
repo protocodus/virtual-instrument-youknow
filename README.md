@@ -105,6 +105,9 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 - Corrected PWM control smoothing, reconstruction of clocked chorus noise,
   and fixed filter service trimming, with additional component and
   original-recording comparisons.
+- The measured six-card filter profile and coupled HPF circuit now run in
+  the product, including restored sessions, following the owner's choice
+  of candidate B. Their unit-specific calibration limits remain documented.
 
 [Full changes and compatibility details](#detailed-release-notes).
 
@@ -350,7 +353,7 @@ forty-year-old unit will null against the plug-in.
   unit's resonance sweep, spectral-ratio error falls from 2.931 to 1.982 dB
   RMS with the same noise calibration in both renders. This supports the
   wiring correction without identifying every resonance component value.
-- The optional `useServiced439522VcfCalibration` comparison assigns fitted
+- The product enables `useServiced439522VcfCalibration`, assigning fitted
   FREQ/WIDTH and effective current-ceiling coordinates to six fixed card
   slots. Native 192 kHz renders reduce per-card held-out tuning error from
   42.0–56.8 to 9.7–22.2 cents RMS; worst error falls from 243.6 to 45.9 cents.
@@ -358,7 +361,9 @@ forty-year-old unit will null against the plug-in.
   cards. The profile does not establish original-module tolerances or drift,
   and its ascending-sweep startup discrepancy remains visible. Representative
   192/384 kHz renders differ by at most 2.42 cents, so fitted decimal places
-  are not physical measurement precision.
+  are not physical measurement precision. Unit Character and Aging add their
+  existing variation to this measured base. Nominal raw-DSP calibration
+  remains available for component reference tests and comparisons.
 - C59's 1 µF voice coupling now uses the
   [module board's R108 82 kΩ](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13)
   as its minimum series resistance, replacing a contradicted 33 kΩ estimate.
@@ -515,7 +520,7 @@ forty-year-old unit will null against the plug-in.
   voiced point; OQ-04).
 
 **Instrument-level extensions** (product policy): Unit Character scales
-every modelled tolerance from calibrated-nominal (0) through the default
+the additional modelled tolerances from zero through the default
 voiced profile (100%) to exaggerated (200%); Aging drifts the instrument away
 from a fresh service along one documented recalibration; Velocity,
 Transpose, Master Tune, Chorus Noise (HISS), Polyphony 1–16, the Quality
@@ -533,8 +538,10 @@ unison stack is never artificially phase-locked. There is no six-oscillator
 detune generator; the LFO and envelope generator are shared and digital,
 exactly as in the hardware.
 
-At **Unit Character** 0% the engine is the deterministic calibrated-nominal
-circuit model, including its nominal nonlinearities. At 100% — the default — a
+At **Unit Character** 0% the product retains the measured six-card filter
+calibration and its nonlinearities, with the additional seeded tolerances
+disabled. The raw-DSP reference configuration keeps nominal card calibration.
+At 100% — the default — a
 fixed-seed profile enables the full span of every modelled tolerance:
 per-card ramp current inside the ±2 % G class the module drawing prints on
 C54 (no per-card trimmer touches it), each card's net pulse duty inside the
@@ -543,14 +550,15 @@ CH1 at exactly 50 %, VCA and sub/noise-level errors (a voiced ±3 % class
 inside the ±5 % "R20J" resistor class the module-board legend on p. 12
 prints for every untrimmed leg — R3, R101/R102 and their siblings — with the
 metal-oxide 1 % parts reserved for the DCO ranges), VCF trim
-residuals bounded by the service manual's own ±10-cent acceptance at its two
-check points (fixed service trims absorb static capacitor, converter and
-thermal errors; all twelve rendered endpoints are within 6 cents at the
-declared ten-minute service state), per-stage input offsets and capacitor staggering, slow cutoff
-wander, the R-2R carry error, the two chorus lines' relative insertion
+residuals derived from the service manual's ±10-cent acceptance at its two
+check points (the nominal reference endpoints remain within 6 cents at the
+declared ten-minute service state; the product adds these residuals to the
+measured card base), per-stage input offsets and capacitor staggering, slow cutoff
+wander, the two chorus lines' relative insertion
 offset inside the MN3009's ±4 dB row, and the chassis warm-up law
 `25 + 15(1 − e^{−t/900})` °C with its spatial gradient across the cards.
-Everything scales linearly with the knob, seeds are fixed, and the same
+These additional variations scale with the knob; the measured filter base
+and its DAC carry steps stay active at zero. Seeds are fixed, and the same
 patch renders identically every launch. Where a drawing or a procedure
 bounds a span it sits inside that bound; the points inside are still voiced
 sound design, not measured population statistics — OQ-10 owns the data that
@@ -834,16 +842,16 @@ new plug-in instance starts at 1× with Aging 50 %.
 <!-- peaks-table-begin: regenerated by YouKnowRenderDemos; edits between the markers are overwritten -->
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
-| `01-chorus-pad.wav` | Saw and sub through the mode-I chorus: the classic pad, hiss and all | 21.9 s | −10.5 dBFS | +7.5 dB |
-| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −12.3 dBFS | +9.3 dB |
+| `01-chorus-pad.wav` | Saw and sub through the mode-I chorus: the classic pad, hiss and all | 21.9 s | −10.6 dBFS | +7.6 dB |
+| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −12.4 dBFS | +9.4 dB |
 | `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −24.9 dBFS | +21.9 dB |
 | `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −22.3 dBFS | +19.3 dB |
-| `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −25.6 dBFS | +22.6 dB |
+| `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −25.7 dBFS | +22.7 dB |
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, mode II, then I+II | 20.5 s | −13.0 dBFS | +10.0 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −8.2 dBFS | +5.2 dB |
 | `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −19.5 dBFS | +16.5 dB |
 | `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −11.7 dBFS | +8.7 dB |
-| `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −19.5 dBFS | +16.5 dB |
+| `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −19.6 dBFS | +16.6 dB |
 <!-- peaks-table-end -->
 
 ### The composition
@@ -867,11 +875,11 @@ one cannot.
 | 1 | `A48` Synth Bass I (unison) | bass | 1 | −3.6 dBFS |
 | 2 | `A67` Shaker | shaker | 1 | −28.7 dBFS |
 | 3 | `A64` Snare Drum (unison) | snare | 1 | −14.8 dBFS |
-| 4 | `A54` Funky II | stabs | 4 | −8.4 dBFS |
+| 4 | `A54` Funky II | stabs | 4 | −8.5 dBFS |
 | 5 | `A28` Elect. Piano II | electric piano | 1 | −18.9 dBFS |
 | 6 | `A11` Brass Set 1 | brass | 3 | −11.5 dBFS |
-| 7 | `B11` Strings | strings | 3 | −14.6 dBFS |
-| 8 | `A17` Choir | choir | 3 | −11.3 dBFS |
+| 7 | `B11` Strings | strings | 3 | −14.7 dBFS |
+| 8 | `A17` Choir | choir | 3 | −11.2 dBFS |
 | 9 | `B13` Chorus Vibes | chorus vibes | 4 | −26.5 dBFS |
 | 10 | `A53` Lead III | lead | 1 | −24.5 dBFS |
 <!-- composition-table-end -->
@@ -1496,7 +1504,7 @@ The hardware comparison protocols live with their executable checks in
 [`AnalyzeHardwarePwm.py`](Tools/AnalyzeHardwarePwm.py) and
 [`AnalyzeChorusCapture.py`](Tools/AnalyzeChorusCapture.py), together with
 [`AnalyzeVoiceCardCalibration.py`](Tools/AnalyzeVoiceCardCalibration.py), separate
-fitting from held-out measurements and identifies its recording inputs.
+fitting from held-out measurements and identify their recording inputs.
 `YouKnowRenderVcaControlComparison`, `YouKnowRenderChorusMute`,
 `YouKnowCoupledMixerAudit`, `YouKnowHighPassSwitchAudit`,
 `YouKnowChorusNoiseAudit` and `YouKnowDcoFirmwareTimingAudit` provide the

@@ -5,6 +5,31 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-11 — Adopt filter-card and HPF candidate B in the product
+
+Following confirmation that the other three round-two B corrections were
+active, the owner requested: "do the filter and hpf models as well".
+This selects the remaining two B candidates as product defaults:
+
+- Filter: A was the nominal card calibration; B assigns the serviced
+  #439522 capture's fitted FREQ/WIDTH/current-ceiling coordinates to six
+  card slots. C was recorded hardware context, not another software option.
+- HPF: A was the legacy network; B is the coupled C14/IC3/HPF circuit at
+  110 ohms switch resistance. C used 240 ohms.
+
+The plug-in, ten maintained demos, composition and factory-preset audit use
+the same product selection. Nominal raw-DSP defaults remain available for
+component reference tests and controlled comparisons. No host parameter or
+session-format field is added, so restored sessions also use the new product
+model. Existing Unit Character and Aging settings still apply to the measured
+filter base; their combined sound is not a literal replay of the captured unit.
+
+This is the owner's product direction; no blind listening verdict was
+reported. The serviced unit has Borish replacement cards, and its single
+sweep does not establish original-card population tolerances or drift.
+The 110-ohm HPF coordinate is a datasheet comparison point, not a measured
+installed resistance. Neither adoption closes those calibration questions.
+
 ## 2026-09-11 — Confirm the three adopted round-two B defaults
 
 After reviewing the explanation of the circuit and measurement evidence,
@@ -22,7 +47,8 @@ The approval retains these defaults. It followed the evidence explanation;
 the owner did not report a blind listening result, so this entry records no
 by-ear preference or new measurement. The optional serviced six-card VCF
 profile and finite-resistance HPF comparisons were outside those three
-adopted defaults and remain opt-in. No DSP or preset change is needed.
+adopted defaults and remained opt-in at that decision. The later decision
+above adopts them as well.
 
 ## 2026-09-05 — Release defaults: Quality 1× and Aging 50%
 

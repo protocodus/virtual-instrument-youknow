@@ -150,3 +150,8 @@ be advertised as an exact transistor-level solve. The existing 5 ms JFET glide
 remains declared product policy. A coupled candidate belongs in the independent
 oracle/capture work above; changing several uncertain transistor assumptions
 at once would obscure the confirmed state-continuity fix.
+
+## 2026-09-12 follow-up
+
+The latest open-question capture expansion and source log is in
+[Docs/research-findings-juno106-2026-09-12.md](/Users/vojta/Dev/virtual-instrument-youknow/Docs/research-findings-juno106-2026-09-12.md).
