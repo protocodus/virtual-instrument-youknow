@@ -576,6 +576,11 @@ if(YOUKNOW_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(YouKnowChorusInputLoadingTests Tests/YouKnowChorusInputLoadingTests.cpp)
+    target_link_libraries(YouKnowChorusInputLoadingTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusInputLoading COMMAND YouKnowChorusInputLoadingTests)
+    set_tests_properties(YouKnow.ChorusInputLoading PROPERTIES TIMEOUT 60)
+
     add_executable(YouKnowVcfCalibrationTests Tests/YouKnowVcfCalibrationTests.cpp)
     target_link_libraries(YouKnowVcfCalibrationTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcfCalibration COMMAND YouKnowVcfCalibrationTests)
@@ -621,6 +626,7 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowSysExTests PRIVATE cxx_std_20)
 
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
+                   YouKnowChorusInputLoadingTests
                    YouKnowVcfIntegratorTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)

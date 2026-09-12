@@ -160,8 +160,6 @@ constexpr double transferSmear = 0.8654743;
 constexpr double saturationLevel = 1.1246614;
 constexpr double saturationCurvature = 1.2044546;
 constexpr double saturationExponent = 12.9395323;
-constexpr double inputCouplingHz = 15.9155;
-constexpr double inputPassiveHz = 7234.0;
 constexpr double firstHz = 9688.0;
 constexpr double firstQ = 0.5490625934422811;
 constexpr double secondHz = 10377.0;
@@ -185,8 +183,6 @@ constexpr double noiseAmplitude =
 constexpr double modeTwoNoiseGain = 1.57579602;
 constexpr double wetGainTarget = 47.0 / 39.0;
 constexpr double wetTau = 0.005;
-constexpr double hotFundamentalAmplitude = 0.8157048;
-constexpr double hotUpperAmplitude = 0.1464086;
 constexpr double nodeVoltsPerUnit = 2.6;
 constexpr int oracleFactor = 16;
 constexpr std::size_t filterTaps = 4097;
@@ -292,20 +288,6 @@ double triangle(long double phase)
     return static_cast<double>(4.0L * folded - 1.0L);
 }
 
-std::complex<double> lowpass(double frequency, double corner)
-{
-    const std::complex<double> s(0.0, 2.0 * static_cast<double>(pi) * frequency);
-    const double w = 2.0 * static_cast<double>(pi) * corner;
-    return w / (s + w);
-}
-
-std::complex<double> highpass(double frequency, double corner)
-{
-    const std::complex<double> s(0.0, 2.0 * static_cast<double>(pi) * frequency);
-    const double w = 2.0 * static_cast<double>(pi) * corner;
-    return s / (s + w);
-}
-
 std::complex<double> sallen(double frequency, double corner, double q)
 {
     const std::complex<double> s(0.0, 2.0 * static_cast<double>(pi) * frequency);
@@ -315,11 +297,33 @@ std::complex<double> sallen(double frequency, double corner, double q)
 
 std::complex<double> inputResponse(double frequency)
 {
+    // Closed-form KCL for C44/R120/R122/C52, independent of the production
+    // six-state integration. The unbuffered junction adds R120*C52 to the
+    // denominator; the former separable HP*LP reference omitted its load.
+    // Roland JUNO-106 Service Notes, jack board p. 15:
+    // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+    constexpr double bias = 100000.0;
+    constexpr double series = 10000.0;
+    constexpr double coupling = 0.1e-6;
+    constexpr double passive = 2.2e-9;
+    const std::complex<double> s(0.0, 2.0 * static_cast<double>(pi) * frequency);
+    const auto loaded = s * bias * coupling
+        / (1.0 + s * (bias * coupling + series * passive + bias * passive)
+            + s * s * bias * series * coupling * passive);
     return sallen(frequency, firstHz, firstQ)
          * sallen(frequency, secondHz, secondQ)
-         * highpass(frequency, inputCouplingHz)
-         * lowpass(frequency, inputPassiveHz);
+         * loaded;
 }
+
+// Preserve the declared 1.5 Vrms hot test at the BBD input after correcting
+// the support topology. Derive the raw scale, rather than retaining rounded
+// amplitudes normalized through the obsolete unloaded transfer. The original
+// exploratory two-tone weights and their ratio stay fixed.
+const double hotCardScale = 1.5 / (nodeVoltsPerUnit * std::sqrt(0.5
+    * (std::norm(0.78 * inputResponse(997.0))
+       + std::norm(0.14 * inputResponse(5213.0)))));
+const double hotFundamentalAmplitude = 0.78 * hotCardScale;
+const double hotUpperAmplitude = 0.14 * hotCardScale;
 
 double analyticInputSupportRmsVolts()
 {
@@ -340,8 +344,8 @@ struct Drive
         if (noiseOnly)
             return 0.0;
         // The analytic input-support solution puts this two-tone card at
-        // exactly 1.500000 Vrms at the BBD input.  The common scale is
-        // 1.045775384 over the earlier exploratory 0.78/0.14 card.
+        // exactly 1.500000 Vrms at the BBD input. The common scale above is
+        // solved from the installed input topology and the 0.78/0.14 weights.
         return hotFundamentalAmplitude * std::sin(
                    2.0 * static_cast<double>(pi) * 997.0 * time)
              + hotUpperAmplitude * std::sin(

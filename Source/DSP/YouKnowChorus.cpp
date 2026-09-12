@@ -150,8 +150,9 @@ double interpolatedBbdTransfer(double normalised) noexcept
 //   Tr14 / Tr16   1.8 nF feedback, 270 pF shunt  -> 10.38 kHz, Q 1.291
 //
 // and the input adds one passive pole, R122 10 kOhm against C52 2.2 nF, at
-// 7.23 kHz. The coupling capacitor C44/C47 adds a wet-only high-pass against
-// R120/R114 100 kOhm at 15.9 Hz.
+// an isolated 7.23 kHz. C44/C47 and R120/R114 100 kOhm give an isolated
+// 15.9 Hz high-pass. These last two capacitors share an unbuffered node;
+// inputSupportMatrix() includes their mutual loading.
 //
 // This replaces a single pole at 9.9 kHz in and 9.5 kHz out, which was a guess
 // at a fifth-order response rather than the response itself, and was therefore
@@ -166,8 +167,14 @@ constexpr float antiAliasFirstShuntF = 680.0e-12f;
 constexpr float antiAliasSecondHz = 10377.0f;
 constexpr float antiAliasSecondFeedbackF = 1.8e-9f;
 constexpr float antiAliasSecondShuntF = 270.0e-12f;
-constexpr float antiAliasPassiveHz = 7234.0f;   // R122 10 kOhm x C52 2.2 nF
-constexpr float inputCouplingHz = 15.9155f;     // C44 0.1 uF x R120 100 kOhm
+constexpr double inputCouplingFarads = 0.1e-6; // C44 / C47
+constexpr double inputBiasReturnOhms = 100000.0; // R120 / R114
+constexpr double inputPassiveSeriesOhms = 10000.0; // R122 / R115
+constexpr double inputPassiveFarads = 2.2e-9; // C52 / C56
+constexpr float antiAliasPassiveHz = static_cast<float>(1.0
+    / (2.0 * pi * inputPassiveSeriesOhms * inputPassiveFarads));
+constexpr float inputCouplingHz = static_cast<float>(1.0
+    / (2.0 * pi * inputBiasReturnOhms * inputCouplingFarads));
 constexpr float wetOutputCouplingCapacitanceF = 1.0e-6f; // C28 / C25
 constexpr float wetOutputBleedOhms = 22000.0f;           // R103 / R81
 constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
@@ -425,15 +432,26 @@ AnalogMatrix inputSupportMatrix() noexcept
 {
     const double w1 = 2.0 * pi * antiAliasFirstHz;
     const double w2 = 2.0 * pi * antiAliasSecondHz;
-    const double wc = 2.0 * pi * inputCouplingHz;
-    const double wp = 2.0 * pi * antiAliasPassiveHz;
+    const double wc = 1.0 / (inputBiasReturnOhms * inputCouplingFarads);
+    const double wp = 1.0 / (inputPassiveSeriesOhms * inputPassiveFarads);
+    const double loading = 1.0 / (inputPassiveSeriesOhms * inputCouplingFarads);
     const double k1 = 1.0 / Chorus::sallenKeyQ(
         antiAliasFirstFeedbackF, antiAliasFirstShuntF);
     const double k2 = 1.0 / Chorus::sallenKeyQ(
         antiAliasSecondFeedbackF, antiAliasSecondShuntF);
     AnalogMatrix matrix {};
     // Voltage-like analog integrator coordinates: BP1, LP1, BP2, LP2,
-    // coupling-capacitor lowpass voltage and passive-pole output voltage.
+    // voltage across the coupling capacitor and passive-pole output voltage.
+    // Roland JUNO-106 Service Notes, July 31, 1984, jack board p. 15:
+    // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+    // C44/C47 drives R120/R114 and the unbuffered R122/C52 (R115/C56)
+    // branch together. With u=LP2, x=voltage across C44 and y=C52 voltage,
+    // KCL gives x'=(wc+loading)*(u-x)-loading*y, y'=wp*(u-x-y).
+    // The separable HP*LP approximation omitted loading, losing Rbias*C52
+    // from the transfer denominator and making the wet input about 0.19 dB
+    // too hot at midband. Both paths retain the existing ideal bias-source
+    // boundary: the unknown installed VR1/VR2 setting/source impedance and
+    // emitter-follower output impedance are not newly calibrated here.
     matrix[0][0] = -k1 * w1;
     matrix[0][1] = -w1;
     matrix[1][0] = w1;
@@ -441,8 +459,9 @@ AnalogMatrix inputSupportMatrix() noexcept
     matrix[2][2] = -k2 * w2;
     matrix[2][3] = -w2;
     matrix[3][2] = w2;
-    matrix[4][3] = wc;
-    matrix[4][4] = -wc;
+    matrix[4][3] = wc + loading;
+    matrix[4][4] = -wc - loading;
+    matrix[4][5] = -loading;
     matrix[5][3] = wp;
     matrix[5][4] = -wp;
     matrix[5][5] = -wp;
@@ -876,6 +895,20 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     SupportChain chain;
     chain.inputCouplingG = onePoleG(inputCouplingHz, sampleRate);
     chain.passiveG = onePoleG(antiAliasPassiveHz, sampleRate);
+    // Keep the reviewed low-grid prewarping of each reactive rate, but solve
+    // both capacitor currents simultaneously. Both currents through C44 use
+    // its same warped capacitance; their ratio stays R120/R122 = 10.
+    const double gc = chain.inputCouplingG / (1.0 - chain.inputCouplingG);
+    const double gp = chain.passiveG / (1.0 - chain.passiveG);
+    const double gl = gc * inputBiasReturnOhms / inputPassiveSeriesOhms;
+    const double determinant = (1.0 + gc + gl) * (1.0 + gp) - gl * gp;
+    chain.inputCouplingInverse = {{
+        {{ (1.0 + gp) / determinant, -gl / determinant }},
+        {{ -gp / determinant, (1.0 + gc + gl) / determinant }}
+    }};
+    chain.inputCouplingDrive = {{
+        (gc * (1.0 + gp) + gl) / determinant, gp / determinant
+    }};
     chain.antiAliasFirst = sallenKeyCoefficients(
         antiAliasFirstHz,
         sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);
@@ -967,11 +1000,17 @@ float Chorus::advanceInputSupport(float input) noexcept
         inputSupport_.antiAliasFirst, supportInput, support_.antiAliasFirst);
     limited = Chorus::biquadStep(
         inputSupport_.antiAliasSecond, limited, support_.antiAliasSecond);
-    const float couplingLow = Chorus::supportFilterStep(
-        inputSupport_.couplingState, limited, support_.inputCouplingG);
-    limited -= couplingLow;
-    return Chorus::supportFilterStep(
-        inputSupport_.passiveState, limited, support_.passiveG);
+    const auto& inverse = support_.inputCouplingInverse;
+    const auto& drive = support_.inputCouplingDrive;
+    const double coupling = inverse[0][0] * inputSupport_.couplingState
+                          + inverse[0][1] * inputSupport_.passiveState
+                          + drive[0] * limited;
+    const double passive = inverse[1][0] * inputSupport_.couplingState
+                         + inverse[1][1] * inputSupport_.passiveState
+                         + drive[1] * limited;
+    inputSupport_.couplingState = 2.0 * coupling - inputSupport_.couplingState;
+    inputSupport_.passiveState = 2.0 * passive - inputSupport_.passiveState;
+    return static_cast<float>(passive);
 }
 
 void Chorus::Line::reset(std::uint32_t seed) noexcept

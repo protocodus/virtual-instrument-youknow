@@ -996,8 +996,6 @@ constexpr double bbdTransferSmear = 0.8654743;
 constexpr double bbdSaturationLevel = 1.1246614;
 constexpr double bbdSaturationCurvature = 1.2044546;
 constexpr double bbdSaturationExponent = 12.9395323;
-constexpr double bbdInputCouplingHz = 15.9155;
-constexpr double bbdInputPassiveHz = 7234.316;
 constexpr double bbdFirstSallenKeyHz = 9688.043;
 constexpr double bbdFirstSallenKeyQ = 0.549063;
 constexpr double bbdSecondSallenKeyHz = 10377.179;
@@ -1065,13 +1063,6 @@ BbdAuditWindow makeBbdAuditWindow(double hostRate, double familyBaseRate)
     return window;
 }
 
-std::complex<double> onePoleLowPass(double frequencyHz, double cutoffHz)
-{
-    const std::complex<double> s(0.0, 2.0 * pi * frequencyHz);
-    const double omega = 2.0 * pi * cutoffHz;
-    return omega / (s + omega);
-}
-
 std::complex<double> onePoleHighPass(double frequencyHz, double cutoffHz)
 {
     const std::complex<double> s(0.0, 2.0 * pi * frequencyHz);
@@ -1090,12 +1081,25 @@ std::complex<double> sallenKeyLowPass(double frequencyHz, double cutoffHz,
 
 std::complex<double> bbdInputSupportResponse(double frequencyHz)
 {
+    // Independent AC nodal solve of the unbuffered C44/R120/R122/C52
+    // network, Roland JUNO-106 Service Notes, jack board p. 15:
+    // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+    // C52's branch loads C44; multiplying isolated HP and LP transfers
+    // silently omitted that physical current (about 0.19 dB at midband).
+    const std::complex<double> s(0.0, 2.0 * pi * frequencyHz);
+    constexpr double coupling = 0.1e-6;
+    constexpr double bias = 100000.0;
+    constexpr double series = 10000.0;
+    constexpr double passive = 2.2e-9;
+    const auto firstAdmittance = s * coupling + 1.0 / bias + 1.0 / series;
+    const auto secondAdmittance = s * passive + 1.0 / series;
+    const auto coupledInput = (s * coupling / series)
+        / (firstAdmittance * secondAdmittance - 1.0 / (series * series));
     return sallenKeyLowPass(
                frequencyHz, bbdFirstSallenKeyHz, bbdFirstSallenKeyQ)
          * sallenKeyLowPass(
                frequencyHz, bbdSecondSallenKeyHz, bbdSecondSallenKeyQ)
-         * onePoleHighPass(frequencyHz, bbdInputCouplingHz)
-         * onePoleLowPass(frequencyHz, bbdInputPassiveHz);
+         * coupledInput;
 }
 
 std::complex<double> bbdOutputSupportResponse(double frequencyHz)
@@ -2543,7 +2547,10 @@ void selfTest(const AuditResult& audit)
             throw std::runtime_error(
                 "common-host BBD oracle capture length changed");
         constexpr std::array expectedLinearization {
-            2.818738e-5, 2.796921e-5
+            // Same saturation derivative/0.02 input amplitude; the loaded
+            // input network reduces the drive and its tangent-error bound.
+            // The independent absolute 3e-5 admission gate stays unchanged.
+            2.703078e-5, 2.682960e-5
         };
         constexpr std::array expectedProjectionDb {
             0.016142, 0.000012

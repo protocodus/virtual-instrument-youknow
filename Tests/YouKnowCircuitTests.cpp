@@ -6396,8 +6396,9 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     const auto inputMatrix = [] {
         const double w1 = 2.0 * pi * static_cast<double>(9688.0f);
         const double w2 = 2.0 * pi * static_cast<double>(10377.0f);
-        const double wc = 2.0 * pi * static_cast<double>(15.9155f);
-        const double wp = 2.0 * pi * static_cast<double>(7234.0f);
+        const double wc = 1.0 / (100000.0 * 0.1e-6);
+        const double wp = 1.0 / (10000.0 * 2.2e-9);
+        const double loading = 1.0 / (10000.0 * 0.1e-6);
         const double q1 = Chorus::sallenKeyQ(820.0e-12f, 680.0e-12f);
         const double q2 = Chorus::sallenKeyQ(1.8e-9f, 270.0e-12f);
         Matrix matrix {};
@@ -6408,8 +6409,9 @@ void testCombinedBbdSupportTransitionAndStateSafety()
         matrix[2][2] = -w2 / q2;
         matrix[2][3] = -w2;
         matrix[3][2] = w2;
-        matrix[4][3] = wc;
-        matrix[4][4] = -wc;
+        matrix[4][3] = wc + loading;
+        matrix[4][4] = -wc - loading;
+        matrix[4][5] = -loading;
         matrix[5][3] = wp;
         matrix[5][4] = -wp;
         matrix[5][5] = -wp;

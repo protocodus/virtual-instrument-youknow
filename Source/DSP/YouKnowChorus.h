@@ -571,6 +571,11 @@ public:
 
         float inputCouplingG { 0.001f };    // C44 / R120, wet path only
         float passiveG { 0.1f };            // R122 / C52, ahead of the line
+        // Inverse trapezoidal nodal system for the two unbuffered input
+        // capacitors, plus its input drive. Stored separately from the
+        // isolated pole coefficients used to define low-rate prewarping.
+        std::array<std::array<double, 2>, 2> inputCouplingInverse {};
+        std::array<double, 2> inputCouplingDrive {};
         // Legacy TPT coefficients retained only for the low-rate input policy.
         // The output side is exclusively the exact continuous transition.
         BiquadCoefficients antiAliasFirst {};
@@ -713,8 +718,10 @@ private:
     // say -- and this has to be split back into the two lines first.
     struct InputSupport
     {
-        float couplingState { 0.0f };
-        float passiveState { 0.0f };
+        // Coupled TPT carries use the solve's double precision so a held DC
+        // input cannot park a float-rounding remainder at the wet BBD node.
+        double couplingState { 0.0 };
+        double passiveState { 0.0 };
         BiquadState antiAliasFirst {};
         BiquadState antiAliasSecond {};
         std::array<double, 6> exactState {};
