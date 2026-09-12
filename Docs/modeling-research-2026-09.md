@@ -151,7 +151,12 @@ remains declared product policy. A coupled candidate belongs in the independent
 oracle/capture work above; changing several uncertain transistor assumptions
 at once would obscure the confirmed state-continuity fix.
 
-## 2026-09-12 follow-up
+## 2026-09-12 capture tooling
 
-The latest open-question capture expansion and source log is in
-[Docs/research-findings-juno106-2026-09-12.md](/Users/vojta/Dev/virtual-instrument-youknow/Docs/research-findings-juno106-2026-09-12.md).
+The capture protocol and take definitions live in
+[`Tools/MakeCalibrationTakes.cpp`](../Tools/MakeCalibrationTakes.cpp).
+`10b-chorus-transients` provides long windows around Off/I/Off/II/Off
+switching. `long/L4-chorus-one-two.mid` contains notes only and requires
+manual I+II selection on a reference that supports it; the original tone
+dump cannot encode that state. Neither addition is a hardware measurement
+or closes a calibration question.

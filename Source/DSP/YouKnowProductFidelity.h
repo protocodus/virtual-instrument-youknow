@@ -8,7 +8,8 @@ namespace youknow
 {
 // Product selection approved on 2026-09-11 (Docs/decisions.md). Raw engine
 // fixtures keep their nominal reference defaults; the plug-in, maintained
-// demos and preset audit select the same two B comparisons here.
+// demos, calibration product renders, preset scores and preset audit select
+// the same two B comparisons here.
 struct ProductFidelityProfile
 {
     // The B audition used this datasheet comparison coordinate. It is not a

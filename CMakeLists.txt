@@ -645,6 +645,9 @@ if(BUILD_TESTING)
                  COMMAND YouKnowDcoFirmwareTimingAudit --self-test)
         add_test(NAME YouKnow.CalibrationEvents
                  COMMAND YouKnowRenderCalibrationEvents --self-test)
+        add_test(NAME YouKnow.CalibrationTakes
+                 COMMAND YouKnowMakeCalibrationTakes --self-test)
+        set_tests_properties(YouKnow.CalibrationTakes PROPERTIES TIMEOUT 60)
         # Guards the renderer that produces the committed demonstration WAVs:
         # it renders a short take to a temporary directory and checks that the
         # audio is finite, audible and written as a readable WAV.

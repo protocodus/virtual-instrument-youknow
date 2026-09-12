@@ -498,6 +498,187 @@ void renderBlocks (YouKnowAudioProcessor& processor, juce::AudioBuffer<float>& b
     }
 }
 
+// Read the public panel rather than sharing the product-profile helper under
+// test. The reference below selects each approved B coordinate explicitly, so
+// removing either selection from the processor cannot change its oracle too.
+EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& processor)
+{
+    const auto patch = processor.currentPatch();
+    const auto value = [&processor] (const char* id)
+    {
+        return parameterValue (processor, id);
+    };
+    EngineParameters result;
+    result.lfoRate = patch.lfoRate;
+    result.lfoDelay = patch.lfoDelay;
+    result.dcoLfoDepth = patch.dcoLfo;
+    result.pwmDepth = patch.pwm;
+    result.noiseLevel = patch.noise;
+    result.cutoff = patch.cutoff;
+    result.resonance = patch.resonance;
+    result.envDepth = patch.vcfEnv;
+    result.vcfLfoDepth = patch.vcfLfo;
+    result.keyFollow = patch.keyFollow;
+    result.vcaLevel = patch.vcaLevel;
+    result.attack = patch.attack;
+    result.decay = patch.decay;
+    result.sustain = patch.sustain;
+    result.release = patch.release;
+    result.subLevel = patch.sub;
+    result.range = patch.range;
+    result.sawEnabled = patch.saw;
+    result.pulseEnabled = patch.pulse;
+    result.pwmSource = patch.pwmSource;
+    result.vcaMode = patch.vcaMode;
+    result.envPolarity = patch.envPolarity;
+    result.highPass = patch.highPass;
+    result.chorus = patch.chorus;
+    result.volume = value (parameters::volume);
+    result.benderDcoDepth = value (parameters::benderDco);
+    result.benderVcfDepth = value (parameters::benderVcf);
+    result.benderLfoDepth = value (parameters::benderLfo);
+    result.portamento = value (parameters::portamento);
+    result.keyMode = keyModeFor (value (parameters::poly1) > 0.5f,
+                                 value (parameters::poly2) > 0.5f);
+    result.keyTranspose = juce::roundToInt (value (parameters::transpose));
+    result.masterTuneCents = value (parameters::masterTune);
+    result.velocityDepth = value (parameters::velocity);
+    result.calibration = value (parameters::calibration);
+    result.aging = value (parameters::aging);
+    result.chorusNoise = value (parameters::chorusNoise);
+    result.polyphony = juce::roundToInt (value (parameters::polyphony));
+    result.vcfTanhMode = static_cast<VcfTanhMode> (
+        juce::roundToInt (value (parameters::vcfTanhMode)));
+    result.vcfFastEarlyMode = static_cast<VcfFastEarlyMode> (
+        juce::roundToInt (value (parameters::vcfFastEarlyMode)));
+    result.vcfSolverMode = static_cast<VcfSolverMode> (
+        juce::roundToInt (value (parameters::vcfSolverMode)));
+    result.useServiced439522VcfCalibration = true;
+    return result;
+}
+
+void testProductFidelitySurvivesHostLifecycle()
+{
+    YouKnowAudioProcessor processor;
+    // B/B, nominal-VCF/B, and B/legacy-HPF. The isolated alternatives prove
+    // that this musical probe actually detects each of the two selections.
+    std::array<std::unique_ptr<YouKnowEngine>, 3> references;
+    for (std::size_t index = 0; index < references.size(); ++index)
+    {
+        references[index] = std::make_unique<YouKnowEngine>();
+        if (index != 2)
+            expect (references[index]->configureHighPassSwitch (110.0),
+                    "cannot configure the explicit HPF B reference");
+        references[index]->selectConverterTimingProfile (
+            YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+    }
+    processor.prepareToPlay (sampleRate, blockSize);
+    for (std::size_t index = 0; index < references.size(); ++index)
+    {
+        auto& reference = *references[index];
+        reference.prepare (sampleRate, blockSize, 1);
+        auto parameters = fidelityReferenceParameters (processor);
+        parameters.useServiced439522VcfCalibration = index != 1;
+        reference.setParameters (parameters);
+    }
+
+    const auto compare = [&] (const std::string& context, bool notes,
+                             bool checkAlternatives = false)
+    {
+        const int referenceCount = checkAlternatives ? 3 : 1;
+        const int factor = YouKnowAudioProcessor::oversamplingFactorForChoice (
+            processor.getQualityChoice());
+        std::array<float, 3> differences {};
+        float peak = 0;
+        bool finite = true;
+        for (int block = 0; block < 8; ++block)
+        {
+            juce::MidiBuffer midi;
+            auto parameters = fidelityReferenceParameters (processor);
+            for (int index = 0; index < referenceCount; ++index)
+            {
+                auto& reference = *references[static_cast<std::size_t> (index)];
+                reference.setOversamplingFactor (factor);
+                parameters.useServiced439522VcfCalibration = index != 1;
+                reference.setParameters (parameters);
+            }
+            if (notes && block == 0)
+                for (int note : { 48, 55, 60, 64, 67, 72 })
+                {
+                    midi.addEvent (juce::MidiMessage::noteOn (1, note, 1.0f), 0);
+                    for (int index = 0; index < referenceCount; ++index)
+                        references[static_cast<std::size_t> (index)]->noteOn (note, 1.0f);
+                }
+            juce::AudioBuffer<float> actual (2, blockSize);
+            actual.clear();
+            processor.processBlock (actual, midi);
+            finite = finite && bufferIsFinite (actual);
+            peak = std::max (peak, actual.getMagnitude (0, blockSize));
+            for (int index = 0; index < referenceCount; ++index)
+            {
+                juce::AudioBuffer<float> expected (2, blockSize);
+                references[static_cast<std::size_t> (index)]->process (
+                    expected.getWritePointer (0), expected.getWritePointer (1), blockSize);
+                finite = finite && bufferIsFinite (expected);
+                differences[static_cast<std::size_t> (index)] = std::max (
+                    differences[static_cast<std::size_t> (index)],
+                    maximumBufferDifference (actual, expected));
+            }
+        }
+        expect (finite, context + " produced non-finite product/reference audio");
+        expect (differences[0] <= 1.0e-7f,
+                context + " lost the approved VCF/HPF B profile: peak difference "
+                    + std::to_string (differences[0]));
+        if (checkAlternatives)
+        {
+            expect (peak > 1.0e-4f, "the product-fidelity probe was silent");
+            expect (differences[1] > 1.0e-5f,
+                    "the product-fidelity probe cannot detect nominal VCF calibration");
+            expect (differences[2] > 1.0e-5f,
+                    "the product-fidelity probe cannot detect the legacy HPF");
+        }
+    };
+
+    compare ("Fresh instance", true, true);
+    processor.setCurrentProgram (1);
+    compare ("Factory recall during audio", false);
+    juce::MemoryBlock savedFactory;
+    processor.getStateInformation (savedFactory);
+    processor.setCurrentProgram (0);
+    compare ("INIT during audio", false);
+    // Exercise all coupled switch legs, including their departing charge,
+    // while the six physical VCF slots continue sounding.
+    for (int mode : { 0, 2, 3, 1 })
+    {
+        setParameterValue (processor, parameters::highPass, static_cast<float> (mode));
+        compare ("HPF switch " + std::to_string (mode), false);
+    }
+    processor.setStateInformation (savedFactory.getData(),
+                                  static_cast<int> (savedFactory.getSize()));
+    compare ("Session restore during audio", false);
+
+    for (int quality : { 2, 1, 0 })
+    {
+        processor.reset();
+        references[0]->resetForHostStop();
+        setParameterValue (processor, parameters::quality, static_cast<float> (quality));
+        // A live rate change waits for its five-millisecond safety fade.
+        // Starting the chord in the same callback cancels that idle window
+        // and correctly defers the change until the notes have finished.
+        compare ("Idle quality transition " + std::to_string (quality), false);
+        expect (processor.getOversamplingFactorForDisplay()
+                    == YouKnowAudioProcessor::oversamplingFactorForChoice (quality),
+                "the fidelity lifecycle test did not apply its quality change");
+        compare ("Host reset and quality " + std::to_string (quality), true);
+    }
+    processor.releaseResources();
+    processor.prepareToPlay (44100.0, blockSize);
+    references[0]->prepare (44100.0, blockSize, 1);
+    references[0]->setParameters (fidelityReferenceParameters (processor));
+    compare ("Release and reprepare at a new host rate", true);
+    processor.releaseResources();
+}
+
 // --------------------------------------------------------------------------
 
 // The macOS-only VST3 bundle test locates the standard Bypass and Program
@@ -7900,6 +8081,12 @@ int main()
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
+    if (std::getenv ("YOUKNOW_PRODUCT_FIDELITY_TEST_ONLY") != nullptr)
+    {
+        testProductFidelitySurvivesHostLifecycle();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     if (std::getenv ("YOUKNOW_HOST_RECALL_TEST_ONLY") != nullptr)
     {
         testStateSaveIncludesUnreflectedMidiTone();
@@ -7918,6 +8105,7 @@ int main()
     testParameterContract();
     testParameterTextRoundTrips();
     testProcessingProducesSound();
+    testProductFidelitySurvivesHostLifecycle();
     testVariableHostBlockSizesPreserveTheTimeline();
     testAdjacentMidiNotesAreIndependentOfSameSampleInsertionOrder();
     testMidiNoteOrderingPreservesOverlapsAndZeroLengthNotes();

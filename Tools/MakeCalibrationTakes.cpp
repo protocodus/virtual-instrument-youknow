@@ -58,10 +58,27 @@
 // every note is written at velocity 100 and velocity carries no information.
 // Every take ends with at least two seconds of silence, which is where the
 // release tail and the noise floor are read.
+//
+// 10b isolates OFF->I, I->OFF, OFF->II and II->OFF at 7, 22, 30 and 43 s.
+// Record the MIDI-to-audio latency separately before attributing an edge delay
+// to the hardware. Inspect stereo wet-return onset and post-off leakage around
+// those edges; the static manual variants cannot measure switching timing.
+// L4 is an optional manual I+II capture, only where the reference exposes that
+// condition. Its model uses the product's summed-rate compatibility policy;
+// descendant Roland effects do not establish the original unit's transfer.
+// The long-take MIDI contains notes only, so it preserves manual I+II instead
+// of sending a tone dump that would collapse that state to II.
+//
+// -model renders select the approved product filter/HPF B profiles and Unit
+// Character 100%; -model-nominal retains the raw reference circuits at 0%.
+// Both use Aging 0, 4x processing and the measured-chart converter placement
+// for controlled capture comparisons, rather than the default host settings.
+// --self-test checks the emitted MIDI and these render-profile contracts.
 // ---------------------------------------------------------------------------
 
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowPresets.h"
+#include "DSP/YouKnowProductFidelity.h"
 #include "DSP/YouKnowSysEx.h"
 
 #include <algorithm>
@@ -71,7 +88,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -115,10 +135,9 @@ struct MidiEvent
     bool isSysEx { false };
 };
 
-// Writes an SMF type 0 whose only track carries the events, sorted by time.
-bool writeMidiFile(const std::filesystem::path& path,
-                   const std::string& trackName,
-                   std::vector<MidiEvent> events, int endMs)
+// Encodes an SMF type 0 whose only track carries the events, sorted by time.
+std::vector<std::uint8_t> midiFileBytes(const std::string& trackName,
+                                     std::vector<MidiEvent> events, int endMs)
 {
     std::stable_sort(events.begin(), events.end(),
                      [](const MidiEvent& a, const MidiEvent& b) {
@@ -173,7 +192,14 @@ bool writeMidiFile(const std::filesystem::path& path,
     pushText(file, "MTrk");
     pushBig(file, static_cast<std::uint32_t>(track.size()), 4);
     file.insert(file.end(), track.begin(), track.end());
+    return file;
+}
 
+bool writeMidiFile(const std::filesystem::path& path,
+                   const std::string& trackName,
+                   std::vector<MidiEvent> events, int endMs)
+{
+    const auto file = midiFileBytes(trackName, std::move(events), endMs);
     std::ofstream stream(path, std::ios::binary);
     if (!stream)
         return false;
@@ -555,7 +581,7 @@ std::vector<Take> buildTakes()
         take.patch.sub = 64.0f / 127.0f;
         take.patch.cutoff = 90.0f / 127.0f;
         take.notes = { { 60, 500, 48500 } };
-        take.endMs = 50000;
+        take.endMs = 51000;
         takes.push_back(take);
     }
 
@@ -648,16 +674,14 @@ std::vector<Take> buildTakes()
 // Long takes, for a reference whose output is corrupted at random.
 //
 // A demo build that injects distortion at random times cannot be cleaned by
-// filtering, but it can be outvoted. Every measurement these takes carry is
-// either a RATE, recovered from tens of cycles so a corrupted second perturbs
-// it negligibly, or a level read as the MEDIAN of many independent windows,
-// which a minority of corrupted windows cannot move. Nothing here is measured
-// from a single moment.
+// filtering. Long observations and robust window estimates reduce the effect
+// of isolated corruptions; inspect and exclude corrupt windows and report the
+// remaining spread rather than claiming a corruption-proof estimator.
 //
 // The subject is the chorus, because it is the one P0 mechanism whose primary
 // measurand is a frequency: the modulation rates this project derives from the
 // instrument's own T-network as 0.5533 and 0.8983 Hz, and the 1.6235 ratio
-// between them, which no recording chain and no injected distortion can shift.
+// between them. A capture clock error can still shift the measured rates.
 // The silences at either end read the idle floor for OQ-03 in the same file,
 // and the ratio between the two chorus states' floors is the mode-II delta.
 //
@@ -682,24 +706,35 @@ std::vector<Take> buildLongTakes()
     {
         Take take;
         take.id = entry.id;
-        take.purpose =
-            std::string("Chorus rate, depth and idle floor with ") + entry.label
-            + ". The held note carries the modulation: its rate is recovered "
-              "from about fifty cycles, so neither the chain nor a randomly "
-              "corrupted second can move it, and it tests the derived "
-              "0.5533/0.8983 Hz pair and their 1.6235 ratio (OQ-01). The two "
-              "silences read the idle floor as the median of many independent "
-              "windows, which a minority of corrupted windows cannot move, and "
-              "the difference between this take's floor and the chorus-off "
-              "take's is the chorus hiss (OQ-03). Every figure is a rate or a "
-              "median ratio; none is an absolute level.";
+        take.purpose = std::string("Chorus reference with ") + entry.label + ". ";
+        if (entry.chorus == ChorusMode::Off)
+            take.purpose += "Dry-note and idle-floor baseline for L2/L3/L4. ";
+        else if (entry.chorus == ChorusMode::OneTwo)
+            take.purpose +=
+                "Optional manual both-button capture (OQ-01). The model uses "
+                "the 1.4515542 Hz summed-rate compatibility policy and narrow "
+                "wet return; this is not a hardware-derived third rate. "
+                "Record the actual reference behavior and stereo width. ";
+        else
+            take.purpose +=
+                "The 100-second held note provides many cycles for rate/depth "
+                "estimation. L2/L3 test the derived 0.5533/0.8983 Hz pair and "
+                "their 1.6235 ratio (OQ-01). ";
+        take.purpose +=
+            "The two silences provide idle-floor windows; compare robust "
+            "window-level estimates against L1 for chorus hiss (OQ-03). "
+            "Exclude corrupted windows and report the estimator spread; "
+            "a median reduces outlier influence but cannot guarantee immunity. "
+            "Keep the same capture gain for every take.";
         take.panel =
             std::string("SAW on, PULSE off, SUB 0, NOISE 0, RANGE 8', "
                         "VCF FREQ max, RES 0, ENV 0, LFO 0, KYBD 0, HPF flat, "
                         "VCA GATE, VCA LEVEL max, and ") + entry.label
-            + (entry.unencodable ? ". Press both chorus buttons on the panel "
-                                 "for this state and hold; SysEx patches "
-                                 "encode only OFF/I/II."
+            + (entry.unencodable ? ". If the reference supports I+II, select "
+                                 "both buttons manually and maintain that "
+                                 "condition throughout; otherwise skip L4 and "
+                                 "record that limitation. SysEx patches encode "
+                                 "only OFF/I/II; do not reload a patch."
                                  : ". Set it once; nothing moves during the take.");
         take.patch = openPanel();
         take.patch.saw = true;
@@ -781,7 +816,44 @@ std::vector<ParameterStep> parameterStepsFor(const std::string& id)
     return {};
 }
 
-EngineParameters engineParametersFor(const sysex::Patch& patch)
+std::vector<MidiEvent> noteEventsFor(const std::vector<Note>& notes)
+{
+    std::vector<MidiEvent> events;
+    for (const auto& note : notes)
+    {
+        events.push_back({ note.onMs,
+                           { 0x90u, static_cast<std::uint8_t>(note.note), 100u },
+                           false });
+        events.push_back({ note.offMs,
+                           { 0x80u, static_cast<std::uint8_t>(note.note), 0u },
+                           false });
+    }
+    return events;
+}
+
+std::vector<MidiEvent> sysexEventsFor(const Take& take)
+{
+    std::vector<std::uint8_t> dump(sysex::patchMessageBytes);
+    if (sysex::writePatchMessage(take.patch, 0, dump.data(), dump.size())
+        != dump.size())
+        throw std::runtime_error("cannot encode calibration patch");
+    std::vector<MidiEvent> events { { 0, std::move(dump), true } };
+    for (const auto& step : parameterStepsFor(take.id))
+        events.push_back({ step.timeMs,
+                           { 0xf0u, sysex::manufacturerId,
+                             sysex::parameterOpcode, 0x00u,
+                             static_cast<std::uint8_t>(step.parameter),
+                             static_cast<std::uint8_t>(step.value), 0xf7u },
+                           true });
+    const auto notes = noteEventsFor(take.notes);
+    events.insert(events.end(), notes.begin(), notes.end());
+    return events;
+}
+
+enum class RenderProfile { Product, NominalReference };
+
+EngineParameters engineParametersFor(const sysex::Patch& patch,
+                                     RenderProfile profile)
 {
     EngineParameters parameters {};
     parameters.lfoRate = patch.lfoRate;
@@ -808,10 +880,12 @@ EngineParameters engineParametersFor(const sysex::Patch& patch)
     parameters.sustain = patch.sustain;
     parameters.release = patch.release;
     parameters.chorus = patch.chorus;
-    // Product defaults, so the model's side of the comparison is the product:
-    // the full modelled tolerance profile and the chosen converter placement.
+    // Capture controls are deliberate: full output, six voices, Aging 0.
     parameters.volume = 1.0f;
     parameters.polyphony = 6;
+    parameters.calibration = profile == RenderProfile::Product ? 1.0f : 0.0f;
+    if (profile == RenderProfile::Product)
+        ProductFidelityProfile::applyTo(parameters);
     return parameters;
 }
 
@@ -825,16 +899,17 @@ struct RenderResult
 
 RenderResult renderTake(const std::vector<MidiEvent>& events,
                         const sysex::Patch& startPatch, int endMs,
-                        float calibration)
+                        RenderProfile profile)
 {
     YouKnowEngine engine;
+    if (profile == RenderProfile::Product)
+        ProductFidelityProfile::configureBeforePrepare(engine);
     engine.selectConverterTimingProfile(
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine.prepare(renderSampleRate, 256, 4);
 
     auto patch = startPatch;
-    auto parameters = engineParametersFor(patch);
-    parameters.calibration = calibration;
+    auto parameters = engineParametersFor(patch, profile);
     engine.setParameters(parameters);
 
     std::vector<MidiEvent> ordered = events;
@@ -860,8 +935,7 @@ RenderResult renderTake(const std::vector<MidiEvent>& events,
                 {
                     (void) sysex::applyParameter(patch, event.bytes[4],
                                                  event.bytes[5]);
-                    parameters = engineParametersFor(patch);
-                    parameters.calibration = calibration;
+                    parameters = engineParametersFor(patch, profile);
                     engine.setParameters(parameters);
                 }
             }
@@ -891,6 +965,231 @@ RenderResult renderTake(const std::vector<MidiEvent>& events,
     for (const float value : result.left)
         result.peak = std::max(result.peak, static_cast<double>(std::abs(value)));
     return result;
+}
+
+void selfTest()
+{
+    const auto require = [](bool condition, const char* message) {
+        if (!condition)
+            throw std::runtime_error(message);
+    };
+    // Read the actual SMF bytes independently of the writer's event vector.
+    // The fixture format has no running status: every event carries its status.
+    const auto decodeMidi = [&require](const std::vector<std::uint8_t>& bytes,
+                                      int expectedEndMs) {
+        require(bytes.size() >= 22, "MIDI header is truncated");
+        const std::array<std::uint8_t, 18> header {
+            'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 3, 232,
+            'M', 'T', 'r', 'k' };
+        require(std::equal(header.begin(), header.end(), bytes.begin()),
+                "MIDI must be type 0 with 1000 ticks per quarter");
+        const std::uint32_t trackSize = (std::uint32_t(bytes[18]) << 24)
+            | (std::uint32_t(bytes[19]) << 16)
+            | (std::uint32_t(bytes[20]) << 8) | bytes[21];
+        require(trackSize == bytes.size() - 22, "MIDI track size is wrong");
+        std::size_t cursor = 22;
+        const auto byte = [&]() {
+            require(cursor < bytes.size(), "MIDI event is truncated");
+            return bytes[cursor++];
+        };
+        const auto variable = [&]() {
+            std::uint32_t value = 0;
+            for (int count = 0; count < 4; ++count)
+            {
+                const auto current = byte();
+                value = (value << 7) | (current & 0x7f);
+                if ((current & 0x80) == 0)
+                    return value;
+            }
+            throw std::runtime_error("invalid MIDI variable-length quantity");
+        };
+        std::vector<MidiEvent> decoded;
+        int elapsedMs = 0;
+        bool sawTempo = false, sawEnd = false;
+        while (cursor < bytes.size())
+        {
+            elapsedMs += static_cast<int>(variable());
+            const auto status = byte();
+            if (status == 0xff)
+            {
+                const auto type = byte();
+                const auto length = variable();
+                require(length <= bytes.size() - cursor, "truncated MIDI meta");
+                if (type == 0x51)
+                {
+                    require(elapsedMs == 0 && length == 3
+                                && bytes[cursor] == 0x0f
+                                && bytes[cursor + 1] == 0x42
+                                && bytes[cursor + 2] == 0x40,
+                            "MIDI tempo must give one millisecond per tick");
+                    sawTempo = true;
+                }
+                if (type == 0x2f)
+                {
+                    require(length == 0 && elapsedMs == expectedEndMs
+                                && cursor == bytes.size(), "wrong MIDI end time");
+                    sawEnd = true;
+                }
+                cursor += length;
+            }
+            else if (status == 0xf0)
+            {
+                const auto length = variable();
+                require(length > 0 && length <= bytes.size() - cursor,
+                        "truncated MIDI SysEx");
+                std::vector<std::uint8_t> message { 0xf0 };
+                message.insert(message.end(), bytes.begin() + cursor,
+                               bytes.begin() + cursor + length);
+                require(message.back() == 0xf7, "SysEx terminator is missing");
+                cursor += length;
+                decoded.push_back({ elapsedMs, std::move(message), true });
+            }
+            else
+            {
+                require(status == 0x90 || status == 0x80,
+                        "unexpected calibration MIDI event");
+                const auto note = byte();
+                const auto velocity = byte();
+                decoded.push_back({ elapsedMs, { status, note, velocity }, false });
+            }
+        }
+        require(sawTempo && sawEnd, "MIDI tempo or end event is missing");
+        return decoded;
+    };
+    const auto takes = buildTakes();
+    const auto transient = std::find_if(takes.begin(), takes.end(),
+        [](const Take& take) { return take.id == "10b-chorus-transients"; });
+    require(transient != takes.end(), "10b take is missing");
+    require(transient->endMs - transient->notes.back().offMs >= 2000,
+            "10b needs at least two seconds of final silence");
+    const auto events = decodeMidi(midiFileBytes(transient->id,
+        sysexEventsFor(*transient), transient->endMs), transient->endMs);
+    require(events.size() == 8 && events.front().timeMs == 0,
+            "10b must contain one patch, five switch writes and two notes");
+    sysex::Patch panel;
+    int channel = -1;
+    require(sysex::readPatchMessage(events.front().bytes.data(),
+                events.front().bytes.size(), panel, channel) && channel == 0,
+            "10b embedded tone does not decode");
+    const std::array<int, 5> times { 200, 7000, 22000, 30000, 43000 };
+    const std::array<int, 5> values { 50, 82, 50, 18, 50 };
+    const std::array<ChorusMode, 5> modes { ChorusMode::Off, ChorusMode::One,
+        ChorusMode::Off, ChorusMode::Two, ChorusMode::Off };
+    std::size_t step = 0;
+    bool sawOn = false, sawOff = false;
+    for (std::size_t index = 1; index < events.size(); ++index)
+    {
+        const auto& event = events[index];
+        if (event.isSysEx)
+        {
+            require(step < times.size(), "10b has an extra parameter write");
+            const std::vector<std::uint8_t> expected {
+                0xf0, 0x41, 0x32, 0, 16,
+                static_cast<std::uint8_t>(values[step]), 0xf7 };
+            require(event.timeMs == times[step] && event.bytes == expected,
+                    "10b switch byte or timing changed");
+            require(sysex::applyParameter(panel, 16, values[step])
+                        && panel.chorus == modes[step] && panel.saw
+                        && !panel.pulse && panel.range == DcoRange::Eight
+                        && std::abs(panel.sub - 64.0f / 127.0f) < 1e-6f
+                        && std::abs(panel.cutoff - 90.0f / 127.0f) < 1e-6f,
+                    "10b chorus write changed the excitation panel");
+            ++step;
+        }
+        else if (event.bytes[0] == 0x90)
+            sawOn = event.timeMs == 500
+                && event.bytes == std::vector<std::uint8_t> { 0x90, 60, 100 };
+        else
+            sawOff = event.timeMs == 48500
+                && event.bytes == std::vector<std::uint8_t> { 0x80, 60, 0 };
+    }
+    require(step == times.size() && sawOn && sawOff, "10b note schedule changed");
+
+    const auto longTakes = buildLongTakes();
+    const auto both = std::find_if(longTakes.begin(), longTakes.end(),
+        [](const Take& take) { return take.id == "L4-chorus-one-two"; });
+    require(both != longTakes.end() && both->patch.chorus == ChorusMode::OneTwo,
+            "L4 must retain the live I+II state");
+    const auto longEvents = decodeMidi(midiFileBytes(both->id,
+        noteEventsFor(both->notes), both->endMs), 135000);
+    require(longEvents.size() == 2 && !longEvents[0].isSysEx
+                && !longEvents[1].isSysEx && longEvents[0].timeMs == 15000
+                && longEvents[1].timeMs == 115000
+                && longEvents[0].bytes == std::vector<std::uint8_t> { 0x90, 60, 100 }
+                && longEvents[1].bytes == std::vector<std::uint8_t> { 0x80, 60, 0 },
+            "L4 must emit only its held note, with no lossy tone dump");
+    const auto productParameters = engineParametersFor(both->patch,
+                                                       RenderProfile::Product);
+    const auto nominalParameters = engineParametersFor(both->patch,
+                                                RenderProfile::NominalReference);
+    require(productParameters.chorus == ChorusMode::OneTwo
+                && nominalParameters.chorus == ChorusMode::OneTwo
+                && productParameters.useServiced439522VcfCalibration
+                && !nominalParameters.useServiced439522VcfCalibration
+                && productParameters.calibration == 1.0f
+                && nominalParameters.calibration == 0.0f,
+            "render profiles lost I+II or the product/reference distinction");
+
+    // A no-op control message must leave the product render unchanged after
+    // the message, catching a profile lost when a new snapshot is constructed.
+    auto renderPatch = both->patch;
+    renderPatch.cutoff = 80.0f / 127.0f;
+    renderPatch.highPass = HighPassMode::Boost;
+    auto shortEvents = noteEventsFor({ { 60, 10, 240 } });
+    const auto product = renderTake(shortEvents, renderPatch, 300,
+                                    RenderProfile::Product);
+    const auto nominal = renderTake(shortEvents, renderPatch, 300,
+                                    RenderProfile::NominalReference);
+    shortEvents.push_back({ 100, { 0xf0, 0x41, 0x32, 0, 5, 80, 0xf7 }, true });
+    const auto stepped = renderTake(shortEvents, renderPatch, 300,
+                                    RenderProfile::Product);
+    double profileDifference = 0.0;
+    for (const auto* result : { &product, &nominal, &stepped })
+    {
+        require(result->left.size() == 14400 && result->right.size() == 14400,
+                "calibration render duration is wrong");
+        for (std::size_t frame = 0; frame < result->left.size(); ++frame)
+            require(std::isfinite(result->left[frame])
+                        && std::isfinite(result->right[frame]),
+                    "calibration render contains nonfinite stereo samples");
+    }
+    for (std::size_t frame = 0; frame < product.left.size(); ++frame)
+    {
+        require(std::abs(product.left[frame] - stepped.left[frame]) < 1e-7f
+                    && std::abs(product.right[frame] - stepped.right[frame]) < 1e-7f,
+                "parameter SysEx changed the product render profile");
+        profileDifference = std::max(profileDifference,
+            static_cast<double>(std::abs(product.left[frame] - nominal.left[frame])));
+    }
+    require(product.peak > 1e-5 && profileDifference > 1e-5,
+            "product and nominal renders must produce distinct audible samples");
+
+    // Independently configure the engine's B switch coordinate. A product vs
+    // nominal waveform difference alone could pass with the HPF still on A,
+    // because their filter calibration and Unit Character also differ.
+    auto expectedEngine = std::make_unique<YouKnowEngine>();
+    require(expectedEngine->configureHighPassSwitch(110.0),
+            "could not prepare the independent product HPF reference");
+    expectedEngine->selectConverterTimingProfile(
+        YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+    expectedEngine->prepare(renderSampleRate, 256, 4);
+    expectedEngine->setParameters(engineParametersFor(renderPatch,
+                                                       RenderProfile::Product));
+    std::array<float, 48> expectedLeft {}, expectedRight {};
+    for (int millisecond = 0; millisecond < 300; ++millisecond)
+    {
+        if (millisecond == 10) expectedEngine->noteOn(60, 1.0f);
+        if (millisecond == 240) expectedEngine->noteOff(60);
+        expectedEngine->process(expectedLeft.data(), expectedRight.data(), 48);
+        for (int sample = 0; sample < 48; ++sample)
+        {
+            const auto frame = static_cast<std::size_t>(millisecond * 48 + sample);
+            require(std::abs(product.left[frame] - expectedLeft[sample]) < 1e-7f
+                        && std::abs(product.right[frame] - expectedRight[sample]) < 1e-7f,
+                    "product calibration render did not select the HPF B circuit");
+        }
+    }
+    std::printf("Calibration MIDI and render-profile self-test: PASS\n");
 }
 } // namespace
 
@@ -945,6 +1244,16 @@ std::string stepDescription(int parameter, int value)
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--self-test")
+    {
+        try { selfTest(); }
+        catch (const std::exception& error)
+        {
+            std::fprintf(stderr, "Calibration self-test failed: %s\n", error.what());
+            return 1;
+        }
+        return 0;
+    }
     const std::filesystem::path root =
         argc > 1 ? argv[1] : "calibration-takes";
     const std::filesystem::path outputDirectory = root / "with-sysex";
@@ -960,6 +1269,10 @@ int main(int argc, char** argv)
                 "under the same name.\n"
                 "48 kHz or better, 24-bit or float, no limiting, no "
                 "normalisation, one gain setting for the whole session.\n\n"
+                "-model.wav: approved product filter/HPF B, Unit Character 100%.\n"
+                "-model-nominal.wav: raw nominal filter/HPF, Unit Character 0%.\n"
+                "Both use Aging 0, 48 kHz output, 4x processing, full output, "
+                "six voices and measured-chart converter timing.\n\n"
                 "with-sysex/  the patch is embedded in each .mid and controls "
                 "step during the take. Original hardware and this plug-in "
                 "accept it; among software Junos only Cherry Audio's DCO-106 "
@@ -1016,39 +1329,25 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        std::vector<MidiEvent> events;
         // The whole panel, at the head of the file, in the hardware's own
         // format. An instrument that takes it needs no manual setup at all.
-        events.push_back({ 0, dump, true });
+        const auto events = sysexEventsFor(take);
         const auto steps = parameterStepsFor(take.id);
-        for (const auto& step : steps)
-            events.push_back({ step.timeMs,
-                               { 0xf0u, sysex::manufacturerId,
-                                 sysex::parameterOpcode, 0x00u,
-                                 static_cast<std::uint8_t>(step.parameter),
-                                 static_cast<std::uint8_t>(step.value), 0xf7u },
-                               true });
-        for (const auto& note : take.notes)
-        {
-            events.push_back({ note.onMs,
-                               { 0x90u, static_cast<std::uint8_t>(note.note),
-                                 100u }, false });
-            events.push_back({ note.offMs,
-                               { 0x80u, static_cast<std::uint8_t>(note.note),
-                                 0u }, false });
-        }
         writeMidiFile(outputDirectory / (take.id + ".mid"), take.id,
                       events, take.endMs);
 
         // Two renders of the identical take. The product one carries the
-        // instrument as it ships, per-card tolerances and all; the nominal one
-        // is the calibrated-nominal model with every tolerance at zero. A LAW
+        // product's filter/HPF selection and per-card tolerances; the nominal
+        // one is the raw reference with every tolerance at zero. Both use the
+        // capture controls documented above, including Aging 0 and 4x. A LAW
         // is measured against the nominal render, because the product render's
         // own seeded per-card trims are noise on that question; the product
         // render is what says whether the shipped instrument as a whole lands
         // where the recording does.
-        const auto product = renderTake(events, take.patch, take.endMs, 1.0f);
-        const auto nominal = renderTake(events, take.patch, take.endMs, 0.0f);
+        const auto product = renderTake(events, take.patch, take.endMs,
+                                        RenderProfile::Product);
+        const auto nominal = renderTake(events, take.patch, take.endMs,
+                                        RenderProfile::NominalReference);
         writeFloatWav(outputDirectory / (take.id + "-model.wav"),
                       product.left, product.right);
         writeFloatWav(outputDirectory / (take.id + "-model-nominal.wav"),
@@ -1113,7 +1412,8 @@ int main(int argc, char** argv)
                 std::vector<Note> windowNotes;
                 for (const auto& note : take.notes)
                     if (note.onMs >= from && note.onMs < to)
-                        windowNotes.push_back(note);
+                        windowNotes.push_back({ note.note, note.onMs,
+                                                std::min(note.offMs, to) });
                 // A chord take holds its notes across every step, so nothing
                 // STARTS inside a window. Take the notes that OVERLAP it and
                 // clip them to it; requiring a note to span the window
@@ -1150,22 +1450,15 @@ int main(int argc, char** argv)
         for (const auto& variant : variants)
         {
             const std::string name = take.id + variant.suffix;
-            std::vector<MidiEvent> manualEvents;
-            for (const auto& note : variant.notes)
-            {
-                manualEvents.push_back(
-                    { note.onMs, { 0x90u, static_cast<std::uint8_t>(note.note),
-                                   100u }, false });
-                manualEvents.push_back(
-                    { note.offMs, { 0x80u, static_cast<std::uint8_t>(note.note),
-                                    0u }, false });
-            }
+            const auto manualEvents = noteEventsFor(variant.notes);
             writeMidiFile(manualDirectory / (name + ".mid"), name,
                           manualEvents, variant.endMs);
             const auto manualProduct =
-                renderTake(manualEvents, variant.patch, variant.endMs, 1.0f);
+                renderTake(manualEvents, variant.patch, variant.endMs,
+                           RenderProfile::Product);
             const auto manualNominal =
-                renderTake(manualEvents, variant.patch, variant.endMs, 0.0f);
+                renderTake(manualEvents, variant.patch, variant.endMs,
+                           RenderProfile::NominalReference);
             writeFloatWav(manualDirectory / (name + "-model.wav"),
                           manualProduct.left, manualProduct.right);
             writeFloatWav(manualDirectory / (name + "-model-nominal.wav"),
@@ -1186,19 +1479,11 @@ int main(int argc, char** argv)
     const auto longTakes = buildLongTakes();
     for (const auto& take : longTakes)
     {
-        std::vector<MidiEvent> longEvents;
-        for (const auto& note : take.notes)
-        {
-            longEvents.push_back(
-                { note.onMs, { 0x90u, static_cast<std::uint8_t>(note.note),
-                               100u }, false });
-            longEvents.push_back(
-                { note.offMs, { 0x80u, static_cast<std::uint8_t>(note.note),
-                                0u }, false });
-        }
+        const auto longEvents = noteEventsFor(take.notes);
         writeMidiFile(longDirectory / (take.id + ".mid"), take.id, longEvents,
                       take.endMs);
-        const auto product = renderTake(longEvents, take.patch, take.endMs, 1.0f);
+        const auto product = renderTake(longEvents, take.patch, take.endMs,
+                                        RenderProfile::Product);
         writeFloatWav(longDirectory / (take.id + "-model.wav"),
                       product.left, product.right);
         manifest << "  long/" << take.id << ".mid  --  " << take.panel

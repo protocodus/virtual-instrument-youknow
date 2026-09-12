@@ -7,6 +7,7 @@
 // raw-float fingerprint mode so CTest can prove that observation is inert.
 
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowProductFidelity.h"
 #include "OversamplingAuditSupport.h"
 
 #include <algorithm>
@@ -223,19 +224,33 @@ struct PreparedSnapshot
     int factor {};
 };
 
+enum class SnapshotProfile { Reference, Product };
+
 PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
                                  int requestedFactor,
                                  VcfTanhMode tanhMode = VcfTanhMode::Exact,
                                  VcfFastEarlyMode fastEarlyMode =
                                      VcfFastEarlyMode::Hermite,
                                  VcfSolverMode solverMode =
-                                     VcfSolverMode::MersonHalfSteps)
+                                     VcfSolverMode::MersonHalfSteps,
+                                 SnapshotProfile profile = SnapshotProfile::Reference)
 {
     PreparedSnapshot snapshot;
+    if (profile == SnapshotProfile::Product)
+    {
+        youknow::ProductFidelityProfile::configureBeforePrepare(snapshot.engine);
+        snapshot.engine.selectConverterTimingProfile(
+            YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+    }
     snapshot.engine.prepare(static_cast<double>(sampleRate), blockSize,
                             requestedFactor);
     auto parameters = parametersFor(
         scenario.kind, tanhMode, fastEarlyMode, solverMode);
+    if (profile == SnapshotProfile::Product)
+    {
+        youknow::ProductFidelityProfile::applyTo(parameters);
+        parameters.aging = 0.5f;
+    }
     parameters.polyphony = std::max(parameters.polyphony, scenario.heldNotes);
     snapshot.engine.setParameters(parameters);
     for (int note = 0; note < scenario.heldNotes; ++note)
@@ -581,6 +596,7 @@ int printFingerprints()
     std::cout << "protocol host_rate=" << sampleRate
               << " requested_quality=" << requestedFactor << "x"
               << " kernel=poly-zoned early=cubic solver=rk4-single"
+              << " fidelity=product-b converter=measured-chart aging=0.5"
               << " block_size=" << blockSize
               << " preroll_seconds=" << preRollSeconds
               << " timed_blocks=" << timingBlocks
@@ -594,11 +610,13 @@ int printFingerprints()
 
     for (const auto& scenario : tanhScenarios)
     {
-        // Match PluginProcessor's shipping defaults. EngineParameters keeps
-        // Exact/Hermite/Merson defaults for the established reference tools.
+        // Use the fresh plug-in's model and numerical defaults beneath each
+        // declared scenario panel. Reference/fingerprint modes keep their
+        // nominal physical profile and Exact/Hermite/Merson kernels.
         const auto snapshot = prepareSnapshot(
             scenario, sampleRate, requestedFactor, VcfTanhMode::PolyZoned,
-            VcfFastEarlyMode::Cubic, VcfSolverMode::Rk4Single);
+            VcfFastEarlyMode::Cubic, VcfSolverMode::Rk4Single,
+            SnapshotProfile::Product);
         const std::string quality = std::to_string(snapshot.factor) + "x";
         std::vector<double> times;
         std::vector<std::uint64_t> hashes;
@@ -1168,7 +1186,7 @@ void printUsage(const char* executable)
                  "|--self-test|--help]\n"
               << "       " << executable
               << " --cpu-benchmark [sample-rate [factor]]\n"
-              << "CPU defaults: 48000 Hz, requested factor 4 (allowed: 1, 2, 4).\n";
+              << "CPU defaults: 48000 Hz, requested factor 1 (allowed: 1, 2, 4).\n";
 }
 
 } // namespace
@@ -1202,7 +1220,7 @@ int main(int argc, char** argv)
                 return value;
             };
             const int sampleRate = argc >= 3 ? parseInteger(argv[2]) : 48000;
-            const int factor = argc >= 4 ? parseInteger(argv[3]) : 4;
+            const int factor = argc >= 4 ? parseInteger(argv[3]) : 1;
             if (sampleRate < YouKnowEngine::minimumSupportedSampleRate
                 || sampleRate > YouKnowEngine::maximumSupportedSampleRate
                 || (factor != 1 && factor != 2 && factor != 4))

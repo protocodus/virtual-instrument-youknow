@@ -13,6 +13,7 @@
 
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowPresets.h"
+#include "DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <cmath>
@@ -71,6 +72,7 @@ EngineParameters parametersFor(const sysex::Patch& patch)
     p.decay = patch.decay; p.sustain = patch.sustain;
     p.release = patch.release; p.chorus = patch.chorus;
     p.volume = 1.0f; p.polyphony = 6; p.calibration = 1.0f;
+    ProductFidelityProfile::applyTo(p);
     return p;
 }
 } // namespace
@@ -116,6 +118,7 @@ int main(int argc, char** argv)
     }
 
     YouKnowEngine engine;
+    ProductFidelityProfile::configureBeforePrepare(engine);
     engine.selectConverterTimingProfile(
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine.prepare(renderRate, 256, 4);

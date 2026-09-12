@@ -17,12 +17,13 @@ This selects the remaining two B candidates as product defaults:
 - HPF: A was the legacy network; B is the coupled C14/IC3/HPF circuit at
   110 ohms switch resistance. C used 240 ohms.
 
-The plug-in, ten maintained demos, composition and factory-preset audit use
-the same product selection. Nominal raw-DSP defaults remain available for
-component reference tests and controlled comparisons. No host parameter or
-session-format field is added, so restored sessions also use the new product
-model. Existing Unit Character and Aging settings still apply to the measured
-filter base; their combined sound is not a literal replay of the captured unit.
+The plug-in, ten maintained demos, composition, calibration product renders,
+preset-score renderer and factory-preset audit use the same product selection.
+Nominal raw-DSP defaults remain available for component reference tests and
+controlled comparisons. No host parameter or session-format field is added, so restored
+sessions also use the new product model. Existing Unit Character and Aging
+settings still apply to the measured filter base; their combined sound is not
+a literal replay of the captured unit.
 
 This is the owner's product direction; no blind listening verdict was
 reported. The serviced unit has Borish replacement cards, and its single

@@ -356,6 +356,9 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 // of that gap is the model's doing than it once was: restoring the shared noise
 // rail to its service anchor lifted the twelve noise-only patches from 21.5 dB
 // below the corpus median to 12.9 dB below it.
+// The 2026-09-12 full product-B audit found B43 and B52 above the gated
+// ceiling by 0.023 and 0.309 dB. Their VR1 positions are reduced from 0.521
+// and 0.723 to 0.517 and 0.695; the hardware tone bytes stay unchanged.
 constexpr std::array<float, presetCount> factoryVolume {{
     0.800f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
     0.450f, 0.547f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
@@ -368,8 +371,8 @@ constexpr std::array<float, presetCount> factoryVolume {{
     0.640f, 0.800f, 0.591f, 0.637f, 0.800f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.450f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.800f, 0.800f, 0.754f, 0.800f, 0.800f, 0.766f, 0.800f,
-    0.800f, 0.800f, 0.521f, 0.356f, 0.800f, 0.800f, 0.534f, 0.800f,
-    0.800f, 0.723f, 0.800f, 0.800f, 0.800f, 0.786f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.517f, 0.356f, 0.800f, 0.800f, 0.534f, 0.800f,
+    0.800f, 0.695f, 0.800f, 0.800f, 0.800f, 0.786f, 0.800f, 0.800f,
     0.800f, 0.800f, 0.800f, 0.673f, 0.800f, 0.800f, 0.800f, 0.617f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.673f, 0.800f, 0.750f,
     0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.800f, 0.611f,
