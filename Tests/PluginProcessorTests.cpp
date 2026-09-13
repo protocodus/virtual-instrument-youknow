@@ -3856,6 +3856,133 @@ void testPatchFileImportAppliesFirstPatchAndCountsTheRest()
     processor.releaseResources();
 }
 
+void testPatchFileImportSeparatesRealTimeBytesFromToneFrames()
+{
+    YouKnowAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    // Independent hardware Manual fixture; the second patch deliberately has
+    // a different tone and channel, exposing a silently skipped first patch.
+    const std::vector<std::uint8_t> manual {
+        0xf0, 0x41, 0x31, 0x03, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+        0x00, 0x40, 0x00, 0x00, 0x7f, 0x00, 0x00, 0x21, 0x14, 0xf7
+    };
+    auto numbered = manual;
+    numbered[2] = 0x30;
+    numbered[4] = 127;
+    auto legacy = numbered;
+    legacy.erase (legacy.begin() + 4);
+    auto second = manual;
+    second[3] = 9;
+    second[10] = 127;
+
+    const auto expectTone = [&] (const std::vector<std::uint8_t>& expected,
+                                 const std::string& context) {
+        std::array<std::uint8_t, sysex::toneByteCount> actual {};
+        sysex::toneBytesFromPatch (processor.currentPatch(), actual.data());
+        expect (std::equal (actual.begin(), actual.end(),
+                            expected.end() - sysex::toneByteCount - 1),
+                context + " changed the imported tone bytes");
+        expect (processor.sysExMidiChannel() == expected[3],
+                context + " adopted the wrong patch channel");
+    };
+    const auto expectFirstPatch = [&] (std::vector<std::uint8_t> stream,
+                                       const std::string& context) {
+        stream.insert (stream.end(), second.begin(), second.end());
+        int count = -1;
+        expect (processor.importPatchSysExBytes (stream.data(), stream.size(), count)
+                    && count == 2,
+                context + " discarded or miscounted a valid patch");
+        expectTone (manual, context);
+    };
+
+    for (const auto& message : { manual, numbered, legacy })
+    {
+        // Include both outside boundaries and every boundary inside each
+        // supported frame, including immediately after F0 and before F7.
+        for (std::size_t gap = 0; gap <= message.size(); ++gap)
+            for (int realTime = 0xf8; realTime <= 0xff; ++realTime)
+            {
+                auto interrupted = message;
+                interrupted.insert (interrupted.begin()
+                                        + static_cast<std::ptrdiff_t> (gap),
+                                    static_cast<std::uint8_t> (realTime));
+                expectFirstPatch (interrupted,
+                    "real-time " + std::to_string (realTime) + " at gap "
+                        + std::to_string (gap) + " of "
+                        + std::to_string (message.size()) + "-byte frame");
+            }
+
+        std::vector<std::uint8_t> interrupted;
+        for (const auto byte : message)
+        {
+            interrupted.push_back (byte);
+            interrupted.insert (interrupted.end(), { 0xf8, 0xfa, 0xfe, 0xff });
+        }
+        expectFirstPatch (interrupted, "multiple real-time bytes at every gap");
+        interrupted.insert (interrupted.begin(), { 0xf0, 0x41, 0xf8, 0x31, 0x00 });
+        expectFirstPatch (interrupted, "nested F0 after an interrupted prefix");
+    }
+
+    const auto expectRejectedThenRecover = [&] (
+        std::vector<std::uint8_t> malformed, const std::string& context) {
+        processor.applyPatch (sysex::patchFromToneBytes (manual.data() + 5));
+        const int channelBefore = processor.sysExMidiChannel();
+        int count = -1;
+        expect (!processor.importPatchSysExBytes (
+                    malformed.data(), malformed.size(), count) && count == 0,
+                context + " was accepted as a patch");
+        std::array<std::uint8_t, sysex::toneByteCount> actual {};
+        sysex::toneBytesFromPatch (processor.currentPatch(), actual.data());
+        expect (std::equal (actual.begin(), actual.end(), manual.begin() + 5)
+                    && processor.sysExMidiChannel() == channelBefore,
+                context + " changed the panel or reply channel");
+        malformed.insert (malformed.end(), second.begin(), second.end());
+        expect (processor.importPatchSysExBytes (
+                    malformed.data(), malformed.size(), count) && count == 1,
+                context + " swallowed the following valid patch");
+        expectTone (second, context + " recovery");
+    };
+
+    for (const auto& message : { manual, numbered, legacy })
+    {
+        auto overlong = message;
+        // Two extra data bytes make even the 23-byte legacy form too long.
+        overlong.insert (overlong.end() - 1, { 0x00, 0xf8, 0x00, 0xfe });
+        expectRejectedThenRecover (overlong, "overlong frame with real-time bytes");
+        auto truncated = message;
+        truncated.pop_back();
+        truncated.push_back (0xf8);
+        expectRejectedThenRecover (truncated, "unterminated frame");
+        for (int status = 0x80; status < 0xf7; ++status)
+        {
+            if (status == 0xf0)
+                continue; // A new F0 restarts framing, covered above.
+            auto malformed = message;
+            malformed.insert (malformed.begin() + 6,
+                              static_cast<std::uint8_t> (status));
+            expectRejectedThenRecover (malformed,
+                "non-real-time status " + std::to_string (status));
+        }
+    }
+
+    auto invalidManual = manual;
+    invalidManual[4] = 1;
+    invalidManual.insert (invalidManual.begin() + 1, 0xf8);
+    expectRejectedThenRecover (invalidManual, "nonzero Manual marker");
+    auto foreign = manual;
+    foreign[1] = 0x43;
+    foreign.insert (foreign.begin() + 1, 0xfe);
+    expectRejectedThenRecover (foreign, "foreign manufacturer");
+    auto invalidChannel = manual;
+    invalidChannel[3] = 0x10;
+    invalidChannel.insert (invalidChannel.end() - 1, 0xff);
+    expectRejectedThenRecover (invalidChannel, "dirty channel nibble");
+
+    processor.releaseResources();
+}
+
 void testLaterRecallSupersedesPendingMidi()
 {
     for (const int recallKind : { 0, 1, 2 })
@@ -8092,6 +8219,7 @@ int main()
         testStateSaveIncludesUnreflectedMidiTone();
         testStateSavePreservesEditsAfterMidiReflection();
         testPatchFileImportAppliesFirstPatchAndCountsTheRest();
+        testPatchFileImportSeparatesRealTimeBytesFromToneFrames();
         testLaterRecallSupersedesPendingMidi();
         testOrderedSysExAffectsAudioWithoutTheMessageThread();
         testReflectionAckCannotRetireShadowAgainstAStaleSnapshot();
@@ -8148,6 +8276,7 @@ int main()
     testSysExPatchRoundTripsThroughTheParameters();
     testHardwarePatchFramingReachesLiveAndFilePaths();
     testPatchFileImportAppliesFirstPatchAndCountsTheRest();
+    testPatchFileImportSeparatesRealTimeBytesFromToneFrames();
     testLaterRecallSupersedesPendingMidi();
     testOrderedSysExAffectsAudioWithoutTheMessageThread();
     testReflectionAckCannotRetireShadowAgainstAStaleSnapshot();

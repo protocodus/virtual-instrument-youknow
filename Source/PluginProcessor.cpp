@@ -2429,29 +2429,39 @@ bool YouKnowAudioProcessor::importPatchSysExBytes (const void* data,
         return false;
 
     bool applied = false;
-    std::size_t index = 0;
-    while (index < size)
+    std::array<std::uint8_t, youknow::sysex::patchMessageBytes> frame {};
+    std::size_t frameSize = 0;
+    for (std::size_t index = 0; index < size; ++index)
     {
-        if (bytes[index] != 0xf0)
+        const auto byte = bytes[index];
+        // MIDI System Real-Time bytes may interrupt any message, including
+        // SysEx. They are transport events, not tone data or terminators.
+        // https://midi.org/about-midi-part-3midi-messages
+        if (byte >= 0xf8)
+            continue;
+        if (byte == 0xf0)
         {
-            ++index;
+            frame[0] = byte;
+            frameSize = 1;
             continue;
         }
-
-        std::size_t end = index + 1;
-        while (end < size && bytes[end] != 0xf7 && bytes[end] != 0xf0)
-            ++end;
-        if (end == size)
-            break;
-        if (bytes[end] == 0xf0)
+        if (frameSize == 0)
+            continue;
+        if ((byte >= 0x80 && byte != 0xf7) || frameSize == frame.size())
         {
-            index = end;
+            // A non-real-time status aborts the frame. Likewise, an oversized
+            // frame stays discarded until another F0; never truncate it into
+            // a valid patch or let an untrusted file grow a temporary buffer.
+            frameSize = 0;
             continue;
         }
+        frame[frameSize++] = byte;
+        if (byte != 0xf7)
+            continue;
 
         youknow::sysex::Patch patch {};
         int channel = 0;
-        if (youknow::sysex::readPatchMessage (bytes + index, end - index + 1,
+        if (youknow::sysex::readPatchMessage (frame.data(), frameSize,
                                                  patch, channel))
         {
             ++patchesFound;
@@ -2464,7 +2474,7 @@ bool YouKnowAudioProcessor::importPatchSysExBytes (const void* data,
                 applied = true;
             }
         }
-        index = end + 1;
+        frameSize = 0;
     }
     return applied;
 }
