@@ -2688,6 +2688,113 @@ void testStateRoundTripAndMigration()
     }
 }
 
+void testMalformedStateCannotReplaceAWorkingPreset()
+{
+    YouKnowAudioProcessor processor;
+    processor.setCurrentProgram (9);
+    setParameterValue (processor, parameters::cutoff, 0.31415f);
+    setParameterValue (processor, parameters::volume, 0.4321f);
+    juce::MemoryBlock before;
+    processor.getStateInformation (before);
+    const auto originalXml = juce::AudioProcessor::getXmlFromBinary (
+        before.getData(), static_cast<int> (before.getSize()));
+    expect (originalXml != nullptr, "cannot build malformed-state fixtures");
+    if (originalXml == nullptr)
+        return;
+    const auto original = juce::ValueTree::fromXml (*originalXml);
+    const auto expectUnchanged = [&] (const std::string& context) {
+        juce::MemoryBlock after;
+        processor.getStateInformation (after);
+        expect (before == after && processor.getCurrentProgram() == 9,
+                context + " replaced some or all of the working preset");
+    };
+    const auto loadTree = [&] (const juce::ValueTree& state) {
+        juce::MemoryBlock bytes;
+        if (const auto xml = state.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, bytes);
+        expect (! bytes.isEmpty(), "cannot serialise malformed-state fixture");
+        processor.setStateInformation (bytes.getData(), static_cast<int> (bytes.getSize()));
+    };
+
+    // Exercise every public parameter, including bool/int ranges that would
+    // otherwise perform a float-to-integer conversion before the next block.
+    for (int index = 0; index < original.getNumChildren(); ++index)
+        for (const char* invalid : { "nan", "NaN", "inf", "-inf", "1e100", "-1e100" })
+        {
+            auto corrupt = original.createCopy();
+            corrupt.setProperty ("program", 3, nullptr);
+            auto parameter = corrupt.getChild (index);
+            parameter.setProperty ("value", invalid, nullptr);
+            loadTree (corrupt);
+            expectUnchanged (parameter.getProperty ("id").toString().toStdString()
+                             + "=" + invalid);
+        }
+
+    processor.setStateInformation (nullptr, 128);
+    expectUnchanged ("null state buffer");
+    processor.setStateInformation (before.getData(), -1);
+    expectUnchanged ("negative state length");
+    for (int length = 0; length <= 8; ++length)
+    {
+        processor.setStateInformation (before.getData(), length);
+        expectUnchanged ("truncated state header");
+    }
+    loadTree (juce::ValueTree { "FOREIGN_STATE" });
+    expectUnchanged ("foreign state root");
+
+    // Extreme but finite values retain JUCE's established range-clamping
+    // contract. Clamping the legacy choices must happen before roundToInt;
+    // ±1e30 are valid floats but cannot be converted to an int as-is.
+    for (const float extreme : { -1.0e30f, 1.0e30f })
+    {
+        auto state = original.createCopy();
+        state.setProperty ("program", 3, nullptr);
+        for (auto child : state)
+            child.setProperty ("value", extreme, nullptr);
+        loadTree (state);
+        expect (processor.getCurrentProgram() == 3,
+                "a finite out-of-range state was rejected");
+        for (auto* parameter : processor.getParameters())
+        {
+            const auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter);
+            expect (ranged != nullptr, "cannot inspect restored parameter range");
+            if (ranged == nullptr)
+                continue;
+            const auto value = parameterValue (processor, ranged->paramID.toRawUTF8());
+            const auto& range = ranged->getNormalisableRange();
+            expect (std::isfinite (value) && value >= range.start && value <= range.end,
+                    ranged->paramID.toStdString()
+                        + " was not finite and in range after an extreme restore");
+        }
+        expect (parameterValue (processor, parameters::legacyKeyMode)
+                    == (extreme > 0.0f ? 2.0f : 0.0f)
+                    && parameterValue (processor, parameters::legacyChorus)
+                    == (extreme > 0.0f ? 2.0f : 0.0f),
+                "finite legacy choices did not clamp to their legal endpoint");
+
+        auto legacy = original.createCopy();
+        legacy.removeProperty ("stateSchemaVersion", nullptr);
+        for (int index = legacy.getNumChildren(); --index >= 0;)
+        {
+            auto child = legacy.getChild (index);
+            const auto id = child.getProperty ("id").toString();
+            if (id == parameters::poly1 || id == parameters::poly2
+                || id == parameters::chorusI || id == parameters::chorusII)
+                legacy.removeChild (index, nullptr);
+            else if (id == parameters::legacyKeyMode || id == parameters::legacyChorus)
+                child.setProperty ("value", extreme, nullptr);
+        }
+        loadTree (legacy);
+        expect (parameterValue (processor, parameters::poly1) == 1.0f
+                    && parameterValue (processor, parameters::poly2)
+                           == (extreme > 0.0f ? 1.0f : 0.0f)
+                    && parameterValue (processor, parameters::chorusI) == 0.0f
+                    && parameterValue (processor, parameters::chorusII)
+                           == (extreme > 0.0f ? 1.0f : 0.0f),
+                "extreme finite legacy migration did not preserve endpoint mode");
+    }
+}
+
 void testLegacySplitModeMigration()
 {
     const auto setStored = [] (juce::ValueTree& state, const char* id, float value)
@@ -8333,6 +8440,7 @@ int main()
 
     if (std::getenv ("YOUKNOW_HOST_RECALL_TEST_ONLY") != nullptr)
     {
+        testMalformedStateCannotReplaceAWorkingPreset();
         testStateSaveIncludesUnreflectedMidiTone();
         testSysExExportUsesCoherentCurrentTone();
         testStateSavePreservesEditsAfterMidiReflection();
@@ -8377,6 +8485,7 @@ int main()
     testPerformanceLeverAutomationGesturesAndHostFeedback();
     testPanicSilencesEverything();
     testStateRoundTripAndMigration();
+    testMalformedStateCannotReplaceAWorkingPreset();
     testLegacySplitModeMigration();
     testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls();
     testRandomizerPreservesQualityAndLevel();

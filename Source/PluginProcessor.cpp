@@ -319,6 +319,14 @@ float storedParameterValue (const juce::ValueTree& state, const char* parameterI
     return fallback;
 }
 
+// Clamp before converting: saved XML is external input, and a finite float
+// such as 1e30 still cannot be represented by roundToInt's integer result.
+int storedModeChoice (const juce::ValueTree& state, const char* parameterId)
+{
+    return juce::roundToInt (juce::jlimit (
+        0.0f, 2.0f, storedParameterValue (state, parameterId, 0.0f)));
+}
+
 void setStoredParameterValue (juce::ValueTree& state, const char* parameterId,
                               float value)
 {
@@ -500,7 +508,7 @@ void YouKnowAudioProcessor::migrateSplitModeParameters (juce::ValueTree& state)
     const bool hasPoly2 = containsParameterState (state, poly2);
     if (containsParameterState (state, "keyMode") && ! hasPoly1 && ! hasPoly2)
     {
-        const auto legacy = juce::roundToInt (storedParameterValue (state, "keyMode", 0.0f));
+        const auto legacy = storedModeChoice (state, "keyMode");
         const bool unison = legacy == 2;
         setStoredParameterValue (state, poly1, (legacy == 0 || unison) ? 1.0f : 0.0f);
         setStoredParameterValue (state, poly2, (legacy == 1 || unison) ? 1.0f : 0.0f);
@@ -534,7 +542,7 @@ void YouKnowAudioProcessor::migrateSplitModeParameters (juce::ValueTree& state)
     const bool hasChorusII = containsParameterState (state, chorusII);
     if (hasLegacyChorus && ! hasChorusI && ! hasChorusII)
     {
-        const auto legacy = juce::roundToInt (storedParameterValue (state, "chorus", 0.0f));
+        const auto legacy = storedModeChoice (state, "chorus");
         setStoredParameterValue (state, chorusI, legacy == 1 ? 1.0f : 0.0f);
         setStoredParameterValue (state, chorusII, legacy == 2 ? 1.0f : 0.0f);
     }
@@ -545,8 +553,7 @@ void YouKnowAudioProcessor::migrateSplitModeParameters (juce::ValueTree& state)
         // that ambiguity when it names the missing mode; an on modern member
         // remains authoritative over a stale legacy choice.
         const int legacy = hasLegacyChorus
-                         ? juce::jlimit (0, 2, juce::roundToInt (
-                               storedParameterValue (state, "chorus", 0.0f)))
+                         ? storedModeChoice (state, "chorus")
                          : 0;
         if (hasChorusI)
         {
@@ -1977,6 +1984,9 @@ void YouKnowAudioProcessor::getStateInformation (juce::MemoryBlock& destinationD
 
 void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
+    if (data == nullptr || sizeInBytes <= 0)
+        return;
+
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
         return;
@@ -1984,6 +1994,19 @@ void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInByt
     auto state = juce::ValueTree::fromXml (*xml);
     if (! state.isValid())
         return;
+
+    // JUCE 8.0.14 parses XML "nan"/"inf" as IEEE values, and its range clamp
+    // does not make NaN finite. Validate before migration or replaceState so a
+    // corrupt chunk cannot partially replace a working preset or feed NaN to
+    // a discrete parameter's float-to-integer conversion. Test the float that
+    // APVTS actually stores: a finite double such as 1e100 also overflows it.
+    // Pinned JUCE: 2cdfca8feb300fb424002ba2c2751569e5bacb64,
+    // CharacterFunctions::readDoubleValue and APVTS::ParameterAdapter.
+    for (const auto& child : state)
+        if (child.hasProperty ("value")
+            && parameters.getParameter (child.getProperty ("id").toString()) != nullptr
+            && ! std::isfinite (static_cast<float> (child.getProperty ("value"))))
+            return;
 
     // Schema-less chunks predate Unit Character entirely. Most such chunks
     // explicitly carry `calibration`, which must be preserved as-is; the
@@ -2041,12 +2064,10 @@ void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInByt
         if (pointer.id != nullptr)
             addDefaultParameterStateIfMissing (state, parameters, pointer.id);
 
-    const int restoredKeyMode = juce::jlimit (
-        0, 2, juce::roundToInt (storedParameterValue (
-                  state, youknow::parameters::legacyKeyMode, 0.0f)));
-    const int restoredChorusMode = juce::jlimit (
-        0, 2, juce::roundToInt (storedParameterValue (
-                  state, youknow::parameters::legacyChorus, 0.0f)));
+    const int restoredKeyMode =
+        storedModeChoice (state, youknow::parameters::legacyKeyMode);
+    const int restoredChorusMode =
+        storedModeChoice (state, youknow::parameters::legacyChorus);
 
     // Deliberately no engine update here. This runs on the message thread while
     // the audio thread may be inside process(), and the engine's parameter
