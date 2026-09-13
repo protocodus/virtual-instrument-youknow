@@ -367,6 +367,10 @@ if(YOUKNOW_BUILD_TOOLS)
         PRIVATE YouKnowDSP Threads::Threads)
     target_compile_features(YouKnowRenderPresetScore PRIVATE cxx_std_20)
 
+    add_executable(YouKnowRenderControlDacProbe Tools/RenderControlDacProbe.cpp)
+    target_link_libraries(YouKnowRenderControlDacProbe PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderControlDacProbe PRIVATE cxx_std_20)
+
     add_executable(YouKnowMakeCalibrationTakes Tools/MakeCalibrationTakes.cpp)
     target_link_libraries(YouKnowMakeCalibrationTakes
         PRIVATE YouKnowDSP Threads::Threads)
