@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 
 namespace youknow
 {
@@ -24,6 +25,27 @@ struct YouKnowTestAccess
     static double control(const YouKnowEngine& engine, int slot = 0)
     {
         return engine.voices_[static_cast<std::size_t>(slot)].vcaControl;
+    }
+    static std::pair<float, float> writeEnvelopeWord(
+        YouKnowEngine& engine, std::uint16_t word, VcaMode mode,
+        bool gateOpen = true)
+    {
+        EngineParameters parameters;
+        parameters.calibration = parameters.velocityDepth = 0;
+        parameters.vcaMode = mode;
+        auto& voice = engine.voices_[0];
+        voice.keyDown = gateOpen;
+        voice.sustained = false;
+        voice.envelope.level = word;
+        voice.envelope.stage = YouKnowEngine::EnvelopeStage::Sustain;
+        // Exercise the production RAM -> discarded low bits -> normalized
+        // envelope -> actual mux destination, rather than injecting a float.
+        voice.envelope.tick(1u, 0u, word, 0u);
+        engine.performConverterWrite(
+            {YouKnowEngine::ConverterDestination::VoiceVca, 0}, parameters);
+        voice.vcaControl = voice.vcaControlTarget;
+        engine.updateVoiceAudio(voice, parameters);
+        return {voice.vcaControlTarget, voice.vcaGain};
     }
     static double seedFractionalWrite(YouKnowEngine& engine, int slot,
                                       double requestedPosition)
@@ -91,10 +113,12 @@ namespace
 // R105 and integrate C58 KCL with substepped long-double RK4. It never calls
 // the production charge table, RK4 helper or effective-CV equation.
 constexpr long double vt = static_cast<long double>(0.026f);
-constexpr long double span = 9.921875L;
-constexpr long double knee = static_cast<long double>(0.015f);
+constexpr long double span = 10.0L * 4095.0L / 4096.0L;
+// Keep the existing junction prior in volts, independently of the corrected
+// ENV peak span. The old span was the stored slider's maximum, code4064.
+constexpr long double kneeVolts = static_cast<long double>(0.015f) * 9.921875L;
 constexpr long double standoff = 0.26L;
-const long double logIs = std::log(vt / 32000.0L) - (standoff + knee * span) / vt;
+const long double logIs = std::log(vt / 32000.0L) - (standoff + kneeVolts) / vt;
 
 long double emitterCurrent(long double node, long double resistance)
 {
@@ -164,11 +188,83 @@ void processOne(youknow::YouKnowEngine& engine)
             "VCA callback fixture produced non-finite audio");
 }
 
+// Independent code-to-voltage oracle: add the twelve binary-weighted ladder
+// contributions, then apply the chart's nominal x2 positive buffer. This
+// deliberately does not call ControlDac or reuse its endpoint constants.
+long double positiveRailForCode(unsigned code)
+{
+    long double ladder = 0;
+    for (unsigned bit = 0; bit < 12; ++bit)
+        if ((code & (1u << bit)) != 0)
+            ladder += std::ldexp(5.0L, static_cast<int>(bit) - 12);
+    return standoff + 2.0L * ladder;
+}
+
+void testEnvelopeCodeToPhysicalVca(const youknow::VcaControlCircuit& circuit)
+{
+    using Engine = youknow::YouKnowEngine;
+    using Law = Engine::VoiceVcaControlLaw;
+    auto engine = std::make_unique<Engine>();
+    engine->prepare(48000, 1, 1);
+    const long double peakCurrent = emitterCurrent(positiveRailForCode(4095), 32000.0L);
+    double maximumRailError = 0, maximumCapacitorError = 0, maximumGainDb = 0;
+    for (unsigned code = 0; code < 4096; ++code)
+    {
+        const auto [control, gain] = youknow::YouKnowTestAccess::writeEnvelopeWord(
+            *engine, static_cast<std::uint16_t>((code << 2u) | 3u),
+            youknow::VcaMode::Envelope);
+        const long double voltage = positiveRailForCode(code);
+        const double actualRail = static_cast<double>(standoff)
+            + static_cast<double>(control) * Law::controlFullScaleVolts;
+        maximumRailError = std::max(maximumRailError,
+            std::abs(actualRail - static_cast<double>(voltage)));
+        const long double current = emitterCurrent(voltage, 32000.0L);
+        const long double capacitor = voltage - 10000.0L * current;
+        const double actualCapacitor = static_cast<double>(standoff)
+            + Law::controlFullScaleVolts * circuit.capacitorCoordinate(control);
+        maximumCapacitorError = std::max(maximumCapacitorError,
+            std::abs(actualCapacitor - static_cast<double>(capacitor)));
+        if (control > Law::deadband)
+            maximumGainDb = std::max(maximumGainDb, std::abs(20.0 * std::log10(
+                static_cast<double>(gain) / static_cast<double>(current / peakCurrent))));
+        else
+            require(gain == 0, "declared off-current policy changed");
+    }
+    require(maximumRailError < 1.0e-6,
+            "ENV DAC code does not reach its binary-weighted physical voltage");
+    require(maximumCapacitorError < 5.0e-6,
+            "ENV DAC code misses the joined absolute-voltage C58 equilibrium");
+    require(maximumGainDb < .012,
+            "ENV code-to-gain law misses the independent physical-current ratio");
+
+    const auto [sustain, sustainGain] = youknow::YouKnowTestAccess::writeEnvelopeWord(
+        *engine, 0x3f80u, youknow::VcaMode::Envelope);
+    const auto [peak, peakGain] = youknow::YouKnowTestAccess::writeEnvelopeWord(
+        *engine, 0x3fffu, youknow::VcaMode::Envelope);
+    const auto [gate, gateGain] = youknow::YouKnowTestAccess::writeEnvelopeWord(
+        *engine, 0u, youknow::VcaMode::Gate);
+    const auto [off, offGain] = youknow::YouKnowTestAccess::writeEnvelopeWord(
+        *engine, 0x3fffu, youknow::VcaMode::Gate, false);
+    require(peak == 1 && gate == peak && peakGain == 1 && gateGain == 1,
+            "GATE and ENV peak must use code4095 while normalized peak stays unity");
+    require(off == 0 && offGain == 0, "closed GATE did not write zero");
+    require(std::abs(sustain * Law::controlFullScaleVolts - 9.921875) < 1e-6,
+            "maximum stored sustain no longer represents code4064");
+    require(std::abs((peak - static_cast<double>(sustain)) * Law::controlFullScaleVolts
+                     - 31.0 * 10.0 / 4096.0) < 1e-6 && sustainGain < peakGain,
+            "ENV peak and stored sustain lost their distinct physical DAC endpoints");
+    require(std::abs(Law::turnOnVolts - static_cast<double>(kneeVolts)) < 1e-12,
+            "voltage-span correction refitted the existing absolute VCA knee");
+    std::cout << "4096 joined ENV DAC codes: max rail error " << maximumRailError * 1e6
+              << "uV, C58 error " << maximumCapacitorError * 1e6
+              << "uV, gain error " << maximumGainDb << "dB\n";
+}
+
 void testSubstepBoundary(const youknow::VcaControlCircuit& circuit)
 {
     // Deliberately approach the branch on both sides. At the boundary the
     // solver takes one RK4 step even for a large upward target change.
-    const double boundary = static_cast<double>(knee)
+    const double boundary = static_cast<double>(kneeVolts / span)
         + 8.0 * static_cast<double>(vt) / static_cast<double>(span);
     for (int rate : {8000, 44100, 48000, 192000, 768000})
     {
@@ -273,6 +369,7 @@ int main()
     try
     {
         const auto& circuit = youknow::YouKnowTestAccess::productionCircuit();
+        testEnvelopeCodeToPhysicalVca(circuit);
         for (double level : {0.0, .004, .015, .02, .1, .5, 1.0})
         {
             require(circuit.advance(level, level, 1.0/48000) == level,

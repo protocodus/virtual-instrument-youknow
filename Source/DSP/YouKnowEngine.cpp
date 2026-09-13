@@ -1760,8 +1760,8 @@ const VcaControlCircuit& YouKnowEngine::voiceVcaControlCircuit() noexcept
 {
     static const VcaControlCircuit circuit {
         thermalVoltage,
-        CircuitDerivedResonanceProfile::controlFullScaleVolts,
-        VoiceVcaControlLaw::turnOn };
+        VoiceVcaControlLaw::controlFullScaleVolts,
+        VoiceVcaControlLaw::turnOnVolts / VoiceVcaControlLaw::controlFullScaleVolts };
     return circuit;
 }
 
@@ -1777,13 +1777,11 @@ YouKnowEngine::VoiceVcaControlLaw::exactGainTable()
     static const std::array<float, tableSteps + 1> table = []
     {
         std::array<double, tableSteps + 1> solved {};
-        constexpr double voltsPerUnit =
-            static_cast<double>(CircuitDerivedResonanceProfile::controlFullScaleVolts)
-            / static_cast<double>(thermalVoltage);
+        constexpr double spanVolts = static_cast<double>(controlFullScaleVolts);
         for (int i = 0; i <= tableSteps; ++i)
         {
-            const double v = (static_cast<double>(i) / tableSteps
-                              - static_cast<double>(turnOn)) * voltsPerUnit;
+            const double v = (static_cast<double>(i) / tableSteps * spanVolts
+                              - turnOnVolts) / static_cast<double>(thermalVoltage);
             double y = v > 1.0 ? v - std::log(v) : std::exp(v);
             for (int step = 0; step < 12; ++step)
             {
@@ -1828,12 +1826,12 @@ float YouKnowEngine::VoiceVcaControlLaw::softplusGain(float control) noexcept
     const float level = clamp01(sanitised(control, 0.0f));
     if (level <= deadband)
         return 0.0f;
-    const float x = (level - turnOn) / knee;
+    const float x = (level - softplusTurnOn) / knee;
     // log1p(exp(x)) is x to the last bit long before x reaches thirty, and the
     // exponential would overflow well after that; take the limit early so the
     // linear region costs one comparison rather than two transcendentals.
     const float softplus = x > 30.0f ? x : std::log1p(std::exp(x));
-    return knee * softplus / (1.0f - turnOn);
+    return knee * softplus / (1.0f - softplusTurnOn);
 }
 
 float YouKnowEngine::commonVcaControlVolts(float dacFraction) noexcept

@@ -7,6 +7,7 @@
 #include "YouKnowHighPassSwitch.h"
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
+#include "YouKnowControlDac.h"
 
 #include <array>
 #include <bit>
@@ -1216,8 +1217,8 @@ public:
     [[nodiscard]] static std::uint16_t envelopeReleaseLevel(
         std::uint16_t level, std::uint16_t multiplier) noexcept;
     // The recurrence retains all 14 state bits, but the physical 12-bit DAC
-    // receives E>>2. This is the analogue-control fraction actually presented
-    // to the VCF envelope summing path and the ENV-mode voice VCA.
+    // receives E>>2. This is the ENV-mode voice-VCA coordinate, normalized
+    // on DAC code 4095. VCF summing instead retains all fourteen RAM bits.
     [[nodiscard]] static float envelopeDacFraction(
         std::uint16_t level) noexcept;
 
@@ -1303,6 +1304,11 @@ public:
     // separate question and is not assumed here.
     struct VoiceVcaControlLaw
     {
+        // ENV and GATE can reach code 4095; stored RESO/VCA LEVEL sliders
+        // stop at 4064. Keep the envelope's existing code/4095 coordinate,
+        // but assign it the voltage span of the code it actually represents.
+        static constexpr float controlFullScaleVolts = static_cast<float>(
+            ControlDac::positiveSpanVolts(ControlDac::maximumCode));
         // 150 mV of envelope travel above the control rail's anchored
         // operating point, normalised on the converter's 10 V span.
         // Service Notes pp. 18-19 adjust VR34 (10KB) for +0.25...+0.27 V at
@@ -1321,7 +1327,7 @@ public:
         // that path's junction onset.
         //
         // Convention under the exact law: v = 0 (control = turnOn) is where
-        // y + ln y = 0, y = Omega = 0.5671 (Ie = 0.461 uA, -56.3 dB re full
+        // y + ln y = 0, y = Omega = 0.5671 (Ie = 0.461 uA, -56.4 dB re full
         // scale), i.e. the law's sub-knee exponential asymptote coincides
         // with the former softplus's, so this constant keeps meaning what it
         // meant -- the 60 mV/decade tail position the tests pin. The
@@ -1330,12 +1336,19 @@ public:
         // gain above `silenceGain`; it was rejected for that. This mapping is
         // a stated convention, not a derivation. Implied by it, for
         // documentation only: Is = (Vt / R) * exp(-(0.26 + 0.015 * 9.92) / Vt)
-        // = 1.2e-13 A, and Vbe = 0.563 V at the full-scale 300.6 uA, a
+        // = 1.2e-13 A, and Vbe is about 0.564 V at full-scale 303 uA, a
         // plausible small-signal PNP figure and nothing more.
-        static constexpr float turnOn = 0.015f;
+        // Preserve the existing voiced knee in VOLTS while correcting the
+        // envelope's full-scale span. This is a coordinate correction, not
+        // a new transistor fit or a change to the archived softplus option.
+        static constexpr float softplusTurnOn = 0.015f;
+        static constexpr double turnOnVolts = static_cast<double>(softplusTurnOn)
+            * ControlDac::positiveSpanVolts(ControlDac::storedMaximumCode);
+        static constexpr float turnOn = static_cast<float>(
+            turnOnVolts / controlFullScaleVolts);
         // Legacy softplus scale, comparison path only: ideal-BJT kT/q on the
         // converter span, rounded. The exact law uses the derived
-        // thermalVoltage / controlFullScaleVolts = 0.026 / 9.921875 = 0.0026205.
+        // thermalVoltage / controlFullScaleVolts = 0.026 / 9.9975586 = 0.0026006.
         static constexpr float knee = 0.0026f;
         // R106 10k + R105 22k, p. 13. Documentation: it cancels in the
         // normalised law and only sets the implied Is above.

@@ -1947,7 +1947,7 @@ void testEnvelopeAndAmplifierLaws()
     // volts turns control travel into units of Vt.
     const double voltsPerUnit =
         static_cast<double>(
-            YouKnowEngine::CircuitDerivedResonanceProfile::controlFullScaleVolts)
+            VoiceVcaLaw::controlFullScaleVolts)
         / static_cast<double>(YouKnowTestAccess::thermalVoltage());
     const auto solveOmega = [](double v)
     {
@@ -1963,9 +1963,10 @@ void testEnvelopeAndAmplifierLaws()
     };
     const double fullScaleCurrent =
         solveOmega((1.0 - VoiceVcaLaw::turnOn) * voltsPerUnit);
-    // 369.97 Vt / R is 300.6 uA through 32 kOhm.
-    expectNear(fullScaleCurrent, 369.97, 0.01,
-               "the full-scale emitter current is not 370 Vt/R");
+    // Code4095 reaches 9.9975586 V above the standoff: 372.876 Vt/R
+    // is 302.962 uA through 32 kOhm, with the same absolute junction prior.
+    expectNear(fullScaleCurrent, 372.876, 0.01,
+               "the full-scale emitter current missed the code4095 voltage");
 
     // On the table's own grid every entry must satisfy y + ln y = v: the
     // residual is the whole distance between the shipped number and the
@@ -2042,10 +2043,10 @@ void testEnvelopeAndAmplifierLaws()
     for (int step = 1; step <= 20; ++step)
     {
         const float control = static_cast<float>(step) / 20.0f;
-        const float x = (control - VoiceVcaLaw::turnOn) / VoiceVcaLaw::knee;
+        const float x = (control - VoiceVcaLaw::softplusTurnOn) / VoiceVcaLaw::knee;
         const float softplus = x > 30.0f ? x : std::log1p(std::exp(x));
         const float expected =
-            VoiceVcaLaw::knee * softplus / (1.0f - VoiceVcaLaw::turnOn);
+            VoiceVcaLaw::knee * softplus / (1.0f - VoiceVcaLaw::softplusTurnOn);
         expect(VoiceVcaLaw::softplusGain(control) == expected,
                "the softplus comparison path is not bit-exact at control "
                    + std::to_string(control));
