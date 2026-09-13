@@ -2592,8 +2592,6 @@ void YouKnowAudioProcessorEditor::chooseAndExportPatchFile()
             auto file = chooser.getResult();
             if (file == juce::File())
                 return;
-            if (file.getFileExtension().isEmpty())
-                file = file.withFileExtension ("syx");
             safe->exportPatchFile (file);
         });
 }
@@ -2629,18 +2627,27 @@ void YouKnowAudioProcessorEditor::importPatchFile (const juce::File& file)
         "LOAD", "No compatible patch dump in \"" + file.getFileName() + "\".");
 }
 
-void YouKnowAudioProcessorEditor::exportPatchFile (const juce::File& file)
+void YouKnowAudioProcessorEditor::exportPatchFile (const juce::File& selectedFile)
 {
-    const auto engaged = [this] (const char* id)
+    if (selectedFile == juce::File())
+        return;
+
+    const auto file = selectedFile.getFileExtension().isEmpty()
+        ? selectedFile.withFileExtension ("syx") : selectedFile;
+    // Linux/non-native choosers can return an extensionless filename. Their
+    // overwrite prompt covered only that selected path, not the different
+    // .syx destination we add here. Never replace that second file silently.
+    if (file != selectedFile && file.exists())
     {
-        const auto* value = audioProcessor.parameters.getRawParameterValue (id);
-        return value != nullptr
-            && value->load (std::memory_order_relaxed) > 0.5f;
-    };
-    const bool exportedBothAsTwo = engaged (parameters::chorusI)
-                                && engaged (parameters::chorusII);
+        contextHelp.showNotice (
+            "SAVE", "\"" + file.getFileName()
+                + "\" already exists. Select that exact filename in Save to replace it.");
+        return;
+    }
+
+    bool exportedBothAsTwo = false;
     const auto message = audioProcessor.currentPatchAsSysEx (
-        audioProcessor.sysExMidiChannel());
+        audioProcessor.sysExMidiChannel(), &exportedBothAsTwo);
     if (message.getRawDataSize() == 0
         || !file.replaceWithData (message.getRawData(),
                                   static_cast<std::size_t> (

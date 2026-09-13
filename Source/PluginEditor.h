@@ -256,6 +256,7 @@ public:
                              bool mouseMoved);
 
 private:
+    friend struct YouKnowEditorFileTestAccess;
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;

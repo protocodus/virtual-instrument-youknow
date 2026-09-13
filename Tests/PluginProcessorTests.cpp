@@ -17,6 +17,15 @@
 #include <utility>
 #include <vector>
 
+struct YouKnowEditorFileTestAccess
+{
+    static void exportSelection (YouKnowAudioProcessorEditor& editor,
+                                 const juce::File& selectedFile)
+    {
+        editor.exportPatchFile (selectedFile);
+    }
+};
+
 namespace
 {
 using namespace youknow;
@@ -8384,6 +8393,59 @@ void checkSynthesisSectionsDominateUtilities (
                 + ")");
 }
 
+void testPatchExportProtectsTheResolvedFilename()
+{
+    YouKnowAudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> owner (processor.createEditor());
+    auto* editor = dynamic_cast<YouKnowAudioProcessorEditor*> (owner.get());
+    expect (editor != nullptr, "patch export requires the product editor");
+    if (editor == nullptr)
+        return;
+
+    const auto directory = juce::File::getSpecialLocation (juce::File::tempDirectory)
+        .getChildFile ("YouKnow-export-test-" + juce::Uuid().toString());
+    struct Cleanup
+    {
+        juce::File directory;
+        ~Cleanup() { directory.deleteRecursively(); }
+    } cleanup { directory };
+    expect (directory.createDirectory().wasOk(), "cannot create patch-export fixture");
+    if (! directory.isDirectory())
+        return;
+
+    const auto selected = directory.getChildFile ("Customer tone");
+    const auto existing = selected.withFileExtension ("syx");
+    constexpr auto original = "Existing customer patch must survive";
+    expect (existing.replaceWithText (original), "cannot create existing-patch fixture");
+
+    // A chooser's confirmation for "Customer tone" did not authorize
+    // replacing "Customer tone.syx". Exercise the actual file-writing path.
+    YouKnowEditorFileTestAccess::exportSelection (*editor, selected);
+    expect (existing.loadFileAsString() == original,
+            "adding .syx silently replaced a different existing patch");
+    expect (! selected.exists(), "patch export wrote an extensionless file");
+
+    const auto expected = processor.currentPatchAsSysEx (processor.sysExMidiChannel());
+    const auto isExpectedPatch = [&] (const juce::File& file)
+    {
+        juce::MemoryBlock bytes;
+        return file.loadFileAsData (bytes)
+            && bytes.getSize() == static_cast<std::size_t> (expected.getRawDataSize())
+            && std::memcmp (bytes.getData(), expected.getRawData(), bytes.getSize()) == 0;
+    };
+    const auto fresh = directory.getChildFile ("New tone");
+    YouKnowEditorFileTestAccess::exportSelection (*editor, fresh);
+    expect (! fresh.exists() && isExpectedPatch (fresh.withFileExtension ("syx")),
+            "a new extensionless selection did not save a complete .syx patch");
+
+    // An explicit selected .syx path has already passed the chooser's
+    // overwrite confirmation and must remain replaceable.
+    YouKnowEditorFileTestAccess::exportSelection (*editor, existing);
+    expect (isExpectedPatch (existing), "explicit patch replacement no longer works");
+    YouKnowEditorFileTestAccess::exportSelection (*editor, {});
+    expect (isExpectedPatch (existing), "cancelling Save changed an existing patch");
+}
+
 void testEditorBuildsAndRenders()
 {
     YouKnowAudioProcessor processor;
@@ -8746,6 +8808,12 @@ int main()
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
+    if (std::getenv ("YOUKNOW_EDITOR_FILES_TEST_ONLY") != nullptr)
+    {
+        testPatchExportProtectsTheResolvedFilename();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     if (std::getenv ("YOUKNOW_PARAMETER_TEXT_TEST_ONLY") != nullptr)
     {
         testDisplayedParameterTextIsStableWhenReentered();
@@ -8854,6 +8922,7 @@ int main()
     testProgrammerRowKeysShareOneKeyFace();
     testPerformanceLeverKeepsTheAxisStillHeld();
     testPolyButtonsKeepAValidFirmwareLatch();
+    testPatchExportProtectsTheResolvedFilename();
     testEditorBuildsAndRenders();
 
     if (failureCount != 0)
