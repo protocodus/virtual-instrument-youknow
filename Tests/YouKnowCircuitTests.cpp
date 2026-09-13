@@ -2117,7 +2117,7 @@ void testEnvelopeAndAmplifierLaws()
     }
 
     // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA
-    // after the six voices are summed. Solve Roland's p. 8 converter and p. 15
+    // after the six voices are summed. Solve Roland's p. 13 converter and p. 15
     // resistor network independently in double precision, then apply NEC's
     // -5.9 mV/dB typical control constant. This guards every stage instead of
     // pinning a few outputs copied from the implementation.
@@ -2133,7 +2133,10 @@ void testEnvelopeAndAmplifierLaws()
         const double physicalCode = 32.0 * storedByte;
         const double converterVolts =
             dacReferenceVolts * physicalCode / dacSteps;
-        const double holdVolts = 4.0 - 2.0 * converterVolts;
+        // IC28a: virtual-ground input, R130 4.99k from the DAC, R129 39k
+        // from -15V and R131 10k feedback; p.8's +4..-6V labels are rounded.
+        const double holdVolts = 10000.0
+            * (15.0 / 39000.0 - converterVolts / 4990.0);
         const double holdSeries = r30 + r32;
         return (holdVolts / holdSeries + biasVolts / r165)
              / (1.0 / holdSeries + 1.0 / r31 + 1.0 / r165);
@@ -6930,14 +6933,14 @@ void testCommonVcaControlConstantIsProportionalToAbsoluteTemperature()
         expectNear(warmDb(position), coldDb(position) / warmRatio, 1.0e-4,
                    "the warm law is not the cold decibels over 313.15/298.15 "
                    "at position " + std::to_string(position));
-    expectNear(coldDb(0.0f), -16.32, 0.01, "stored byte 0 is not -16.3 dB cold");
-    expectNear(warmDb(0.0f), -15.54, 0.01,
-               "stored byte 0 does not read -15.5 dB at full warm-up");
-    expectNear(warmDb(0.0f) - coldDb(0.0f), 0.78, 0.01,
-               "stored byte 0 does not gain 0.78 dB at full warm-up");
-    expectNear(coldDb(1.0f), 4.71, 0.01, "full travel is not +4.7 dB cold");
-    expectNear(warmDb(1.0f), 4.48, 0.01,
-               "full travel does not read +4.48 dB at full warm-up");
+    expectNear(coldDb(0.0f), -15.9936, 0.01, "stored byte 0 is not -15.99 dB cold");
+    expectNear(warmDb(0.0f), -15.2275, 0.01,
+               "stored byte 0 does not read -15.23 dB at full warm-up");
+    expectNear(warmDb(0.0f) - coldDb(0.0f), 0.7661, 0.01,
+               "stored byte 0 does not gain 0.77 dB at full warm-up");
+    expectNear(coldDb(1.0f), 5.0773, 0.01, "full travel is not +5.08 dB cold");
+    expectNear(warmDb(1.0f), 4.8341, 0.01,
+               "full travel does not read +4.83 dB at full warm-up");
 
     // The gain is monotone in position, so bisect the cold law for the
     // position reading -10 dB and the position where Vc = 0: the first warms

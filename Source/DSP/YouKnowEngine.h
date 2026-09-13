@@ -1465,10 +1465,10 @@ public:
         [[nodiscard]] static float shape(float volts) noexcept;
     };
     // The stored VCA LEVEL trim drives a second, shared uPC1252H2 after the
-    // voice sum. Roland's converter chart and jack-board drawing establish the
-    // complete nominal path: stored byte b becomes 12-bit code b<<5, the
-    // +4..-6 V hold crosses R30/R32 into the R31/R165-biased GC1 node, and NEC
-    // specifies -5.9 mV/dB typical. The two helpers expose the intermediate
+    // voice sum. Roland's module- and jack-board drawings establish the
+    // complete nominal path: stored byte b becomes 12-bit code b<<5, IC28a's
+    // resistor-derived hold crosses R30/R32 into the R31/R165-biased GC1 node,
+    // and NEC specifies -5.9 mV/dB typical. The two helpers expose the intermediate
     // voltage and C7's derived time constant so the suite can check the
     // resistor solve independently of the final gain conversion. NEC's figure
     // is the part's 25 C value and is proportional to absolute temperature

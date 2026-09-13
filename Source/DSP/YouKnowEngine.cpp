@@ -201,16 +201,22 @@ constexpr float commonVcaInputResistanceOhms = 33000.0f;
 constexpr float commonVcaOutputNoiseDbv = -94.0f;
 constexpr float commonVcaOutputNoiseBandwidthHz = 19990.0f;
 
-// Stored VCA LEVEL control path on the jack board. Roland's p. 8 converter
-// chart gives the +4..-6 V buffer span and the firmware stores byte b as the
-// physical 12-bit code b<<5. Page 15 then shows R30/C7 at the held node, R32
+// Stored VCA LEVEL control path on the jack board. The firmware stores byte b
+// as physical 12-bit code b<<5. Page 15 shows R30/C7 at the held node, R32
 // into IC5 GC1, R31 to ground and R165 to +15 V. The DAC uses the usual ideal
 // 4096-step R-2R convention; the largest reachable stored code is 4064.
 constexpr float commonVcaDacReferenceVolts = 5.0f;
 constexpr float commonVcaDacSteps = 4096.0f;
 constexpr float commonVcaMaximumDacCode = 4064.0f;
-constexpr float commonVcaBufferOffsetVolts = 4.0f;
-constexpr float commonVcaBufferGain = -2.0f;
+// Page 8 rounds IC28a's span to +4..-6 V; p. 13 gives its actual nominal
+// summing network: R130 4.99k from TP4, R131 10k feedback and R129 39k from
+// -15 V. With the noninverting input grounded, KCL gives
+// Vout = 15*(10k/39k) - Vdac*(10k/4.99k). There is no trim on this buffer.
+// This common-VCA path uses those component values; the VCF's service fit
+// and PWM's independently calibrated endpoints retain their coordinates.
+// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13
+constexpr float commonVcaBufferOffsetVolts = 15.0f * 10000.0f / 39000.0f;
+constexpr float commonVcaBufferGain = -10000.0f / 4990.0f;
 constexpr float commonVcaR30Ohms = 2200.0f;
 constexpr float commonVcaR32Ohms = 1500.0f;
 constexpr float commonVcaR31Ohms = 47.0f;
