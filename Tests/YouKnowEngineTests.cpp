@@ -2584,9 +2584,10 @@ EngineParameters plainPatch()
     parameters.decay = 1.0f;
     parameters.sustain = 1.0f;
     parameters.release = 0.0f;
-    // The stored LEVEL slider is a shared post-sum trim. Byte 99 is the nearest
-    // stored setting to 0 dB in the nominal jack-board/NEC solve (+0.073 dB);
-    // full travel adds 4.71 dB and changes the downstream chorus drive.
+    // The stored LEVEL slider is a shared post-sum trim. Retain the reference
+    // fixture's byte 99: correcting IC28a's drawn buffer gives +0.432 dB at
+    // this setting and +5.077 dB at full travel. Changing the fixture to the
+    // newly nearest-unity byte 96 would hide part of that circuit correction.
     parameters.vcaLevel = 99.0f / 127.0f;
     parameters.volume = 1.0f;
     parameters.chorus = ChorusMode::Off;
@@ -10180,8 +10181,17 @@ void testFixedOutputBoundaryCorpus()
         // circuit correction crossed 4%. ENV and KEY are both zero here, so
         // their firmware correction has no effect. Keep the RMS reference,
         // every fixture/window and the 4% guards.
-        Baseline { 0.123353, 0.245922, 0.248728, 0, 0 },
-        Baseline { 0.312853, 0.943451, 0.954339, 0, 0 },
+        // Re-measured after the resistor-derived common-VCA buffer and
+        // positive control-DAC corrections. The frozen pre-DAC engine passes
+        // these historical guard bands; the same fixture on the corrected
+        // engine gains 0.37..0.38 dB RMS for ordinary rows, mostly the common
+        // VCA's independently derived +0.368 dB at stored LEVEL 127. The
+        // hot Unison row gains 0.29 dB RMS because the output stage compresses
+        // it. Refresh only exceeded references: these are broad historical
+        // product guards, not a current-waveform fingerprint. Every fixture,
+        // four-percent tolerance, overload reference and global ceiling stays.
+        Baseline { 0.123353, 0.2571413517, 0.2600825992, 0, 0 },
+        Baseline { 0.3292897219, 0.943451, 0.954339, 0, 0 },
         // Re-pinned after replacing the phase-zero timer restart with explicit
         // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
         // physical C54/comparator event walk. Only this six-card Unison
@@ -10191,18 +10201,18 @@ void testFixedOutputBoundaryCorpus()
         // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
         // change this low-note stack's phase and reconstructed crossings;
         // the fixture, window and four-percent guards remain unchanged.
-        Baseline { 0.631629, 1.41347, 1.41929, 1194, 4762 },
+        Baseline { 0.6642484260, 1.41347, 1.41929, 1194, 4762 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.0603095, 0.0847796, 0.0847796, 0, 0 },
+        Baseline { 0.0629453996, 0.0884786248, 0.0884786248, 0, 0 },
         Baseline { 0.207787, 0.470048, 0.474565, 0, 0 },
         // This wet row additionally includes the independently qualified
         // loading ahead of the BBD. Refresh only its exceeded level/peak
         // references, without treating their historical drift as an isolated
         // loading measurement. The other chorus row, overload counts and all
         // 4% guards stay unchanged.
-        Baseline { 0.149503, 0.337386, 0.337386, 0, 0 },
+        Baseline { 0.1561511158, 0.3526028097, 0.3526028097, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -10794,9 +10804,13 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
         // HQ-on extremes moved one sample later when the voice VCA took Tr20's
         // exact junction law, which sits up to 2.5 dB under the former
         // softplus where the attack crosses this threshold.
+        // The corrected DAC buffer/gain laws move the HQ-on maximum back
+        // one sample to 223: this is an amplitude-threshold crossing, not a
+        // MIDI/converter latency improvement. All physical milestones above
+        // and the timing/paired-grid bounds below remain unchanged.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 132.0, 177.5, 224.0 }
+                          ? std::array<double, 3> { 132.0, 177.5, 223.0 }
                           : std::array<double, 3> { 113.0, 159.5, 205.0 },
                       0.0, mode + " output-onset-proxy");
     }
@@ -13143,7 +13157,7 @@ void testVcaLevelGainWarmsWithTheChassis()
     // temperature (patchLevelGain), and the jack board follows the chassis
     // warm-up without the cards' spatial gradient. A quiet stored level
     // therefore grows towards 0 dB as the instrument warms: stored byte 0,
-    // -16.32 dB at 25 C, reads -15.54 dB at the 40 C asymptote of Unit
+    // -15.994 dB at 25 C, reads -15.227 dB at the 40 C asymptote of Unit
     // Character 1. The drive is a small sub alone, so the cascade the same
     // warm-up also relaxes (dynamicOtaHeadroomVolts) stays linear to well
     // under a millidecibel and the render measures the VCA. Unit Character 0
@@ -13187,8 +13201,12 @@ void testVcaLevelGainWarmsWithTheChassis()
     const double expected = 20.0 * std::log10(
         YouKnowEngine::patchLevelGain(0.0f, 40.0f)
         / YouKnowEngine::patchLevelGain(0.0f, 25.0f));
-    expectNear(expected, 0.78, 0.01,
-               "fixture: the law does not put +0.78 dB on stored byte 0 at "
+    // Independent p.13/p.15 nominal DC solve: at DAC zero IC28a holds
+    // 15*(10k/39k) V. GC1=(hold/3700+15/15000)/(1/3700+1/47+1/15000)
+    // is 0.0943622253 V, giving -15.9935975 dB at NEC's 5.9 mV/dB and
+    // +0.7660992 dB after the 298.15/313.15 thermal ratio is applied.
+    expectNear(expected, 0.7660992, 0.01,
+               "fixture: the law does not put +0.7661 dB on stored byte 0 at "
                "40 C");
     expectNear(warm - cold, expected, 0.02,
                "a quiet VCA LEVEL does not grow by the warm control constant "
