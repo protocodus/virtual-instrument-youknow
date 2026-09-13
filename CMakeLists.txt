@@ -886,30 +886,38 @@ if(BUILD_TESTING)
             set_tests_properties(YouKnow.CLAPBundle PROPERTIES TIMEOUT 60)
         endif()
 
-        if(APPLE)
-            # Exercise the product through the same dynamically loaded VST3
-            # boundary a DAW uses. This complements the processor tests; it is
-            # deliberately small and does not pretend to replace host/vendor
-            # validation of the final signed package.
-            add_executable(YouKnowVST3BundleSmokeTests
-                Tests/VST3BundleSmokeTests.cpp)
-            target_link_libraries(YouKnowVST3BundleSmokeTests PRIVATE
-                juce::juce_audio_processors_headless
-                juce::juce_recommended_config_flags)
-            target_compile_definitions(YouKnowVST3BundleSmokeTests PRIVATE
-                JUCE_PLUGINHOST_VST3=1
-                JUCE_USE_CURL=0
-                JUCE_WEB_BROWSER=0)
-            target_compile_features(YouKnowVST3BundleSmokeTests PRIVATE
-                cxx_std_20)
+        # Exercise the product through the same dynamically loaded VST3
+        # boundary a DAW uses. This complements the processor tests; it is
+        # deliberately small and does not pretend to replace host/vendor
+        # validation of the final signed package.
+        add_executable(YouKnowVST3BundleSmokeTests
+            Tests/VST3BundleSmokeTests.cpp)
+        target_link_libraries(YouKnowVST3BundleSmokeTests PRIVATE
+            juce::juce_audio_processors_headless
+            juce::juce_recommended_config_flags)
+        target_compile_definitions(YouKnowVST3BundleSmokeTests PRIVATE
+            JUCE_PLUGINHOST_VST3=1
+            JUCE_USE_CURL=0
+            JUCE_WEB_BROWSER=0)
+        target_compile_features(YouKnowVST3BundleSmokeTests PRIVATE
+            cxx_std_20)
+        if(MSVC)
+            target_compile_options(YouKnowVST3BundleSmokeTests PRIVATE /W4 /permissive-)
+        else()
             target_compile_options(YouKnowVST3BundleSmokeTests PRIVATE
                 -Wall -Wextra -Wpedantic)
-            add_dependencies(YouKnowVST3BundleSmokeTests YouKnow_VST3)
-
-            add_test(NAME YouKnow.VST3Bundle
-                COMMAND YouKnowVST3BundleSmokeTests
-                        "$<TARGET_BUNDLE_DIR:YouKnow_VST3>")
-            set_tests_properties(YouKnow.VST3Bundle PROPERTIES TIMEOUT 60)
         endif()
+        add_dependencies(YouKnowVST3BundleSmokeTests YouKnow_VST3)
+
+        if(APPLE)
+            set(youknow_vst3_test_bundle "$<TARGET_BUNDLE_DIR:YouKnow_VST3>")
+        else()
+            # JUCE puts the binary in Contents/<architecture>-<platform>.
+            set(youknow_vst3_test_bundle "$<TARGET_FILE_DIR:YouKnow_VST3>/../..")
+        endif()
+        add_test(NAME YouKnow.VST3Bundle
+            COMMAND YouKnowVST3BundleSmokeTests
+                    "${youknow_vst3_test_bundle}")
+        set_tests_properties(YouKnow.VST3Bundle PROPERTIES TIMEOUT 60)
     endif()
 endif()

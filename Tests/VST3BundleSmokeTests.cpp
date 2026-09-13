@@ -16,10 +16,9 @@ constexpr double sampleRate = 48000.0;
 constexpr int blockSize = 256;
 
 // The public parameter order is shared with PluginProcessorTests, which checks
-// the live processor against it on every platform. This test is macOS-only, so
-// without that companion check a parameter added to the layout but not to the
-// shared list would only be caught here -- which is how it went unnoticed
-// before. See the header.
+// the live processor against it on every platform. This host-boundary probe
+// also verifies the wrapper's public IDs and automation flags in each shipped
+// VST3 bundle. See the header.
 constexpr auto expectedParameters = youknow::tests::publicParameterOrder;
 
 bool expect (bool condition, const juce::String& message)
