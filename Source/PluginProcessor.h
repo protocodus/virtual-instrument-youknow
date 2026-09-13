@@ -105,8 +105,11 @@ public:
     }
     // The current panel settings as a patch.
     youknow::sysex::Patch currentPatch() const;
-    // The current patch as a system-exclusive message the hardware would accept.
-    juce::MidiMessage currentPatchAsSysEx (int channel) const;
+    // A coherent current tone, including MIDI awaiting panel reflection, as a
+    // message the hardware accepts. Optional output reports I+II's conversion
+    // to hardware Chorus II from that same snapshot. Non-realtime save API.
+    juce::MidiMessage currentPatchAsSysEx (
+        int channel, bool* chorusBothCollapsed = nullptr);
     // Message thread. Scans a .syx file image for the instrument's own
     // program/manual patch dumps, applies the first and counts every one the
     // file carries. Anything else in the stream -- other makers, other
@@ -506,8 +509,8 @@ private:
     };
     static thread_local ScopedParameterWrite* activeParameterWrite;
     const ScopedParameterWrite* activeWriteForThisThread() const noexcept;
-    void serialiseWriteSnapshot (const ScopedParameterWrite&,
-                                 juce::MemoryBlock& destinationData);
+    // Shared by session and SysEx saves; never consumes MIDI reflection.
+    juce::ValueTree copyStateForSave (int& program);
     static void serialiseStateSnapshot (juce::ValueTree state, int program,
                                         juce::MemoryBlock& destinationData);
     std::atomic<bool>* midiReflectionSnapshotCapturedForTest { nullptr };

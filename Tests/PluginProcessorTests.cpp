@@ -4717,6 +4717,123 @@ void testStateSavePreservesEditsAfterMidiReflection()
     source.releaseResources();
 }
 
+// SysEx files and host sessions save the same currently sounding tone, even
+// when MIDI reflection has not run. Neither save may consume the pending FIFO.
+void testSysExExportUsesCoherentCurrentTone()
+{
+    for (int kind = 0; kind < 3; ++kind)
+        for (const int eventCount : { 1, 70 })
+        {
+            YouKnowAudioProcessor processor;
+            processor.setCurrentProgram (7);
+            processor.setChorusModeFromUi (ChorusMode::OneTwo);
+            processor.prepareToPlay (sampleRate, blockSize);
+            auto wanted = kind == 2 ? processor.currentPatch() : processor.programPatch (3);
+            if (kind == 0)
+                wanted.chorus = ChorusMode::One;
+            const auto oldCutoff = parameterValue (processor, parameters::cutoff);
+            std::array<std::uint8_t, sysex::patchMessageBytes> raw {};
+            const auto written = kind == 2
+                ? sysex::writeParameterMessage (
+                      static_cast<int> (sysex::ToneParameter::VcfFreq), 17, 0,
+                      raw.data(), raw.size())
+                : sysex::writePatchMessage (wanted, 0, raw.data(), raw.size());
+            juce::MidiBuffer midi;
+            for (int event = 0; event < eventCount; ++event)
+                midi.addEvent (
+                    kind == 1 ? juce::MidiMessage::programChange (1, 2)
+                              : juce::MidiMessage::createSysExMessage (
+                                    raw.data() + 1, static_cast<int> (written) - 2),
+                    event);
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            processor.processBlock (buffer, midi);
+            if (kind == 2)
+            {
+                wanted.cutoff = 17.0f / 127.0f;
+                wanted.release = 0.7345f;
+                setParameterValue (processor, parameters::release, wanted.release);
+            }
+
+            juce::MidiMessage exported;
+            bool collapsed = false;
+            std::thread hostSave ([&] {
+                exported = processor.currentPatchAsSysEx (5, &collapsed);
+            });
+            hostSave.join();
+            sysex::Patch decoded {};
+            int channel = -1;
+            expect (sysex::readPatchMessage (
+                        exported.getRawData(),
+                        static_cast<std::size_t> (exported.getRawDataSize()),
+                        decoded, channel) && channel == 5,
+                    "pending MIDI export produced invalid SysEx or changed channel");
+            std::array<std::uint8_t, sysex::toneByteCount> actual {}, expected {};
+            sysex::toneBytesFromPatch (decoded, actual.data());
+            sysex::toneBytesFromPatch (wanted, expected.data());
+            expect (actual == expected && collapsed == (kind == 2),
+                    "SysEx export lost pending tone/edits or reported stale I+II state");
+            expect (processor.getCurrentProgram() == 7
+                        && parameterValue (processor, parameters::cutoff) == oldCutoff,
+                    "SysEx export consumed pending MIDI reflection");
+
+            processor.setCurrentProgram (9);
+            exported = processor.currentPatchAsSysEx (0, &collapsed);
+            sysex::readPatchMessage (
+                exported.getRawData(),
+                static_cast<std::size_t> (exported.getRawDataSize()), decoded, channel);
+            sysex::toneBytesFromPatch (decoded, actual.data());
+            sysex::toneBytesFromPatch (processor.programPatch (9), expected.data());
+            expect (actual == expected && ! collapsed,
+                    "SysEx export resurrected MIDI superseded by a later recall");
+            processor.flushPendingMidiEvents();
+            setParameterValue (processor, parameters::release, 0.8123f);
+            exported = processor.currentPatchAsSysEx (0);
+            sysex::readPatchMessage (
+                exported.getRawData(),
+                static_cast<std::size_t> (exported.getRawDataSize()), decoded, channel);
+            expect (std::abs (decoded.release - 0.8123f) < 0.5f / 127.0f,
+                    "SysEx export overlaid retired MIDI onto a later panel edit");
+            processor.releaseResources();
+        }
+
+    struct ExportDuringRecall final : juce::AudioProcessorListener
+    {
+        void audioProcessorParameterChanged (juce::AudioProcessor* processor,
+                                              int, float) override
+        {
+            if (saved)
+                return;
+            saved = true;
+            message = static_cast<YouKnowAudioProcessor*> (processor)
+                          ->currentPatchAsSysEx (0, &collapsed);
+        }
+        void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails&) override {}
+        bool saved = false, collapsed = false;
+        juce::MidiMessage message;
+    } listener;
+    YouKnowAudioProcessor processor;
+    processor.setCurrentProgram (1);
+    processor.setChorusModeFromUi (ChorusMode::OneTwo);
+    const auto prior = processor.currentPatch();
+    processor.addListener (&listener);
+    processor.setCurrentProgram (2);
+    processor.removeListener (&listener);
+    sysex::Patch decoded {};
+    int channel = -1;
+    expect (listener.saved && listener.collapsed
+                && sysex::readPatchMessage (
+                    listener.message.getRawData(),
+                    static_cast<std::size_t> (listener.message.getRawDataSize()),
+                    decoded, channel),
+            "reentrant SysEx export did not return a complete pre-recall snapshot");
+    std::array<std::uint8_t, sysex::toneByteCount> actual {}, expected {};
+    sysex::toneBytesFromPatch (decoded, actual.data());
+    sysex::toneBytesFromPatch (prior, expected.data());
+    expect (actual == expected && processor.getCurrentProgram() == 2
+                && ! processor.currentProgramIsEdited(),
+            "reentrant SysEx export captured a hybrid or disrupted the outer recall");
+}
+
 // A saved program index has to come back, or the host's selector and the sound
 // disagree after a reload.
 void testSelectedProgramSurvivesAStateRoundTrip()
@@ -8217,6 +8334,7 @@ int main()
     if (std::getenv ("YOUKNOW_HOST_RECALL_TEST_ONLY") != nullptr)
     {
         testStateSaveIncludesUnreflectedMidiTone();
+        testSysExExportUsesCoherentCurrentTone();
         testStateSavePreservesEditsAfterMidiReflection();
         testPatchFileImportAppliesFirstPatchAndCountsTheRest();
         testPatchFileImportSeparatesRealTimeBytesFromToneFrames();
@@ -8287,6 +8405,7 @@ int main()
     testSelectedProgramSurvivesAStateRoundTrip();
     testConcurrentProgramRecallSavesACoherentState();
     testStateSaveIncludesUnreflectedMidiTone();
+    testSysExExportUsesCoherentCurrentTone();
     testStateSavePreservesEditsAfterMidiReflection();
     testReentrantStateSaveReturnsThePreRecallSnapshot();
     testForeignSysExLeavesThePatchAlone();

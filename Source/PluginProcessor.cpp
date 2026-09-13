@@ -340,6 +340,46 @@ void setStoredParameterValue (juce::ValueTree& state, const char* parameterId,
     state.appendChild (added, nullptr);
 }
 
+template <typename ValueReader>
+youknow::sysex::Patch patchFromParameterValues (ValueReader&& valueOf)
+{
+    using namespace youknow::parameters;
+
+    const auto choiceOf = [&valueOf] (const char* id, int maximum) {
+        return juce::jlimit (0, maximum, juce::roundToInt (valueOf (id)));
+    };
+
+    youknow::sysex::Patch patch {};
+    patch.lfoRate = valueOf (lfoRate);
+    patch.lfoDelay = valueOf (lfoDelay);
+    patch.dcoLfo = valueOf (dcoLfo);
+    patch.pwm = valueOf (pwm);
+    patch.noise = valueOf (noise);
+    patch.cutoff = valueOf (cutoff);
+    patch.resonance = valueOf (resonance);
+    patch.vcfEnv = valueOf (vcfEnv);
+    patch.vcfLfo = valueOf (vcfLfo);
+    patch.keyFollow = valueOf (keyFollow);
+    patch.vcaLevel = valueOf (vcaLevel);
+    patch.attack = valueOf (attack);
+    patch.decay = valueOf (decay);
+    patch.sustain = valueOf (sustain);
+    patch.release = valueOf (release);
+    patch.sub = valueOf (sub);
+
+    patch.range = static_cast<youknow::DcoRange> (choiceOf (range, 2));
+    patch.saw = valueOf (saw) > 0.5f;
+    patch.pulse = valueOf (pulse) > 0.5f;
+    patch.pwmSource = static_cast<youknow::PwmSource> (choiceOf (pwmMode, 1));
+    patch.vcaMode = static_cast<youknow::VcaMode> (choiceOf (vcaMode, 1));
+    patch.envPolarity =
+        static_cast<youknow::EnvPolarity> (choiceOf (envPolarity, 1));
+    patch.highPass = static_cast<youknow::HighPassMode> (choiceOf (highPass, 3));
+    patch.chorus = youknow::chorusModeFor (valueOf (chorusI) > 0.5f,
+                                              valueOf (chorusII) > 0.5f);
+    return patch;
+}
+
 void overlayPendingMidiTone (
     juce::ValueTree& state, const youknow::sysex::Patch& patch,
     const std::array<std::uint64_t, youknow::sysex::toneByteCount>& sequences,
@@ -1765,18 +1805,6 @@ YouKnowAudioProcessor::activeWriteForThisThread() const noexcept
     return nullptr;
 }
 
-void YouKnowAudioProcessor::serialiseWriteSnapshot (
-    const ScopedParameterWrite& snapshot,
-    juce::MemoryBlock& destinationData)
-{
-    juce::ValueTree state { parameters.state.getType() };
-    for (std::size_t index = 0; index < snapshot.values.size(); ++index)
-        if (const auto* id = parameterPointers[index].id)
-            setStoredParameterValue (state, id, snapshot.values[index]);
-    serialiseStateSnapshot (std::move (state), snapshot.program,
-                            destinationData);
-}
-
 void YouKnowAudioProcessor::serialiseStateSnapshot (
     juce::ValueTree state, int program, juce::MemoryBlock& destinationData)
 {
@@ -1887,15 +1915,19 @@ void YouKnowAudioProcessor::setChorusModeFromUi (
     set (chorusII, youknow::chorusTwoEngaged (mode));
 }
 
-void YouKnowAudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
+juce::ValueTree YouKnowAudioProcessor::copyStateForSave (int& program)
 {
     // Parameter notifications are synchronous, so a host may save state from
     // the same call stack as a multi-parameter write. Return the fixed snapshot
     // taken immediately before that transaction rather than waiting on itself.
     if (const auto* snapshot = activeWriteForThisThread())
     {
-        serialiseWriteSnapshot (*snapshot, destinationData);
-        return;
+        juce::ValueTree state { parameters.state.getType() };
+        for (std::size_t index = 0; index < snapshot->values.size(); ++index)
+            if (const auto* id = parameterPointers[index].id)
+                setStoredParameterValue (state, id, snapshot->values[index]);
+        program = snapshot->program;
+        return state;
     }
 
     for (;;)
@@ -1911,7 +1943,7 @@ void YouKnowAudioProcessor::getStateInformation (juce::MemoryBlock& destinationD
         const auto reflected = reflectedMidiSequence.load (std::memory_order_acquire);
         const auto recall = toneRecallGeneration.load (std::memory_order_acquire);
         auto state = parameters.copyState();
-        int program = currentProgram.load (std::memory_order_relaxed);
+        program = currentProgram.load (std::memory_order_relaxed);
         PendingMidiEvent pending;
         std::array<std::uint64_t, youknow::sysex::toneByteCount> toneSequences {};
         const bool hasPending = readPendingMidiResyncMailbox (pending, &toneSequences);
@@ -1932,9 +1964,15 @@ void YouKnowAudioProcessor::getStateInformation (juce::MemoryBlock& destinationD
             if (pending.programIndex >= 0 && pending.programSequence > reflected)
                 program = pending.programIndex;
         }
-        serialiseStateSnapshot (std::move (state), program, destinationData);
-        return;
+        return state;
     }
+}
+
+void YouKnowAudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
+{
+    int program = 0;
+    auto state = copyStateForSave (program);
+    serialiseStateSnapshot (std::move (state), program, destinationData);
 }
 
 void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -2368,44 +2406,27 @@ void YouKnowAudioProcessor::applyPendingMidiEventToEngine (
 
 youknow::sysex::Patch YouKnowAudioProcessor::currentPatch() const
 {
-    using namespace youknow::parameters;
-
-    youknow::sysex::Patch patch {};
-    patch.lfoRate = valueOf (lfoRate);
-    patch.lfoDelay = valueOf (lfoDelay);
-    patch.dcoLfo = valueOf (dcoLfo);
-    patch.pwm = valueOf (pwm);
-    patch.noise = valueOf (noise);
-    patch.cutoff = valueOf (cutoff);
-    patch.resonance = valueOf (resonance);
-    patch.vcfEnv = valueOf (vcfEnv);
-    patch.vcfLfo = valueOf (vcfLfo);
-    patch.keyFollow = valueOf (keyFollow);
-    patch.vcaLevel = valueOf (vcaLevel);
-    patch.attack = valueOf (attack);
-    patch.decay = valueOf (decay);
-    patch.sustain = valueOf (sustain);
-    patch.release = valueOf (release);
-    patch.sub = valueOf (sub);
-
-    patch.range = static_cast<youknow::DcoRange> (choiceOf (range, 2));
-    patch.saw = valueOf (saw) > 0.5f;
-    patch.pulse = valueOf (pulse) > 0.5f;
-    patch.pwmSource = static_cast<youknow::PwmSource> (choiceOf (pwmMode, 1));
-    patch.vcaMode = static_cast<youknow::VcaMode> (choiceOf (vcaMode, 1));
-    patch.envPolarity =
-        static_cast<youknow::EnvPolarity> (choiceOf (envPolarity, 1));
-    patch.highPass = static_cast<youknow::HighPassMode> (choiceOf (highPass, 3));
-    patch.chorus = youknow::chorusModeFor (valueOf (chorusI) > 0.5f,
-                                              valueOf (chorusII) > 0.5f);
-    return patch;
+    return patchFromParameterValues ([this] (const char* id) { return valueOf (id); });
 }
 
-juce::MidiMessage YouKnowAudioProcessor::currentPatchAsSysEx (int channel) const
+juce::MidiMessage YouKnowAudioProcessor::currentPatchAsSysEx (
+    int channel, bool* chorusBothCollapsed)
 {
+    // File exports need the same ordered snapshot as host session saves: MIDI
+    // can already be audible while its APVTS reflection waits for the timer.
+    // copyStateForSave also handles synchronous exports from a host callback
+    // during a recall without deadlocking or capturing a partial patch.
+    int program = 0;
+    const auto state = copyStateForSave (program);
+    const auto patch = patchFromParameterValues ([&state] (const char* id) {
+        return storedParameterValue (state, id, 0.0f);
+    });
+    if (chorusBothCollapsed != nullptr)
+        *chorusBothCollapsed = patch.chorus == youknow::ChorusMode::OneTwo;
+
     std::array<std::uint8_t, youknow::sysex::patchMessageBytes> raw {};
     const auto written = youknow::sysex::writePatchMessage (
-        currentPatch(), channel, raw.data(), raw.size());
+        patch, channel, raw.data(), raw.size());
     if (written == 0)
         return {};
     // JUCE wants the body without the leading F0 and trailing F7.
