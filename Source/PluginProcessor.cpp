@@ -1358,7 +1358,10 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
     if (parametersUpdated)
         dispatchPerformanceControls();
-    dispatchUiMidiEvents();
+    // A GUI tap has no sample timestamp and is guaranteed an audible block.
+    // MIDI-only callbacks must not consume its press and release in silence.
+    if (numSamples > 0)
+        dispatchUiMidiEvents();
 
     // Render up to each event before applying it. Dispatching the whole buffer's
     // MIDI at the block boundary would collapse a short note-on/note-off pair
@@ -1465,14 +1468,23 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         else if (message.isNoteOff())
             engine.noteOff (message.getNoteNumber());
         else if (message.isAllSoundOff())
+        {
             engine.allNotesOff();
+            uiHeldNotes.fill (0);
+        }
         else if (message.isAllNotesOff()
                  || isModeMessageRecognisedAsAllNotesOff (message))
             // All notes off means release the keys, not cut the sound: the
             // exact B-2 release runs for up to 25.55 s -- and the output
             // coupling for another 28 s after it -- so truncating it would be
             // an all-sound-off.
+        {
             engine.releaseAllNotes();
+            // These global releases also clear the engine's press counts.
+            // A later UI key-up no longer owns a count and must not release
+            // a new external note of the same pitch.
+            uiHeldNotes.fill (0);
+        }
         else if (message.isPitchWheel())
             engine.setPitchBend ((static_cast<float> (message.getPitchWheelValue())
                                   - 8192.0f) / 8192.0f);
@@ -1594,16 +1606,16 @@ void YouKnowAudioProcessor::processBlockBypassed (
     processBlock (buffer, midiMessages);
 }
 
-void YouKnowAudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,
+void YouKnowAudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int midiChannel,
                                              int midiNoteNumber, float velocity)
 {
-    enqueueUiMidiEvent (midiNoteNumber, velocity, true);
+    enqueueUiMidiEvent (midiChannel, midiNoteNumber, velocity, true);
 }
 
-void YouKnowAudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int,
+void YouKnowAudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int midiChannel,
                                               int midiNoteNumber, float)
 {
-    enqueueUiMidiEvent (midiNoteNumber, 0.0f, false);
+    enqueueUiMidiEvent (midiChannel, midiNoteNumber, 0.0f, false);
 }
 
 void YouKnowAudioProcessor::parameterChanged (const juce::String& parameterId,
@@ -1637,12 +1649,16 @@ void YouKnowAudioProcessor::queueModulation (float value) noexcept
                              std::memory_order_release);
 }
 
-void YouKnowAudioProcessor::enqueueUiMidiEvent (int note, float velocity,
+void YouKnowAudioProcessor::enqueueUiMidiEvent (int channel, int note, float velocity,
                                                    bool isNoteOn) noexcept
 {
+    if (channel < 1 || channel > 16 || note < 0 || note > 127)
+        return;
     const auto write = uiWriteIndex.load (std::memory_order_relaxed);
     const auto read = uiReadIndex.load (std::memory_order_acquire);
-    if (write - read >= uiQueueCapacity)
+    const bool recovering = uiOverflowRequested.load (std::memory_order_relaxed)
+        != uiOverflowAcknowledged.load (std::memory_order_acquire);
+    if (write - read >= uiQueueCapacity || recovering)
     {
         // The queue only fills if processing has stalled for a long time. A
         // press dropped here is a note that never sounds, which is a shrug; a
@@ -1651,28 +1667,46 @@ void YouKnowAudioProcessor::enqueueUiMidiEvent (int note, float velocity,
         // lift and applied once the backlog has been worked through.
         if (! isNoteOn)
         {
-            const auto index = static_cast<unsigned> (juce::jlimit (0, 127, note));
-            uiPendingNoteOff[index >> 6].fetch_or (1ull << (index & 63u),
-                                                   std::memory_order_release);
+            const auto index = static_cast<unsigned> (note);
+            const auto word = static_cast<std::size_t> (channel - 1) * 2u
+                            + (index >> 6);
+            uiPendingNoteOff[word].fetch_or (1ull << (index & 63u),
+                                             std::memory_order_release);
+            uiOverflowRequested.fetch_add (1, std::memory_order_release);
         }
         return;
     }
 
-    uiMidiQueue[write % uiQueueCapacity] = { note, velocity, isNoteOn };
+    uiMidiQueue[write % uiQueueCapacity] = { note, velocity, isNoteOn, channel };
     uiWriteIndex.store (write + 1, std::memory_order_release);
 }
 
 void YouKnowAudioProcessor::discardUiMidiEvents() noexcept
 {
-    uiReadIndex.store (uiWriteIndex.load (std::memory_order_acquire),
-                       std::memory_order_release);
-    // Nothing is held any more, so there is no release left to honour.
+    const auto recoverySequence = uiOverflowRequested.load (std::memory_order_acquire);
+    // Retire recovery before freeing FIFO slots. A later producer press and
+    // overflow release must survive this reset together, just as in the drain.
     for (auto& pending : uiPendingNoteOff)
-        pending.store (0, std::memory_order_release);
+        pending.exchange (0, std::memory_order_acq_rel);
+    const auto write = uiWriteIndex.load (std::memory_order_acquire);
+    uiHeldNotes.fill (0);
+    uiReadIndex.store (write, std::memory_order_release);
+    uiOverflowAcknowledged.store (recoverySequence, std::memory_order_release);
 }
 
 void YouKnowAudioProcessor::dispatchUiMidiEvents() noexcept
 {
+    const auto recoverySequence = uiOverflowRequested.load (std::memory_order_acquire);
+    // Snapshot release recovery BEFORE the FIFO's write position. A producer
+    // publishes an accepted press before it can overflow the corresponding
+    // release, so acquiring that bit guarantees the following write snapshot
+    // includes its press. Bits published during this drain remain pending.
+    // Reading/clearing them after freeing FIFO slots could consume a fresh
+    // release ahead of the newly queued press and strand that note later.
+    std::array<std::uint64_t, uiNoteBitmapWords> pendingReleases {};
+    for (std::size_t word = 0; word < pendingReleases.size(); ++word)
+        pendingReleases[word] = uiPendingNoteOff[word].exchange (
+            0, std::memory_order_acq_rel);
     auto read = uiReadIndex.load (std::memory_order_relaxed);
     const auto write = uiWriteIndex.load (std::memory_order_acquire);
 
@@ -1684,22 +1718,41 @@ void YouKnowAudioProcessor::dispatchUiMidiEvents() noexcept
     // event for any one key and leaves the rest queued: every press then gets
     // at least a block of its own, at the cost of a block of latency in the
     // case that would otherwise have lost the note entirely.
-    std::array<std::uint64_t, 2> touched { 0u, 0u };
+    std::array<std::uint64_t, uiNoteBitmapWords> touched {};
 
     while (read != write)
     {
         const auto event = uiMidiQueue[read % uiQueueCapacity];
         const auto note = static_cast<unsigned> (juce::jlimit (0, 127, event.note));
-        const auto word = static_cast<std::size_t> (note >> 6);
+        const auto word = static_cast<std::size_t> (event.channel - 1) * 2u
+                        + (note >> 6);
         const std::uint64_t bit = 1ull << (note & 63u);
+        const bool alreadyHeld = (uiHeldNotes[word] & bit) != 0;
+        // MidiKeyboardState stores one bit per channel/key, not a press
+        // count: mouse and computer-key input can both emit Note On, but
+        // their releases collapse to one callback. Preserve that UI contract
+        // without changing the engine's genuine overlapping MIDI notes.
+        // JUCE 8.0.14 MidiKeyboardState::noteOnInternal/noteOffInternal:
+        // https://github.com/juce-framework/JUCE/blob/2cdfca8feb300fb424002ba2c2751569e5bacb64/modules/juce_audio_basics/midi/juce_MidiKeyboardState.cpp#L91-L124
+        if (event.noteOn == alreadyHeld)
+        {
+            ++read;
+            continue;
+        }
         if ((touched[word] & bit) != 0)
             break;
         touched[word] |= bit;
 
         if (event.noteOn)
+        {
+            uiHeldNotes[word] |= bit;
             engine.noteOn (event.note, event.velocity);
+        }
         else
+        {
+            uiHeldNotes[word] &= ~bit;
             engine.noteOff (event.note);
+        }
         ++read;
     }
 
@@ -1709,18 +1762,26 @@ void YouKnowAudioProcessor::dispatchUiMidiEvents() noexcept
     // wait: one already touched in this drain, whose press would otherwise be
     // cancelled before anything is rendered, and one whose press is still
     // sitting further down the queue, which the release must not overtake.
-    std::array<std::uint64_t, 2> deferred = touched;
+    auto deferred = touched;
     for (auto scan = read; scan != write; ++scan)
     {
         const auto queued = uiMidiQueue[scan % uiQueueCapacity];
         const auto note = static_cast<unsigned> (juce::jlimit (0, 127, queued.note));
-        deferred[static_cast<std::size_t> (note >> 6)] |= 1ull << (note & 63u);
+        const auto word = static_cast<std::size_t> (queued.channel - 1) * 2u
+                        + (note >> 6);
+        deferred[word] |= 1ull << (note & 63u);
     }
 
+    bool recoveryDeferred = false;
     for (std::size_t word = 0; word < uiPendingNoteOff.size(); ++word)
     {
-        const auto pending = uiPendingNoteOff[word].load (std::memory_order_acquire)
-                           & ~deferred[word];
+        const auto stillDeferred = pendingReleases[word] & deferred[word];
+        if (stillDeferred != 0)
+        {
+            recoveryDeferred = true;
+            uiPendingNoteOff[word].fetch_or (stillDeferred, std::memory_order_release);
+        }
+        const auto pending = pendingReleases[word] & ~deferred[word];
         if (pending == 0)
             continue;
 
@@ -1729,10 +1790,21 @@ void YouKnowAudioProcessor::dispatchUiMidiEvents() noexcept
             const std::uint64_t mask = 1ull << bit;
             if ((pending & mask) == 0)
                 continue;
-            uiPendingNoteOff[word].fetch_and (~mask, std::memory_order_acq_rel);
-            engine.noteOff (static_cast<int> (word * 64u + bit));
+            // Its press may also have been dropped. Such a release owns no
+            // engine press and must not lift the host's same-pitch note.
+            if ((uiHeldNotes[word] & mask) != 0)
+            {
+                uiHeldNotes[word] &= ~mask;
+                engine.noteOff (static_cast<int> ((word % 2u) * 64u + bit));
+            }
         }
     }
+    // The producer cannot admit a later press during recovery: otherwise an
+    // old release and a new press could collapse to the same UI-held bit.
+    // A release published after our initial snapshot has a newer sequence
+    // and remains a barrier even when this acknowledgement is written.
+    if (read == write && ! recoveryDeferred)
+        uiOverflowAcknowledged.store (recoverySequence, std::memory_order_release);
 }
 
 void YouKnowAudioProcessor::dispatchPerformanceControls() noexcept
@@ -2784,7 +2856,14 @@ bool YouKnowAudioProcessor::readPendingMidiResyncMailbox (
 void YouKnowAudioProcessor::timerCallback()
 {
     if (keyboardResetRequested.exchange (false, std::memory_order_acq_rel))
+    {
+        // A fresh UI press may have arrived since the audio-thread reset.
+        // Balance its queued/sounding press before clearing JUCE's bits, or
+        // the eventual physical key-up would no longer produce a callback.
+        // This lock-taking visual cleanup remains on the message thread.
+        keyboardState.allNotesOff (0);
         keyboardState.reset();
+    }
     drainPendingMidiQueue();
     forwardLegacyModeParameters();
 }

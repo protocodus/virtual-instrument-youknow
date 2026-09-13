@@ -1594,6 +1594,12 @@ void testUiKeyboardPressAndReleaseIsHeard()
 
     processor.keyboardState.noteOn (1, 60, 1.0f);
     processor.keyboardState.noteOff (1, 60, 0.0f);
+    // Hosts may make MIDI-only callbacks while preparing the next audio
+    // block. Those must not consume both edges of a GUI tap without sound.
+    juce::AudioBuffer<float> noFrames (2, 0);
+    juce::MidiBuffer noMidi;
+    processor.processBlock (noFrames, noMidi);
+    processor.processBlock (noFrames, noMidi);
 
     float peak = 0.0f;
     juce::AudioBuffer<float> buffer (2, blockSize);
@@ -1605,8 +1611,200 @@ void testUiKeyboardPressAndReleaseIsHeard()
         peak = std::max (peak, bufferPeak (buffer));
     }
 
-    expect (peak > 0.0f,
+    const float idleFloor = idleNoiseFloor ([] (YouKnowAudioProcessor& reference) {
+        setParameterValue (reference, parameters::attack, 0.0f);
+        setParameterValue (reference, parameters::sustain, 1.0f);
+        setParameterValue (reference, parameters::release, 0.0f);
+    }, 4);
+    expect (peak > 2.0f * idleFloor,
             "a keyboard press and release in one drain produced no audio at all");
+    for (const bool hostReset : { false, true })
+    {
+        processor.keyboardState.noteOn (1, 67, 0.8f);
+        if (hostReset)
+            processor.reset();
+        else
+            processor.requestPanic();
+        processor.processBlock (noFrames, noMidi);
+        renderBlocks (processor, buffer, 4);
+        expect (processor.getActiveVoiceCount() == 0,
+                "a zero-frame panic or reset failed to discard queued UI notes");
+        processor.keyboardState.noteOff (1, 67, 0.0f);
+        processor.keyboardState.noteOn (1, 67, 0.8f);
+        renderBlocks (processor, buffer, 4);
+        expect (processor.getActiveVoiceCount() == 1,
+                "a zero-frame panic or reset blocked a newer UI press");
+        processor.keyboardState.noteOff (1, 67, 0.0f);
+        renderBlocks (processor, buffer, 32);
+        expect (processor.getActiveVoiceCount() == 0,
+                "a late key-up after zero-frame panic or reset stranded a note");
+    }
+    processor.releaseResources();
+}
+
+void testUiKeyboardDuplicatePressesBalanceTheirRelease()
+{
+    // JUCE's mouse and computer-key handlers can both press one pitch, but
+    // MidiKeyboardState stores a bit and emits just one subsequent release.
+    // The UI adapter must not forward those as two counted host-MIDI presses.
+    YouKnowAudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::release, 0.0f);
+    processor.keyboardState.noteOn (1, 60, 1.0f);
+    processor.keyboardState.noteOn (1, 60, 0.7f);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    renderBlocks (processor, buffer, 4);
+    expect (processor.getActiveVoiceCount() == 1,
+            "duplicate UI presses did not reach their single physical key");
+
+    // An actual host note of the same pitch is a separate owner and still
+    // needs its own release after the keyboard's single bit goes low.
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (2, 60, 0.8f), 0);
+    processor.processBlock (buffer, midi);
+    processor.keyboardState.noteOff (1, 60, 0.0f);
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 1,
+            "the UI release lifted an overlapping external MIDI press");
+    midi.addEvent (juce::MidiMessage::noteOff (2, 60), 0);
+    processor.processBlock (buffer, midi);
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 0,
+            "mouse/computer-key overlap left a voice held after both owners released");
+    processor.releaseResources();
+}
+
+void testUiKeyboardChannelsKeepIndependentSamePitchOwners()
+{
+    YouKnowAudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::release, 0.0f);
+    processor.keyboardState.noteOn (1, 60, 0.8f);
+    processor.keyboardState.noteOn (16, 60, 0.8f);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (3, 60, 0.8f), 0);
+    processor.processBlock (buffer, midi);
+    renderBlocks (processor, buffer, 4);
+    processor.keyboardState.noteOff (1, 60, 0.0f);
+    renderBlocks (processor, buffer, 4);
+    midi.addEvent (juce::MidiMessage::noteOff (3, 60), 0);
+    processor.processBlock (buffer, midi);
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 1,
+            "UI channel 1 or external MIDI released UI channel 16's same-pitch owner");
+    processor.keyboardState.noteOff (16, 60, 0.0f);
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 0,
+            "separate UI channels did not balance their same-pitch releases");
+    processor.releaseResources();
+}
+
+void testMidiGlobalReleaseRetiresUiOwnership()
+{
+    for (const int controller : { 120, 123, 124, 125, 126, 127 })
+    {
+        YouKnowAudioProcessor processor;
+        processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, parameters::attack, 0.0f);
+        setParameterValue (processor, parameters::sustain, 1.0f);
+        setParameterValue (processor, parameters::release, 0.0f);
+        processor.keyboardState.noteOn (1, 60, 0.8f);
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        renderBlocks (processor, buffer, 4);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, controller, 0), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (2, 60, 0.8f), 1);
+        processor.processBlock (buffer, midi);
+        processor.keyboardState.noteOff (1, 60, 0.0f);
+        renderBlocks (processor, buffer, 32);
+        expect (processor.getActiveVoiceCount() == 1,
+                "a pre-CC" + std::to_string (controller)
+                    + " UI owner released a newer external same-pitch note");
+        midi.addEvent (juce::MidiMessage::noteOff (2, 60), 0);
+        processor.processBlock (buffer, midi);
+        renderBlocks (processor, buffer, 32);
+        expect (processor.getActiveVoiceCount() == 0,
+                "a global MIDI release left an unbalanced same-pitch owner");
+        processor.releaseResources();
+    }
+}
+
+void testDroppedUiPressCannotReleaseAnExternalMidiNote()
+{
+    YouKnowAudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::release, 0.0f);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+    processor.processBlock (buffer, midi);
+
+    // A stalled callback lets a long UI backlog fill the bounded queue.
+    // The next UI press is dropped, while its release is kept for recovery.
+    for (int press = 0; press < 64; ++press)
+    {
+        processor.keyboardState.noteOn (1, 36, 0.8f);
+        processor.keyboardState.noteOff (1, 36, 0.0f);
+    }
+    processor.keyboardState.noteOn (1, 60, 0.8f);
+    processor.keyboardState.noteOff (1, 60, 0.0f);
+    renderBlocks (processor, buffer, 160);
+    expect (processor.getActiveVoiceCount() == 1,
+            "a release for a dropped UI press cut the host's same-pitch note");
+    midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+    processor.processBlock (buffer, midi);
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 0,
+            "UI overflow recovery left a key held after the host release");
+    processor.releaseResources();
+}
+
+void testDeferredKeyboardResetBalancesANewerUiPress()
+{
+    YouKnowAudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::release, 0.0f);
+    processor.reset();
+
+    // This new press arrives after the audio-thread reset, but before its
+    // deferred message-thread keyboard cleanup. A bare state.reset() loses
+    // the bit without notifying the engine and suppresses its later key-up.
+    processor.keyboardState.noteOn (1, 60, 0.8f);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (2, 60, 0.8f), 0);
+    processor.processBlock (buffer, midi);
+    for (int attempt = 0; attempt < 40
+         && processor.keyboardState.isNoteOn (1, 60); ++attempt)
+    {
+        juce::Thread::sleep (5);
+        juce::Timer::callPendingTimersSynchronously();
+    }
+    expect (! processor.keyboardState.isNoteOn (1, 60),
+            "deferred keyboard cleanup did not run in the reset fixture");
+    processor.keyboardState.noteOff (1, 60, 0.0f); // Actual later physical key-up.
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 1,
+            "deferred keyboard cleanup released the external same-pitch owner");
+    midi.addEvent (juce::MidiMessage::noteOff (2, 60), 0);
+    processor.processBlock (buffer, midi);
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 0,
+            "deferred keyboard reset stranded a newer UI press after its key-up");
     processor.releaseResources();
 }
 
@@ -8417,6 +8615,11 @@ int main()
         testZeroFrameMidiNoteOrderingKeepsOriginalTimestamps();
         testShortNoteInsideOneBlockIsHeard();
         testUiKeyboardPressAndReleaseIsHeard();
+        testUiKeyboardDuplicatePressesBalanceTheirRelease();
+        testUiKeyboardChannelsKeepIndependentSamePitchOwners();
+        testMidiGlobalReleaseRetiresUiOwnership();
+        testDroppedUiPressCannotReleaseAnExternalMidiNote();
+        testDeferredKeyboardResetBalancesANewerUiPress();
         testAllNotesOffReleasesAndAllSoundOffCuts();
         testHoldLatchesOnAnyNonZeroValue();
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -8471,6 +8674,11 @@ int main()
     testReportedDspLatencyIsForwardedForEveryNumericalPath();
     testShortNoteInsideOneBlockIsHeard();
     testUiKeyboardPressAndReleaseIsHeard();
+    testUiKeyboardDuplicatePressesBalanceTheirRelease();
+    testUiKeyboardChannelsKeepIndependentSamePitchOwners();
+    testMidiGlobalReleaseRetiresUiOwnership();
+    testDroppedUiPressCannotReleaseAnExternalMidiNote();
+    testDeferredKeyboardResetBalancesANewerUiPress();
     testDeferredQualitySwitchIsNotAutomatable();
     testVcfTanhSelectorDrivesTheEngine();
     testVcfFastEarlySelectorDrivesTheEngine();

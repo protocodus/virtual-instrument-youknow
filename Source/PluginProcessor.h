@@ -291,15 +291,25 @@ private:
         int note = 60;
         float velocity = 0.0f;
         bool noteOn = false;
+        int channel = 1;
     };
 
     static constexpr unsigned uiQueueCapacity = 128;
+    static constexpr std::size_t uiNoteBitmapWords = 16 * 2;
     std::array<UiMidiEvent, uiQueueCapacity> uiMidiQueue {};
     std::atomic<unsigned> uiWriteIndex { 0 };
     std::atomic<unsigned> uiReadIndex { 0 };
+    // Audio-thread-owned UI channel/key bits. JUCE can emit duplicate
+    // mouse/computer-key presses but only one release; host MIDI retains its
+    // separate counted ownership in the engine.
+    std::array<std::uint64_t, uiNoteBitmapWords> uiHeldNotes {};
     // Key releases the queue had no room for. Dropping a press costs a note
     // nobody hears; dropping a release leaves one held down for good.
-    std::array<std::atomic<std::uint64_t>, 2> uiPendingNoteOff { };
+    std::array<std::atomic<std::uint64_t>, uiNoteBitmapWords> uiPendingNoteOff {};
+    // An overflow release is an ordering barrier: later presses may be
+    // dropped until that recovery completes, but cannot overtake its release.
+    std::atomic<unsigned> uiOverflowRequested { 0 };
+    std::atomic<unsigned> uiOverflowAcknowledged { 0 };
     // A host may call reset() from its processing thread. MidiKeyboardState's
     // reset takes a lock, so its visual cleanup is deferred to the existing
     // message-thread timer while the engine and audio queues reset immediately.
@@ -316,7 +326,7 @@ private:
                         int midiNoteNumber, float velocity) override;
     void parameterChanged (const juce::String& parameterId,
                            float newValue) override;
-    void enqueueUiMidiEvent (int note, float velocity, bool isNoteOn) noexcept;
+    void enqueueUiMidiEvent (int channel, int note, float velocity, bool isNoteOn) noexcept;
     void discardUiMidiEvents() noexcept;
     void dispatchUiMidiEvents() noexcept;
     void dispatchPerformanceControls() noexcept;
