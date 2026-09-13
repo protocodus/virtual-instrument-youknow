@@ -959,13 +959,20 @@ float YouKnowEngine::VoicedResonanceCompatibilityProfile::frequencyTrim(
 
 float YouKnowEngine::vcfConverterCarryCounts(float counts) noexcept
 {
-    // One R-2R ladder serves all 23 holds, so its carry error reaches the
-    // other 22 destinations too; it is applied only here as a matter of
-    // scope. In volts the major carry is 5.55 codes, 13.5 mV of the 10 V
-    // branch (0.14 % of full scale): 0.012 dB on the voice-VCA tail current
-    // or a sub/noise/resonance level, 0.08 % of duty on the PWM threshold,
-    // 0.012 dB of ramp amplitude at one pitch -- all below audibility, where
-    // the cutoff's exponential law turns the same 0.14 % into 23 cents.
+    // Retained effective cutoff calibration from the original analyst's V4
+    // frequency table: 93 sampled codes, with each boundary's excess inferred
+    // by log-frequency extrapolation from the preceding two measurements.
+    // These are end-to-end VCF observations from #439522 (Borish replacement
+    // voice cards), not direct TP4 measurements of the shared DAC's voltage.
+    // https://github.com/kayrockscreenprinting/ultramaster_kr106/blob/bc15caee5843ab238a25d0969e68d57db2b1615f/Source/DSP/J106DACHzTable.h#L1-L22
+    // https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/16
+    // A physical ladder error would reach all 23 holds through their buffers,
+    // but that attribution and transfer are not uniquely identified here.
+    // Keep this established VCF calibration until TP4 voltage data resolve it.
+    // At strength 1 the largest increment is 5.551 physical codes; cumulative
+    // error peaks at 4.446 codes and is zero below code 1024 in this model.
+    // Full-scale voltage percentages are not relative gain-error bounds at
+    // low controls, nor audibility bounds for PWM or a resonant feedback loop.
     // Cents to counts: 1143 counts is an octave and 1200 cents is an octave.
     constexpr float perCent = vcfCountsPerOctave / 1200.0f;
     // Cumulative excess step at each of the three top bit boundaries. The
@@ -7312,10 +7319,12 @@ float YouKnowEngine::voiceVcfTarget(
     // the hardware's trimmers sit.
     counts = std::clamp(counts, 0.0f, vcfCountsCeiling);
     const float code = vcfDacCountStep * std::floor(counts / vcfDacCountStep);
-    // The ladder's own integral non-linearity rides on the code it just
-    // produced, so it stays on the hold capacitor and reaches the filter.
-    // Crossing mid-scale on a slow sweep therefore steps by about 23 cents,
-    // as a real card's does.
+    // Apply the retained effective cutoff boundary offsets after digital
+    // quantization, so the hold slews toward that persistent target. The
+    // nominal count conversion assigns the mid-scale boundary 23.31 cents
+    // of excess; the later service slope and current limit affect the actual
+    // frequency step. The approved serviced-card fit fixes its strength at 1;
+    // the legacy profile retains its existing Unit Character scaling.
     return code + vcfConverterCarryCounts(code)
         * (parameters.useServiced439522VcfCalibration ? 1.0f : parameters.calibration);
 }
@@ -9316,8 +9325,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     coefficients.subDecay)
                 : advanceOrdinaryOnePoleHold(
                     subCv_, subCvTarget_, coefficients.subDecay);
-            // IC26's C85 hold: rON x C is at most 2.8 us, a step within the
-            // slot (see converterHoldFarads).
+            // IC26's C85 has no post-hold network. Direct assignment is
+            // ideal acquisition; the datasheet RC coordinate is not an
+            // installed settling bound (see converterHoldFarads).
             noiseCv_ = noiseCvTarget_;
             advanceThermalWarmup();
 

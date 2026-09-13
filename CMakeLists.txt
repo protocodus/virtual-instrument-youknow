@@ -584,6 +584,13 @@ if(YOUKNOW_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME YouKnow.ControlDacTiming
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/AuditControlDacTiming.py" --self-test)
+    endif()
+
     add_executable(YouKnowChorusInputLoadingTests Tests/YouKnowChorusInputLoadingTests.cpp)
     target_link_libraries(YouKnowChorusInputLoadingTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.ChorusInputLoading COMMAND YouKnowChorusInputLoadingTests)
