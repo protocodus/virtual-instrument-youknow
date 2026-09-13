@@ -120,6 +120,11 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   on-screen presses no longer stick, non-finite state is rejected, CLAP hosts
   refresh restored controls, and SysEx saves include the latest MIDI edits.
   Saving an extensionless patch name also protects existing `.syx` files.
+- RANGE changes now preserve ramp charge while changing its charging current;
+  envelope and portamento updates follow the recovered firmware order.
+  Chorus mute retains both capacitor charges, and each filter stage receives
+  its own resistor noise. See [the five corrections](#further-circuit-and-firmware-corrections)
+  for checks, CPU cost and remaining hardware uncertainty.
 
 [Full changes and compatibility details](#detailed-release-notes).
 
@@ -566,10 +571,13 @@ ladder and the VCF numerical-kernel settings described under
 
 ### Juno-106 fidelity research
 
-Three corrections improve agreement with the documented circuit and B-2
-firmware: the filter-control arithmetic, the chorus input's mutual loading,
-and the digital approximation of the output jack's treble attenuation.
-They correct identifiable implementation errors without fitting a new
+Earlier corrections addressed filter-control arithmetic, the chorus input's
+mutual loading and the output jack's treble attenuation. Five further
+[corrections](#further-circuit-and-firmware-corrections) address switching
+current, firmware state order and distributed filter noise. The accompanying
+[instability research](#voice-instability-and-pitch-drift) distinguishes common
+DCO-clock drift from per-card analog variation.
+These corrections address identifiable implementation errors without fitting a new
 instrument character to an unrelated recording. Their expected listening
 impact is modest; the measurements below are local numerical and circuit
 comparisons, not a new blind listening result or an overall hardware-fidelity
@@ -717,6 +725,144 @@ no-interrupt window is only 35.25/39.75 µs. Installed supplies, source drive,
 exact latch edges, droop and charge injection remain measurement questions;
 no arbitrary switching glitch or random ladder error was introduced.
 
+#### Further circuit and firmware corrections
+
+Five further changes target discrepancies that can be resolved without fitting
+unknown hardware characteristics. Their checks compare against circuit
+relations or the recovered B-2 control flow. They establish implementation
+accuracy within the stated model; they do not constitute a new end-to-end
+original-instrument accuracy score.
+
+| Correction | Independent evidence and check | Audible or behavioral consequence |
+| --- | --- | --- |
+| Finite chorus discharge | R46 330 Ω; two-node current integration agrees within 0.35 µV at 8–768 kHz, including interrupted commands | Nominal settled wet-return opening moves from 113.2 to 120.6 ms; both capacitor charges survive switching |
+| Envelope store order | B-2 `$0503–$05C5`; distinct per-card states and interrupted PWM/VCA/DCO windows | Abandoning a DCO scan cannot accelerate attack/release; completed later envelope stores survive a restart |
+| DCO range current | Selected 399/200/100 kΩ charging resistance; independent charge integrals and same-cycle comparator decisions for every directed range change at six rates | The first partial cycle follows the new charging current, retaining its charge; 16′ also restores the 400/399 nominal ramp-height ratio |
+| Four-stage resistor noise | Original-module 68 kΩ/560 Ω readings and Johnson–Nyquist density; independent per-stage transfer functions and integrated output PSD | The filter receives its own noise at every stage, with the correct downstream filtering and self-oscillation excitation |
+| Portamento store order | B-2 `$03E0–$0410`; six distinct glide states, interrupted passes and callback partitions | A partially completed DCO train cannot give only its first few cards an extra glide step |
+
+**Switching current and stored charge.** The two analog changes repair a
+specific boundary condition. C16 cannot discharge instantly through a finite
+resistor, and selecting a different C54 charging resistor changes current
+without instantaneously changing capacitor voltage. The chorus uses prepared
+state transitions outside the callback; the DCO retains its event-based slope
+correction, independent clock reload, reset policy and supply limit. The
+0.6 V transistor threshold and unknown analog-switch injection remain model
+assumptions, not newly measured properties.
+
+**Firmware state.** The prior envelope/pitch helper advanced two unrelated
+kinds of RAM at each DCO transaction. The corrected scheduler respects their
+separate positions in the recovered loop. Envelopes advance after the DCO
+train: ENV0 before PWM, subsequent envelopes before the preceding card’s VCA
+write. Portamento advances all six words before SUB and the DCO train. Shared
+per-pass guards make a fractional look-ahead and its later converter poll one
+operation. Completed RAM updates remain completed when a logical Voice On/Off
+restarts the pass; unvisited work is discarded. These are ordinal guarantees
+on the established chart grid, not a complete CPU or serial-wire emulator.
+The collapsed phase-zero diagnostic is a separate synthetic test profile.
+
+**Distributed noise.** The original hybrid’s resistor readings corroborate
+the existing 68 kΩ/560 Ω stage network and also the VCA’s 47 kΩ load and
+4.7 kΩ/560 Ω input. The VCA’s parallel capacitor remains unidentified; no
+new capacitor value is inferred from a replacement design. For each filter
+stage, the resistor-derived node density at 25 °C is approximately
+3.02 nV/√Hz, or 370 nV/√Hz referred through the stage divider. Four separate
+sources enter their corresponding differential inputs, outside the external
+signal’s resonance compensation.
+
+An independent small-signal reference gives each source the transfer
+`H^(4-j)/(1+k*H^4)`, where `H=1/(1+s/ωc)` and `j=0..3`. Independent powers
+add. At zero resonance this yields four times the former low-frequency PSD,
+fifteen times its PSD at cutoff, and a total noise-power integral of
+`density² * 35πfc/32`. The stochastic test at 192 kHz/1 kHz agrees with that
+integral within 0.04 dB. This closes the omitted resistor sources; it does
+not calibrate the complete installed-card floor, semiconductor noise or the
+shared NOISE slider. Scalar and vector kernels use the same reconstructed
+sources, and idle cards preserve the random-stream histories. An isolated
+five-pair 48 kHz/4× benchmark with 64-frame blocks and chorus Off measures
++13.36% median CPU for six voices (pair range 12.49–15.60%) and +4.68% idle.
+This is a material runtime cost, accepted for the four physically distinct
+noise paths; it is not a hardware accuracy or listening score.
+
+The source basis is [Roland’s service drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf),
+the pinned [B-2 listing](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt),
+the [original-module measurements](https://www.sounddoctorin.com/synthtec/roland/juno106.htm),
+and [Johnson’s thermal-noise paper](https://doi.org/10.1103/PhysRev.32.97).
+
+#### Voice instability and pitch drift
+
+A faithful 106 should distinguish **common DCO tuning movement**, **relative
+phase**, and **analog voice variation**. Those produce different audible
+results and require different state variables. Six unrelated random pitch
+walks would not reproduce the documented DCO architecture.
+
+Roland identifies the master as an 8 MHz **ceramic resonator**, part
+`12389728 / KMFC1034T1`, and the processors’ separate 12 MHz resonators as
+`12389719 / KMFC1007T31` ([parts list, p. 4](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=4)).
+The earlier claim that its crystal tolerance must be smaller than pitch
+quantization was unsupported. For a fixed count, `fvoice = fmaster/(range*N)`;
+common reference movement therefore shifts all six voices together. Equal
+counts retain equal steady frequencies, while staggered count writes during
+modulation can temporarily differ and change phase relationships.
+
+How much actual DCO drift occurs remains a measurement gap: no quantitative
+cold-to-warm trace or temperature/aging specification for the installed
+KMFC1034T1 has been established. For scale only, 500 ppm of common clock
+movement is 0.8654 cents, while one count from 4545 to 4546 changes pitch by
+0.3809 cents. The firmware’s 1/256-semitone control grid is 0.390625 cents.
+These are arithmetic examples, not observed Juno drift amplitudes.
+
+The [Murata CSA/CSB catalogue](https://docs.rs-online.com/9b38/0900766b8053c862.pdf)
+lists ±0.5% initial, full-range temperature and ten-year aging limits for its
+CSA□MTZ family. A ±0.5% frequency change corresponds to about ±8.65 cents,
+but the installed part’s identity, load and operating temperature are not
+established by that catalogue. Its full-range bounds cannot be repurposed
+as typical warm-up or random-wander settings. Murata also warns that the
+oscillator’s actual IC circuit affects frequency
+([application manual, printed p. 14](https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/2531/Ceramic%20Resonator%20(CERALOCK)%20Application%20Manual.pdf#page=16)).
+
+The [Kiwi-106 hardware-upgrade manual, p. 19](https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf#page=19)
+describes bass cancellation on some unison notes from the six waveforms’
+relative phases, despite their stable common tuning. Preserving timer state,
+count-load timing and free-running phase models that behavior. Randomizing
+phase on every sample or adding arbitrary voice detune models something else.
+
+VCF tuning can vary independently of DCO pitch. Roland’s ±10-cent service
+acceptance after warm-up is a calibration criterion, not a distribution of
+thermal drift. A [single repair account](https://sequence15.blogspot.com/2008/01/on-workbench-juno-106-part-2.html)
+reports several filters about a quarter-tone flat after years without
+calibration; it does not measure oscillator drift or establish population
+statistics. The [AS3109 datasheet’s](https://www.alfatriode.lv/eng/sc/AS3109.pdf)
+0.33%/°C is a typical frequency-control coefficient for a replacement IC,
+not an original 80017A residual-drift bound after the installed compensation.
+
+The current Unit Character model’s `0.9992` recurrence at 375 updates/s,
+with uniform `±0.004` excitation, corresponds to a 3.332 s correlation time
+and approximately 2.425 cents stationary cutoff standard deviation at 100%.
+Its 15 °C/900 s chassis warm-up, spatial gradient and Aging profile remain
+voiced priors. The sample-count scheduler approximates 375 Hz when the
+processing rate is not an integer multiple. These numbers describe this
+implementation; they are not measurements of a typical Juno-106. The seeded VCF wander belongs to cutoff,
+not to a per-card DCO frequency offset.
+
+An accurately calibrated future clock model should integrate **one continuous
+master phase**, using a measured reference frequency versus temperature,
+supply and age. Feed all PITs from that same phase and preserve their counts
+through changes. The separate CPU clock controls firmware cadence and needs
+its own measurement. A common DCO-clock change also changes the ramp’s
+available charging time at a fixed DAC current, so amplitude and PWM must
+follow the circuit rather than being renormalized automatically.
+
+A useful identification session records X2 frequency with a calibrated
+reference, dry DCO reset periods, local temperature and supply voltage over
+repeated cold starts. Separate VCF self-oscillation captures identify analog
+filter drift. Voice-by-voice frequency residuals must be split into common
+clock movement, discrete count changes and measurement error. Audio recorded
+against an unreferenced interface clock cannot by itself establish absolute
+synthesizer drift. Until those measurements exist, retaining the 8 MHz
+nominal reference and labeling the analog character assumptions is more
+faithful than selecting arbitrary pitch-wander constants.
+
 #### Other methods assessed
 
 The following decisions distinguish a useful research method from evidence
@@ -773,6 +919,9 @@ not additional unimplemented sound-design choices.
 #### Reproduction and listening
 
 Build with the existing DSP-only recipe and run `ctest --output-on-failure`.
+`YouKnowChorusMuteTests`, `YouKnowDcoRangeTests` and `YouKnowVcfNoiseTests`
+check the further circuit corrections. The focused PIT engine suite also
+checks interrupted envelope/portamento stores and host-block invariance.
 `YouKnowOutputJackTests` reports the magnitude comparison;
 `YouKnowChorusInputLoadingTests` reports AC errors and the loading correction;
 `YOUKNOW_PIT_TESTS_ONLY=1 YouKnowEngineTests` includes the exhaustive ENV/KEY
@@ -782,16 +931,19 @@ fixed output corpus and rendered jack-response integration checks. The general
 engine, circuit, oversampling and rendering suites check their integration. All references
 and derivations needed by the implementation are also beside the code.
 
-Final macOS arm64 validation passes all 31 DSP/tool CTest contracts after
-affected-suite reruns, including the complete engine suite. The VST3, Audio
-Unit, CLAP and Standalone builds succeed; the processor and CLAP/VST3 bundle
-loading checks pass. Output-reference updates retain their four-percent
-guards and distinguish accumulated reference drift from this pass's circuit
-changes.
+The five further corrections pass all 36 DSP/tool CTest contracts after
+an affected-audit rerun, including the complete engine suite. The dynamic
+VCF wiring oracle now replays the four additional noise inputs; its connected
+state remains bit exact and its disconnected-control mutation still fails.
+The rebuilt macOS arm64 VST3, Audio Unit and CLAP pass the processor and all
+three bundle checks. The isolated noise test additionally proves that full-
+and half-step RK4 pairs and Merson pairs/quads execute. No new original-unit
+capture or blind listening score is claimed.
 
-The maintained ten demos and *Low Sun* composition are re-rendered from the
-combined changes with the existing product profile and renderer settings.
-All eleven files pass format, duration, peak and DC validation.
+The earlier output/filter pass re-rendered the maintained ten demos and
+*Low Sun* composition with the product profile and renderer settings.
+Those eleven files passed format, duration, peak and DC validation; they
+are not new listening evidence for the five further corrections.
 Their tables below are generated by the renderers. Frozen historical
 comparison recordings remain historical evidence. For listening, bright
 upper-register material exposes the output correction, chorus pads expose
@@ -1151,9 +1303,10 @@ Not to be reopened without contradictory primary evidence:
 - POLY 1 + POLY 2 is Solo Unison: six equal-frequency free-running voices,
   unnormalised, with no programmed detune. The POLY switches are momentary
   firmware inputs, and both-off is not a stable state.
-- Mains ripple is not modelled by derivation (≈0.011 cents of cutoff), and
-  neither ripple nor rail droop may ever be routed to DCO pitch — pitch is
-  integer division of a crystal-derived clock.
+- Mains ripple is not modelled by derivation (≈0.011 cents of cutoff).
+  Card-rail movement must not become independent DCO detune: their timers
+  divide one ceramic-resonator reference. That reference's own unmeasured
+  supply/temperature sensitivity is a separate common-clock question.
 - Main VOLUME is the nominal-linear `10KB×2` law with its fixed internal
   loads, not a generic squared taper.
 - The noise calibration point (4.0 Vpp at TP8 via VR32) exists.
@@ -1271,16 +1424,18 @@ the drum gain through the actual stereo mix path.
 
 Deliberate, each with its reason recorded:
 
-- **No pitch drift and no inter-voice detune.** Pitch is integer division
-  of a crystal-derived clock: temperature, supply and ageing have no term
-  in that arithmetic, so six voices on one key are always exactly in tune
-  and unison carries no detune generator. The crystal's whole tolerance
-  budget sits below the pitch quantisation step.
+- **Nominal common DCO reference; no programmed inter-voice detune.** The
+  installed 8 MHz source is a ceramic resonator. Its drift would move all
+  six DCOs together, but no calibrated installed-part drift trace is known.
+  The model therefore holds the nominal reference. Equal counts have equal
+  steady frequencies; staggered writes and free-running phase still matter.
+  See [voice instability](#voice-instability-and-pitch-drift) for the evidence,
+  the distinction from analog VCF drift and the required capture protocol.
 - **No mains ripple.** Derived at ~0.011 cents of cutoff through the
   regulators — the ±15 V rails are an M5230L whose data sheet gives 68 dB of
   ripple rejection at 120 Hz, so about 0.30 mVpp reaches a card — below
-  audibility; and neither ripple nor rail droop may ever
-  be routed to pitch.
+  audibility. Any master-reference supply sensitivity needs a separate
+  common-clock measurement; it is not an independent card-pitch term.
 - **No invented behaviour where evidence is missing.** Mechanisms whose
   magnitude the sources cannot fix either ship voiced and labelled (mixer
   level coordinates, sub half-wave DC magnitude, resonance
@@ -1323,7 +1478,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-15 | Oscillator-mixer levels and filter-drive calibration. Node anchors are settled (saw/pulse ≈12 Vpp, noise 4.0 Vpp at TP8, the 68 kΩ/560 Ω core attenuator) and the mixer topology is designator-complete; the level coordinates remain voiced. The WAVE node's absolute DC and its DC/AC impedance also set the sub's mean and the diode onset; the nominal model assumes ~0 V and a ratio of 1. The sub coordinate moved 5.0 → 7.57 V on 2026-09-04, on the owner's decision, after two independent third-party models both read it low: frequency-matched at 261.63 Hz, sub against saw reads +8.49 dB on Ultramaster KR-106 and +6.87 on Arturia's Jun-6 V against this model's former +4.89, while pulse against saw has this model and Arturia within 0.3 dB. It follows KR-106, the one of the two that models the 106 rather than the JUNO-6, and it **remains voiced**: two models cannot close a question, they disagree by 1.6 dB on the size, and because this project consumes KR-106's measurements elsewhere the shared value can never later be cited as independent corroboration. An earlier move in the other direction, on a hardware recording of A64, was withdrawn because a recording witnesses the slider rather than the stored byte. The identified original-DCO SUB sweep now anchors the relative slider law: a soft-diode model with one fitted 8.896 V aggregate scale gives 0.282 dB worst error on interleaved held-out levels, versus 18.50 dB for the previous linear law. This changes partial SUB levels while preserving zero and full-scale coordinates. It does not identify absolute WAVE impedance/bias or six-card spread; the optional coupled mixer requires those inputs explicitly. Original-card absolute filter-drive calibration remains open | P0 |
 | OQ-06 | Absolute output-reference calibration. The product convention is settled and not reopenable; only the physical reference value is open. Roland's L −30 / M −15 / H 0 dBm selector spec fixes the intended steps but not the reference impedance | dependent |
 | OQ-07 | Converter hold topology and time constants. Ownership and inventory are closed — 23 used 0.01 µF holds over a 4.2 ms pass, per-destination smoothing designator-complete. Roland identifies the DCO mux as Hitachi HD14051BP, explicitly excluding Toshiba; its acquisition remains unmeasured. At the datasheet’s 15 V test coordinate, 280 Ω and 10 nF give one 2.8 µs RC time constant, while an ideal full-scale step needs 25.23 µs to reach half a 12-bit LSB. Installed analog supplies differ from that test coordinate, and the 25 mA absolute maximum is not guaranteed charging current. NOISE’s no-interrupt enable window is only 35.25/39.75 µs, depending on sustain; exact latch edges, source-drive settling and charge injection need captures. The post-hold smoothing is now read off p. 13 rather than attributed to the module: the voice-VCA now solves C58 with the changing Tr20 load, approaching 687.5 µs at high current and 1 ms near cutoff rather than treating 687 µs as exact everywhere, resonance has no network at all and steps, and the VCF's own C61 sits behind VR28 (WIDTH). That trimmer's position is bounded by its own purpose: WIDTH sets two octaves of code to two octaves of pitch, so the pin-6 node sensitivity equals the transconductor's own mV/octave, and solving 0.6976 V/oct × 560/(18 760 Ω + VR28) against the AS3109's 17.5–20.5 mV/oct spread puts VR28 at 0.3–3.6 kΩ of its 5 kΩ travel and C61's time constant at 473–532 µs (under the reading that pin 6 loads the divider negligibly), narrowing the earlier 467–553 µs; the shipped 522 µs is the ideal-junction point at the model's 26.0 mV thermal voltage. A reading of that trimmer, or a scope on C61 during a cutoff write, would pin it | P1 |
-| OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The comparison-only `FirmwareDcoNoInterrupt` profile derives consecutive DCO-write intervals from B-2 instruction paths: 216.75 µs running, 243.25 µs reset, plus 3/6.5 µs at the lower/upper clamp. An independent instruction-path audit covers 2560 paths, actual engine writes, reset cases and block invariance; the first DCO and non-DCO chart anchors remain unchanged. This is a partial no-interrupt timing profile, not a serial-input or complete CPU emulator. The 23-write ordinal order is settled; the shipped offsets are the pixel-measured p. 8 chart geometry, chosen by ear over the normalised `ordinal/23` placement on 2026-09-04 (the listener heard the stabs as slightly more resonant) — drafting proportions, not timestamps, so the choice moves no evidence class. Roland's [CPU/clock drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8) and [IC29/IC35 drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13), the recovered B-2 [running](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741), [reset](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794) and [converter-output](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302) paths, and NEC's [instruction timing table](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17) close the nominal no-interrupt relationship to the existing pitch-converter timestamp `T`. Treating `T` as the start of `ANI PA,$EF`, running LSB instruction start is `T-334` states (83.50 us), both paths' MSB instruction start is `T-323` (80.75 us), and reset-control instruction start is `T-389` (97.25 us); reset control-to-LSB remains 55 states and LSB-to-MSB 11. The engine captures the paired count, reset decision and DCO-CV target at `T-389`, applies the modelled control/LSB/MSB events at those instruction anchors, and commits only that captured CV when the converter cursor reaches `T`, so later host edits cannot splice two scans together. The matching [OKI MSM82C53-2 mode timing](https://bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf#page=186) anchors PIT OUT polarity, odd-count split and delayed CE transfer; its same-part Mode 2/3 timing diagram places CE changes and PIT OUT transitions on the TP5 falling/count edge. Roland maps only positive-going PIT OUT to C54 discharge and the sub clock. IC29's 12 MHz resonator and IC35's separate 8 MHz resonator prove there is no fixed CPU-to-PIT phase to recover. Exact coincidences therefore use two separate deterministic compatibility policies, not hardware claims: **Policy A** compares the PIT `/WR` trailing/latch edge with TP5 falling/count; **Policy B** compares the PF6/PF7 update with IC35 parallel reload, whose corresponding TP5 rise appears later after propagation. Neither coincidence outcome is manufacturer-specified; no metastability behaviour is asserted or modelled. IC35's [installed-part truth table](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=17) and the firmware's [`$C0/$40/$00` range writes](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L246-L273) establish DCBA presets 14/12/8 and ÷2/÷4/÷8. The model separates TP5 falling/count from IC35 reload by one nominal raw-8 MHz tick, 125 ns, and leaves propagation refinements unmodelled. At exact equality, Policy A is TP5-count-first, so the tied count edge sees the pre-write state; Policy B is IC35-reload-first, so the stable old preset is captured. Both orderings are deterministic compatibility policy, not hardware claims. Preset 10/÷6 remains a structural bit-skew hypothesis and is neither implemented nor synthesised in tests. ADC service cannot reach the DCO transaction; semantic Voice On/Off instead discard their interrupt return and restart the voice-board loop. The engine reproduces that restart at its logical command boundary, preserving protected PIT writes and completed port stores while cancelling abandoned CPU/CV work. What remains open is each physical converter/mux timestamp; serial wire phase and installed-NMOS automatic-entry timing; installed resonator frequencies and drift; `/WR`-to-TP5-falling and PF-to-reload phase statistics; measured, rather than nominal, PIT-count-to-reload separation and TP5 pulse-width distortion; C54 reset waveform; and installed MC5534A output swing, saturation onset and shape, recovery, and the magnitude—not the existence—of ramp-to-comparator coupling. Roland's [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9) give an approximately 12 Vpp Miller ramp and identify C54 as 0.001 µF with 399/200/100 kΩ range resistors (R85 prints 399 kΩ, so the model now carries the 400/399, +0.02175 dB, 16′ ramp-height factor. Live RANGE also immediately changes charging slope by the old/new resistance ratio while preserving capacitor charge and the PIT’s separate reload; the ratio and same-cycle PWM crossing pass independent charge-integral tests), but the custom IC's internal amplifier/discharge-transistor values are unpublished; the renderer therefore retains its finite-linear discharge and scale-aware +15 V ideal-supply bound as compatibility policy rather than a measurement claim. Two whole-pass quantities are bounded but not yet modelled: inverting KR-106's four measured LFO rates on #439522 through the integer law (passes per period = 4·⌈8192/coefficient⌉) gives a pass period of 4.231–4.304 ms (mean 4.268 ms) against the chart's 4.2 ms, so every firmware-timed quantity on that unit runs 0.7–2.5 % slower than the model — a one-unit measurement, and summing the recovered instruction paths over a full pass would say whether it is the no-interrupt prediction; and the assigner-to-voice serial link is derivable from both firmware images — 12 MHz/16/24 = 31 250 bit/s, 8N1, 320 µs per byte, two bytes per voice-on, one per voice-off, with B-2 restarting its loop on each command — so a Solo Unison key sends six voice-ons over 3.84 ms and each card's DCO write is consumed in the pass its own command starts, where the engine applies one logical restart per host event with no wire time | P1 |
+| OQ-08 | Exact intra-pass timing and DCO pitch-write staging. The comparison-only `FirmwareDcoNoInterrupt` profile derives consecutive DCO-write intervals from B-2 instruction paths: 216.75 µs running, 243.25 µs reset, plus 3/6.5 µs at the lower/upper clamp. An independent instruction-path audit covers 2560 paths, actual engine writes, reset cases and block invariance; the first DCO and non-DCO chart anchors remain unchanged. This is a partial no-interrupt timing profile, not a serial-input or complete CPU emulator. The 23-write ordinal order is settled; the shipped offsets are the pixel-measured p. 8 chart geometry, chosen by ear over the normalised `ordinal/23` placement on 2026-09-04 (the listener heard the stabs as slightly more resonant) — drafting proportions, not timestamps, so the choice moves no evidence class. Roland's [CPU/clock drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8) and [IC29/IC35 drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13), the recovered B-2 [running](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L732-L741), [reset](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L783-L794) and [converter-output](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1292-L1302) paths, and NEC's [instruction timing table](https://datasheet4u.com/pdf/298676/UPD7810.pdf#page=17) close the nominal no-interrupt relationship to the existing pitch-converter timestamp `T`. Treating `T` as the start of `ANI PA,$EF`, running LSB instruction start is `T-334` states (83.50 us), both paths' MSB instruction start is `T-323` (80.75 us), and reset-control instruction start is `T-389` (97.25 us); reset control-to-LSB remains 55 states and LSB-to-MSB 11. The engine captures the paired count, reset decision and DCO-CV target at `T-389`, applies the modelled control/LSB/MSB events at those instruction anchors, and commits only that captured CV when the converter cursor reaches `T`, so later host edits cannot splice two scans together. The matching [OKI MSM82C53-2 mode timing](https://bitsavers.org/components/oki/_dataBooks/1986_OKI_Microprocessor_Databook.pdf#page=186) anchors PIT OUT polarity, odd-count split and delayed CE transfer; its same-part Mode 2/3 timing diagram places CE changes and PIT OUT transitions on the TP5 falling/count edge. Roland maps only positive-going PIT OUT to C54 discharge and the sub clock. IC29's 12 MHz resonator and IC35's separate 8 MHz resonator prove there is no fixed CPU-to-PIT phase to recover. Exact coincidences therefore use two separate deterministic compatibility policies, not hardware claims: **Policy A** compares the PIT `/WR` trailing/latch edge with TP5 falling/count; **Policy B** compares the PF6/PF7 update with IC35 parallel reload, whose corresponding TP5 rise appears later after propagation. Neither coincidence outcome is manufacturer-specified; no metastability behaviour is asserted or modelled. IC35's [installed-part truth table](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=17) and the firmware's [`$C0/$40/$00` range writes](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L246-L273) establish DCBA presets 14/12/8 and ÷2/÷4/÷8. The model separates TP5 falling/count from IC35 reload by one nominal raw-8 MHz tick, 125 ns, and leaves propagation refinements unmodelled. At exact equality, Policy A is TP5-count-first, so the tied count edge sees the pre-write state; Policy B is IC35-reload-first, so the stable old preset is captured. Both orderings are deterministic compatibility policy, not hardware claims. Preset 10/÷6 remains a structural bit-skew hypothesis and is neither implemented nor synthesised in tests. ADC service cannot reach the DCO transaction; semantic Voice On/Off instead discard their interrupt return and restart the voice-board loop. The engine reproduces that restart at its logical command boundary, preserving protected PIT writes and completed port/RAM stores while cancelling abandoned CPU/CV work. In particular, all six portamento words advance before SUB; envelopes advance after the DCO train, ENV0 before PWM and ENV1–5 before the preceding card’s VCA write. These store-order questions are closed for B-2; their ordinal bounds are not exact CPU timestamps. What remains open is each physical converter/mux timestamp; serial wire phase and installed-NMOS automatic-entry timing; installed resonator frequencies and drift; `/WR`-to-TP5-falling and PF-to-reload phase statistics; measured, rather than nominal, PIT-count-to-reload separation and TP5 pulse-width distortion; C54 reset waveform; and installed MC5534A output swing, saturation onset and shape, recovery, and the magnitude—not the existence—of ramp-to-comparator coupling. Roland's [DCO drawing and text](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9) give an approximately 12 Vpp Miller ramp and identify C54 as 0.001 µF with 399/200/100 kΩ range resistors (R85 prints 399 kΩ, so the model now carries the 400/399, +0.02174 dB, 16′ ramp-height factor. Live RANGE also immediately changes charging slope by the old/new resistance ratio while preserving capacitor charge and the PIT’s separate reload; the ratio and same-cycle PWM crossing pass independent charge-integral tests), but the custom IC's internal amplifier/discharge-transistor values are unpublished; the renderer therefore retains its finite-linear discharge and scale-aware +15 V ideal-supply bound as compatibility policy rather than a measurement claim. Two whole-pass quantities are bounded but not yet modelled: inverting KR-106's four measured LFO rates on #439522 through the integer law (passes per period = 4·⌈8192/coefficient⌉) gives a pass period of 4.231–4.304 ms (mean 4.268 ms) against the chart's 4.2 ms, so every firmware-timed quantity on that unit runs 0.7–2.5 % slower than the model — a one-unit measurement, and summing the recovered instruction paths over a full pass would say whether it is the no-interrupt prediction; and the assigner-to-voice serial link is derivable from both firmware images — 12 MHz/16/24 = 31 250 bit/s, 8N1, 320 µs per byte, two bytes per voice-on, one per voice-off, with B-2 restarting its loop on each command — so a Solo Unison key sends six voice-ons over 3.84 ms and each card's DCO write is consumed in the pass its own command starts, where the engine applies one logical restart per host event with no wire time | P1 |
 | OQ-09 | Resonance byte-to-loop-gain law. Topology and mechanism are settled, including the Roland-printed input-side compensation from the p. 9 module drawing. The 106's own drawing prints no component values, but two sibling readings of the same network now do, and they bracket the compensation coefficient rather than fixing it: Roland's JUNO-6/JUNO-60 CPU BOARD p. 9 gives (10/68)·(101.5/48.5) = 0.3078, the published Open80017a reconstruction gives (4.7/68)·(101.5/25.5) = 0.2751, and they disagree 2.1× on the stage-1 input resistor. A technician's ohmmeter reading of a **de-potted original 80017A** ([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)) supplies a third reading, and it **corroborates the shipped value** once its measurement artefact is accounted for. Taken at face value it reads the resonance OTA's non-inverting leg as 5.1 kΩ and the stage-1 series input as 3.9 kΩ, which would give c = 0.882. But those are in-circuit readings, and in-circuit ohmmetry reads low through parallel paths. Against the Open80017a topology the predicted readings are exactly what he saw: 24 kΩ ∥ (4.7 + 1.5 + 0.56) kΩ = 5.27 kΩ where he read 5.1, and 4.7 kΩ ∥ (24 + 1.5) kΩ = 3.97 kΩ where he read 3.9. Every value the two sources agree on — 68 kΩ, 100 kΩ, 47 kΩ, 1.5 kΩ, 560 Ω and the 4.7 kΩ VCA input — is one whose parallel path is negligible, and both disagreements are in the direction a parallel path forces. So a second, independent original is consistent with 4.7 kΩ and 24 kΩ, and the sibling drawing's 10 kΩ/47 kΩ is the discrete JUNO-6/60's own proportioning rather than the hybrid's. The shipped floor is the best-supported reading of the 106's own module. The onset coordinate now includes the anchored +0.26 V VR34/TP7 standoff (p. 18 section 3) that the p. 8 IC27b branch carries into the RES CV hold; the 0.6 V junction drop above it is still a nominal prior awaiting the measured response family | P1 |
 | OQ-11 | Pulse-off pinned-leg mixer behaviour. Roland establishes that about −0.8 V holds the comparator high and the module drawing keeps that output on the fixed WAVE node ahead of C56/C50. The model now retains the high state and lets its existing coupling node reject the settled DC, replacing the contradicted hard-zero mixer gate; the transient therefore follows actual comparator crossings. Absolute WAVE level is still an OQ-15 coordinate, while installed residual bleed, loading and switching-waveform detail remain unmeasured | P1 |
 | OQ-19 | Voice BA662 gain, knee and deadband. Topology is settled and the control law now follows the traced stage's ideal-junction physics with one voiced knee; the measured gain sweep would fix that knee (and the implied Is, currently 1.2e-13 A) and the BA662's low-current gm, not the law's shape. The signal-path saturation uses the p. 19 trims and a 47 kΩ load now corroborated by [an original de-potted 80017A measurement](https://www.sounddoctorin.com/synthtec/roland/juno106.htm), which also reads its 4.7 kΩ/560 Ω input network. Those resistance questions are closed; the parallel output capacitor remains explicitly unidentified; a level-swept THD capture TP19 against TP8 at bank-3 full sustain would confirm the headroom directly — the pair predicts HD3 = −48 dBc at the 4.8 Vp-p trim, rising 12 dB per doubling, and one reading gives H = 2.4 V / √(12·HD3). KR-106's 56-point sustain sweep on the same replacement-card unit reads the gain linear within a few percent from 5 % of control upward and sub-linear only below about 1.2–2 % (roughly 0.12–0.2 V above the standoff on the 9.92 V hold), consistent with the voiced 150 mV knee — replacement OTAs, so a bound rather than a reading of the BA662 | P1 |
@@ -1331,12 +1486,12 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-04 | Loaded post-BBD support-chain transfer. Roland's designators and Panasonic's typical Gi–RL curve now anchor the nominal ideal-follower MNA: both finite-source MN3009 outputs, the shared 47 kΩ/2.2 nF tap, both 22 kΩ Sallen-Key sections and loaded output coupling are one continuous solve. The ≈3.7 kΩ per-output source value is a local typical-curve estimate, not a guaranteed parameter; installed-part spread, finite Tr15–Tr18 impedance, absolute wet gain and an original-unit wet-only sweep remain open. The two parts' relative insertion offset now lives under Unit Character inside Panasonic's ±4 dB row (voiced point, split ± so the normalised absolute level stays); a stereo capture of an identified unit's wet-only returns would fix both the offset and the absolute gain | P2 |
 | OQ-12 | Envelope physical timing and firmware-revision scope. The digital law and relative store order are ROM-resolved for B-2: ENV0 is stored before PWM; ENV1–5 before the preceding card’s VCA write, all after the DCO train. Interrupted-pass regressions preserve completed stores and exclude premature DCO-stage updates. Exact instruction-to-converter timestamps and original-unit pass duration remain open; the printed spec endpoints reconcile under stated threshold conventions | P2 |
 | OQ-13 | LFO and delay physical timing. ROM-resolved for B-2: the [holdoff-crossing pass also performs the fade's first add](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L577-L607), giving exact state-completion spans of 8.4 ms to 4.3512 s; the [late-loop PWM calculation](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1144-L1197) reads the raw accumulator, bypasses that onset byte, and stores the exact next-loop PWM word. The doubled depth, partial-product truncation and discarded DAC low bits are now reproduced exactly. Roland's [panel network](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=11) has no minimum-stop resistor on LFO RATE, and the A-5 assigner's [exact ADC conversion](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1283-L1296) maps raw codes 0–5 to stored byte 0; the physical control path therefore does not force byte 1. Its coincidental 0.109 Hz rate cannot replace the reachable byte-0 rate without a unit measurement. The [93–97% service window](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) bounds PWM's loaded full-travel duty while raw SysEx retains its overrange. The printed 30 Hz top inverts to the same pass period within 0.8 %. The 0.1 Hz floor is no longer a contradiction, only a spec convention: the [rate table at `$0C60`](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1809-L1810) opens `0005 000f 0019 0028`, which the model's compact generator reproduces entry for entry, and those coefficients give 0.0363 Hz at byte 0 and **0.1088 Hz at byte 1**. Roland's printed 0.1 Hz to 30 Hz is therefore byte 1 to byte 127 — both endpoints land inside 0.9 % — and byte 0 is a below-spec entry the panel can still reach because nothing stops the slider short. A suspected misread of table entry 0 was checked against the listing and refuted; the entry really is 5. What remains open is only whether a real unit's slowest setting measures 0.036 Hz. Both processors condition their control readings before use — the A-5 maps each 8-bit panel reading through a 4-code dead band, a halving up to 242 and a doubled top stretch to the stored 7-bit byte ([`$08C3`](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1283-L1296)), and B-2 gives its own bender-board channels a 2-code hysteresis, a 4-code floor and the same top-end doubling ([`$0800`](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1256-L1280)) — so a physical slider's travel-to-byte law is not linear; the plug-in's parameters are the stored bytes' linear image and keep that departure as product policy | P2 |
-| OQ-14 | Portamento pot/ADC transfer. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code | P2 |
+| OQ-14 | Portamento pot/ADC transfer and store order. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code. All six glide words are stored at `$03E0–$0406` before SUB at `$0410`, then consumed by the DCO train. The engine now advances them together once per pass; independent interrupted-pass and late-edit regressions close the former per-card stepping error. Exact store timestamps and absolute pass cadence remain OQ-08 | P2 |
 | OQ-16 | Installed main-noise level, spectrum and self-oscillation startup. Roland’s p. 13 designators settle the shape and ordering (C42 high-pass, scanned BA662 level OTA, C41/R79 low-pass), but the earlier claim that level was settled is withdrawn. A [verified hardware recording](Docs/hardware-validation.md) from Juno-106 #439522 with Borish replacement voice cards puts noise relative to saw about 11.7 dB above this model; a separate same-gain noise take agrees within 0.3 dB. Noise relative to its noise-driven resonator output also differs by roughly 9 dB; a later same-file take with all sources disabled during true self-oscillation confirms an 8.33 dB deficit, contradicting the prior assertion that a stronger reading must be a crest-factor mistake. The shipped level remains provisional: this capture does not establish original 80017A gain, noise-trim condition or the physical TP8 crest factor, and a universal gain correction is not justified. The comparison-only `mainNoiseLevelScale` retains access to level candidates. `MainNoiseCalibrationProfile::Serviced439522` applies a fitted 2.88897× source-rail scale through that same pre-filter path. Disjoint held-out source ratios improve from 9.163 to 1.640 dB RMS error; the independent resonance sweep improves from 4.047 to 0.461 dB RMS error in growth relative to RESO 0. Noise/saw and noise/true-self-oscillation still disagree by about 3.27 dB, so the nominal default and existing NOISE control shape remain unchanged. The omitted internal resistor sources are now closed separately: four independent 68 kΩ/560 Ω stage networks inject Johnson noise at their respective OTA inputs and pass independent transfer/PSD checks. This does not calibrate the shared NOISE generator. Original-card TP8-versus-NOISE captures, VR32 position, Tr21 amplitude, installed PSD, startup, and dry-floor measurements remain open | P0 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy. The integrator capacitor no longer splits the saturation bracket: a de-potted original measures ~250 pF across all four stages ([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)), which is the 240 pF the sibling schematic prints, and the competing 270 pF is the Analogue Renaissance clone's own value rather than Roland's. The shipped 240 pF stands and the 64.8 kHz branch of the bracket can be retired | P2 |
 | OQ-20 | Chorus wet-mute switching transient and leakage. Off mutes wet only and the wet-return devices are identified; the static wet-level error is at most −0.184 dB worst case, below audibility and left unmodelled. The gate-drive parts are read from p. 15 — Tr5/R50/C16 into R48/C13 against R49+R42 into Tr4, whose collector pulls the D4/D5 gate node down. The coupled C16/C13 solution includes bidirectional R48 loading and R46 330 Ω in Tr5’s conducting path. With the existing 0.6 V junction prior it predicts about 80.2 ms to mute and 120.6 ms to open after settled commands. An independent component-node RK4 reference agrees within 0.35 µV across 8–768 kHz, including interrupted commands and rate changes. Tr4 base-current effects on C13's resting charge still require hardware validation. Fast bypass now preserves the same capacitor evolution as continuous processing. The same C16 node also feeds the clock clamp — D3 with R41 10 kΩ, R47 330 kΩ across them and C15 2.2 µF to −15 V, whose junction runs to R130 330 kΩ / R131 33 kΩ on Tr23 (R146/R145 on Tr28 for line 2), whose collector holds the MN3101 oscillator node — so with the same junction prior the BBD clocks stop about 0.2–0.26 s after the button goes off (C15 charging through R47 against the base divider) and restart about 35 ms after it comes on (C15 discharging through D3/R41), both hidden behind the nominal return interval; the engine keeps the lines clocked through that inaudible interval. The R46 omission is closed: the on-state C16/C13 rests are about −14.04/−14.23 V, and both stores now evolve through a prepared two-node solve in both command states. C15’s reciprocal loading of C16, the clock clamp and Tr5’s nonzero saturation voltage still require the fuller switching model. Also open are the 2SK30A pair's pinch-off spread (the transition keeps its declared 5 ms glide), gate-diode leakage, and an original-unit switching capture | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. The Boost leg now runs as its three real stores (C9, C8, C6) in both configurations, so its departing tail (C8 back through R22‖C9 and R25 while IC4b keeps amplifying node N — the exact undriven pair has a 2.77 ms slow mode, longer than the earlier 940 µs single-pole reading), its re-entry charge redistribution and IC4b's finite swing are derived rather than estimated. The product-selected `configureHighPassSwitch` path now solves C14, all selected and deselected passive legs, and IC4b feedback with finite TC4052 resistance and preserved capacitor charge. Independent component-node MNA and continuous-time switching checks qualify the implementation. The 110/240 Ω audition coordinates are Toshiba’s 10 V/5 V typical table points, not measured bounds for the installed +5 V/Tr3 supply. The product uses the approved 110 Ω candidate B; the raw-DSP reference remains unchanged. Actual Ron versus signal voltage, charge injection, leakage, rail clipping and an original-unit switch capture remain open | P2 |
-| OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model retains zero inter-voice spread and drift; seeded Unit Character remains voiced sound design. The product enables `useServiced439522VcfCalibration`, which assigns fixed FREQ/WIDTH and effective upper-current coordinates fitted to six card slots from one identified sweep. It is a serviced unit with Borish replacement VCF/VCA cards, and card identity is confounded with sweep direction. Complementary held-out cutoff codes test interpolation within that capture; they do not establish original 80017A population tolerances, independent-unit accuracy, repeatability or thermal drift | P3 |
+| OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model retains zero inter-voice spread and drift; seeded Unit Character remains voiced sound design. The product enables `useServiced439522VcfCalibration`, which assigns fixed FREQ/WIDTH and effective upper-current coordinates fitted to six card slots from one identified sweep. It is a serviced unit with Borish replacement VCF/VCA cards, and card identity is confounded with sweep direction. The original master-clock identity is now closed as a KMFC1034T1 8 MHz ceramic resonator; its installed warm-up/aging distribution is still unknown. The AS3109’s typical 0.33%/°C frequency-control coefficient is not a bound on original-module compensated cutoff drift. See [voice instability](#voice-instability-and-pitch-drift). Complementary held-out cutoff codes test interpolation within that capture; they do not establish original 80017A population tolerances, independent-unit accuracy, repeatability or thermal drift | P3 |
 | OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law is settled, the ladder's ideal taps land within 1.2 dB of the published steps, the R64/R65–C21/C22 jack pole is derived for the open jack and the L/MONO normalling for the nominal open load; external jack loads and driven headphone behaviour remain open | P3 |
 
 OQ-08's `T-389`, `T-334` and `T-323` values are proven no-interrupt

@@ -2837,6 +2837,19 @@ void YouKnowEngine::prestageDcoPitchTransaction(
     Voice& voice, double clocksToNextInputEdge, float samplesAgo,
     bool addCorrections) noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::PhaseZeroDiagnostic
+        && nextConverterWrite_ == converterWritesPerPass
+        && !converterNextPassPortamentoUpdated_)
+    {
+        // The deliberately collapsed diagnostic has no interval between SUB
+        // and DCO CV, although PIT preparation precedes both. Bootstrap the
+        // upcoming pass's six glide words together before its first prep and
+        // let that pass's SUB consume the same update. This is an explicit
+        // diagnostic policy, not a claim about physical B-2 instruction order.
+        for (int card = 0; card < hardwareVoices; ++card)
+            updateVoicePortamento(voices_[static_cast<std::size_t>(card)], activeParameters_);
+        converterNextPassPortamentoUpdated_ = true;
+    }
     auto& dco = voice.dco;
     const float previousCvTarget = voice.dcoCvTarget;
     const std::uint32_t count = updateVoicePitch(
@@ -6099,6 +6112,8 @@ void YouKnowEngine::reset()
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
     converterPassEnvelopeUpdated_.fill(false);
+    converterPassPortamentoUpdated_ = false;
+    converterNextPassPortamentoUpdated_ = false;
     passiveHoldEventLatch_ = {};
     exactVcfControlInterval_.fill(false);
     assignmentRescanPending_ = false;
@@ -6906,6 +6921,8 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
     nextConverterWrite_ = 0;
     converterPassEnvelopeUpdated_.fill(false);
+    converterPassPortamentoUpdated_ = false;
+    converterNextPassPortamentoUpdated_ = false;
     passiveHoldEventLatch_ = {};
     refreshFirmwareDcoTiming();
 }
@@ -7285,6 +7302,7 @@ std::uint32_t YouKnowEngine::updateVoiceScan(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
     updateVoiceEnvelope(voice, parameters);
+    updateVoicePortamento(voice, parameters);
     const std::uint32_t count = updateVoicePitch(
         voice, parameters);
     updateVoiceVcfTarget(voice, parameters);
@@ -7369,6 +7387,53 @@ void YouKnowEngine::updateEnvelopeBeforeConverterWrite(
     updated = true;
 }
 
+void YouKnowEngine::updateVoicePortamento(
+    Voice& voice, const EngineParameters& parameters) noexcept
+{
+    if (voice.rootMidi >= 0)
+        voice.targetMidi = static_cast<float>(
+            voice.rootMidi + parameters.keyTranspose);
+
+    // The performance ADC selects one integer step shared by all six voices.
+    // Read its current control once per glide pass rather than caching it at
+    // note-on: turning PORTAMENTO off lands every word on its target on the
+    // next pass. The memoized resolver retains the existing pot/ADC table law.
+    voice.glideSemitonesPerScan = resolveGlideStepPerScan(
+        portamentoTravelAdcFraction(parameters.portamento));
+
+    if (voice.glideSemitonesPerScan > 0.0f)
+    {
+        const float distance = voice.targetMidi - voice.currentMidi;
+        const float step = std::min(std::abs(distance), voice.glideSemitonesPerScan);
+        voice.currentMidi += distance < 0.0f ? -step : step;
+    }
+    else
+    {
+        voice.currentMidi = voice.targetMidi;
+    }
+}
+
+void YouKnowEngine::updatePortamentoBeforeConverterWrite(
+    const ConverterWrite& write, const EngineParameters& parameters) noexcept
+{
+    if (write.destination != ConverterDestination::Sub
+        || converterPassPortamentoUpdated_)
+        return;
+
+    // B-2 03E0..0406 advances all six unsigned 8.8 glide words, then writes
+    // SUB at 0410; only after that does 041C start the six DCO transactions.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L635-L685
+    // The following SUB write is a proven ordinal bound for completed work,
+    // not an instruction timestamp for each earlier RAM store. An interrupt
+    // during DCO output therefore retains every card's glide update, while
+    // the next loop can advance all six again. Fractional SUB peeks and their
+    // public polls share one guard. The ten extension slots keep their own
+    // complete pass update and are never advanced by this physical-board loop.
+    for (int card = 0; card < hardwareVoices; ++card)
+        updateVoicePortamento(voices_[static_cast<std::size_t>(card)], parameters);
+    converterPassPortamentoUpdated_ = true;
+}
+
 std::uint32_t YouKnowEngine::updateVoicePitch(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
@@ -7393,26 +7458,10 @@ std::uint32_t YouKnowEngine::updateVoicePitch(
         voice.hasVoicePitchHistory = true;
     }
 
-    // Taken from the control as it stands, not from what it read when the key
-    // went down. The glide rate is a resistance in the pitch integrator's path,
-    // and turning that control while a note is sliding changes the slide --
-    // including turning it off, which lands the note on its pitch at the next
-    // scan rather than leaving it crawling. Every sounding voice reads the same
-    // shared PORTAMENTO position here, so this goes through the memoized
-    // resolver rather than recomputing the table lookup once per voice.
-    voice.glideSemitonesPerScan = resolveGlideStepPerScan(
-        portamentoTravelAdcFraction(parameters.portamento));
-
-    if (voice.glideSemitonesPerScan > 0.0f)
-    {
-        const float distance = voice.targetMidi - voice.currentMidi;
-        const float step = std::min(std::abs(distance), voice.glideSemitonesPerScan);
-        voice.currentMidi += distance < 0.0f ? -step : step;
-    }
-    else
-    {
-        voice.currentMidi = voice.targetMidi;
-    }
+    // The six stored glide words were already advanced before SUB. A live
+    // product transpose edit can update the target/reset history here, as it
+    // did before, but its current pitch word remains that earlier snapshot
+    // until the next glide pass. No late edit adds a second per-card step.
 
     const std::int32_t controlOffset =
         static_cast<std::int32_t>(
@@ -7775,6 +7824,7 @@ bool YouKnowEngine::latchUpcomingPassiveHoldEvent(
     if (!isPassiveHoldWrite(write))
         return false;
 
+    updatePortamentoBeforeConverterWrite(write, parameters);
     updateEnvelopeBeforeConverterWrite(write, parameters);
     passiveHoldEventLatch_.valid = true;
     passiveHoldEventLatch_.nextPass = nextPass;
@@ -8643,8 +8693,9 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     };
 
     // One shared event walk owns the M82C53 half-cycles, C54 ramp and
-    // comparator. The timer runs from the selected crystal-derived clock; card
-    // temperature therefore has no pitch term.
+    // comparator. The timer divides the shared ceramic-resonator reference,
+    // held nominal here. Card temperature has no independent DCO pitch term;
+    // unmeasured common-reference drift is a separate model gap.
     const float thresholdVolts = voice.pulseThresholdVolts;
     const float previousThresholdVolts = voice.pulseThresholdPrimed
         ? voice.previousPulseThresholdVolts : thresholdVolts;
@@ -9340,6 +9391,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 controlScanPhase_ -= 1.0;
                 nextConverterWrite_ = 0;
                 converterPassEnvelopeUpdated_.fill(false);
+                converterPassPortamentoUpdated_ = converterNextPassPortamentoUpdated_;
+                converterNextPassPortamentoUpdated_ = false;
                 // The common VCA's control constant is proportional to
                 // absolute temperature (patchLevelGain), and the chassis
                 // warms on a 900 s exponential. Resample it here, with the
@@ -9404,6 +9457,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     previousTarget = currentPassiveHoldTarget(write);
                 const float latchedTarget = consumesLatch
                     ? passiveHoldEventLatch_.target : 0.0f;
+                updatePortamentoBeforeConverterWrite(write, parameters);
                 updateEnvelopeBeforeConverterWrite(write, parameters);
                 performConverterWrite(
                     write, parameters,

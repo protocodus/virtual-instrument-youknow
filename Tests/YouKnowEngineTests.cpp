@@ -4381,11 +4381,10 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                 *engine, 0, cpuStates);
             return engine;
         };
-    auto latentReference = latentResetPrestageFixture(
-        4.0, LatentResetRunState::Released);
-    const std::uint32_t releasedTransposedCount =
-        YouKnowTestAccess::updateVoiceScan(
-            *latentReference, 0, transposedResetParameters);
+    // This product transpose edit is after the stored glide-word update.
+    // It can still request reset, but cannot run another glide update inside
+    // a protected DCO transaction: the paired count remains the old word.
+    const std::uint32_t releasedStoredCount = oldPitchCount;
 
     for (const double protectedStates : { 4.0, 3.5 })
     {
@@ -4402,11 +4401,10 @@ void testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites()
                    && YouKnowTestAccess::pendingDcoDividerValid(
                           *protectedLatent, 0)
                    && YouKnowTestAccess::pendingDcoDivider(
-                          *protectedLatent, 0) == releasedTransposedCount
+                          *protectedLatent, 0) == releasedStoredCount
                    && YouKnowTestAccess::lastVoiceMidi(
                           *protectedLatent, 0) == 108,
-               "a protected latent reset did not retain the released, "
-               "transposed voice payload");
+               "a protected latent reset did not retain the already-stored glide word");
     }
 
     auto beforeLatentResetDi = latentResetPrestageFixture(
@@ -10379,6 +10377,175 @@ void testFixedOutputBoundaryCorpus()
            "changing Vref changed pre-output-boundary behavior");
 }
 
+void testPhaseZeroPortamentoAdvancesAllCardsOnce()
+{
+    // The collapsed diagnostic cannot express physical SUB-before-DCO time.
+    // Its declared policy bootstraps all six next-pass words together before
+    // the coincident PIT prestages, then skips a second update at phase zero.
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0 })
+        for (const int quality : { 1, 4 })
+        {
+            YouKnowEngine engine;
+            engine.selectConverterTimingProfile(
+                YouKnowEngine::ConverterTimingProfile::PhaseZeroDiagnostic);
+            engine.prepare(sampleRate, blockSize, quality);
+            auto parameters = plainPatch();
+            parameters.portamento = 0.4f;
+            engine.setParameters(parameters);
+            const int increment = YouKnowEngine::portamentoIncrement(
+                YouKnowEngine::portamentoTravelAdcFraction(parameters.portamento));
+            for (int card = 0; card < 6; ++card)
+            {
+                engine.noteOn(72 + card, 1.0f);
+                YouKnowTestAccess::setVcfControlOperands(engine, card, 0,
+                    static_cast<std::uint16_t>((48 + card) * 256));
+            }
+            const auto expectStep = [&](int updates, const char* message) {
+                for (int card = 0; card < 6; ++card)
+                    expect(YouKnowTestAccess::currentMidi(engine, card)
+                               == 48.0f + card + updates * increment / 256.0f,
+                           message);
+            };
+            renderExact(engine, 1);
+            expectStep(1, "phase-zero initialization did not advance all six words once");
+            bool sawBootstrap = false;
+            for (int frame = 1; frame < static_cast<int>(std::ceil(sampleRate * 0.0042)); ++frame)
+            {
+                renderExact(engine, 1);
+                if (YouKnowTestAccess::currentMidi(engine, 0)
+                        > 48.0f + increment / 256.0f)
+                {
+                    sawBootstrap = true;
+                    expectStep(2, "phase-zero PIT prep advanced a partial or duplicate glide pass");
+                }
+            }
+            expect(sawBootstrap, "phase-zero PIT prep missed its all-card glide bootstrap");
+            renderExact(engine, 2);
+            expectStep(2, "phase-zero SUB repeated the already-bootstrapped glide pass");
+        }
+}
+
+void testPortamentoWordsPrecedeEveryDcoWrite()
+{
+    // B-2's independent control-flow oracle: 03E0..0406 stores all six
+    // portamento words before SUB at 0410, then starts DCO output at 041C.
+    // Interrupting that output cannot leave just its early cards advanced.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L635-L685
+    using Profile = YouKnowEngine::ConverterTimingProfile;
+    const std::array<int, 6> initialWords {
+        48 * 256 + 11, 76 * 256 + 7, 62 * 256,
+        63 * 256 - 1, 64 * 256 + 1, 56 * 256 + 199
+    };
+    for (const auto profile : { Profile::NormalizedServiceChart,
+                                Profile::MeasuredChartGeometry })
+        for (const double sampleRate : { 44100.0, 48000.0, 96000.0 })
+            for (const int quality : { 1, 4 })
+            {
+                YouKnowEngine engine;
+                engine.selectConverterTimingProfile(profile);
+                engine.prepare(sampleRate, blockSize, quality);
+                auto parameters = plainPatch();
+                parameters.calibration = 0.0f;
+                parameters.portamento = 0.4f;
+                parameters.attack = 0.75f;
+                parameters.release = 0.75f;
+                engine.setParameters(parameters);
+                for (int card = 0; card < 6; ++card)
+                {
+                    engine.noteOn(60 + card, 1.0f);
+                    YouKnowTestAccess::setVcfControlOperands(engine, card, 0,
+                        static_cast<std::uint16_t>(initialWords[card]));
+                }
+                auto initial = std::make_unique<YouKnowEngine>(engine);
+                const int increment = YouKnowEngine::portamentoIncrement(
+                    YouKnowEngine::portamentoTravelAdcFraction(parameters.portamento));
+                expect(increment > 1, "the portamento ordering fixture lost its clamp cases");
+                const auto advanceWords = [increment](std::array<int, 6>& words) {
+                    for (int card = 0; card < 6; ++card)
+                        words[card] += std::clamp((60 + card) * 256 - words[card],
+                                                -increment, increment);
+                };
+                const auto expectWords = [](const YouKnowEngine& probe,
+                                            const std::array<int, 6>& expected,
+                                            const char* message) {
+                    for (int card = 0; card < 6; ++card)
+                        expect(YouKnowTestAccess::currentMidi(probe, card)
+                                   == static_cast<float>(expected[card]) / 256.0f,
+                               message);
+                };
+                auto words = initialWords;
+                advanceWords(words);
+                const int interruptedFrames = static_cast<int>(sampleRate * 0.0013);
+                int firstUpdate = -1;
+                for (int frame = 0; frame < interruptedFrames; ++frame)
+                {
+                    float left = 0.0f, right = 0.0f;
+                    engine.process(&left, &right, 1);
+                    if (firstUpdate < 0 && YouKnowTestAccess::currentMidi(engine, 0)
+                            != static_cast<float>(initialWords[0]) / 256.0f)
+                        firstUpdate = frame;
+                    expectWords(engine, firstUpdate < 0 ? initialWords : words,
+                        "a SUB/DCO pass advanced only a prefix of the six glide words or advanced twice");
+                }
+                const auto subOrdinal = YouKnowTestAccess::passiveHoldOrdinal(
+                    YouKnowTestAccess::PassiveHoldDestination::Sub, -1);
+                const double subFrame = sampleRate * 0.0042
+                    * YouKnowTestAccess::converterEventPhase(engine, subOrdinal);
+                expect(firstUpdate >= std::floor(subFrame) - 1.0
+                           && firstUpdate <= std::ceil(subFrame),
+                       "all six glide words were not stored by the SUB boundary");
+
+                // Alternate real commands after SUB but part-way through the
+                // DCO train. Completed RAM stores survive every loop restart.
+                for (int attempt = 0; attempt < 4; ++attempt)
+                {
+                    if ((attempt & 1) == 0) engine.noteOff(62);
+                    else engine.noteOn(62, 1.0f);
+                    expectWords(engine, words, "a serial restart discarded a completed glide word");
+                    renderExact(engine, interruptedFrames);
+                    advanceWords(words);
+                    expectWords(engine, words, "a restarted loop advanced only its early DCO cards");
+                }
+
+                // The remaining DCO writes consume stored words. Editing the
+                // performance control after SUB cannot modify those words.
+                parameters.portamento = 0.0f;
+                engine.setParameters(parameters);
+                renderExact(engine, static_cast<int>(sampleRate * 0.0015));
+                expectWords(engine, words, "a late PORTAMENTO edit changed a captured glide pass");
+                renderExact(engine, static_cast<int>(std::ceil(sampleRate * 0.0042)));
+                for (int card = 0; card < 6; ++card) words[card] = (60 + card) * 256;
+                expectWords(engine, words, "turning glide off missed the next all-card update");
+
+                // Same sample-timed interrupted notes, two callback layouts.
+                const auto partitioned = [&](int chunk) {
+                    auto probe = std::make_unique<YouKnowEngine>(*initial);
+                    std::vector<float> result;
+                    for (int segment = 0; segment < 4; ++segment)
+                    {
+                        if (segment == 1) probe->noteOff(62);
+                        if (segment == 2) probe->noteOn(62, 1.0f);
+                        for (int remaining = segment == 3 ? interruptedFrames * 4 : interruptedFrames;
+                             remaining > 0;)
+                        {
+                            const int frames = std::min(remaining, chunk);
+                            std::array<float, 29> left {}, right {};
+                            probe->process(left.data(), right.data(), frames);
+                            for (int frame = 0; frame < frames; ++frame)
+                            {
+                                result.push_back(left[frame]);
+                                result.push_back(right[frame]);
+                            }
+                            remaining -= frames;
+                        }
+                    }
+                    return result;
+                };
+                expect(partitioned(1) == partitioned(29),
+                       "callback partitioning changed interrupted portamento audio");
+            }
+}
+
 void testEnvelopesWaitForTheVcfTrain()
 {
     // Independent B-2 ordering oracle: 04A3 exits all six DCO writes, then
@@ -16039,6 +16206,8 @@ int main()
         testPitByteTimingIsProcessingGridInvariant();
         testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites();
         testEnvelopesWaitForTheVcfTrain();
+        testPortamentoWordsPrecedeEveryDcoWrite();
+        testPhaseZeroPortamentoAdvancesAllCardsOnce();
         testConverterAnchoredPitchPrestageTimelineAndAtomicCommit();
         testConverterAnchoredPitchPrestageIsWallClockInvariant();
         testPitchPrestageConsumesResetDiscoveredByItsOwnScan();
@@ -16204,6 +16373,8 @@ int main()
     testMainVolumeLoadedLinearPotLaw();
     testFixedOutputBoundaryCorpus();
     testEnvelopesWaitForTheVcfTrain();
+    testPortamentoWordsPrecedeEveryDcoWrite();
+    testPhaseZeroPortamentoAdvancesAllCardsOnce();
     testNotesWaitForTheSharedConverterScan();
     testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
     testNoteOnPlayingLatencyAcrossConverterPhases();

@@ -1572,10 +1572,12 @@ private:
 
     // --- Modelled hardware constants ---------------------------------------
 
-    // One crystal feeds every voice's note timer, so the six voices are
-    // inherently in tune with one another; what little pitch instability the
-    // instrument has comes from the reference and the control chain, not from
-    // six independent oscillator cores.
+    // One 8 MHz ceramic resonator (Roland 12389728 / KMFC1034T1, service
+    // parts list p. 4) feeds every voice's note timer. Equal counts therefore
+    // have equal steady frequency; staggered updates can still change phase.
+    // Common reference drift is physically possible, but no calibrated trace
+    // or installed-part tempco establishes its magnitude. Hold this nominal
+    // coordinate; do not invent six independent oscillator pitch walks.
     static constexpr double masterClockHz = 8000000.0;
     // IC29 executes one state every 250 ns. The recovered pitch-write paths
     // below are timed in these states, independently of the selected DCO clock.
@@ -1734,20 +1736,17 @@ private:
     // enough to hear as odd-harmonic grit on every resonant sweep.
     static constexpr float otaEarlyVoltage = 100.0f;
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
-    // Temperature coefficient of the transconductor's cutoff control path, from
-    // the AS3109 datasheet -- the IR3109 clone whose own test condition is this
-    // circuit's 240 pF and 68 kOhm. It is what turns the modelled chassis
-    // thermal gradient into a per-card cutoff difference.
+    // Voiced thermal-character coordinate retained from the AS3109's typical
+    // 0.33%/degC "Tempco of frequency control" row. That replacement-IC row
+    // has no min/max and concerns the control coefficient: it does not bound
+    // an original 80017A's residual cutoff drift at a fixed installed CV.
+    // https://www.alfatriode.lv/eng/sc/AS3109.pdf (v2, 2022-04-29)
     //
-    // A revision instead spread the six cards by 1 + 0.04 * (card - 2.5), which
-    // is +/-165 cents: roughly ten times what this coefficient supports across
-    // the 4 degC gradient computed beside it, linear in the card index while
-    // that gradient is exponential in it, and absent from the README's own Unit
-    // Character table. The module board also carries R111, a 560 Ohm positor --
+    // The module board also carries R111, a 560 Ohm positor --
     // a PTC thermistor, listed as such in the parts legend -- returning the CV
-    // divider node to ground precisely to cancel this tempco, so the derived
-    // figure below is an upper bound on what survives it rather than a
-    // measured residual. How much the positor actually leaves is OQ-10.
+    // divider node to ground for compensation. This model's use of the clone
+    // coefficient is a sound-design prior, not an upper bound or a measured
+    // residual. Installed compensated behavior and its statistics are OQ-10.
     static constexpr float vcfCutoffTempcoPerCelsius = 0.0033f;
     // Card-to-card thermal gradient across the chassis, in degrees Celsius at
     // the card nearest the supply, falling exponentially with the card index.
@@ -2784,6 +2783,10 @@ private:
         Voice& voice, const EngineParameters& parameters) noexcept;
     void updateEnvelopeBeforeConverterWrite(
         const ConverterWrite& write, const EngineParameters& parameters) noexcept;
+    void updateVoicePortamento(
+        Voice& voice, const EngineParameters& parameters) noexcept;
+    void updatePortamentoBeforeConverterWrite(
+        const ConverterWrite& write, const EngineParameters& parameters) noexcept;
     [[nodiscard]] std::uint32_t updateVoicePitch(
         Voice& voice, const EngineParameters& parameters) noexcept;
     void updateVoiceVcfTarget(Voice& voice,
@@ -3008,6 +3011,10 @@ private:
     // Physical envelopes belong to the later VCF/VCA train, not the DCO
     // transaction. Fractional PWM/VCA peeks and polls share one update.
     std::array<bool, hardwareVoices> converterPassEnvelopeUpdated_ {};
+    // All six glide RAM words are stored before the shared SUB write.
+    bool converterPassPortamentoUpdated_ { false };
+    // PhaseZeroDiagnostic has to bootstrap its next pass before PIT prep.
+    bool converterNextPassPortamentoUpdated_ { false };
     PassiveHoldEventLatch passiveHoldEventLatch_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};
     std::array<VcfHoldInterval, maxVoices> cutoffVcfHoldIntervals_ {};
@@ -3262,7 +3269,7 @@ private:
     // The envelope generator is the one shared digital processor: ATTACK,
     // DECAY and RELEASE resolve to the same increment/multiplier for every
     // voice (see the note in updateVoiceEnvelope), so recomputing
-    // them from the panel position on every voice's Pitch write recomputed
+    // them from the panel position on every voice's envelope update recomputed
     // the same three answers as many times as there are sounding cards. The
     // panel position is compared for exact equality, so this memo cannot
     // return anything the piecewise law would not have recomputed; sentinels
@@ -3277,8 +3284,8 @@ private:
     // The glide law is the same shared-processor story: glideStepPerScan()
     // resolves PORTAMENTO's panel position through one eight-bit ADC lookup
     // that is identical for every voice, but both initialiseVoice() and
-    // updateVoicePitch() called it fresh on every voice's note-on
-    // and Pitch write. resolveGlideStepPerScan() memoizes it the same way the
+    // updateVoicePortamento() called it fresh on every voice's note-on
+    // and glide update. resolveGlideStepPerScan() memoizes it the same way the
     // envelopeLaw* cache above memoizes ATTACK/DECAY/RELEASE: comparison is
     // exact equality against the same parameters.portamento source, so the
     // memo can never return anything the unconditional call would not have.
