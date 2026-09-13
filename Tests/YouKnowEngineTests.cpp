@@ -10002,16 +10002,16 @@ void testMainVolumeLoadedLinearPotLaw()
     const auto half = atVolume(0.5f);
     const auto quarter = atVolume(0.25f);
     const auto fittedRatio = [&](const Render& reduced) {
-        double cross = 0.0;
-        double referenceEnergy = 0.0;
-        for (std::size_t index = 0; index < full.left.size(); ++index)
-        {
-            cross += static_cast<double>(full.left[index]) * reduced.left[index]
-                   + static_cast<double>(full.right[index]) * reduced.right[index];
-            referenceEnergy += static_cast<double>(full.left[index]) * full.left[index]
-                             + static_cast<double>(full.right[index]) * full.right[index];
-        }
-        return cross / referenceEnergy;
+        // Test the pot gain on the 220 Hz fundamental, where both jack
+        // corners are essentially flat. A broadband waveform projection also
+        // measures VOLUME-dependent treble/phase changes and therefore is not
+        // a scalar pot-law test once the RC roll-off is represented correctly.
+        // The separate output-jack tests qualify that frequency dependence.
+        const auto fundamental = [](const Render& take) {
+            return magnitudeAt(take.left, 0, 8192, 220.0, 48000.0)
+                 + magnitudeAt(take.right, 0, 8192, 220.0, 48000.0);
+        };
+        return fundamental(reduced) / fundamental(full);
     };
     const double halfRatio = fittedRatio(half);
     const double quarterRatio = fittedRatio(quarter);
@@ -10173,7 +10173,14 @@ void testFixedOutputBoundaryCorpus()
         // the policy is a post-clip output scalar, so the instrument's
         // behaviour is identical and only where 0 dBFS sits changed. The
         // overload counts are not scalable and were re-measured.
-        Baseline { 0.123353, 0.259007, 0.261076, 0, 0 },
+        // Refresh only the two exceeded peak references for the independently
+        // qualified output-jack magnitude approximation. Verified 9d32c51
+        // passed these guards; this pass changes dry sample peak by -2.106%
+        // and chorus-II RMS by -1.325%. Historical reference drift plus the
+        // circuit correction crossed 4%. ENV and KEY are both zero here, so
+        // their firmware correction has no effect. Keep the RMS reference,
+        // every fixture/window and the 4% guards.
+        Baseline { 0.123353, 0.245922, 0.248728, 0, 0 },
         Baseline { 0.312853, 0.943451, 0.954339, 0, 0 },
         // Re-pinned after replacing the phase-zero timer restart with explicit
         // M82C53 Mode-3 OUT polarity, pending-count half-cycles and the shared
@@ -10190,7 +10197,12 @@ void testFixedOutputBoundaryCorpus()
         // testSelfOscillationMatchesTheServiceTrim.
         Baseline { 0.0603095, 0.0847796, 0.0847796, 0, 0 },
         Baseline { 0.207787, 0.470048, 0.474565, 0, 0 },
-        Baseline { 0.155827, 0.357776, 0.359128, 0, 0 },
+        // This wet row additionally includes the independently qualified
+        // loading ahead of the BBD. Refresh only its exceeded level/peak
+        // references, without treating their historical drift as an isolated
+        // loading measurement. The other chorus row, overload counts and all
+        // 4% guards stay unchanged.
+        Baseline { 0.149503, 0.337386, 0.337386, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -15831,6 +15843,20 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW_OUTPUT_TESTS_ONLY") != nullptr)
+    {
+        testMainVolumeLoadedLinearPotLaw();
+        testFixedOutputBoundaryCorpus();
+        testOutputJackPoleRollsOffTheTopOfTheBandAtHighHostRates();
+        if (failures != 0)
+        {
+            std::cerr << failures << " output check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All output checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW_NOTE_TESTS_ONLY") != nullptr)
     {
         testKeyAssignerDropsRatherThanSteals();

@@ -43,10 +43,15 @@ double corner(double volume)
 double measureError(const OutputJackLowPass::Coefficients& coefficients,
                     double rate, double pole, double& oldError)
 {
+    require(std::isfinite(coefficients.a1) && std::isfinite(coefficients.correction),
+            "jack coefficients are nonfinite");
     OutputJackLowPass filter;
     std::array<float, 256> impulse {};
     for (std::size_t i = 0; i < impulse.size(); ++i)
+    {
         impulse[i] = filter.process(i == 0 ? 1.0f : 0.0f, coefficients);
+        require(std::isfinite(impulse[i]), "jack impulse response is nonfinite");
+    }
     double worst = 0.0;
     const double oldPole = std::exp(-2.0 * pi * pole / rate);
     for (int bin = 0; bin <= 160; ++bin)
@@ -60,7 +65,10 @@ double measureError(const OutputJackLowPass::Coefficients& coefficients,
             power *= z;
         }
         const double analog = 1.0 / std::sqrt(1.0 + (f / pole) * (f / pole));
-        worst = std::max(worst, std::abs(20.0 * std::log10(std::abs(response) / analog)));
+        const double error = std::abs(20.0 * std::log10(std::abs(response) / analog));
+        require(std::isfinite(response.real()) && std::isfinite(response.imag())
+                    && std::isfinite(error), "jack frequency response is nonfinite");
+        worst = std::max(worst, error);
         const auto old = (1.0 - oldPole) / (1.0 - oldPole * z);
         oldError = std::max(oldError, std::abs(20.0 * std::log10(std::abs(old) / analog)));
     }
