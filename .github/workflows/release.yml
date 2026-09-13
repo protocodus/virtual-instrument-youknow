@@ -27,6 +27,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Test packaging and release preflight without credentials
+        run: |
+          python3 scripts/test-ci-packaging.py
+          bash scripts/test-release-preflight.sh
+
       - name: Verify the protected release source and repository settings
         env:
           RELEASE_SETTINGS_TOKEN: ${{ secrets.YOUKNOW_RELEASE_SETTINGS_TOKEN }}

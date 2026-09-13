@@ -204,6 +204,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # The bundle-version checks require macOS and are skipped by the Linux
+      # script job. Preflight uses disposable sources and mocked signing tools.
+      - name: Test macOS packaging and release preflight
+        run: |
+          python3 scripts/test-ci-packaging.py
+          bash scripts/test-release-preflight.sh
+
       # Clearing the committed screenshot first is what makes the check after
       # the build meaningful: the file can only be there afterwards because this
       # run's suite rendered it.
@@ -327,6 +334,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Test Windows archive replacement and payload checks
+        run: python scripts/test-ci-packaging.py WindowsPackagingTests
 
       - name: Configure DSP tests
         run: |
