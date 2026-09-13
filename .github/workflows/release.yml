@@ -13,8 +13,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci:
+    name: Validate the tagged build on every platform
+    # The called workflow declares write access for its main-only preview
+    # job. A tag skips that job; no production credentials are passed here.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ci.yml
+
   macos:
     name: Sign, notarize and publish macOS
+    needs: ci
     runs-on: macos-15
     environment: youknow-production
     permissions:

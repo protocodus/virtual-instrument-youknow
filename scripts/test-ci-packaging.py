@@ -7,6 +7,7 @@ import io
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,144 @@ def invalid_build_caches():
 def write(path: Path, contents: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(contents)
+
+
+def workflow_job(workflow: Path, job: str) -> str:
+    # Only extract indentation-delimited job/step blocks; execute their real
+    # Bash commands below instead of maintaining a parallel copy in the test.
+    text = workflow.read_text()
+    match = re.search(rf"^  {re.escape(job)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)",
+                      text, re.MULTILINE | re.DOTALL)
+    if match is None:
+        raise AssertionError(f"missing workflow job: {job}")
+    return match.group(1)
+
+
+def workflow_step(job: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    if job.count(marker) != 1:
+        raise AssertionError(f"expected one workflow step: {name}")
+    step = job.split(marker, 1)[1].split("\n      - ", 1)[0]
+    if "        run: |\n" in step:
+        return textwrap.dedent(step.split("        run: |\n", 1)[1])
+    return step.split("        run: ", 1)[1].splitlines()[0]
+
+
+@unittest.skipUnless(os.name == "posix", "workflow shell fixtures run on POSIX")
+class WorkflowGateTests(unittest.TestCase):
+    """Verify the actual CI command gates without claiming native host runs."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="youknow-ci-gates-")
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.bin = self.directory / "bin"
+        self.bin.mkdir()
+        self.log = self.directory / "commands.jsonl"
+        mock_script = self.bin / "mock-tool"
+        mock_script.write_text(textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import json, os, re, subprocess, sys
+            from pathlib import Path
+            name, args = Path(sys.argv[0]).name, sys.argv[1:]
+            with open(os.environ['GATE_LOG'], 'a') as log:
+                log.write(json.dumps([name, args]) + '\\n')
+            if name == 'xvfb-run':
+                assert args[0] == '--auto-servernum'
+                sys.exit(subprocess.run(args[1:]).returncode)
+            if name == 'ctest':
+                pattern = args[args.index('-R') + 1]
+                registered = os.environ.get('GATE_REGISTERED',
+                    'PluginProcessor,CLAPBundle,VST3Bundle').split(',')
+                matches = [suite for suite in registered
+                    if re.search(pattern, 'YouKnow.' + suite)]
+                if not matches:
+                    sys.exit(7 if '--no-tests=error' in args else 0)
+                if os.environ.get('GATE_FAIL') in matches:
+                    sys.exit(8)
+            elif name != 'cmake':
+                sys.exit(99)
+        """))
+        mock_script.chmod(0o755)
+        for name in ("cmake", "ctest", "xvfb-run"):
+            (self.bin / name).symlink_to(mock_script)
+        self.environment = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+                            "GATE_LOG": str(self.log)}
+
+    def execute(self, command, **environment):
+        self.log.write_text("")
+        result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", command],
+                                cwd=self.directory,
+                                env={**self.environment, **environment},
+                                text=True, capture_output=True, check=False)
+        import json
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        return result, calls
+
+    def test_each_platform_builds_and_requires_all_three_host_suites(self):
+        workflow = SCRIPTS.parent / ".github/workflows/ci.yml"
+        suites = ("PluginProcessor", "CLAPBundle", "VST3Bundle")
+        targets = {"YouKnowPluginProcessorTests", "YouKnowCLAPBundleSmokeTests",
+                   "YouKnowVST3BundleSmokeTests", "YouKnow_VST3", "YouKnow_CLAP",
+                   "YouKnow_Standalone"}
+        for platform, job_id in (("Linux", "dsp-tests"), ("Windows", "dsp-tests-windows")):
+            job = workflow_job(workflow, job_id)
+            configure = workflow_step(job, f"Configure {platform} plug-in build")
+            result, calls = self.execute(configure)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            options = calls[0][1]
+            for option in ("-DYOUKNOW_BUILD_PLUGIN=ON", "-DYOUKNOW_BUILD_CLAP=ON",
+                           "-DBUILD_TESTING=ON"):
+                self.assertIn(option, options)
+            build_name = f"Build {platform} plug-ins and host-boundary tests"
+            result, calls = self.execute(workflow_step(job, build_name))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(targets <= set(calls[0][1]))
+            gate_name = f"Test {platform} processor and plug-in host boundaries"
+            gate = workflow_step(job, gate_name)
+            self.assertLess(job.index(gate_name), job.index(f"Package {platform}"))
+            result, calls = self.execute(gate)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            test_calls = [args for name, args in calls if name == "ctest"]
+            self.assertEqual(len(test_calls), 3)
+            patterns = {args[args.index("-R") + 1] for args in test_calls}
+            self.assertEqual(patterns, {rf"^YouKnow\.{suite}$" for suite in suites})
+            for args in test_calls:
+                self.assertIn("--no-tests=error", args)
+                if platform == "Windows":
+                    self.assertEqual(args[args.index("-C") + 1], "Release")
+            self.assertEqual(sum(name == "xvfb-run" for name, _ in calls),
+                             3 if platform == "Linux" else 0)
+            # Any failing or missing individual suite must reject the gate,
+            # even when all other registrations exist and return success.
+            for suite in suites:
+                with self.subTest(platform=platform, failing=suite):
+                    result, _ = self.execute(gate, GATE_FAIL=suite)
+                    self.assertNotEqual(result.returncode, 0)
+                with self.subTest(platform=platform, missing=suite):
+                    registered = ",".join(item for item in suites if item != suite)
+                    result, _ = self.execute(gate, GATE_REGISTERED=registered)
+                    self.assertNotEqual(result.returncode, 0)
+        linux = workflow_job(workflow, "dsp-tests")
+        dependencies = workflow_step(linux, "Install JUCE Linux dependencies")
+        self.assertIn("xvfb", dependencies)
+        self.assertIn("xauth", dependencies)
+
+    def test_release_waits_for_the_same_source_cross_platform_ci(self):
+        release = SCRIPTS.parent / ".github/workflows/release.yml"
+        gate = workflow_job(release, "ci")
+        self.assertRegex(gate, r"(?m)^    uses: \./\.github/workflows/ci\.yml$")
+        self.assertNotRegex(gate, r"(?m)^    (?:if|continue-on-error):")
+        publisher = workflow_job(release, "macos")
+        self.assertRegex(publisher, r"(?m)^    needs: ci$")
+        # With no overriding job condition, Actions' default success() gate
+        # blocks both a failed and a skipped dependency before credentials.
+        self.assertNotRegex(publisher, r"(?m)^    (?:if|continue-on-error):")
+        ci = SCRIPTS.parent / ".github/workflows/ci.yml"
+        self.assertRegex(ci.read_text(), r"(?m)^  workflow_call:$")
+        for job in ("dsp-tests", "plugin-macos", "dsp-tests-windows"):
+            header = workflow_job(ci, job).split("    steps:", 1)[0]
+            self.assertNotRegex(header, r"(?m)^    (?:if|continue-on-error):")
 
 
 class WindowsPackagingTests(unittest.TestCase):

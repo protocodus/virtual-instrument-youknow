@@ -32,7 +32,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config \
+            ninja-build pkg-config xvfb xauth \
             libasound2-dev \
             libfreetype-dev libfontconfig1-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
@@ -122,12 +122,25 @@ jobs:
             -B build-dsp \
             -DCMAKE_BUILD_TYPE=Release \
             -DYOUKNOW_BUILD_PLUGIN=ON \
-            -DBUILD_TESTING=OFF
+            -DYOUKNOW_BUILD_CLAP=ON \
+            -DBUILD_TESTING=ON
 
-      - name: Build Linux VST3 and standalone
+      - name: Build Linux plug-ins and host-boundary tests
         run: |
           cmake --build build-dsp --parallel \
-            --target YouKnow_VST3 YouKnow_Standalone
+            --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone \
+              YouKnowPluginProcessorTests YouKnowCLAPBundleSmokeTests \
+              YouKnowVST3BundleSmokeTests
+
+      - name: Test Linux processor and plug-in host boundaries
+        run: |
+          set -euo pipefail
+          # The editor fixture and JUCE host initialise GUI services. Give them
+          # an isolated display; require each registration, not just any match.
+          for suite in PluginProcessor CLAPBundle VST3Bundle; do
+            xvfb-run --auto-servernum ctest --test-dir build-dsp \
+              --output-on-failure -R "^YouKnow\\.${suite}$" --no-tests=error
+          done
 
       - name: Package Linux VST3 and standalone
         run: |
@@ -351,12 +364,20 @@ jobs:
         run: |
           cmake -S . -B build-win -DYOUKNOW_BUILD_PLUGIN=ON -DYOUKNOW_BUILD_CLAP=ON -DBUILD_TESTING=ON
 
-      - name: Build Windows VST3, CLAP and standalone
+      - name: Build Windows plug-ins and host-boundary tests
         run: |
-          cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone YouKnowCLAPBundleSmokeTests
+          cmake --build build-win --config Release --parallel \
+            --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone \
+              YouKnowPluginProcessorTests YouKnowCLAPBundleSmokeTests \
+              YouKnowVST3BundleSmokeTests
 
-      - name: Test the Windows CLAP host boundary
-        run: ctest --test-dir build-win -C Release --output-on-failure -R '^YouKnow\.CLAPBundle$' --no-tests=error
+      - name: Test Windows processor and plug-in host boundaries
+        run: |
+          set -euo pipefail
+          for suite in PluginProcessor CLAPBundle VST3Bundle; do
+            ctest --test-dir build-win -C Release --output-on-failure \
+              -R "^YouKnow\\.${suite}$" --no-tests=error
+          done
 
       - name: Package Windows VST3, CLAP and standalone
         run: python scripts/package-windows.py --build-dir build-win
