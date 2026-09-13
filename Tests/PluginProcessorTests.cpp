@@ -975,6 +975,28 @@ void testParameterTextRoundTrips()
     }
 }
 
+void testDisplayedParameterTextIsStableWhenReentered()
+{
+    YouKnowAudioProcessor processor;
+    for (const auto* parameter : processor.getParameters())
+        for (const int divisions : { 127, 255, 1000 })
+            for (int step = 0; step <= divisions; ++step)
+            {
+                const auto text = parameter->getText (
+                    static_cast<float> (step) / static_cast<float> (divisions), 1024);
+                const auto parsed = parameter->getValueForText (text);
+                const auto repeated = parameter->getText (parsed, 1024);
+                if (! std::isfinite (parsed) || parsed < 0.0f || parsed > 1.0f
+                    || repeated != text)
+                {
+                    expect (false, parameter->getName (128).toStdString()
+                        + " changes when its displayed value is re-entered: "
+                        + text.toStdString() + " -> " + repeated.toStdString());
+                    break;
+                }
+            }
+}
+
 void testProcessingProducesSound()
 {
     YouKnowAudioProcessor processor;
@@ -8724,9 +8746,16 @@ int main()
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
+    if (std::getenv ("YOUKNOW_PARAMETER_TEXT_TEST_ONLY") != nullptr)
+    {
+        testDisplayedParameterTextIsStableWhenReentered();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     testPublicParameterOrderMatchesTheSharedList();
     testParameterContract();
     testParameterTextRoundTrips();
+    testDisplayedParameterTextIsStableWhenReentered();
     testProcessingProducesSound();
     testProductFidelitySurvivesHostLifecycle();
     testVariableHostBlockSizesPreserveTheTimeline();

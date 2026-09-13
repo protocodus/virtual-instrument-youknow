@@ -243,7 +243,16 @@ juce::AudioParameterFloatAttributes cutoffAttributes()
         })
         .withValueFromStringFunction ([] (const juce::String& text)
         {
-            return YouKnowEngine::panelPositionForCutoff (hertzFromText (text));
+            const auto hertz = hertzFromText (text);
+            const auto maximum = YouKnowEngine::vcfCutoffHz (
+                YouKnowEngine::vcfPanelCounts (1.0f));
+            // The displayed law has a capped plateau. Its analytic inverse
+            // rounds 50 kHz down to the preceding hardware byte (48.63 kHz),
+            // so merely re-entering the displayed value used to move it.
+            // Like the other physical-unit controls, use full travel for a
+            // value at or above the displayed maximum. DSP laws are unchanged.
+            return hertz >= maximum ? 1.0f
+                : YouKnowEngine::panelPositionForCutoff (hertz);
         });
 }
 
