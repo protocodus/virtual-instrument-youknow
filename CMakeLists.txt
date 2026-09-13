@@ -299,6 +299,10 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderComposition PRIVATE YouKnowDSP Threads::Threads)
     target_compile_features(YouKnowRenderComposition PRIVATE cxx_std_20)
 
+    add_executable(YouKnowRenderShowcase Tools/RenderShowcase.cpp)
+    target_link_libraries(YouKnowRenderShowcase PRIVATE YouKnowDSP Threads::Threads)
+    target_compile_features(YouKnowRenderShowcase PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderSota Tools/RenderSotaComparisons.cpp)
     target_link_libraries(YouKnowRenderSota PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderSota PRIVATE cxx_std_20)
@@ -505,6 +509,7 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowRenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowBenchmarkReference PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowRenderShowcase PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderTanhAuditions
             PRIVATE /W4 /permissive-)
@@ -540,6 +545,8 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowBenchmarkReference PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderComposition PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowRenderShowcase PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderSota PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -676,6 +683,9 @@ if(BUILD_TESTING)
                  COMMAND YouKnowRenderComposition --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/composition-smoke")
         set_tests_properties(YouKnow.RenderComposition PROPERTIES TIMEOUT 120)
+
+        add_test(NAME YouKnow.ShowcaseScores COMMAND YouKnowRenderShowcase --check)
+        set_tests_properties(YouKnow.ShowcaseScores PROPERTIES TIMEOUT 30)
 
         # Proves the hardware-benchmark measures can see the differences they
         # exist to report: a render must compare equal to itself, and a known

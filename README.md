@@ -117,11 +117,19 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Audio demos
 
+**Five musical showcases, at maximum quality, 24-bit/96 kHz stereo:**
+[bass](Docs/audio/showcase/01-bass-midnight-drive.wav) ·
+[lead](Docs/audio/showcase/02-lead-signal-fire.wav) ·
+[strings](Docs/audio/showcase/03-strings-silver-canopy.wav) ·
+[brass](Docs/audio/showcase/04-brass-city-lights.wav) ·
+[pad](Docs/audio/showcase/05-pad-slow-horizon.wav).
+Each is an original solo performance, with a chord progression and voice count
+suited to its sound; [the showcase notes](#musical-showcases) describe what to hear.
+
 **[The composition](Docs/audio/composition/youknow-composition.wav)** — ten
 factory presets, ten overdubs, one piece of music, rendered at 24-bit/44.1 kHz
-on the deepest oversampling rung. It is the shortest way to hear what this
-instrument sounds like; [the part list](#the-composition) says which preset
-plays what.
+on the deepest oversampling rung. Hear the sounds together in one arrangement;
+[the part list](#the-composition) says which preset plays what.
 
 Or hear one mechanism at a time:
 [chorus pad](Docs/audio/01-chorus-pad.wav) ·
@@ -1048,6 +1056,48 @@ new plug-in instance starts at 1× with Aging 50 %.
 | `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −19.6 dBFS | +16.6 dB |
 <!-- peaks-table-end -->
 
+### Musical showcases
+
+Five original performances expose the instrument's range with one synth instance
+per recording. The bass and lead outline their progressions melodically; strings,
+brass and pad play their harmony directly. Every part stays in its declared scale,
+and sustained keys agree with each chord they cross. Short melodic passing notes are
+deliberate, in-scale connections. The strings and pad tie shared notes across
+chord changes, leaving the available voices for moving parts.
+
+| WAV | Key / tempo | Length | What to hear |
+| --- | --- | ---: | --- |
+| [Bass — Midnight Drive](Docs/audio/showcase/01-bass-midnight-drive.wav) | E minor / 100 BPM | 32.2 s | Six voices in unison: syncopated plucks, octave answers and an opening resonant filter. |
+| [Lead — Signal Fire](Docs/audio/showcase/02-lead-signal-fire.wav) | D minor / 72 BPM | 30.8 s | One voice: two answering melodic phrases, short glides and gentle vibrato on longer notes. |
+| [Strings — Silver Canopy](Docs/audio/showcase/03-strings-silver-canopy.wav) | D major / 76 BPM | 29.4 s | Five inner parts support a sixth melodic voice; PWM and Chorus II animate a suspended dominant resolving to D6/9. |
+| [Brass — City Lights](Docs/audio/showcase/04-brass-city-lights.wav) | B-flat major / 80 BPM | 28.2 s | Four-note syncopated hits and short melodic answers build to a six-voice B-flat sixth chord. |
+| [Pad — Slow Horizon](Docs/audio/showcase/05-pad-slow-horizon.wav) | C major / 68 BPM | 37.5 s | Six spread voices move through major and minor ninths, with slow PWM, Chorus I and a long natural release. |
+
+These use `YB4 Rubber Bass`, `A53 Lead III`, `B11 Strings`, `A11 Brass Set 1`
+and `YP2 Slow Horizon`. The strings retain their factory settings. The bass uses
+six-voice unison and a filter performance; the lead uses one voice, envelope VCA
+and brief portamento; brass uses the 8′ range and a shorter release; the pad
+reduces its sub oscillator and gently opens its filter. The visible parameter
+choices and complete scores live in
+[`ShowcaseBassLead.h`](Tools/ShowcaseBassLead.h) and
+[`ShowcasePolyphonic.h`](Tools/ShowcasePolyphonic.h); the factory bank is unchanged.
+
+[`Tools/RenderShowcase.cpp`](Tools/RenderShowcase.cpp) renders at 96 kHz with the
+maximum 4× quality ceiling selected. At this host rate the engine applies 2×,
+giving its intended 192 kHz internal grid, with Exact tanh and the two-half-step
+Merson filter solver. Aging is zero. Each take receives one fixed gain to reach
+−3 dBFS peak, 24-bit TPDF dither and short recording-boundary fades after the
+envelopes have finished. There is no added EQ, compression, delay or reverb;
+the stereo modulation comes from the synth's own chorus. The
+[render manifest](Docs/audio/showcase/showcase-manifest.json) records the chords,
+actual voice counts, durations, gain and tail measurements.
+
+`YouKnowRenderShowcase --check` checks harmony across held notes, voice limits,
+centered tuning and quality settings without rendering. A full render also
+checks actual active voices, finite audio, headroom, DC and completed releases.
+Regenerate these five takes on demand with
+`YouKnowRenderShowcase Docs/audio/showcase`.
+
 ### The composition
 
 [`Tools/RenderComposition.cpp`](Tools/RenderComposition.cpp) renders a piece of
@@ -1704,6 +1754,7 @@ cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/YouKnowRenderDemos Docs/audio
 ./build-dsp/YouKnowRenderComposition Docs/audio/composition
+./build-dsp/YouKnowRenderShowcase Docs/audio/showcase
 ```
 
 The same build produces the audit tools whose numbers this README quotes —
