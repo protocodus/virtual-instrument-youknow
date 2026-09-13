@@ -5,6 +5,7 @@ import argparse
 import hashlib
 from pathlib import Path
 import re
+import tempfile
 import zipfile
 
 
@@ -55,25 +56,36 @@ def package(build_dir: Path) -> Path:
 
     dist = build_dir / "dist"
     dist.mkdir(parents=True, exist_ok=True)
+    archive = dist / f"YouKnow-{distribution_version}-Windows-x64.zip"
+    # Complete and verify both files before replacing any previous package.
+    # A failed ZIP write used to truncate the old archive while leaving its
+    # checksum unchanged. Stage on the same filesystem for atomic file moves;
+    # the context also removes partial work on an exception.
+    with tempfile.TemporaryDirectory(prefix=".youknow-package-", dir=dist) as work:
+        staged_archive = Path(work) / archive.name
+        staged_checksums = Path(work) / "SHA256SUMS.txt"
+        with zipfile.ZipFile(staged_archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            for relative, path in sorted(files.items()):
+                output.write(path, relative)
+        with zipfile.ZipFile(staged_archive) as output:
+            damaged = output.testzip()
+            if damaged is not None:
+                raise ValueError(f"Corrupt ZIP member: {damaged}")
+        digest = hashlib.sha256()
+        with staged_archive.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        staged_checksums.write_text(
+            f"{digest.hexdigest()}  {archive.name}\n", encoding="utf-8"
+        )
+        staged_archive.replace(archive)
+        staged_checksums.replace(dist / "SHA256SUMS.txt")
+
     # A reused build directory must not upload older builds alongside the new
     # archive while its checksum file covers only the current build.
     for previous in dist.glob("YouKnow-*-Windows-x64.zip"):
-        previous.unlink()
-    archive = dist / f"YouKnow-{distribution_version}-Windows-x64.zip"
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
-        for relative, path in sorted(files.items()):
-            output.write(path, relative)
-    with zipfile.ZipFile(archive) as output:
-        damaged = output.testzip()
-        if damaged is not None:
-            raise ValueError(f"Corrupt ZIP member: {damaged}")
-    digest = hashlib.sha256()
-    with archive.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    (dist / "SHA256SUMS.txt").write_text(
-        f"{digest.hexdigest()}  {archive.name}\n", encoding="utf-8"
-    )
+        if previous != archive:
+            previous.unlink()
     return archive
 
 

@@ -2,6 +2,7 @@
 """Check distribution completeness and preview publication in isolated fixtures."""
 
 import hashlib
+import importlib.util
 import io
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import tarfile
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 import zipfile
 
 
@@ -156,6 +158,39 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertEqual(unrelated.read_text(), "preserve")
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         self.assertEqual((dist / "SHA256SUMS.txt").read_text(), f"{digest}  {archive.name}\n")
+
+    def test_failed_repack_preserves_valid_archive_and_checksum(self):
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dist = self.build / "dist"
+        archive = next(dist.glob("*.zip"))
+        old_archive = archive.read_bytes()
+        old_checksum = (dist / "SHA256SUMS.txt").read_bytes()
+        spec = importlib.util.spec_from_file_location("fixture_windows_packager", self.script)
+        packager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(packager)
+        # Exercise actual I/O failures, not just input preflight rejection.
+        # Both rebuilding the current version and starting a new version must
+        # leave the preceding distribution intact if preparation fails.
+        for build_number in (BUILD_NUMBER, "34393416911.2"):
+            (self.build / "CMakeCache.txt").write_bytes(
+                version_cache().replace(BUILD_NUMBER.encode(), build_number.encode())
+            )
+            faults = (
+                mock.patch.object(packager.zipfile.ZipFile, "write",
+                                  side_effect=OSError("simulated ZIP write failure")),
+                mock.patch.object(packager.zipfile.ZipFile, "testzip",
+                                  return_value="damaged member"),
+                mock.patch.object(packager.Path, "write_text",
+                                  side_effect=OSError("simulated checksum write failure")),
+            )
+            for index, fault in enumerate(faults):
+                with self.subTest(build_number=build_number, fault=index):
+                    with fault, self.assertRaises((OSError, ValueError)):
+                        packager.package(self.build)
+                    self.assertEqual(archive.read_bytes(), old_archive)
+                    self.assertEqual((dist / "SHA256SUMS.txt").read_bytes(), old_checksum)
+                    self.assertEqual(set(dist.iterdir()), {archive, dist / "SHA256SUMS.txt"})
 
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS bundle validation requires PlistBuddy")
