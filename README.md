@@ -873,6 +873,38 @@ parameter but resets the selector to an edited INIT panel rather than
 attaching an unrelated factory name. See
 [third-party notices](THIRD_PARTY_NOTICES.md) for provenance.
 
+#### Factory presets against published hardware recordings
+
+[SynthMania's Juno-106 page](https://www.synthmania.com/juno-106.htm) provides
+individual original-instrument examples for A11 Brass, A48 Synth Bass I,
+A53 Lead III, B11 Strings and A68 Synth Pad, among the full factory bank.
+The publisher's [historical log](https://synthmania.com/misc.htm) dates the
+page and examples to 3 October 2004. The normal and unison A48 examples are
+separate performances; the archival name alone does not establish the
+performance mode of a recording.
+
+[`YouKnowRenderPresetScore`](Tools/RenderPresetScore.cpp) accepts
+`<preset> <out.wav> --score notes.txt --sample-rate 96000` for short reference
+passages. Score lines are `note <on seconds> <off seconds> <MIDI key>` and an
+optional `end <seconds>`; `#` comments can record provenance and uncertain
+transcriptions. Custom scores keep the factory tone bytes and add no filter
+sweep. They use Poly1, neutral bend/modulation, zero portamento and one fixed
+full-volume setup. The renderer validates key spans and the six-key limit,
+extends the tail through the natural release, and writes float audio plus
+a sidecar containing the tone bytes, performance controls and actual quality.
+At 96 kHz the maximum setting runs internally at 192 kHz, with Exact tanh
+and the two-half-step Merson solver.
+
+For listening, match stereo RMS over declared corresponding note-body windows
+and apply only fixed playback gain, with shared headroom when needed. The
+published references are 44.1 kHz/128 kb/s MP3s with undocumented calibration,
+recording chain and exact key/controller events. In particular, the B11 file
+has identical left and right channels throughout, so it cannot validate stereo
+chorus width, and its unknown mono connection also limits spectral comparison.
+Inferred voicings and gates must remain labelled as such. These comparisons
+identify differences between recordings; they do not justify fitting the DSP
+to an uncalibrated reference or assigning a hardware-fidelity percentage.
+
 ### MIDI
 
 The on-screen keyboard matches the physical 61-key C2–C7 span; host MIDI
