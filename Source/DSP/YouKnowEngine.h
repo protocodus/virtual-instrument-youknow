@@ -787,9 +787,10 @@ public:
     // it.
     struct CircuitDerivedResonanceProfile
     {
-        // Byte 127 -> aligned word 0x3F80 -> physical code 4064 on the
-        // 0..+10 V branch (Service Notes p. 8): 10 * 4064 / 4096.
-        static constexpr float controlFullScaleVolts = 9.921875f;
+        // Byte 127 -> aligned word 0x3F80 -> physical code 4064 on IC27b's
+        // positive branch: 10.026514 V after its drawn bias-network loading.
+        static constexpr float controlFullScaleVolts = static_cast<float>(
+            ControlDac::positiveSpanVolts(ControlDac::storedMaximumCode));
         // Nominal silicon emitter-junction drop of the grounded-base stage.
         // One reconstruction lineage reads ~150 mV for a *calibrated* card
         // (atosynth); that trimmed figure is recorded under OQ-09 and not
@@ -845,7 +846,7 @@ public:
     struct CircuitDerivedNoiseLevelProfile
     {
         // The NOISE LEVEL hold rides the same 0..+10 V converter branch as
-        // the resonance hold (p. 8): byte 127 -> code 4064 -> 9.921875 V.
+        // the resonance hold (p. 8): byte 127 -> code 4064 -> 10.026514 V.
         static constexpr float controlFullScaleVolts =
             CircuitDerivedResonanceProfile::controlFullScaleVolts;
         // Anchored standoff under the hold. p. 18 section 3 adjusts VR34
@@ -878,18 +879,18 @@ public:
         // deadband the drawn circuit can produce. An end-stop is the least
         // likely installed state but the one that never overstates the
         // deadband; mid-travel (60 kOhm,
-        // 1.025 V onset, travel 0.0771) is the natural second candidate and
-        // the maximum (110 kOhm, 1.380 V, travel 0.1129) the ceiling. If
+        // 1.025 V onset, travel 0.0763) is the natural second candidate and
+        // the maximum (110 kOhm, 1.380 V, travel 0.1117) the ceiling. If
         // the BA662 inherits its BA6110 sibling's 0.5 mA control-current
-        // ceiling, the full-level current (10.18 V - 0.6 V) / Rs - 7.09 uA
-        // needs Rs >= 18.9 kOhm and the floor would move to 0.734 V (travel
-        // 0.0478); not adopted, it is a sibling-part figure.
+        // ceiling, the full-level current (10.29 V - 0.6 V) / Rs - 7.09 uA
+        // needs Rs >= 19.1 kOhm and the floor would move to 0.735 V (travel
+        // 0.0475); not adopted, it is a sibling-part figure.
         static constexpr float trimSeriesOhms = r115Ohms;
         // 0.6709 V at the floor; bracket to 1.380 V at VR32's maximum.
         static constexpr float onsetVolts =
             junctionVolts + trimSeriesOhms * pullDownAmps;
-        // 0.04141 of the converter's travel at the floor; bracket
-        // 0.0414...0.1129. First conducting stored byte is 6.
+        // 0.04098 of the converter's travel at the floor; bracket
+        // 0.0410...0.1117. First conducting stored byte is 6.
         static constexpr float onsetTravel =
             (onsetVolts - holdStandoffVolts) / controlFullScaleVolts;
         // Normalises the conducting span to unity at full travel; a
@@ -1327,7 +1328,7 @@ public:
         // that path's junction onset.
         //
         // Convention under the exact law: v = 0 (control = turnOn) is where
-        // y + ln y = 0, y = Omega = 0.5671 (Ie = 0.461 uA, -56.4 dB re full
+        // y + ln y = 0, y = Omega = 0.5671 (Ie = 0.461 uA, -56.5 dB re full
         // scale), i.e. the law's sub-knee exponential asymptote coincides
         // with the former softplus's, so this constant keeps meaning what it
         // meant -- the 60 mV/decade tail position the tests pin. The
@@ -1336,19 +1337,19 @@ public:
         // gain above `silenceGain`; it was rejected for that. This mapping is
         // a stated convention, not a derivation. Implied by it, for
         // documentation only: Is = (Vt / R) * exp(-(0.26 + 0.015 * 9.92) / Vt)
-        // = 1.2e-13 A, and Vbe is about 0.564 V at full-scale 303 uA, a
+        // = 1.2e-13 A, and Vbe is about 0.564 V at full-scale 306 uA, a
         // plausible small-signal PNP figure and nothing more.
         // Preserve the existing voiced knee in VOLTS while correcting the
         // envelope's full-scale span. This is a coordinate correction, not
         // a new transistor fit or a change to the archived softplus option.
         static constexpr float softplusTurnOn = 0.015f;
         static constexpr double turnOnVolts = static_cast<double>(softplusTurnOn)
-            * ControlDac::positiveSpanVolts(ControlDac::storedMaximumCode);
+            * 9.921875; // Historical code4064 coordinate: preserve this prior.
         static constexpr float turnOn = static_cast<float>(
             turnOnVolts / controlFullScaleVolts);
         // Legacy softplus scale, comparison path only: ideal-BJT kT/q on the
         // converter span, rounded. The exact law uses the derived
-        // thermalVoltage / controlFullScaleVolts = 0.026 / 9.9975586 = 0.0026006.
+        // thermalVoltage / controlFullScaleVolts = 0.026 / 10.1029956 = 0.0025735.
         static constexpr float knee = 0.0026f;
         // R106 10k + R105 22k, p. 13. Documentation: it cancels in the
         // normalised law and only sets the implied Is above.
@@ -1391,8 +1392,8 @@ public:
     // from the output side alone:
     //
     //   I_tail(full control) = (V_cv,max - V_be) / (R106 + R105)
-    //     V_cv,max = 9.921875 V (code 4064 on the 0..+10 V IC27b branch,
-    //     p. 8) plus the +0.26 V VR34 standoff that branch already stands at
+    //     V_cv,max = 10.026514 V (code 4064 on IC27b, including p.13's
+    //     bias-network loading) plus the +0.26 V VR34 standoff it stands at
     //     (p. 18 s. 3; the coordinate VoiceVcaControlLaw::turnOn is in);
     //     R106 10k + R105 22k into grounded-base Tr20 (p. 13); nominal
     //     2SA1015-class V_be 0.62 V at about 0.3 mA; the BA662's pin-1
@@ -1423,7 +1424,7 @@ public:
     // C59/C14/C12 see no new DC; I_tail scales with the envelope while V_d
     // does not, so the compression is the same at every envelope level; and
     // u_trim contains no V_t, so the warm-up does not enter it. Predicted
-    // HD3 = u^2/12: -48.1 dBc at the trim level, -36.1 dBc at twice it and
+    // HD3 = u^2/12: -48.3 dBc at the trim level, -36.3 dBc at twice it and
     // about -30 dBc with -0.9 dB of compression on a full saw+pulse+sub
     // open-filter voice (6.8 V peak in the voiced mixer coordinate, OQ-15).
     // With the filter open its own stage tanh is nearly linear, so on bright
@@ -1445,21 +1446,21 @@ public:
         // 6 Vp-p at TP8 (p. 19 s. 6) and 4.8 Vp-p at TP19 (p. 19 s. 5).
         static constexpr float trimOutputPeakVolts = 3.0f;
         static constexpr float trimFilterPeakVolts = 2.4f;
-        // 298.8 uA.
+        // 302.1 uA at bank 3's stored maximum SUSTAIN (ENV, not GATE).
         static constexpr float fullControlTailAmps =
             (controlFullScaleVolts + holdStandoffVolts - controlJunctionVolts)
             / controlSeriesOhms;
         // atanh(trimOutputPeakVolts / loadOhms / fullControlTailAmps)
-        // = atanh(63.83 uA / 298.8 uA) = atanh(0.21361). atanh is not
+        // = atanh(63.83 uA / 302.1 uA) = atanh(0.21130). atanh is not
         // constexpr, so the value is stored here and pinned by the circuit
         // suite to 1e-6.
-        static constexpr float trimDrive = 0.21695541f;
-        // 11.06 V at the vcaInput node.
+        static constexpr float trimDrive = 0.21453375f;
+        // 11.19 V at the vcaInput node.
         static constexpr float headroomVolts = trimFilterPeakVolts / trimDrive;
 
         // headroomVolts * tanh(volts / headroomVolts), through the engine's
         // PolyZoned kernel: |x*Q(x^2) - tanh(x)| <= 4.31e-7 over |x| < 1
-        // (|volts| < 11.06 V, which covers every modelled source; the pinned
+        // (|volts| < 11.19 V, which covers every modelled source; the pinned
         // bound including float rounding is 1e-6), the zoned Hermite tables
         // beyond it.
         [[nodiscard]] static float shape(float volts) noexcept;

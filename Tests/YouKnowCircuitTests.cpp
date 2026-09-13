@@ -1625,10 +1625,10 @@ void testCircuitDerivedResonanceProfile()
     expect(EngineParameters {}.useCircuitDerivedResonanceShape,
            "the default left the circuit-derived resonance shape");
 
-    expectNear(Derived::controlFullScaleVolts, 10.0 * 4064.0 / 4096.0, 0.0,
-               "the derived profile's full-scale voltage left the p. 8 "
-               "0..+10 V branch at physical code 4064");
-    expectNear(Derived::onsetTravel, 0.34 / 9.921875, 1.0e-7,
+    expectNear(Derived::controlFullScaleVolts, 10.026513853082035, 1.0e-6,
+               "the derived profile's full-scale voltage left IC27b's loaded "
+               "positive branch at physical code 4064");
+    expectNear(Derived::onsetTravel, 0.34 / 10.026513853082035, 1.0e-7,
                "the derived profile's onset left one junction drop above the "
                "VR34 standoff on the control span");
     expect(Derived::onsetTravel * 127.0f > 4.0f
@@ -1645,7 +1645,7 @@ void testCircuitDerivedResonanceProfile()
                                             : 0.0f);
         return 20.0 * std::log10(Derived::loopGain(panel) / legacy);
     };
-    expectNear(ratioDb(13), 3.98, 0.05,
+    expectNear(ratioDb(13), 3.90, 0.05,
                "the standoff no longer lifts Resonance 1/10 by about 4 dB");
     expectNear(ratioDb(64), 0.26, 0.02,
                "the standoff no longer lifts Resonance 5/10 by about 0.3 dB");
@@ -1702,10 +1702,10 @@ void testCircuitDerivedNoiseLevelProfile()
                "the onset left one junction drop plus R115 times the "
                "pull-down");
     expectNear(Profile::onsetTravel, (0.6 + 10.0e3 * 15.6 / 2.2e6 - 0.26)
-                                         / 9.921875, 1.0e-7,
-               "the onset travel left the anchored standoff on the p. 8 "
-               "0..+10 V branch");
-    expect(Profile::onsetTravel >= 0.0414f && Profile::onsetTravel <= 0.1129f,
+                                         / 10.026513853082035, 1.0e-7,
+               "the onset travel left the anchored standoff on IC27b's "
+               "loaded positive branch");
+    expect(Profile::onsetTravel >= 0.04097f && Profile::onsetTravel <= 0.11171f,
            "the onset travel left VR32's 0.671...1.380 V bracket");
 
     expect(Profile::drive(0.0f) == 0.0f
@@ -1811,18 +1811,20 @@ void testResonanceInputCompensationBracket()
                "a resonance compensation shape is not unity at zero loop gain");
 
     // The two panel points, pinned as numbers so the audible size cannot
-    // drift unnoticed.
+    // drift unnoticed. IC27b's independently solved 10.026513853 V span
+    // gives half = 4.504*(0.5-0.34/span)/(1-0.34/span); compensation then
+    // uses each retained resistor ratio above, with the full endpoint fixed.
     const float half =
         YouKnowEngine::CircuitDerivedResonanceProfile::loopGain(0.5f);
-    expectNear(half, 2.17209, 1.0e-4,
+    expectNear(half, 2.17295402, 1.0e-4,
                "the circuit-derived loop gain moved at panel 0.50");
     expectNear(Profile::inputCompensation(
                    half, ResonanceCompensationShape::Reconstruction),
-               1.59757, 1.0e-4,
+               1.59781298, 1.0e-4,
                "the shipped compensation moved at panel 0.50");
     expectNear(Profile::inputCompensation(
                    half, ResonanceCompensationShape::Legacy),
-               1.49871, 1.0e-4,
+               1.49891024, 1.0e-4,
                "the retired compensation moved at panel 0.50");
     expectNear(Profile::inputCompensation(
                    Profile::maximumFeedback,
@@ -1963,9 +1965,9 @@ void testEnvelopeAndAmplifierLaws()
     };
     const double fullScaleCurrent =
         solveOmega((1.0 - VoiceVcaLaw::turnOn) * voltsPerUnit);
-    // Code4095 reaches 9.9975586 V above the standoff: 372.876 Vt/R
-    // is 302.962 uA through 32 kOhm, with the same absolute junction prior.
-    expectNear(fullScaleCurrent, 372.876, 0.01,
+    // Code4095 reaches 10.1029956 V above the standoff: 376.921 Vt/R
+    // is 306.248 uA through 32 kOhm, with the same absolute junction prior.
+    expectNear(fullScaleCurrent, 376.921, 0.01,
                "the full-scale emitter current missed the code4095 voltage");
 
     // On the table's own grid every entry must satisfy y + ln y = v: the
@@ -2059,7 +2061,9 @@ void testEnvelopeAndAmplifierLaws()
     // predicted third harmonic rather than against a chosen curve.
     {
         using SignalLaw = YouKnowEngine::VoiceVcaSignalLaw;
-        const double tail = (9.921875 + 0.26 - 0.62) / 32000.0;
+        // Bank 3 is ENV with maximum stored SUSTAIN, i.e. physical code4064.
+        // IC27b's loaded-bias nodal oracle pins this independent endpoint.
+        const double tail = (10.026513853082035 + 0.26 - 0.62) / 32000.0;
         const double drive = std::atanh(3.0 / 47000.0 / tail);
         expectNear(SignalLaw::trimDrive, drive, 1.0e-6,
                    "the stored VCA trim drive is not atanh(I_out / I_tail)");

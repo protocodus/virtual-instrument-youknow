@@ -113,7 +113,10 @@ namespace
 // R105 and integrate C58 KCL with substepped long-double RK4. It never calls
 // the production charge table, RK4 helper or effective-CV equation.
 constexpr long double vt = static_cast<long double>(0.026f);
-constexpr long double span = 10.0L * 4095.0L / 4096.0L;
+// Independently solved IC27b nominal gain: the explicit three-node
+// module-board solve in YouKnowControlDacBufferTests also checks this branch.
+constexpr long double positiveBufferGain = 2.0210925562118116L;
+constexpr long double span = 5.0L * positiveBufferGain * 4095.0L / 4096.0L;
 // Keep the existing junction prior in volts, independently of the corrected
 // ENV peak span. The old span was the stored slider's maximum, code4064.
 constexpr long double kneeVolts = static_cast<long double>(0.015f) * 9.921875L;
@@ -189,7 +192,7 @@ void processOne(youknow::YouKnowEngine& engine)
 }
 
 // Independent code-to-voltage oracle: add the twelve binary-weighted ladder
-// contributions, then apply the chart's nominal x2 positive buffer. This
+// contributions, then apply the independently solved positive buffer. This
 // deliberately does not call ControlDac or reuse its endpoint constants.
 long double positiveRailForCode(unsigned code)
 {
@@ -197,7 +200,7 @@ long double positiveRailForCode(unsigned code)
     for (unsigned bit = 0; bit < 12; ++bit)
         if ((code & (1u << bit)) != 0)
             ladder += std::ldexp(5.0L, static_cast<int>(bit) - 12);
-    return standoff + 2.0L * ladder;
+    return standoff + positiveBufferGain * ladder;
 }
 
 void testEnvelopeCodeToPhysicalVca(const youknow::VcaControlCircuit& circuit)
@@ -248,10 +251,12 @@ void testEnvelopeCodeToPhysicalVca(const youknow::VcaControlCircuit& circuit)
     require(peak == 1 && gate == peak && peakGain == 1 && gateGain == 1,
             "GATE and ENV peak must use code4095 while normalized peak stays unity");
     require(off == 0 && offGain == 0, "closed GATE did not write zero");
-    require(std::abs(sustain * Law::controlFullScaleVolts - 9.921875) < 1e-6,
+    require(std::abs(static_cast<double>(sustain) * Law::controlFullScaleVolts
+                     - static_cast<double>(positiveRailForCode(4064) - standoff)) < 1e-6,
             "maximum stored sustain no longer represents code4064");
     require(std::abs((peak - static_cast<double>(sustain)) * Law::controlFullScaleVolts
-                     - 31.0 * 10.0 / 4096.0) < 1e-6 && sustainGain < peakGain,
+                     - 31.0 * 5.0 * static_cast<double>(positiveBufferGain) / 4096.0)
+                     < 1e-6 && sustainGain < peakGain,
             "ENV peak and stored sustain lost their distinct physical DAC endpoints");
     require(std::abs(Law::turnOnVolts - static_cast<double>(kneeVolts)) < 1e-12,
             "voltage-span correction refitted the existing absolute VCA knee");
