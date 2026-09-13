@@ -919,5 +919,21 @@ if(BUILD_TESTING)
             COMMAND YouKnowVST3BundleSmokeTests
                     "${youknow_vst3_test_bundle}")
         set_tests_properties(YouKnow.VST3Bundle PROPERTIES TIMEOUT 60)
+
+        if(APPLE)
+            # Register only the just-built AU factory within the test process;
+            # never install a component or discover an unrelated installed AU.
+            add_executable(YouKnowAUBundleSmokeTests Tests/AUBundleSmokeTests.cpp)
+            target_link_libraries(YouKnowAUBundleSmokeTests PRIVATE
+                "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+            target_compile_features(YouKnowAUBundleSmokeTests PRIVATE cxx_std_20)
+            target_compile_options(YouKnowAUBundleSmokeTests PRIVATE
+                -Wall -Wextra -Wpedantic)
+            add_dependencies(YouKnowAUBundleSmokeTests YouKnow_AU)
+            add_test(NAME YouKnow.AUBundle
+                COMMAND YouKnowAUBundleSmokeTests
+                        "$<TARGET_BUNDLE_DIR:YouKnow_AU>" "${PROJECT_VERSION}")
+            set_tests_properties(YouKnow.AUBundle PROPERTIES TIMEOUT 60)
+        endif()
     endif()
 endif()
