@@ -2771,7 +2771,11 @@ private:
     // converter queue below.
     [[nodiscard]] std::uint32_t updateVoiceScan(
         Voice& voice, const EngineParameters& parameters) noexcept;
-    [[nodiscard]] std::uint32_t updateVoiceEnvelopeAndPitch(
+    void updateVoiceEnvelope(
+        Voice& voice, const EngineParameters& parameters) noexcept;
+    void updateEnvelopeBeforeConverterWrite(
+        const ConverterWrite& write, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] std::uint32_t updateVoicePitch(
         Voice& voice, const EngineParameters& parameters) noexcept;
     void updateVoiceVcfTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
@@ -2992,6 +2996,9 @@ private:
     // host edit cannot splice two firmware passes together. The DCO and VCF
     // LFO words below are likewise held for the pass.
     std::uint16_t converterPassPwmDacCode_ { 0x0fffu };
+    // Physical envelopes belong to the later VCF/VCA train, not the DCO
+    // transaction. Fractional PWM/VCA peeks and polls share one update.
+    std::array<bool, hardwareVoices> converterPassEnvelopeUpdated_ {};
     PassiveHoldEventLatch passiveHoldEventLatch_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};
     std::array<VcfHoldInterval, maxVoices> cutoffVcfHoldIntervals_ {};
@@ -3245,7 +3252,7 @@ private:
 
     // The envelope generator is the one shared digital processor: ATTACK,
     // DECAY and RELEASE resolve to the same increment/multiplier for every
-    // voice (see the note in updateVoiceEnvelopeAndPitch), so recomputing
+    // voice (see the note in updateVoiceEnvelope), so recomputing
     // them from the panel position on every voice's Pitch write recomputed
     // the same three answers as many times as there are sounding cards. The
     // panel position is compared for exact equality, so this memo cannot
@@ -3261,7 +3268,7 @@ private:
     // The glide law is the same shared-processor story: glideStepPerScan()
     // resolves PORTAMENTO's panel position through one eight-bit ADC lookup
     // that is identical for every voice, but both initialiseVoice() and
-    // updateVoiceEnvelopeAndPitch() called it fresh on every voice's note-on
+    // updateVoicePitch() called it fresh on every voice's note-on
     // and Pitch write. resolveGlideStepPerScan() memoizes it the same way the
     // envelopeLaw* cache above memoizes ATTACK/DECAY/RELEASE: comparison is
     // exact equality against the same parameters.portamento source, so the

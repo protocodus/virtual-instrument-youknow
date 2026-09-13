@@ -2798,7 +2798,7 @@ void YouKnowEngine::prestageDcoPitchTransaction(
 {
     auto& dco = voice.dco;
     const float previousCvTarget = voice.dcoCvTarget;
-    const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+    const std::uint32_t count = updateVoicePitch(
         voice, activeParameters_);
     const float cvTarget = voice.dcoCvTarget;
     voice.dcoCvTarget = previousCvTarget;
@@ -5975,6 +5975,7 @@ void YouKnowEngine::reset()
     activeConverterTimingProfile_ = converterTimingProfile_;
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
+    converterPassEnvelopeUpdated_.fill(false);
     passiveHoldEventLatch_ = {};
     exactVcfControlInterval_.fill(false);
     assignmentRescanPending_ = false;
@@ -6781,6 +6782,7 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     }
     controlScanPhase_ = passBoundaryWasAlreadyDue ? 1.0 : 0.0;
     nextConverterWrite_ = 0;
+    converterPassEnvelopeUpdated_.fill(false);
     passiveHoldEventLatch_ = {};
     refreshFirmwareDcoTiming();
 }
@@ -7159,7 +7161,8 @@ void YouKnowEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
 std::uint32_t YouKnowEngine::updateVoiceScan(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
-    const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+    updateVoiceEnvelope(voice, parameters);
+    const std::uint32_t count = updateVoicePitch(
         voice, parameters);
     updateVoiceVcfTarget(voice, parameters);
     updateVoiceVcaTarget(voice, parameters);
@@ -7173,7 +7176,7 @@ bool YouKnowEngine::pitchChangeRequestsDcoReset(
         && !voice.keyDown && !voice.sustained;
 }
 
-std::uint32_t YouKnowEngine::updateVoiceEnvelopeAndPitch(
+void YouKnowEngine::updateVoiceEnvelope(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
     // --- Envelope ---------------------------------------------------------
@@ -7212,7 +7215,40 @@ std::uint32_t YouKnowEngine::updateVoiceEnvelopeAndPitch(
     voice.envelope.tick(voice.attackIncrement, voice.decayMultiplier,
                         storedControlAlignedWord(parameters.sustain),
                         voice.releaseMultiplier);
+}
 
+void YouKnowEngine::updateEnvelopeBeforeConverterWrite(
+    const ConverterWrite& write, const EngineParameters& parameters) noexcept
+{
+    const int envelopeCard = write.destination == ConverterDestination::Pwm
+        ? 0 : write.destination == ConverterDestination::VoiceVca
+            && write.voice >= 0 && write.voice < hardwareVoices - 1
+        ? write.voice + 1 : -1;
+    if (envelopeCard < 0)
+        return;
+    auto& updated = converterPassEnvelopeUpdated_[
+        static_cast<std::size_t>(envelopeCard)];
+    if (updated)
+        return;
+
+    // B-2 leaves the entire DCO loop at 04A3 before computing any envelope
+    // (0503..0590). VCF n then consumes ENV n at 05C5; VCA n follows using
+    // that stored envelope, while the next loop has already computed ENV n+1.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L800-L943
+    // Resolve at the earliest following physical write on the selected grid:
+    // ENV 0 before PWM, ENV n before VCA n-1. These are proven ordinal bounds,
+    // not the unpublished instruction timestamps of the earlier calculation.
+    // Abandoning the DCO train must not advance ENV, but an interrupt between
+    // PWM / previous-card VCA and this card's VCF must retain the stored word.
+    // The fractional peek and later public poll are one write and share this
+    // guard. A restart clears the guard without undoing completed ENV work.
+    updateVoiceEnvelope(voices_[static_cast<std::size_t>(envelopeCard)], parameters);
+    updated = true;
+}
+
+std::uint32_t YouKnowEngine::updateVoicePitch(
+    Voice& voice, const EngineParameters& parameters) noexcept
+{
     // --- Pitch ------------------------------------------------------------
     // Recomputed from the key rather than cached at note-on, so moving the
     // transpose control takes a held note with it.
@@ -7429,7 +7465,7 @@ void YouKnowEngine::performConverterWrite(
                     // modelled pass in which T-389 could exist. Keep that
                     // construction-only/direct-test fallback deterministic;
                     // every subsequent physical transaction is pre-staged.
-                    const std::uint32_t count = updateVoiceEnvelopeAndPitch(
+                    const std::uint32_t count = updateVoicePitch(
                         voice, parameters);
                     programDcoCount(
                         voice, count, voice.dcoResetPending);
@@ -7616,6 +7652,7 @@ bool YouKnowEngine::latchUpcomingPassiveHoldEvent(
     if (!isPassiveHoldWrite(write))
         return false;
 
+    updateEnvelopeBeforeConverterWrite(write, parameters);
     passiveHoldEventLatch_.valid = true;
     passiveHoldEventLatch_.nextPass = nextPass;
     passiveHoldEventLatch_.ordinal = ordinal;
@@ -9154,6 +9191,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 #endif
                 controlScanPhase_ -= 1.0;
                 nextConverterWrite_ = 0;
+                converterPassEnvelopeUpdated_.fill(false);
                 // The common VCA's control constant is proportional to
                 // absolute temperature (patchLevelGain), and the chassis
                 // warms on a 900 s exponential. Resample it here, with the
@@ -9218,6 +9256,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     previousTarget = currentPassiveHoldTarget(write);
                 const float latchedTarget = consumesLatch
                     ? passiveHoldEventLatch_.target : 0.0f;
+                updateEnvelopeBeforeConverterWrite(write, parameters);
                 performConverterWrite(
                     write, parameters,
                     consumesLatch ? &latchedTarget : nullptr);

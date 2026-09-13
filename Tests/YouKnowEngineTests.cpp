@@ -4680,7 +4680,7 @@ void testConverterAnchoredPitchPrestageTimelineAndAtomicCommit()
                           engine, 0) == coldReset
                    && capturedDivider != active
                    && capturedCv != oldCvTarget
-                   && capturedEnvelope != oldEnvelope
+                   && capturedEnvelope == oldEnvelope
                    && YouKnowTestAccess::dcoCvTarget(engine, 0)
                           == oldCvTarget
                    && YouKnowTestAccess::pitWriteState(engine, 0)
@@ -10379,6 +10379,123 @@ void testFixedOutputBoundaryCorpus()
            "changing Vref changed pre-output-boundary behavior");
 }
 
+void testEnvelopesWaitForTheVcfTrain()
+{
+    // Independent B-2 ordering oracle: 04A3 exits all six DCO writes, then
+    // 0503..0590 computes ENV; VCF n and VCA n consume that same stored word.
+    // An instruction-exact envelope timestamp is not asserted: the engine's
+    // selected converter profile resolves ENV at the first following write:
+    // PWM for ENV 0, previous-card VCA for the remaining five envelopes.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L800-L943
+    using Profile = YouKnowEngine::ConverterTimingProfile;
+    for (const auto profile : { Profile::NormalizedServiceChart,
+                                Profile::MeasuredChartGeometry })
+        for (const double sampleRate : { 44100.0, 48000.0, 96000.0 })
+            for (const int quality : { 1, 4 })
+            {
+                YouKnowEngine engine;
+                engine.selectConverterTimingProfile(profile);
+                engine.prepare(sampleRate, blockSize, quality);
+                auto parameters = plainPatch();
+                parameters.calibration = 0.0f;
+                parameters.attack = 0.75f;
+                parameters.release = 0.75f;
+                engine.setParameters(parameters);
+                for (int card = 0; card < 6; ++card)
+                {
+                    engine.noteOn(60 + card, 1.0f);
+                    // Distinct words expose accidentally taking ENV n+1 for
+                    // VCA n in the firmware's pipelined output sequence.
+                    YouKnowTestAccess::setVcfControlOperands(engine, card,
+                        static_cast<std::uint16_t>(card * 257),
+                        static_cast<std::uint16_t>((60 + card) * 256));
+                }
+                auto initial = std::make_unique<YouKnowEngine>(engine);
+
+                const auto increment = YouKnowEngine::envelopeAttackIncrement(
+                    parameters.attack);
+                std::array<int, 6> firstUpdate;
+                firstUpdate.fill(-1);
+                const int passFrames = static_cast<int>(std::ceil(sampleRate * 0.0042));
+                for (int frame = 0; frame < passFrames; ++frame)
+                {
+                    float left = 0.0f, right = 0.0f;
+                    engine.process(&left, &right, 1);
+                    for (int card = 0; card < 6; ++card)
+                    {
+                        const auto level = YouKnowTestAccess::envelopeLevel(engine, card);
+                        if (level != card * 257 && firstUpdate[card] < 0)
+                            firstUpdate[card] = frame;
+                        expect(level == card * 257 || level == card * 257 + increment,
+                               "one VCF peek/poll advanced its envelope more than once");
+                    }
+                }
+                for (int card = 0; card < 6; ++card)
+                {
+                    const auto ordinal = YouKnowTestAccess::passiveHoldOrdinal(
+                        card == 0 ? YouKnowTestAccess::PassiveHoldDestination::Pwm
+                                  : YouKnowTestAccess::PassiveHoldDestination::VoiceVca,
+                        card == 0 ? -1 : card - 1);
+                    const double envelopeFrame = sampleRate * 0.0042
+                        * YouKnowTestAccess::converterEventPhase(engine, ordinal);
+                    expect(firstUpdate[card] >= std::floor(envelopeFrame) - 1.0
+                               && firstUpdate[card] <= std::ceil(envelopeFrame),
+                           "an envelope missed its first proven post-computation write boundary");
+                    expectNear(YouKnowTestAccess::vcaControlTarget(engine, card),
+                               YouKnowEngine::envelopeDacFraction(card * 257 + increment), 1.0e-7,
+                               "a VCA consumed another card's or another pass's envelope");
+                }
+
+                // Once PWM / VCA n-1 has been written, ENV n is already
+                // stored even though VCF n is still ahead. Its completed work
+                // survives a serial handler that restarts the board loop.
+                for (int card = 0; card < 6; ++card)
+                {
+                    auto interrupted = std::make_unique<YouKnowEngine>(*initial);
+                    renderExact(*interrupted, firstUpdate[card] + 1);
+                    const auto ownVcf = YouKnowTestAccess::passiveHoldOrdinal(
+                        YouKnowTestAccess::PassiveHoldDestination::Vcf, card);
+                    expect(YouKnowTestAccess::controlScanPhase(*interrupted)
+                               < YouKnowTestAccess::converterEventPhase(*interrupted, ownVcf),
+                           "the retained-envelope fixture missed the pre-VCF interrupt window");
+                    interrupted->noteOff(60 + (card + 1) % 6);
+                    expect(YouKnowTestAccess::envelopeLevel(*interrupted, card)
+                               == card * 257 + increment,
+                           "a serial restart discarded an envelope stored before PWM/previous VCA");
+                    renderExact(*interrupted, passFrames);
+                    expect(YouKnowTestAccess::envelopeLevel(*interrupted, card)
+                               == card * 257 + 2 * increment,
+                           "the restarted loop failed to retain exactly one earlier envelope update");
+                }
+
+                // Every abandoned pass gets far enough to run several PIT
+                // prestages, but not far enough to compute any envelope.
+                // The old coupled ENV/PITCH path advances card zero each time.
+                const auto heldLevel = YouKnowTestAccess::envelopeLevel(engine, 0);
+                for (int attempt = 0; attempt < 6; ++attempt)
+                {
+                    engine.noteOff(65);
+                    renderExact(engine, static_cast<int>(sampleRate * 0.0012));
+                    engine.noteOn(65, 1.0f);
+                    renderExact(engine, static_cast<int>(sampleRate * 0.0012));
+                    expect(YouKnowTestAccess::envelopeLevel(engine, 0) == heldLevel,
+                           "serial restarts during DCO work accelerated another card's attack");
+                }
+                renderExact(engine, passFrames);
+                expect(YouKnowTestAccess::envelopeLevel(engine, 0) == heldLevel + increment,
+                       "a completed restarted VCF pass missed or doubled its envelope update");
+
+                engine.noteOff(60);
+                const auto releaseStart = YouKnowTestAccess::envelopeLevel(engine, 0);
+                renderExact(engine, static_cast<int>(sampleRate * 0.0012));
+                expect(YouKnowTestAccess::envelopeLevel(engine, 0) == releaseStart,
+                       "a release advanced prematurely in its restarted DCO train");
+                renderExact(engine, passFrames);
+                expect(YouKnowTestAccess::envelopeLevel(engine, 0) < releaseStart,
+                       "a release failed to advance when its VCF train resumed");
+            }
+}
+
 void testNotesWaitForTheSharedConverterScan()
 {
     // One converter serves every voice. Each serial Voice On makes B-2 discard
@@ -15921,6 +16038,7 @@ int main()
         testPitByteTransactionsFollowRecoveredCpuTiming();
         testPitByteTimingIsProcessingGridInvariant();
         testSerialVoiceCommandsRestartScanWithoutSplittingPitWrites();
+        testEnvelopesWaitForTheVcfTrain();
         testConverterAnchoredPitchPrestageTimelineAndAtomicCommit();
         testConverterAnchoredPitchPrestageIsWallClockInvariant();
         testPitchPrestageConsumesResetDiscoveredByItsOwnScan();
@@ -16085,6 +16203,7 @@ int main()
     testContinuousControlsDoNotStepAtBlockBoundaries();
     testMainVolumeLoadedLinearPotLaw();
     testFixedOutputBoundaryCorpus();
+    testEnvelopesWaitForTheVcfTrain();
     testNotesWaitForTheSharedConverterScan();
     testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
     testNoteOnPlayingLatencyAcrossConverterPhases();
