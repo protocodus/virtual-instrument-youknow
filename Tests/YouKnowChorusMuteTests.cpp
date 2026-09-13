@@ -41,8 +41,26 @@ constexpr double threshold = -15.0 + 0.6 * (560000.0 + 39000.0) / 39000.0;
 State currents(const State& v, bool muted)
 {
     const double between = (v[0] - v[1]) / 150000.0;
-    return { muted ? ((15.0 - v[0]) / 10000.0 - between) / 2.2e-6 : 0.0,
+    const double sink = muted ? 0.0 : (v[0] + 15.0) / 330.0;
+    return { ((15.0 - v[0]) / 10000.0 - between - sink) / 2.2e-6,
              (between - (v[1] + 15.0) / (560000.0 + 39000.0)) / 1.0e-6 };
+}
+
+State conductingEquilibrium()
+{
+    // Independent literal nodal DC solve, including R50's current while
+    // Tr5 conducts. The production equilibrium helper is deliberately unused.
+    const double pullUp = 1.0 / 10000.0;
+    const double pullDown = 1.0 / 330.0;
+    const double between = 1.0 / 150000.0;
+    const double holdDown = 1.0 / 599000.0;
+    const double a = pullUp + pullDown + between;
+    const double b = between + holdDown;
+    const double inputA = 15.0 * (pullUp - pullDown);
+    const double inputB = -15.0 * holdDown;
+    const double determinant = a * b - between * between;
+    return { (b * inputA + between * inputB) / determinant,
+             (between * inputA + a * inputB) / determinant };
 }
 
 State offset(State value, const State& slope, double dt)
@@ -54,8 +72,6 @@ State offset(State value, const State& slope, double dt)
 
 void oracleStep(State& v, bool muted, double seconds, double maxStep)
 {
-    if (!muted)
-        v[0] = -15.0;
     const int steps = static_cast<int>(std::ceil(seconds / maxStep));
     const double dt = seconds / steps;
     for (int step = 0; step < steps; ++step)
@@ -86,13 +102,13 @@ void check(double rate)
     float left {}, right {};
     chorus.process(0.0f, youknow::ChorusMode::One, 0.0f, left, right,
                    false, false, 1.0f, false, true, true);
-    State reference { -15.0, -15.0 };
+    State reference = conductingEquilibrium();
     State finer = reference;
     // A settled Off/On pair followed by interrupted charging in both
     // directions. The very short command also exercises a single-frame
-    // Tr5 clamp at the lowest supported rate.
+    // finite Tr5 sink at the lowest supported rate.
     constexpr std::array<std::pair<bool, double>, 9> sequence {{
-        { true, 2.0 }, { false, 0.5 }, { true, 0.06 },
+        { true, 2.0 }, { false, 2.0 }, { true, 0.06 },
         { false, 0.025 }, { true, 0.25 }, { false, 0.035 },
         { true, 0.15 }, { false, 0.000125 }, { true, 0.2 }
     }};
@@ -136,7 +152,18 @@ void check(double rate)
                     "open Tr5 did not approach the loaded series-resistor equilibrium");
         }
         if (intervalIndex == 1)
+        {
             openMs = 1000.0 * (actualSwitch + 1) / rate;
+            const auto actual = youknow::YouKnowTestAccess::volts(chorus);
+            const auto rest = conductingEquilibrium();
+            require(std::abs(actual[0] - rest[0]) < 2.0e-5
+                    && std::abs(actual[1] - rest[1]) < 2.0e-4,
+                    "conducting Tr5 did not approach the finite-R46 loaded equilibrium");
+            require(actual[0] > -14.1 && actual[0] < -14.0,
+                    "R50 current through R46 no longer lifts C16 above the negative rail");
+            require(openMs > 120.0 && openMs < 123.0,
+                    "finite R46 no longer contributes the derived opening delay");
+        }
         ++intervalIndex;
     }
     // Halving the reference step verifies the numerical integration margin.
@@ -163,6 +190,43 @@ void check(double rate)
     std::cout << std::setprecision(10) << rate << " Hz: max node error "
               << maxError << " V; RK4 convergence " << convergence
               << " V; mute " << muteMs << " ms; open " << openMs << " ms\n";
+}
+
+void checkRateInvariance()
+{
+    // Every command edge is representable on all three grids. Check the
+    // same elapsed-time capacitor trajectory, not just threshold timestamps.
+    // A hard node clamp or a per-sample linear ramp fails the nodal oracle;
+    // an incorrectly cached rate fails this independent grid comparison.
+    std::array<youknow::Chorus, 3> chorus;
+    constexpr std::array rates { 48000.0, 192000.0, 768000.0 };
+    for (std::size_t i = 0; i < chorus.size(); ++i)
+    {
+        chorus[i].prepare(rates[i]);
+        float left {}, right {};
+        chorus[i].process(0.0f, youknow::ChorusMode::One, 0.0f, left, right,
+                          false, false, 1.0f, false, true, true);
+    }
+    constexpr std::array<std::pair<bool, double>, 5> sequence {{
+        { true, 0.0875 }, { false, 0.0125 }, { true, 0.225 },
+        { false, 0.05 }, { true, 0.1 }
+    }};
+    double maximumError = 0.0;
+    for (const auto [muted, seconds] : sequence)
+    {
+        for (std::size_t i = 0; i < chorus.size(); ++i)
+            for (int frame = 0; frame < std::llround(seconds * rates[i]); ++frame)
+                youknow::YouKnowTestAccess::advance(chorus[i], muted);
+        const auto reference = youknow::YouKnowTestAccess::volts(chorus.back());
+        for (const auto& candidate : chorus)
+        {
+            const auto actual = youknow::YouKnowTestAccess::volts(candidate);
+            for (std::size_t node = 0; node < actual.size(); ++node)
+                maximumError = std::max(maximumError, std::abs(actual[node] - reference[node]));
+        }
+    }
+    require(maximumError < 1.0e-8, "finite sink trajectory depends on numerical sample grid");
+    std::cout << "48/192/768 kHz elapsed-time node agreement " << maximumError << " V\n";
 }
 
 void checkEffectiveProfileIsolation()
@@ -244,5 +308,6 @@ int main()
 {
     for (const double rate : { 8000.0, 44100.0, 48000.0, 176400.0, 192000.0, 768000.0 })
         check(rate);
+    checkRateInvariance();
     checkEffectiveProfileIsolation();
 }

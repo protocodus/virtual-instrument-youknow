@@ -290,20 +290,24 @@ public:
     // junction threshold:
     //   - chorus OFF: Tr5 opens; R50/C16 and R48/C13 exchange current in
     //     both directions, against R49+R42. The coupled network mutes when
-    //     Tr4's base reaches one junction drop -- about 84.5 ms later;
-    //   - chorus ON: Tr5 saturates, C16 is emptied at once, C13 decays from
-    //     its +8.68 V rest toward -15 V and un-mutes about 113 ms in.
+    //     Tr4's base reaches one junction drop -- about 80.2 ms later;
+    //   - chorus ON: Tr5 conducts through R46 330 Ohm. Both capacitor
+    //     voltages remain continuous; C16 approaches about -14.04 V and C13
+    //     about -14.23 V, un-muting about 121 ms after a settled OFF.
     // Both are derived from the drawn parts with the same 0.6 V junction
     // prior the resonance and NOISE onsets use; the JFET transition itself
     // keeps the declared 5 ms glide policy, because the 2SK30A's
     // pinch-off spread is not fixed by any source. Off by default at this
     // level so the bare-chorus suites keep their immediate switching; the
     // engine enables it. The passive two-node solve includes R48's loading
-    // back into C16; Tr4's base-current loading above the threshold and the
-    // transistor's actual junction voltage still need device data. These
+    // back into C16 and R46's finite sink in the conducting state. Tr5's
+    // saturation voltage is still idealised; Tr4's base-current loading above
+    // threshold, the shared C15 clock-clamp branch and the transistors'
+    // actual junction voltages still need a fuller model/device data. These
     // are circuit-prior timings, not measured original-unit switching times.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
     static constexpr float muteDrivePullUpOhms = 10.0e3f;        // R50
+    static constexpr float muteDriveSinkOhms = 330.0f;          // R46
     static constexpr float muteDriveNodeFarads = 2.2e-6f;        // C16
     static constexpr float muteDriveSeriesOhms = 150.0e3f;       // R48
     static constexpr float muteDriveHoldFarads = 1.0e-6f;        // C13
@@ -334,6 +338,17 @@ public:
             * muteDrivePullUpOhms
             / (muteDrivePullUpOhms + muteDriveSeriesOhms
                + muteDriveBaseOhms + muteDriveEmitterOhms);
+    }
+    // Tr5 conducting: R46 and R48+R49+R42 are parallel paths from C16
+    // to -15 V; R50 continues sourcing from +15 V. No extra fitted voltage
+    // or transistor resistance is needed to restore the drawn R46.
+    [[nodiscard]] static constexpr double muteDriveConductingNodeRestVolts() noexcept
+    {
+        const double sink = 1.0 / muteDriveSinkOhms
+            + 1.0 / (muteDriveSeriesOhms + muteDriveBaseOhms
+                     + muteDriveEmitterOhms);
+        return -muteDriveRailVolts + 2.0 * muteDriveRailVolts
+            / (1.0 + muteDrivePullUpOhms * sink);
     }
     // C13's rest for a fixed Tr5 node voltage.
     [[nodiscard]] static constexpr double muteDriveHoldRestVolts(
@@ -586,7 +601,7 @@ public:
         // Prepared with the audio support at every cached numerical rate, so
         // live quality changes also avoid building the control transition.
         std::array<std::array<double, 2>, 2> muteDriveOpenTransition {};
-        double muteDriveHoldGlide { 0.0 };
+        std::array<std::array<double, 2>, 2> muteDriveConductingTransition {};
     };
     [[nodiscard]] static SupportChain supportChainFor(float sampleRate) noexcept;
 

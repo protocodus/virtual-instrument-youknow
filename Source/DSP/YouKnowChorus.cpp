@@ -943,9 +943,17 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
            -dt * (series + lower) / muteDriveHoldFarads }}
     }};
     chain.muteDriveOpenTransition = matrixExponential(muteDriveMatrix);
-    // Tr5 conducting clamps C16 to -15 V, leaving C13's one-pole discharge.
-    chain.muteDriveHoldGlide = -std::expm1(
-        -dt * (series + lower) / muteDriveHoldFarads);
+    // Roland Service Notes p.15: R46 330 Ohm remains between Tr5's
+    // collector and C16 when the transistor conducts. The same two-node
+    // system gains (Vnode + 15) / R46 sink current; R50 still pulls upward.
+    // C16*dVnode/dt = (15-Vnode)/R50 - (Vnode-Vhold)/R48
+    //                 - (Vnode+15)/R46.
+    // C13*dVhold/dt = (Vnode-Vhold)/R48 - (Vhold+15)/(R49+R42).
+    // This restores the known resistor while keeping the established ideal
+    // Tr5 saturation coordinate and 0.6 V Tr4 threshold prior.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
+    muteDriveMatrix[0][0] -= dt / (muteDriveSinkOhms * muteDriveNodeFarads);
+    chain.muteDriveConductingTransition = matrixExponential(muteDriveMatrix);
     return chain;
 }
 
@@ -1377,27 +1385,18 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
 
 void Chorus::advanceMuteDrive(bool commandMute) noexcept
 {
-    // Same 0.6 V junction prior and 5 ms JFET glide; only the passive
-    // network's missing reciprocal R48 current is corrected here.
-    if (commandMute)
-    {
-        constexpr double nodeRest = muteDriveMutedNodeRestVolts();
-        constexpr double holdRest = muteDriveHoldRestVolts(nodeRest);
-        const double node = muteDriveNodeVolts_ - nodeRest;
-        const double hold = muteDriveHoldVolts_ - holdRest;
-        muteDriveNodeVolts_ = nodeRest
-            + support_.muteDriveOpenTransition[0][0] * node
-            + support_.muteDriveOpenTransition[0][1] * hold;
-        muteDriveHoldVolts_ = holdRest
-            + support_.muteDriveOpenTransition[1][0] * node
-            + support_.muteDriveOpenTransition[1][1] * hold;
-    }
-    else
-    {
-        muteDriveNodeVolts_ = -muteDriveRailVolts;
-        muteDriveHoldVolts_ += (-muteDriveRailVolts - muteDriveHoldVolts_)
-                             * support_.muteDriveHoldGlide;
-    }
+    // Both command states retain the two physical capacitor coordinates.
+    // Only the prepared conductance matrix and its DC equilibrium switch;
+    // there is no charge reset when Tr5 begins conducting through R46.
+    const double nodeRest = commandMute ? muteDriveMutedNodeRestVolts()
+                                       : muteDriveConductingNodeRestVolts();
+    const double holdRest = muteDriveHoldRestVolts(nodeRest);
+    const auto& transition = commandMute ? support_.muteDriveOpenTransition
+                                        : support_.muteDriveConductingTransition;
+    const double node = muteDriveNodeVolts_ - nodeRest;
+    const double hold = muteDriveHoldVolts_ - holdRest;
+    muteDriveNodeVolts_ = nodeRest + transition[0][0] * node + transition[0][1] * hold;
+    muteDriveHoldVolts_ = holdRest + transition[1][0] * node + transition[1][1] * hold;
     muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
 }
 
@@ -1439,10 +1438,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         centreDelay_ = target.centreDelaySeconds;
         wetGain_ = target.wetGain;
         // The drive rests where the command has held it: Tr5 open and both
-        // capacitors at their positive rests when muted, both on the
-        // negative rail when conducting.
+        // capacitors at their positive rests when muted, or the finite-R46
+        // loaded rests when conducting.
         muteDriveNodeVolts_ = commandMute ? muteDriveMutedNodeRestVolts()
-                                          : -muteDriveRailVolts;
+                                          : muteDriveConductingNodeRestVolts();
         muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveNodeVolts_);
         muteDriveMuted_ = commandMute;
         primed_ = true;
@@ -1550,7 +1549,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
 
     // C28/C25 see the 39 kOhm mixer legs through Tr11/Tr12, so their
     // loading follows the RC-delayed gate state. The button command can
-    // precede that switch by roughly 81 ms off or 115 ms on.
+    // precede that switch by roughly 80 ms off or 121 ms on.
     const auto& wetOutputTransition = muteDriveMuted_
         ? support_.exactOutputMuted
         : support_.exactOutputConnected;
