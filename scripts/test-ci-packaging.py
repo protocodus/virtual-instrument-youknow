@@ -316,6 +316,36 @@ class LinuxPackagingTests(unittest.TestCase):
                     self.assertFalse(self.archive.exists())
                     path.write_bytes(original)
 
+    def test_missing_or_empty_binary_preserves_previous_distribution(self):
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        old_archive = self.archive.read_bytes()
+        checksums = self.archive.parent / "SHA256SUMS.txt"
+        old_checksums = checksums.read_bytes()
+        # A subsequent build must fail before deleting the complete previous
+        # archive, even if its bundle folder and executable bits remain.
+        (self.project / "build-dsp/CMakeCache.txt").write_bytes(
+            version_cache().replace(BUILD_NUMBER.encode(), b"34393416911.2")
+        )
+        for relative in self.payload:
+            path = self.artifacts / relative
+            original = path.read_bytes()
+            mode = path.stat().st_mode
+            for empty in (False, True):
+                with self.subTest(binary=relative, empty=empty):
+                    if empty:
+                        path.write_bytes(b"")
+                    else:
+                        path.unlink()
+                    result = self.package()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("missing or empty Linux x64 binary", result.stderr)
+                    self.assertEqual(self.archive.read_bytes(), old_archive)
+                    self.assertEqual(checksums.read_bytes(), old_checksums)
+                    self.assertEqual(list(self.archive.parent.glob("*.tar.gz")), [self.archive])
+                    path.write_bytes(original)
+                    path.chmod(mode)
+
     def test_invalid_or_inconsistent_build_identity_fails_before_archiving(self):
         for description, cache in invalid_build_caches():
             with self.subTest(description=description):

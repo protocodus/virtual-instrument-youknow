@@ -134,6 +134,15 @@ jobs:
           set -euo pipefail
           artefacts="build-dsp/YouKnow_artefacts/Release"
           test -d "$artefacts/VST3/YouKnow.vst3"
+          # A bundle directory or executable bit survives an interrupted or
+          # truncated build; require both actual payloads before archiving.
+          for binary in VST3/YouKnow.vst3/Contents/x86_64-linux/YouKnow.so \
+            Standalone/YouKnow; do
+            if [[ ! -s "$artefacts/$binary" ]]; then
+              echo "error: missing or empty Linux x64 binary: $artefacts/$binary" >&2
+              exit 1
+            fi
+          done
           test -x "$artefacts/Standalone/YouKnow"
           cache="build-dsp/CMakeCache.txt"
           version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$cache")"
