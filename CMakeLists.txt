@@ -654,13 +654,17 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowVcfIntegratorTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowVcfIntegratorTests PRIVATE cxx_std_20)
 
+    add_executable(YouKnowVcfNoiseTests Tests/YouKnowVcfNoiseTests.cpp)
+    target_link_libraries(YouKnowVcfNoiseTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowVcfNoiseTests PRIVATE cxx_std_20)
+
     add_executable(YouKnowSysExTests Tests/YouKnowSysExTests.cpp)
     target_link_libraries(YouKnowSysExTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowSysExTests PRIVATE cxx_std_20)
 
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
                    YouKnowChorusInputLoadingTests YouKnowOutputJackTests
-                   YouKnowVcfIntegratorTests YouKnowSysExTests)
+                   YouKnowVcfIntegratorTests YouKnowVcfNoiseTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
         else()
@@ -675,6 +679,7 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.ChorusMute COMMAND YouKnowChorusMuteTests)
     set_tests_properties(YouKnow.ChorusMute PROPERTIES TIMEOUT 60)
     add_test(NAME YouKnow.VcfIntegrator COMMAND YouKnowVcfIntegratorTests)
+    add_test(NAME YouKnow.VcfNoise COMMAND YouKnowVcfNoiseTests)
     add_test(NAME YouKnow.SysEx COMMAND YouKnowSysExTests)
 
     if(YOUKNOW_BUILD_TOOLS)

@@ -191,11 +191,13 @@ constexpr float moduleCouplingResistanceOhms = 33000.0f;    // voiced, OQ-15
 // was below that physical minimum and rejected too much bass.
 //
 // Use the conservative 82 kOhm limit, hence an 82 ms minimum time constant
-// and 1.941 Hz maximum corner for the nominal 1 uF part. VR27's setting,
-// the module input resistance and the VCF buffer's source impedance remain
-// unresolved (OQ-19); their nonnegative series contributions lower the corner
-// further. This is a circuit-derived bound, not an exact installed pole or a
-// new gain trim. Capacitor tolerance is not inferred from the nominal value.
+// and 1.941 Hz maximum corner for the nominal 1 uF part. The original-module
+// reading now corroborates the internal 4.7k series/560-ohm shunt network
+// (Sound Doctorin, cited by VoiceVcaSignalLaw), but VR27's setting and finite
+// module/buffer impedances remain unresolved (OQ-19). Their nonnegative
+// contributions lower the corner further. This remains a conservative bound,
+// not an exact installed pole or a new gain trim. Capacitor tolerance is not
+// inferred from the nominal value.
 constexpr float vcaInputCouplingCapacitanceF = 1.0e-6f;     // C59
 constexpr float vcaInputCouplingResistanceOhms = 82000.0f;  // R108 minimum, OQ-19
 
@@ -287,10 +289,15 @@ constexpr float outputJackCapacitanceF = 1.0e-9f;
 // 560/(68000+560) attenuator, so referred to the filter-module input coordinate
 // the model works in it is 3.02 nV / 0.0081680 = 370.2 nV/rtHz.
 //
-// Only stage 1's source is injected. The other three stages are uncorrelated
-// and enter after one or more poles, so summing all four at the input would
-// overstate them; a per-stage injection is the honest form and is a larger
-// change than this one. Evidence class: anchored resistors, derived density.
+// Four independent sources now enter their respective OTA differential
+// inputs. For small signals and k=0 their output transfers are H^4, H^3,
+// H^2 and H, H=1/(1+s/w). They must not be summed ahead of four poles or
+// enter the resonance pair's input-compensation branch. These resistor
+// values are independently read on a de-potted original 80017A:
+// https://www.sounddoctorin.com/synthtec/roland/juno106.htm (8/6/2017).
+// Johnson's original law: https://doi.org/10.1103/PhysRev.32.97
+// No BA662/IR3109 device-noise density is invented or added here.
+// Evidence class: primary component reads, derived resistor density.
 //
 // The generator is a bipolar uniform sequence at the 192 kHz reference rate, so
 // amplitude A gives RMS A/sqrt(3) over an fs/2 band: A = sqrt(3) * density *
@@ -2895,6 +2902,9 @@ void YouKnowEngine::OtaCascade::reset() noexcept
     state.fill(0.0);
     inputHistory.fill(0.0);
     inputHistoryCount = 0;
+    stageNoiseAt = {};
+    stageNoiseHistory = {};
+    stageNoiseHistoryCount = 0;
     previousOmegaStep = 0.0;
     previousFeedback = 0.0;
     previousHeadroom = 0.0;
@@ -2912,6 +2922,9 @@ void YouKnowEngine::OtaCascade::retime(float previousStep,
     // internal samples refill the support before the fade is audible.
     inputHistory.fill(inputHistory[0]);
     inputHistoryCount = 0;
+    for (auto& history : stageNoiseHistory)
+        history.fill(history[0]);
+    stageNoiseHistoryCount = 0;
     if (parameterHistoryPrimed)
     {
         const double previous = std::max(
@@ -2924,6 +2937,62 @@ void YouKnowEngine::OtaCascade::retime(float previousStep,
         previousOmegaStep = std::clamp(
             previous > 0.0 ? previousOmegaStep * next / previous : next,
             0.0, maximumOmegaStep);
+    }
+}
+
+void YouKnowEngine::OtaCascade::setStageNoise(
+    const std::array<double, 4>& volts) noexcept
+{
+    // Only retain endpoints here: inactive cards have no solver-node reader.
+    // The chosen tableau reconstructs exactly the nodes it consumes below.
+    for (std::size_t stage = 0; stage < volts.size(); ++stage)
+    {
+        auto& history = stageNoiseHistory[stage];
+        history[3] = history[2];
+        history[2] = history[1];
+        history[1] = history[0];
+        history[0] = std::isfinite(volts[stage]) ? volts[stage] : 0.0;
+    }
+    stageNoiseHistoryCount = std::min(stageNoiseHistoryCount + 1, 3);
+}
+
+void YouKnowEngine::OtaCascade::prepareStageNoise(unsigned int nodeMask) noexcept
+{
+    // Same endpoint reconstruction as the signal, with startup of degree
+    // one, two, then three. Endpoints are direct copies; the usual RK4 rung
+    // needs only one weighted midpoint. No work is done at unread nodes.
+    static constexpr auto weights = [] {
+        std::array<std::array<double, 4>, controlNodePositions.size()> result {};
+        for (std::size_t point = 0; point < result.size(); ++point)
+        {
+            const double t = controlNodePositions[point];
+            result[point] = { t*(t+1.0)*(t+2.0)/6.0,
+                -(t-1.0)*(t+1.0)*(t+2.0)/2.0,
+                (t-1.0)*t*(t+2.0)/2.0, -(t-1.0)*t*(t+1.0)/6.0 };
+        }
+        return result;
+    }();
+    for (std::size_t stage = 0; stage < 4; ++stage)
+    {
+        const auto& h = stageNoiseHistory[stage];
+        stageNoiseAt.front()[stage] = h[1];
+        stageNoiseAt.back()[stage] = h[0];
+    }
+    for (std::size_t point = 1; point + 1 < stageNoiseAt.size(); ++point)
+    {
+        if ((nodeMask >> point & 1u) == 0u)
+            continue;
+        const double t = controlNodePositions[point];
+        for (std::size_t stage = 0; stage < 4; ++stage)
+        {
+            const auto& h = stageNoiseHistory[stage];
+            stageNoiseAt[point][stage] = stageNoiseHistoryCount <= 1
+                ? t*h[0] + (1.0-t)*h[1]
+                : stageNoiseHistoryCount == 2
+                    ? 0.5*t*(t+1.0)*h[0] + (1.0-t*t)*h[1] + 0.5*t*(t-1.0)*h[2]
+                    : weights[point][0]*h[0] + weights[point][1]*h[1]
+                        + weights[point][2]*h[2] + weights[point][3]*h[3];
+        }
     }
 }
 
@@ -3479,6 +3548,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // the reconstruction, the control interpolation and the per-stage omega
     // product at those ordinals have no reader.
     const unsigned int nodeMask = tableauNodeMask(plannedTableau);
+    prepareStageNoise(nodeMask);
 
     std::array<double, pointCount> inputAt {};
     std::array<double, pointCount> omegaAt {};
@@ -3595,11 +3665,14 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const double earlyAmount =
         static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
     std::array<double, 4> stageScale {};
-    std::array<double, 4> stageOffset {};
+    std::array<std::array<double, 4>, pointCount> stageOffset {};
     for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
     {
         stageScale[stage] = static_cast<double>(gScale[stage]);
-        stageOffset[stage] = static_cast<double>(offsetVoltage[stage]);
+        for (std::size_t point = 0; point < pointCount; ++point)
+            if ((nodeMask >> point & 1u) != 0u)
+                stageOffset[point][stage] = static_cast<double>(offsetVoltage[stage])
+                    + stageNoiseAt[point][stage];
     }
     std::array<std::array<double, 4>, pointCount> stageOmegaAt {};
     for (std::size_t point = 0; point < pointCount; ++point)
@@ -3740,7 +3813,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                     * early * runningHeadroom
                     * nonlinear(normalise(
                         previous - value[stage]
-                        + stageOffset[stage]));
+                        + stageOffset[point][stage]));
                 previous = value[stage];
             }
             return result;
@@ -3787,10 +3860,10 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                         * (1.0 / feedbackHeadroom));
 
             const std::array<double, 4> stageArg {
-                (loopReturn - value[0] + stageOffset[0]) * inverseHeadroom,
-                (value[0] - value[1] + stageOffset[1]) * inverseHeadroom,
-                (value[1] - value[2] + stageOffset[2]) * inverseHeadroom,
-                (value[2] - value[3] + stageOffset[3]) * inverseHeadroom
+                (loopReturn - value[0] + stageOffset[point][0]) * inverseHeadroom,
+                (value[0] - value[1] + stageOffset[point][1]) * inverseHeadroom,
+                (value[1] - value[2] + stageOffset[point][2]) * inverseHeadroom,
+                (value[2] - value[3] + stageOffset[point][3]) * inverseHeadroom
             };
             const std::array<double, 4> stageTanh =
                 polyZonedTanhBatch(stageArg);
@@ -3939,7 +4012,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         Tableau tableau { Tableau::MersonHalf };
         std::array<double, 5> drive {};
         std::array<double, 4> stageOmega {};
-        std::array<double, 4> stageOffset {};
+        std::array<std::array<double, 4>, 7> stageOffset {};
     };
 
     const auto prepareLane = [&](OtaCascade& cascade, float input,
@@ -4004,12 +4077,17 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
             lane.drive[3] = reconstruct(
                 0.6015625, 0.6015625, -0.2578125, 0.0546875);
         }
+        const unsigned int noiseNodeMask = tableauNodeMask(tableau);
+        cascade.prepareStageNoise(noiseNodeMask);
         for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
         {
             lane.stageOmega[stage] = currentOmega
                 * static_cast<double>(cascade.gScale[stage]);
-            lane.stageOffset[stage] =
-                static_cast<double>(cascade.offsetVoltage[stage]);
+            for (std::size_t point = 0; point < 7; ++point)
+                if ((noiseNodeMask >> point & 1u) != 0u)
+                    lane.stageOffset[point][stage] =
+                        static_cast<double>(cascade.offsetVoltage[stage])
+                        + cascade.stageNoiseAt[point][stage];
         }
         return true;
     };
@@ -4094,14 +4172,16 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
 
     PairState state;
     PairState stageOmega;
-    PairState stageOffset;
+    std::array<PairState, 7> stageOffset;
     for (std::size_t stage = 0; stage < state.size(); ++stage)
     {
         state[stage] = pack(first.state[stage], second.state[stage]);
         stageOmega[stage] = pack(lanes[0].stageOmega[stage],
                                  lanes[1].stageOmega[stage]);
-        stageOffset[stage] = pack(lanes[0].stageOffset[stage],
-                                  lanes[1].stageOffset[stage]);
+        for (std::size_t point = 0; point < 7; ++point)
+            if ((tableauNodeMask(lanes[0].tableau) >> point & 1u) != 0u)
+                stageOffset[point][stage] = pack(lanes[0].stageOffset[point][stage],
+                                               lanes[1].stageOffset[point][stage]);
     }
     const Pair inverseHeadroom = pack(lanes[0].inverseHeadroom,
                                       lanes[1].inverseHeadroom);
@@ -4112,7 +4192,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     const Pair resonanceCompensation = pack(
         static_cast<double>(first.inputCompensationCoefficient),
         static_cast<double>(second.inputCompensationCoefficient));
-    const auto derivative = [&](const PairState& value, Pair drive) {
+    const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
         const Pair feedbackArgument = pairMultiplyScalar(
             pairSubtract(value[3],
                          pairMultiply(resonanceCompensation, drive)),
@@ -4132,13 +4212,13 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
 
         PairState stageArgument {
             pairMultiply(pairAdd(pairSubtract(loopReturn, value[0]),
-                                 stageOffset[0]), inverseHeadroom),
+                                 stageOffset[point][0]), inverseHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[0], value[1]),
-                                 stageOffset[1]), inverseHeadroom),
+                                 stageOffset[point][1]), inverseHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[1], value[2]),
-                                 stageOffset[2]), inverseHeadroom),
+                                 stageOffset[point][2]), inverseHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[2], value[3]),
-                                 stageOffset[3]), inverseHeadroom)
+                                 stageOffset[point][3]), inverseHeadroom)
         };
         PairState stageTanh;
         for (std::size_t stage = 0; stage < stageTanh.size(); ++stage)
@@ -4208,13 +4288,14 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
                                       lanes[1].drive[middle]);
         const Pair endDrive = pack(lanes[0].drive[end],
                                    lanes[1].drive[end]);
-        const PairState k1 = derivative(origin, k1Drive);
+        static constexpr std::array<std::size_t, 5> node { 0, 2, 3, 5, 6 };
+        const PairState k1 = derivative(origin, k1Drive, node[start]);
         const PairState k2 = derivative(
-            advanceOne(origin, k1, 0.5 * stepSize), middleDrive);
+            advanceOne(origin, k1, 0.5 * stepSize), middleDrive, node[middle]);
         const PairState k3 = derivative(
-            advanceOne(origin, k2, 0.5 * stepSize), middleDrive);
+            advanceOne(origin, k2, 0.5 * stepSize), middleDrive, node[middle]);
         const PairState k4 = derivative(
-            advanceOne(origin, k3, stepSize), endDrive);
+            advanceOne(origin, k3, stepSize), endDrive, node[end]);
         state = finishRk4(origin, k1, k2, k3, k4, stepSize);
     };
     if (lanes[0].tableau == Tableau::Rk4Full)
@@ -4308,7 +4389,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         double inverseHeadroom {};
         std::array<double, 7> drive {};
         std::array<double, 4> stageOmega {};
-        std::array<double, 4> stageOffset {};
+        std::array<std::array<double, 4>, 7> stageOffset {};
     };
 
     const auto prepareLane = [&](OtaCascade& cascade, float input,
@@ -4375,12 +4456,15 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         lane.drive[5] = reconstruct(
             0.6015625, 0.6015625, -0.2578125, 0.0546875);
         lane.drive[6] = reconstruct(1.0,    0.0,    0.0,     0.0);
+        cascade.prepareStageNoise(tableauNodeMask(Tableau::MersonHalf));
         for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
         {
             lane.stageOmega[stage] = currentOmega
                 * static_cast<double>(cascade.gScale[stage]);
-            lane.stageOffset[stage] =
-                static_cast<double>(cascade.offsetVoltage[stage]);
+            for (std::size_t point = 0; point < 7; ++point)
+                lane.stageOffset[point][stage] =
+                    static_cast<double>(cascade.offsetVoltage[stage])
+                    + cascade.stageNoiseAt[point][stage];
         }
         return true;
     };
@@ -4463,14 +4547,15 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
 
     PairState state;
     PairState stageOmega;
-    PairState stageOffset;
+    std::array<PairState, 7> stageOffset;
     for (std::size_t stage = 0; stage < state.size(); ++stage)
     {
         state[stage] = pack(first.state[stage], second.state[stage]);
         stageOmega[stage] = pack(lanes[0].stageOmega[stage],
                                  lanes[1].stageOmega[stage]);
-        stageOffset[stage] = pack(lanes[0].stageOffset[stage],
-                                  lanes[1].stageOffset[stage]);
+        for (std::size_t point = 0; point < 7; ++point)
+            stageOffset[point][stage] = pack(lanes[0].stageOffset[point][stage],
+                                           lanes[1].stageOffset[point][stage]);
     }
     const Pair inverseHeadroom = pack(lanes[0].inverseHeadroom,
                                       lanes[1].inverseHeadroom);
@@ -4481,7 +4566,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     const Pair resonanceCompensation = pack(
         static_cast<double>(first.inputCompensationCoefficient),
         static_cast<double>(second.inputCompensationCoefficient));
-    const auto derivative = [&](const PairState& value, Pair drive) {
+    const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
         const Pair feedbackArgument = pairMultiplyScalar(
             pairSubtract(value[3],
                          pairMultiply(resonanceCompensation, drive)),
@@ -4501,13 +4586,13 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
 
         PairState stageArgument {
             pairMultiply(pairAdd(pairSubtract(loopReturn, value[0]),
-                                 stageOffset[0]), inverseHeadroom),
+                                 stageOffset[point][0]), inverseHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[0], value[1]),
-                                 stageOffset[1]), inverseHeadroom),
+                                 stageOffset[point][1]), inverseHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[1], value[2]),
-                                 stageOffset[2]), inverseHeadroom),
+                                 stageOffset[point][2]), inverseHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[2], value[3]),
-                                 stageOffset[3]), inverseHeadroom)
+                                 stageOffset[point][3]), inverseHeadroom)
         };
         PairState stageTanh;
         for (std::size_t stage = 0; stage < stageTanh.size(); ++stage)
@@ -4597,18 +4682,18 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
                                   lanes[1].drive[start + 2u]);
         const Pair k5Drive = pack(lanes[0].drive[start + 3u],
                                   lanes[1].drive[start + 3u]);
-        const PairState k1 = derivative(origin, k1Drive);
+        const PairState k1 = derivative(origin, k1Drive, start);
         const PairState k2 = derivative(
-            advanceOne(origin, k1, 1.0 / 6.0), sharedDrive);
+            advanceOne(origin, k1, 1.0 / 6.0), sharedDrive, start + 1u);
         const PairState k3 = derivative(
             advanceTwo(origin, 0.5, k1, 1.0 / 6.0,
-                       k2, 1.0 / 6.0), sharedDrive);
+                       k2, 1.0 / 6.0), sharedDrive, start + 1u);
         const PairState k4 = derivative(
             advanceTwo(origin, 0.5, k1, 1.0 / 8.0,
-                       k3, 3.0 / 8.0), k4Drive);
+                       k3, 3.0 / 8.0), k4Drive, start + 2u);
         const PairState k5 = derivative(
             advanceThree(origin, 0.5, k1, 1.0 / 2.0,
-                         k3, -3.0 / 2.0, k4, 2.0), k5Drive);
+                         k3, -3.0 / 2.0, k4, 2.0), k5Drive, start + 3u);
         state = advanceThree(origin, 0.5, k1, 1.0 / 6.0,
                              k4, 2.0 / 3.0, k5, 1.0 / 6.0);
     }
@@ -4693,7 +4778,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         float inverseHeadroom {};
         std::array<float, 7> drive {};
         std::array<float, 4> stageOmega {};
-        std::array<float, 4> stageOffset {};
+        std::array<std::array<float, 4>, 7> stageOffset {};
     };
     std::array<Lane, 4> lanes;
     for (std::size_t laneIndex = 0; laneIndex < lanes.size(); ++laneIndex)
@@ -4762,11 +4847,14 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         lane.drive[5] = reconstruct(
             0.6015625, 0.6015625, -0.2578125, 0.0546875);
         lane.drive[6] = reconstruct(1.0,    0.0,    0.0,     0.0);
+        cascade.prepareStageNoise(tableauNodeMask(Tableau::MersonHalf));
         for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
         {
             lane.stageOmega[stage] = static_cast<float>(
                 currentOmega * static_cast<double>(cascade.gScale[stage]));
-            lane.stageOffset[stage] = cascade.offsetVoltage[stage];
+            for (std::size_t point = 0; point < 7; ++point)
+                lane.stageOffset[point][stage] = static_cast<float>(
+                    cascade.offsetVoltage[stage] + cascade.stageNoiseAt[point][stage]);
         }
     }
 
@@ -4872,7 +4960,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
 
     QuadState state;
     QuadState stageOmega;
-    QuadState stageOffset;
+    std::array<QuadState, 7> stageOffset;
     for (std::size_t stage = 0; stage < state.size(); ++stage)
     {
         std::array<float, 4> values;
@@ -4883,10 +4971,11 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
             [](const Lane& lane, std::size_t point) {
                 return lane.stageOmega[point];
             }, stage);
-        stageOffset[stage] = packField(
-            [](const Lane& lane, std::size_t point) {
-                return lane.stageOffset[point];
-            }, stage);
+        for (std::size_t point = 0; point < 7; ++point)
+            stageOffset[point][stage] = packField(
+                [point](const Lane& lane, std::size_t index) {
+                    return lane.stageOffset[point][index];
+                }, stage);
     }
     const Quad inverseHeadroom = packField(
         [](const Lane& lane, std::size_t) {
@@ -4915,7 +5004,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
             }, point);
 
     // A value parameter lets the ARM ABI pass the four vectors in registers.
-    const auto derivative = [&](QuadState value, Quad drive) {
+    const auto derivative = [&](QuadState value, Quad drive, std::size_t point) {
         const Quad feedbackArgument = quadMultiplyScalar(
             quadSubtract(value[3],
                          quadMultiply(resonanceCompensation, drive)),
@@ -4925,13 +5014,13 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
                                 polyTanhQuad(feedbackArgument)));
         QuadState stageArgument {
             quadMultiply(quadAdd(quadSubtract(loopReturn, value[0]),
-                                 stageOffset[0]), inverseHeadroom),
+                                 stageOffset[point][0]), inverseHeadroom),
             quadMultiply(quadAdd(quadSubtract(value[0], value[1]),
-                                 stageOffset[1]), inverseHeadroom),
+                                 stageOffset[point][1]), inverseHeadroom),
             quadMultiply(quadAdd(quadSubtract(value[1], value[2]),
-                                 stageOffset[2]), inverseHeadroom),
+                                 stageOffset[point][2]), inverseHeadroom),
             quadMultiply(quadAdd(quadSubtract(value[2], value[3]),
-                                 stageOffset[3]), inverseHeadroom)
+                                 stageOffset[point][3]), inverseHeadroom)
         };
         QuadState result;
         for (std::size_t stage = 0; stage < result.size(); ++stage)
@@ -4999,18 +5088,18 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
     for (const std::size_t start : { 0u, 3u })
     {
         const QuadState origin = state;
-        const QuadState k1 = derivative(origin, drives[start]);
+        const QuadState k1 = derivative(origin, drives[start], start);
         const QuadState k2 = derivative(
-            advanceOne(origin, k1, 1.0f / 6.0f), drives[start + 1u]);
+            advanceOne(origin, k1, 1.0f / 6.0f), drives[start + 1u], start + 1u);
         const QuadState k3 = derivative(
             advanceTwo(origin, 0.5f, k1, 1.0f / 6.0f,
-                       k2, 1.0f / 6.0f), drives[start + 1u]);
+                       k2, 1.0f / 6.0f), drives[start + 1u], start + 1u);
         const QuadState k4 = derivative(
             advanceTwo(origin, 0.5f, k1, 1.0f / 8.0f,
-                       k3, 3.0f / 8.0f), drives[start + 2u]);
+                       k3, 3.0f / 8.0f), drives[start + 2u], start + 2u);
         const QuadState k5 = derivative(
             advanceThree(origin, 0.5f, k1, 0.5f,
-                         k3, -1.5f, k4, 2.0f), drives[start + 3u]);
+                         k3, -1.5f, k4, 2.0f), drives[start + 3u], start + 3u);
         state = advanceThree(origin, 0.5f, k1, 1.0f / 6.0f,
                              k4, 2.0f / 3.0f, k5, 1.0f / 6.0f);
     }
@@ -8459,8 +8548,18 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
         voice.pulseThresholdVolts, voice.pulseThresholdVolts,
         voice.pulsePinnedHigh, voice.pulsePinnedHigh, false);
 
-    // The card-local microscopic noise source keeps running.
-    voice.noiseState = xorshift32(voice.noiseState);
+    // Keep the same four independent draws and reconstruction history as
+    // the continuously rendered card behind its closed VCA.
+    std::array<double, 4> stageNoise {};
+    const int draws = activeParameters_.enableCardJohnsonFloor ? 4 : 1;
+    for (int stage = 0; stage < draws; ++stage)
+    {
+        voice.noiseState = xorshift32(voice.noiseState);
+        if (activeParameters_.enableCardJohnsonFloor)
+            stageNoise[static_cast<std::size_t>(stage)] =
+                bipolarFromState(voice.noiseState) * filterNoiseVoltsDerived * noiseRateScale_;
+    }
+    voice.filter.setStageNoise(stageNoise);
 
     // C56/C50 is a 0.482 Hz physical state, not reconstruction work. Follow the
     // free-running ramp/comparator endpoint at low pitch without paying for its
@@ -8634,10 +8733,18 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
                   "filterNoiseVoltsDerived hard-codes the 192 kHz reference "
                   "rate because it is computed at namespace scope");
     voice.noiseState = xorshift32(voice.noiseState);
-    const float microscopicNoise =
-        bipolarFromState(voice.noiseState)
-        * (parameters.enableCardJohnsonFloor ? filterNoiseVoltsDerived
-                                             : filterNoiseVoltsVoiced);
+    const float microscopicNoise = parameters.enableCardJohnsonFloor
+        ? 0.0f : bipolarFromState(voice.noiseState) * filterNoiseVoltsVoiced;
+    std::array<double, 4> stageNoise {};
+    if (parameters.enableCardJohnsonFloor)
+        for (std::size_t stage = 0; stage < stageNoise.size(); ++stage)
+        {
+            if (stage != 0)
+                voice.noiseState = xorshift32(voice.noiseState);
+            stageNoise[stage] = bipolarFromState(voice.noiseState)
+                * filterNoiseVoltsDerived * noiseRateScale_;
+        }
+    voice.filter.setStageNoise(stageNoise);
 
     // --- Filter, amplifier -------------------------------------------------
     // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the
@@ -8673,8 +8780,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     else
         coupled = voice.moduleCoupling.process(
             mixed, moduleCouplingG_, 0.0f, 1.0f);
-    // The microscopic card excitation is injected at the filter input, after
-    // the source coordinate scale, so it stays outside this capacitor (OQ-16).
+    // Resistor noise enters the four OTA nodes after this coupling capacitor.
+    // Only the retired voiced comparison seed still enters the signal input.
     // With the differential form the compensation rides inside the resonance
     // pair's tanh, so the drive reaching the cascade is the plain coupled
     // node; the split form keeps the feedforward multiply it always had.

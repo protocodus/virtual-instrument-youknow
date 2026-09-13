@@ -480,10 +480,11 @@ struct YouKnowTestAccess
 
     // This is deliberately a renderVoice probe, not another direct cascade
     // candidate. It supplies a strongly curved physical hold interval to the
-    // shipping voice, recovers the exact input endpoint which renderVoice
-    // handed to its OtaCascade, and replays that one interval from the saved
-    // capacitor/input-history state. The connected replay must be bit exact;
-    // the explicit nullptr replay is the sensitivity mutation and must differ.
+    // shipping voice, recovers the exact signal and four stage-noise endpoints
+    // which renderVoice handed to its OtaCascade, and replays that one interval
+    // from the saved capacitor/input/noise histories. The connected replay must
+    // be bit exact; the explicit nullptr replay is the sensitivity mutation and
+    // must differ.
     // Consequently changing Engine.cpp's renderVoice call to pass nullptr
     // makes the actual shipping state coincide with the rejected mutation and
     // fails this contract even if every local OtaCascade test still passes.
@@ -653,6 +654,17 @@ struct YouKnowTestAccess
             (void) engine.renderVoice(voice, parameters, 0.0f);
             const float renderedInput = static_cast<float>(
                 voice.filter.inputHistory[0]);
+            // prepareVoiceFilter advances these four exogenous endpoints
+            // before the cascade runs. Replay that same advance in both saved
+            // cascades; copying the post-render capacitor state or control
+            // trajectory here would hide the wiring mutation this probes.
+            std::array<double, 4> renderedStageNoise {};
+            for (std::size_t stage = 0; stage < renderedStageNoise.size();
+                 ++stage)
+                renderedStageNoise[stage] =
+                    voice.filter.stageNoiseHistory[stage][0];
+            connected.setStageNoise(renderedStageNoise);
+            disconnected.setStageNoise(renderedStageNoise);
             (void) connected.process(
                 renderedInput, voice.filterOmegaStep, voice.feedback,
                 headroom, parameters.enableVcfEarlyEffect,

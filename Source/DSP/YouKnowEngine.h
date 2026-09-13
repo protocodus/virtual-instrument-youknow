@@ -371,11 +371,11 @@ struct EngineParameters
     // exactly like the resistor floors -- the exact-silence endpoint at 0 is
     // product policy, not a statement that the floor is a tolerance.
     bool enableCommonVcaNoise { true };
-    // On by default: each voice card's filter input carries the Johnson noise
-    // of its own 68k/560 stage network, referred through that stage's
-    // attenuator -- the same thermal law already applied to IC6's resistor
-    // groups, on resistors p. 9 prints. False restores the former voiced 20 uV
-    // seed bit-exactly for controlled A/B renders. Not serialised.
+    // On by default: four independent 68k/560 Johnson sources enter their
+    // own OTA differential nodes, after the input-compensation branch. The
+    // resistance reads and sqrt(4kTR) law fix the density; the remaining
+    // poles fix each source's different output spectrum. False retains the
+    // former input-only voiced 20 uV seed for comparisons. Not serialised.
     bool enableCardJohnsonFloor { true };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
@@ -1404,16 +1404,17 @@ public:
     //   I_out,peak = 3.0 V / R_load;  tanh(u_trim) = I_out,peak / I_tail.
     //
     // R_load is the R||C the 80017A module drawing (p. 9) shows on the VCA
-    // BA662's output with no value printed. Roland's JUNO-6 and JUNO-60
-    // Service Notes (CPU BOARD, p. 9 in both) draw the same discrete
-    // IR3109 + BA662 voice circuit the module integrates: BA662 pin 6 ->
-    // R42 47K to GND (no capacitor) -> pin 7 buffer in -> pin 8 out (TP4);
-    // input IR3109 output -> C8 1 uF NP -> R38 56K -> VR4 20K GAIN -> pin 2,
-    // R40 470 and R39 470 to GND on pins 2 and 3; control ENV -> R44 27K ->
-    // R43 10K -> grounded-base PNP TR6 -> pin 1. The Open80017a
-    // reconstruction agrees at 47k; the 80017A's own printed resistor is
-    // unread (OQ-19). Evidence class: derived from a sibling Roland drawing
-    // of the same discrete circuit, never measured on a 106.
+    // BA662's output with no value printed. An independent measurement on
+    // a de-potted original 80017A reads that resistor as 47k, its two input
+    // shunts as 560 ohm and the VCA IN series resistor as 4.7k:
+    // https://www.sounddoctorin.com/synthtec/roland/juno106.htm (8/6/2017).
+    // The same account explicitly leaves the parallel capacitor UNKNOWN;
+    // no capacitor value or resulting output pole is inferred here.
+    // Roland's JUNO-6/JUNO-60 CPU BOARD p. 9 separately corroborates the
+    // 47k load as R42 (without a capacitor), but uses different input parts:
+    // R38 56k, VR4 20k, R40/R39 470 ohm. Open80017a also agrees at 47k.
+    // Evidence class: original-module resistance measurement corroborated
+    // by sibling documentation; the full loaded transfer remains OQ-19.
     //
     // Because VR27 fixes the output side, the pin-9 divider (VR27, R108 and
     // the module's internal 4.7k/560) cancels and u_trim refers straight to
@@ -1437,8 +1438,8 @@ public:
         static constexpr float controlSeriesOhms = 32000.0f;
         // Tr20's nominal emitter-junction drop at about 0.3 mA.
         static constexpr float controlJunctionVolts = 0.62f;
-        // R42 on the JUNO-6/60 CPU BOARD drawings (p. 9); the Open80017a
-        // reconstruction agrees; the 80017A's printed value is unread.
+        // Measured on an original 80017A by Sound Doctorin (link above),
+        // corroborated by R42 on the JUNO-6/60 CPU BOARD p. 9 and Open80017a.
         static constexpr float loadOhms = 47000.0f;
         // 6 Vp-p at TP8 (p. 19 s. 6) and 4.8 Vp-p at TP19 (p. 19 s. 5).
         static constexpr float trimOutputPeakVolts = 3.0f;
@@ -2067,6 +2068,14 @@ private:
         // it gains over the former float path-average solve.
         std::array<double, 4> state {};
         std::array<float, 4> offsetVoltage {};
+        // Independent equivalent input voltages of each stage's resistor
+        // network. They use the audio input's same causal cubic reconstruction
+        // at the solver nodes; none enters the resonance compensation input.
+        std::array<std::array<double, 4>, controlNodePositions.size()> stageNoiseAt {};
+        std::array<std::array<double, 4>, 4> stageNoiseHistory {};
+        int stageNoiseHistoryCount { 0 };
+        void setStageNoise(const std::array<double, 4>& volts) noexcept;
+        void prepareStageNoise(unsigned int nodeMask) noexcept;
         // Sample-grid support, not circuit memory. Point zero is the most
         // recent completed endpoint; the current endpoint supplied to process
         // is the fourth point of the causal cubic interpolant.
