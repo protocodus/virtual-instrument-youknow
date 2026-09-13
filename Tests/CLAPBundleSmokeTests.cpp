@@ -1,5 +1,5 @@
 // Load the shipping CLAP binary through its public C ABI. This catches missing
-// exports, wrong format metadata and wrapper MIDI/audio failures without
+// exports, wrong metadata, state notifications and wrapper MIDI/audio failures without
 // linking the host probe to JUCE or opening an editor.
 #include <clap/clap.h>
 
@@ -10,8 +10,10 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #if defined(_WIN32)
  #define NOMINMAX
@@ -91,11 +93,50 @@ struct InstanceLifetime
     }
 };
 
+struct StateStream
+{
+    std::vector<uint8_t> bytes;
+    std::size_t position = 0;
+    uint64_t maximumTransfer = std::numeric_limits<uint64_t>::max();
+
+    static int64_t CLAP_ABI write (const clap_ostream_t* stream,
+                                   const void* data, uint64_t size)
+    {
+        auto& self = *static_cast<StateStream*> (stream->ctx);
+        const auto count = std::min (size, self.maximumTransfer);
+        const auto* source = static_cast<const uint8_t*> (data);
+        self.bytes.insert (self.bytes.end(), source, source + count);
+        return static_cast<int64_t> (count);
+    }
+
+    static int64_t CLAP_ABI read (const clap_istream_t* stream,
+                                  void* data, uint64_t size)
+    {
+        auto& self = *static_cast<StateStream*> (stream->ctx);
+        const auto count = std::min ({ size, self.maximumTransfer,
+                                      static_cast<uint64_t> (self.bytes.size() - self.position) });
+        std::memcpy (data, self.bytes.data() + self.position,
+                     static_cast<std::size_t> (count));
+        self.position += static_cast<std::size_t> (count);
+        return static_cast<int64_t> (count);
+    }
+
+    clap_ostream_t output { this, write };
+    clap_istream_t input { this, read };
+};
+
 struct Host
 {
     const std::thread::id mainThread = std::this_thread::get_id();
     bool processing = false;
     std::atomic<bool> callbackRequested { false };
+    clap_param_rescan_flags rescanFlags = 0;
+    bool rescanOnMainThread = true;
+    bool stateLoadInProgress = false;
+    bool rescannedDuringLoad = false;
+    bool rescanSaveSucceeded = false;
+    const clap_plugin_t* loadedPlugin = nullptr;
+    StateStream* rescanSnapshot = nullptr;
 
     static Host& from (const clap_host_t* host)
     {
@@ -112,10 +153,31 @@ struct Host
         return isMainThread (host) && from (host).processing;
     }
 
+    static void CLAP_ABI rescan (const clap_host_t* host, clap_param_rescan_flags flags)
+    {
+        auto& self = from (host);
+        self.rescanFlags |= flags;
+        self.rescanOnMainThread = self.rescanOnMainThread && isMainThread (host);
+        self.rescannedDuringLoad = self.rescannedDuringLoad || self.stateLoadInProgress;
+        if (self.rescanSnapshot != nullptr)
+        {
+            self.rescanSnapshot->bytes.clear();
+            const auto* state = static_cast<const clap_plugin_state_t*> (
+                self.loadedPlugin->get_extension (self.loadedPlugin, CLAP_EXT_STATE));
+            self.rescanSaveSucceeded = state != nullptr
+                && state->save (self.loadedPlugin, &self.rescanSnapshot->output);
+        }
+    }
+
+    static void CLAP_ABI clear (const clap_host_t*, clap_id, clap_param_clear_flags) {}
+
     static const void* CLAP_ABI getExtension (const clap_host_t*, const char* id)
     {
         static const clap_host_thread_check_t threads { isMainThread, isAudioThread };
-        return matches (id, CLAP_EXT_THREAD_CHECK) ? &threads : nullptr;
+        static const clap_host_params_t params { rescan, clear, request };
+        if (matches (id, CLAP_EXT_THREAD_CHECK))
+            return &threads;
+        return matches (id, CLAP_EXT_PARAMS) ? &params : nullptr;
     }
 
     static void CLAP_ABI request (const clap_host_t*) {}
@@ -160,6 +222,142 @@ struct Events
 
     clap_input_events_t inputEvents { this, size, get };
 };
+
+void serviceCallbacks (Host& host, const clap_plugin_t* plugin)
+{
+    for (int count = 0; count < 16 && host.callbackRequested.exchange (false); ++count)
+        plugin->on_main_thread (plugin);
+}
+
+void testStateRoundTrip (const clap_plugin_factory_t* factory,
+                        const clap_plugin_descriptor_t* descriptor, bool buffered)
+{
+    StateStream saved;
+    saved.maximumTransfer = buffered ? 23 : saved.maximumTransfer;
+    std::vector<std::pair<clap_id, double>> expectedValues;
+    {
+        Host host;
+        const auto* plugin = factory->create_plugin (factory, &host.clapHost, descriptor->id);
+        require (plugin != nullptr, "CLAP state source instantiation failed");
+        InstanceLifetime instance { plugin };
+        require (plugin->init (plugin), "CLAP state source initialization failed");
+        serviceCallbacks (host, plugin);
+        const auto* params = static_cast<const clap_plugin_params_t*> (
+            plugin->get_extension (plugin, CLAP_EXT_PARAMS));
+        const auto* state = static_cast<const clap_plugin_state_t*> (
+            plugin->get_extension (plugin, CLAP_EXT_STATE));
+        require (params != nullptr && state != nullptr, "CLAP parameter/state extension missing");
+
+        unsigned changed = 0;
+        for (uint32_t index = 0; index < params->count (plugin); ++index)
+        {
+            clap_param_info_t info {};
+            require (params->get_info (plugin, index, &info), "CLAP parameter info failed");
+            if (! matches (info.name, "VCF Freq") && ! matches (info.name, "VCA Level"))
+                continue;
+            clap_event_param_value_t event {
+                { sizeof (clap_event_param_value_t), 0, CLAP_CORE_EVENT_SPACE_ID,
+                  CLAP_EVENT_PARAM_VALUE, 0 },
+                info.id, info.cookie, -1, -1, -1, -1,
+                info.min_value + (info.max_value - info.min_value) * 0.37 };
+            clap_input_events_t input {
+                &event, [] (const clap_input_events_t*) -> uint32_t { return 1; },
+                [] (const clap_input_events_t* list, uint32_t eventIndex)
+                    -> const clap_event_header_t*
+                {
+                    return eventIndex == 0
+                        ? &static_cast<clap_event_param_value_t*> (list->ctx)->header : nullptr;
+                } };
+            const clap_output_events_t output {
+                nullptr, [] (const clap_output_events_t*, const clap_event_header_t*) -> bool
+                { return true; } };
+            params->flush (plugin, &input, &output);
+            ++changed;
+        }
+        require (changed == 2, "CLAP state fixture did not find both edited controls");
+        serviceCallbacks (host, plugin);
+        for (uint32_t index = 0; index < params->count (plugin); ++index)
+        {
+            clap_param_info_t info {};
+            double value = 0.0;
+            require (params->get_info (plugin, index, &info)
+                         && params->get_value (plugin, info.id, &value),
+                     "CLAP source parameter read failed");
+            expectedValues.emplace_back (info.id, value);
+        }
+        require (state->save (plugin, &saved.output) && ! saved.bytes.empty(),
+                 "CLAP state save failed");
+    }
+
+    Host host;
+    const auto* plugin = factory->create_plugin (factory, &host.clapHost, descriptor->id);
+    require (plugin != nullptr, "CLAP state destination instantiation failed");
+    InstanceLifetime instance { plugin };
+    require (plugin->init (plugin), "CLAP state destination initialization failed");
+    serviceCallbacks (host, plugin);
+    const auto* params = static_cast<const clap_plugin_params_t*> (
+        plugin->get_extension (plugin, CLAP_EXT_PARAMS));
+    const auto* state = static_cast<const clap_plugin_state_t*> (
+        plugin->get_extension (plugin, CLAP_EXT_STATE));
+    require (params != nullptr && state != nullptr, "CLAP restored extensions missing");
+    unsigned different = 0;
+    for (const auto& [id, expected] : expectedValues)
+    {
+        double value = 0.0;
+        require (params->get_value (plugin, id, &value), "CLAP fresh parameter read failed");
+        different += std::abs (value - expected) > 1.0e-7 ? 1u : 0u;
+    }
+    require (different >= 2, "CLAP state fixture must restore changed parameter values");
+
+    // CLAP's params.h preset scenario requires host.params.rescan when values
+    // change. The pinned JUCE wrapper translates programChanged into VALUES.
+    // CLAP 29ffcc273be7c7c651f6c9953b99e69700e2387a, ext/params.h;
+    // clap-juce-extensions c1a5ad025f95d01e03267857fa8276ebeed16500,
+    // src/wrapper/clap-juce-wrapper.cpp audioProcessorChanged/stateLoad.
+    // Its callback is synchronous on the main thread: a host saving there must
+    // see the complete transaction, without spinning on an unfinished write.
+    StateStream reentrantSnapshot;
+    host.loadedPlugin = plugin;
+    host.rescanSnapshot = &reentrantSnapshot;
+    host.rescanFlags = 0;
+    host.stateLoadInProgress = true;
+    saved.maximumTransfer = buffered ? 17 : std::numeric_limits<uint64_t>::max();
+    const bool loaded = state->load (plugin, &saved.input);
+    host.stateLoadInProgress = false;
+    serviceCallbacks (host, plugin);
+    require (loaded, "CLAP state load failed");
+    require ((host.rescanFlags & CLAP_PARAM_RESCAN_VALUES) != 0,
+             "CLAP state load changed values without a host rescan");
+    require (host.rescanOnMainThread && host.rescannedDuringLoad,
+             "CLAP state rescan did not run synchronously on the main thread");
+    require (host.rescanSaveSucceeded && reentrantSnapshot.bytes == saved.bytes,
+             "CLAP host rescan could not save the complete restored state");
+    host.rescanSnapshot = nullptr;
+    require (params->count (plugin) == expectedValues.size(),
+             "CLAP state load changed the parameter count");
+    for (const auto& [id, expected] : expectedValues)
+    {
+        double value = 0.0;
+        require (params->get_value (plugin, id, &value)
+                     && std::abs (value - expected) <= 1.0e-7,
+                 "CLAP restored parameter differs from its saved value");
+    }
+    StateStream restored;
+    require (state->save (plugin, &restored.output) && restored.bytes == saved.bytes,
+             "CLAP restored state is not byte-for-byte reproducible");
+
+    StateStream invalid;
+    invalid.bytes = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    host.rescanFlags = 0;
+    // JUCE's void restore API prevents the wrapper reporting malformed chunks
+    // as false. They must still leave the processor and host cache untouched.
+    state->load (plugin, &invalid.input);
+    serviceCallbacks (host, plugin);
+    StateStream afterInvalid;
+    require (host.rescanFlags == 0 && state->save (plugin, &afterInvalid.output)
+                 && afterInvalid.bytes == saved.bytes,
+             "CLAP rejected state changed values or notified the host");
+}
 } // namespace
 
 int main (int argc, char** argv)
@@ -186,6 +384,9 @@ int main (int argc, char** argv)
         require (hasFeature (*descriptor, CLAP_PLUGIN_FEATURE_INSTRUMENT)
                      && hasFeature (*descriptor, CLAP_PLUGIN_FEATURE_SYNTHESIZER),
                  "CLAP instrument/synthesizer features are missing");
+
+        testStateRoundTrip (factory, descriptor, false);
+        testStateRoundTrip (factory, descriptor, true);
 
         Host host;
         const auto* plugin = factory->create_plugin (factory, &host.clapHost, descriptor->id);
@@ -261,7 +462,7 @@ int main (int argc, char** argv)
         require (succeeded, "CLAP process returned an error");
         require (finite, "CLAP rendered non-finite audio");
         require (peak > 1.0e-5f, "CLAP rendered silence for a MIDI note");
-        std::cout << "CLAP descriptor, lifecycle and MIDI rendering passed (peak "
+        std::cout << "CLAP descriptor, state/rescan, lifecycle and MIDI rendering passed (peak "
                   << peak << ")\n";
         return 0;
     }

@@ -2160,36 +2160,44 @@ void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInByt
     // the audio thread may be inside process(), and the engine's parameter
     // structs are plain values it reads without synchronisation. The next
     // processBlock picks the restored patch up on the thread that owns them.
-    ScopedParameterWrite write { *this };
-    parameters.replaceState (state);
-    toneRecallGeneration.fetch_add (1, std::memory_order_release);
-    queuePitchBend (valueOf (ParameterIndex::pitchBend));
-    queueModulation (valueOf (ParameterIndex::modulation));
+    {
+        ScopedParameterWrite write { *this };
+        parameters.replaceState (state);
+        toneRecallGeneration.fetch_add (1, std::memory_order_release);
+        queuePitchBend (valueOf (ParameterIndex::pitchBend));
+        queueModulation (valueOf (ParameterIndex::modulation));
 
-    // The restored legacy values are the new baseline on both sides of the
-    // bridge. Without this the first tick after a restore reads them as a fresh
-    // edit and forwards them over the pair the session actually saved.
-    lastLegacyKeyMode = restoredKeyMode;
-    lastLegacyChorus = restoredChorusMode;
+        // The restored legacy values are the new baseline on both sides of the
+        // bridge. Without this the first tick after a restore reads them as a fresh
+        // edit and forwards them over the pair the session actually saved.
+        lastLegacyKeyMode = restoredKeyMode;
+        lastLegacyChorus = restoredChorusMode;
 
-    forwardedLegacyKeyMode.store (restoredKeyMode, std::memory_order_relaxed);
-    const int keyRestoreGeneration =
-        keyModeForwardGeneration.fetch_add (1, std::memory_order_release) + 1;
-    forwardedLegacyChorus.store (restoredChorusMode, std::memory_order_relaxed);
-    const int chorusRestoreGeneration =
-        chorusForwardGeneration.fetch_add (1, std::memory_order_release) + 1;
+        forwardedLegacyKeyMode.store (restoredKeyMode, std::memory_order_relaxed);
+        const int keyRestoreGeneration =
+            keyModeForwardGeneration.fetch_add (1, std::memory_order_release) + 1;
+        forwardedLegacyChorus.store (restoredChorusMode, std::memory_order_relaxed);
+        const int chorusRestoreGeneration =
+            chorusForwardGeneration.fetch_add (1, std::memory_order_release) + 1;
 
-    restoredLegacyKeyMode.store (restoredKeyMode, std::memory_order_relaxed);
-    restoredLegacyChorus.store (restoredChorusMode, std::memory_order_relaxed);
-    restoredKeyModeForwardGeneration.store (keyRestoreGeneration,
-                                             std::memory_order_relaxed);
-    restoredChorusForwardGeneration.store (chorusRestoreGeneration,
-                                            std::memory_order_relaxed);
-    reseedLegacyBridges.store (true, std::memory_order_release);
-    currentProgram.store (restoredProgram, std::memory_order_relaxed);
-    // Publish the parameter tree and its matching bridge baseline as one
-    // stable snapshot. Ending the write before the baseline was published let
-    // the audio thread briefly interpret a restore as fresh legacy automation.
+        restoredLegacyKeyMode.store (restoredKeyMode, std::memory_order_relaxed);
+        restoredLegacyChorus.store (restoredChorusMode, std::memory_order_relaxed);
+        restoredKeyModeForwardGeneration.store (keyRestoreGeneration,
+                                                 std::memory_order_relaxed);
+        restoredChorusForwardGeneration.store (chorusRestoreGeneration,
+                                                std::memory_order_relaxed);
+        reseedLegacyBridges.store (true, std::memory_order_release);
+        currentProgram.store (restoredProgram, std::memory_order_relaxed);
+        // Publish the parameter tree and its matching bridge baseline as one
+        // stable snapshot. Ending the write before the baseline was published let
+        // the audio thread briefly interpret a restore as fresh legacy automation.
+    }
+
+    // Hosts must invalidate cached parameter values after a state load. Notify
+    // after the transaction is published: a synchronous callback may save the
+    // just-restored state and must see its complete parameters and program.
+    updateHostDisplay (
+        juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
 }
 
 juce::AudioProcessorEditor* YouKnowAudioProcessor::createEditor()
