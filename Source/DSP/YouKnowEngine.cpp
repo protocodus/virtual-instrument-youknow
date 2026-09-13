@@ -32,6 +32,24 @@ namespace
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 6.28318530717958647692f;
 
+// RANGE drives both IC35's clock preset and IC2/6/10's analogue mux.
+// C54's charging resistor changes at the PF write, independently of the
+// synchronous clock's later reload. Roland prints R85/87/86 = 399/200/100 kOhm:
+// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13
+// The p.9 Miller-integrator description gives dV/dt = I/C, I proportional
+// to 1/R. This nominal ideal-switch relationship does not assign unmeasured
+// mux charge injection or custom-IC reset/saturation characteristics.
+constexpr double dcoChargingResistance(DcoRange range) noexcept
+{
+    switch (range)
+    {
+        case DcoRange::Sixteen: return 399000.0;
+        case DcoRange::Four:    return 100000.0;
+        case DcoRange::Eight:
+        default:               return 200000.0;
+    }
+}
+
 
 // Signal levels use the established 2.6 V-per-unit model coordinate so the
 // transconductor and BBD nonlinearities retain their existing drive. The
@@ -2692,6 +2710,22 @@ void YouKnowEngine::beginRangeClockTransition(
     for (auto& voice : voices_)
     {
         auto& dco = voice.dco;
+        if (dco.rampSlopePerSecond > 0.0)
+        {
+            // Preserve C54 charge and its frozen coordinate scale. Only
+            // charging current changes; the discharge transistor and a
+            // capacitor already held at its rail keep their state. Waiting
+            // for the next PIT reset incorrectly integrated the old current
+            // through the first part of a newly selected octave.
+            const double oldSlope = dco.rampSlopePerSecond;
+            dco.rampSlopePerSecond *= dcoChargingResistance(previous)
+                                   / dcoChargingResistance(next);
+            if (dco.saw.primed)
+                addSlope(dco.saw, static_cast<float>(
+                    (dco.rampSlopePerSecond - oldSlope)
+                    * static_cast<double>(dco.renderScale)
+                    / oversampledRate_), 1.0f);
+        }
         if (dco.pitState == Dco::PitState::stopped
             || !(dco.pitClocksToEvent > 0.0))
             continue;
@@ -7770,9 +7804,9 @@ float YouKnowEngine::rampCurrentScaleFor(
     // p. 13 prints the integrator as "C54 .001G" -- the G code is +/-2 % --
     // and the three range resistors as "399K MF / 200K MF / 100K MF",
     // metal film -- 399 kOhm, not the 400 kOhm an exact 2:1 against 200 kOhm
-    // would need, so the 16' ramp is 400/399 (+0.02 dB) taller than the
-    // range-independent code x divider product assumes; below audibility and
-    // left as the ledger's approximation. The +/-2 % capacitor class is therefore the anchored
+    // would need. dcoLaunchScale includes the resulting 400/399 nominal
+    // 16' factor separately from this card's component dispersion.
+    // The +/-2 % capacitor class is therefore the anchored
     // bound the dispersion sits inside (a 1 % film resistor adds 2.24 %
     // in quadrature); the former 0.03 was a voiced class with no part
     // behind it. Anchored bound, point at the bound's own class.
@@ -7967,7 +8001,14 @@ float YouKnowEngine::dcoLaunchScale(const Voice& voice) const noexcept
     const float scale = targetCode
                       * static_cast<float>(voice.dco.divider)
                       / dcoRampReferenceProduct;
-    return std::clamp(scale, 0.25f, 4.0f);
+    // Period is count/clock, so ramp height is proportional to
+    // code*count/(R*clock). R*clock agrees at 8' and 4'; the printed 399k
+    // at 16' leaves a 400/399 ratio. Apply it after the legacy CV/count
+    // bound, so that bound does not silently erase a real range relation.
+    const float rangeScale = activeParameters_.range == DcoRange::Sixteen
+        ? static_cast<float>(400000.0 / dcoChargingResistance(DcoRange::Sixteen))
+        : 1.0f;
+    return std::clamp(scale, 0.25f, 4.0f) * rangeScale;
 }
 
 bool YouKnowEngine::pulseMixEnabled(

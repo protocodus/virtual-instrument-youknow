@@ -103,7 +103,12 @@ struct YouKnowTestAccess
         // duty requested below and mislabel that mismatch as aliasing.
         const float unitScaleCode =
             YouKnowEngine::dcoRampReferenceProduct
-            / static_cast<float>(divider);
+            / static_cast<float>(divider)
+            // Keep this reconstruction-only fixture at its declared unit
+            // amplitude: the physical 16' 399k resistor now contributes
+            // 400/399 in dcoLaunchScale. Its actual ratio and switching
+            // current are qualified by YouKnow.DcoRange, not Fourier error.
+            * (range == DcoRange::Sixteen ? 399.0f / 400.0f : 1.0f);
         voice.dcoCv = unitScaleCode;
         voice.dcoCvTarget = unitScaleCode;
         voice.dco.renderScale = 1.0f;

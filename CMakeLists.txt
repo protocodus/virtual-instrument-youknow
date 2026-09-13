@@ -628,6 +628,11 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowPwmControlTests PRIVATE cxx_std_20)
     add_test(NAME YouKnow.PwmControl COMMAND YouKnowPwmControlTests)
 
+    add_executable(YouKnowDcoRangeTests Tests/YouKnowDcoRangeTests.cpp)
+    target_link_libraries(YouKnowDcoRangeTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowDcoRangeTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.DcoRange COMMAND YouKnowDcoRangeTests)
+
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowEngineTests PRIVATE cxx_std_20)
