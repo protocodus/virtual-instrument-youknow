@@ -116,6 +116,10 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   detailed resistor networks. Expect small envelope-tail and control-response
   changes plus about 0.35 dB more raw level; level-matched factory renders
   retain almost the same overall brightness. See [DAC research](#control-dac-circuitry).
+- More reliable keyboard releases, session recall and patch files: duplicate
+  on-screen presses no longer stick, non-finite state is rejected, CLAP hosts
+  refresh restored controls, and SysEx saves include the latest MIDI edits.
+  Saving an extensionless patch name also protects existing `.syx` files.
 
 [Full changes and compatibility details](#detailed-release-notes).
 
@@ -1003,6 +1007,14 @@ list, and overlapping presses of one pitch are counted so that the first
 matching Note Off does not release a later press — the A-5 keeps one bit per
 note and would release on the first Note Off.
 
+The on-screen keyboard tracks one held key per MIDI channel, matching its
+mouse/computer-key input, separately from counted host MIDI presses. Duplicate
+UI presses, queue overflow and transport reset must not strand a note or
+release a host-owned press of the same pitch. A quick UI tap waits for a
+block with audio samples, even when the host sends intervening zero-frame
+callbacks. Truncated channel messages and status bytes in channel-message
+data positions are ignored before dispatch.
+
 #### Host automation
 
 All tone controls and playing controls support host automation, including
@@ -1054,6 +1066,14 @@ and plug-in session have four chorus states — Off, I, II and I+II — using th
 two modern boolean parameters as a complete two-bit pair. The hardware tone
 field still has only three codes, so SAVE writes I+II as II and says so without
 changing the live/session state.
+
+File import accepts interleaved MIDI System Real-Time bytes and resumes at
+the next frame after malformed data. Export takes a coherent tone snapshot,
+including MIDI edits that are already sounding but await panel refresh.
+When SAVE adds `.syx` to a filename and that destination already exists,
+select the exact existing filename in the chooser to confirm replacement.
+Session loads reject non-finite parameter values before changing the current
+sound; successful loads notify the host to refresh its parameter display.
 
 ### Performance and quality
 
@@ -1442,6 +1462,18 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### Changes in 1.1.0
 
+- Corrected keyboard ownership and overflow recovery to prevent stuck UI
+  notes and accidental releases of overlapping host notes, including during
+  transport reset. Invalid channel MIDI is discarded before note/control
+  decoding, while valid events retain their sample timing.
+- SysEx import now accepts legal interleaved real-time bytes. Export includes
+  pending MIDI edits and reports the I+II-to-II conversion from the same
+  snapshot; adding a filename extension cannot silently overwrite a different
+  destination than the file chooser confirmed.
+- Corrupt session chunks containing non-finite parameter values leave the
+  current state intact. Restoring a session refreshes the CLAP host's cached
+  controls after the complete state transaction. Re-entering the displayed
+  maximum cutoff frequency preserves that displayed value.
 - Filter ENV/KEY calculations now retain the B-2 firmware's operand precision
   and partial-product carries through the final VCF DAC sum. The correction
   changes fine envelope/glide steps while preserving octave and full ENV
@@ -1911,6 +1943,29 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
+
+CI requires processor, VST3 bundle and CLAP bundle tests on macOS, Windows
+and Linux; Linux GUI fixtures run under Xvfb. The bundle tests exercise the
+public plugin interfaces, including state streams and host notifications.
+macOS also tests the freshly built Audio Unit by registering its factory
+inside the test process, without installing or scanning other plugins.
+Tagged releases depend on that complete CI run before signing and publishing.
+Packaging checks reject empty Linux payloads and preserve an existing Windows
+package when archive creation or verification fails.
+
+The September 13, 2026 macOS arm64 Release audit passed the processor and
+VST3/CLAP/AU bundle suites, all 23 packaging checks and the mocked release
+preflight. The rebuilt VST3 passed
+[pluginval 1.0.4](https://github.com/Tracktion/pluginval/releases/tag/v1.0.4)
+at strictness 10. [CLAP Validator 0.4.1](https://github.com/free-audio/clap-validator/releases/tag/0.4.1)
+reported 33 passes, 10 unsupported-feature skips and no failures, fixing the
+four baseline failures in state notification and parameter text conversion.
+One warning remains: the pinned JUCE CLAP wrapper reports a successful load
+for malformed nonempty state even when the processor rejects it; ABI tests
+verify that rejection preserves the current values and saved bytes. JUCE's
+void state-restore API has no result for the wrapper to forward. Native
+Windows/Linux CI, actual DAW sessions, and signed installer installation and
+upgrade checks still need to pass for the release candidate being sold.
 
 Local builds default to `1.1.0-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
