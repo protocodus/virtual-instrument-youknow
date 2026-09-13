@@ -1808,6 +1808,71 @@ void testDeferredKeyboardResetBalancesANewerUiPress()
     processor.releaseResources();
 }
 
+void testMalformedChannelMessagesAreIgnored()
+{
+    // MidiBuffer retains a truncated channel message; MidiMessage's status
+    // accessors assume its bytes are complete. Validate the adapter's raw
+    // view before constructing such a message or normalising a note run.
+    const std::array malformed {
+        std::vector<juce::uint8> { 0x80, 60 },
+        std::vector<juce::uint8> { 0x90, 60 },
+        std::vector<juce::uint8> { 0xb0, 64 },
+        std::vector<juce::uint8> { 0xc0 },
+        std::vector<juce::uint8> { 0xe0, 0 },
+        std::vector<juce::uint8> { 0x90, 60, 0x80 },
+        std::vector<juce::uint8> { 0xb0, 123, 0x80 },
+        std::vector<juce::uint8> { 0xc0, 0x80 },
+        std::vector<juce::uint8> { 0xe0, 0xff, 0x7f }
+    };
+    for (std::size_t index = 0; index < malformed.size(); ++index)
+    {
+        YouKnowAudioProcessor actual, reference;
+        for (auto* processor : { &actual, &reference })
+        {
+            processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
+            processor->prepareToPlay (sampleRate, blockSize);
+            setParameterValue (*processor, parameters::attack, 0.0f);
+            setParameterValue (*processor, parameters::sustain, 1.0f);
+            setParameterValue (*processor, parameters::release, 0.0f);
+        }
+        juce::AudioBuffer<float> actualBuffer (2, blockSize), referenceBuffer (2, blockSize);
+        for (auto* processor : { &actual, &reference })
+        {
+            juce::MidiBuffer note;
+            note.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            processor->processBlock (processor == &actual ? actualBuffer : referenceBuffer, note);
+        }
+        float difference = 0.0f;
+        for (int block = 0; block < 4; ++block)
+        {
+            juce::MidiBuffer bad, empty;
+            if (block == 0)
+                bad.addEvent (malformed[index].data(), static_cast<int> (malformed[index].size()), 0);
+            actual.processBlock (actualBuffer, bad);
+            reference.processBlock (referenceBuffer, empty);
+            difference = std::max (difference,
+                maximumBufferDifference (actualBuffer, referenceBuffer));
+            expect (bad.isEmpty(), "malformed MIDI leaked to the host output");
+        }
+        expect (difference == 0.0f,
+                "malformed channel message changed the instrument: fixture "
+                    + std::to_string (index));
+        for (auto* processor : { &actual, &reference })
+        {
+            juce::MidiBuffer off;
+            off.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+            auto& buffer = processor == &actual ? actualBuffer : referenceBuffer;
+            processor->processBlock (buffer, off);
+            renderBlocks (*processor, buffer, 32);
+            expect (processor->getActiveVoiceCount() == 0,
+                    "malformed MIDI added a phantom held press: fixture "
+                        + std::to_string (index));
+        }
+        actual.releaseResources();
+        reference.releaseResources();
+    }
+}
+
 void testDeferredQualitySwitchIsNotAutomatable()
 {
     // The engine holds a quality change until the output path is quiet, so an
@@ -8620,6 +8685,7 @@ int main()
         testMidiGlobalReleaseRetiresUiOwnership();
         testDroppedUiPressCannotReleaseAnExternalMidiNote();
         testDeferredKeyboardResetBalancesANewerUiPress();
+        testMalformedChannelMessagesAreIgnored();
         testAllNotesOffReleasesAndAllSoundOffCuts();
         testHoldLatchesOnAnyNonZeroValue();
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -8679,6 +8745,7 @@ int main()
     testMidiGlobalReleaseRetiresUiOwnership();
     testDroppedUiPressCannotReleaseAnExternalMidiNote();
     testDeferredKeyboardResetBalancesANewerUiPress();
+    testMalformedChannelMessagesAreIgnored();
     testDeferredQualitySwitchIsNotAutomatable();
     testVcfTanhSelectorDrivesTheEngine();
     testVcfFastEarlySelectorDrivesTheEngine();

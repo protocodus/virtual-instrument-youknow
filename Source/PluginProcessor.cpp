@@ -428,10 +428,26 @@ void overlayPendingMidiTone (
     }
 }
 
+[[nodiscard]] bool isCompleteMidiChannelEvent (
+    const juce::MidiMessageMetadata& event) noexcept
+{
+    if (event.data == nullptr || event.numBytes < 2
+        || event.data[0] < 0x80 || event.data[0] >= 0xf0)
+        return false;
+    const auto status = event.data[0] & 0xf0;
+    const int expectedBytes = status == 0xc0 || status == 0xd0 ? 2 : 3;
+    if (event.numBytes != expectedBytes)
+        return false;
+    for (int byte = 1; byte < expectedBytes; ++byte)
+        if (event.data[byte] >= 0x80)
+            return false;
+    return true;
+}
+
 [[nodiscard]] bool isMidiNoteEvent (
     const juce::MidiMessageMetadata& event) noexcept
 {
-    return event.data != nullptr && event.numBytes == 3 && event.data[1] < 128
+    return isCompleteMidiChannelEvent (event)
         && ((event.data[0] & 0xf0) == 0x80
             || (event.data[0] & 0xf0) == 0x90);
 }
@@ -1455,19 +1471,18 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             continue;
         }
 
-        // Every supported non-SysEx event is a one-, two- or three-byte MIDI
-        // message, which stays inside MidiMessage's inline storage. Ignore an
-        // unrelated long event rather than allocating merely to discover that
-        // the instrument does not handle it.
-        if (length > 3)
+        // MidiBuffer keeps truncated channel messages (findActualEventLength
+        // takes min(required, available)), whereas MidiMessage's accessors
+        // assume complete bytes. Reject bad lengths/data bytes before making
+        // an owning view; unsupported system events also need no copy here.
+        // https://github.com/juce-framework/JUCE/blob/2cdfca8feb300fb424002ba2c2751569e5bacb64/modules/juce_audio_basics/midi/juce_MidiBuffer.cpp#L55-L85
+        if (! isCompleteMidiChannelEvent (metadata))
             continue;
 
         const auto message = metadata.getMessage();
-        if (message.isNoteOn())
-            engine.noteOn (message.getNoteNumber(), message.getFloatVelocity());
-        else if (message.isNoteOff())
-            engine.noteOff (message.getNoteNumber());
-        else if (message.isAllSoundOff())
+        // Every valid note was handled by the adjacent-note run above.
+        // Avoid note accessors on two-byte program/channel-pressure events.
+        if (message.isAllSoundOff())
         {
             engine.allNotesOff();
             uiHeldNotes.fill (0);
