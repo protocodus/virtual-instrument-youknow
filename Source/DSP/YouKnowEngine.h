@@ -8,6 +8,7 @@
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
 #include "YouKnowControlDac.h"
+#include "YouKnowDcoTemperature.h"
 
 #include <array>
 #include <bit>
@@ -454,15 +455,28 @@ public:
     // No public plug-in parameter, preset byte or shipping default selects it.
     [[nodiscard]] bool configureCoupledMixer(
         const CoupledSubMixer::Calibration& calibration) noexcept;
-    // Comparison/calibration input for one already-settled instrument. Call
+    // Comparison/calibration reference frequency for one instrument. Call
     // before prepare(); retained across reset/prepare, never a preset or host
     // parameter. The 7.2..8.8 MHz engineering domain keeps the event walk
-    // bounded; it is NOT a measured resonator tolerance. No drift is generated.
+    // bounded; it is NOT a measured resonator tolerance. This setter alone
+    // generates no drift; the separately enabled temperature proxy can move
+    // the effective clock around this reference.
     [[nodiscard]] bool configureDcoMasterClockHz(double frequencyHz) noexcept;
     [[nodiscard]] double dcoMasterClockHz() const noexcept
     {
         return masterClockHz * dcoMasterClockRatio_;
     }
+    // Explicit component-substitute temperature shape. With it enabled, the
+    // configured master Hz is the frequency AT referenceCelsius (-20..80 C).
+    // Before prepare only; no curve or spread is claimed for the OEM KMFC.
+    [[nodiscard]] bool configureDcoTemperatureProxy(
+        bool enabled, double referenceCelsius) noexcept;
+    // Before prepare only. Settled starts the EXISTING shared thermal model
+    // at its asymptote, including the VCA, OTA headroom and temperature display.
+    [[nodiscard]] bool configureThermalStart(bool settled) noexcept;
+    // User-selected software startup time, not the original chassis's measured
+    // heating rate. 63.2% at 3 s; 95% at 9 s. Retains the existing 15 C rise.
+    static constexpr double thermalWarmupTimeConstantSeconds = 3.0;
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     // Audio-thread query for host event ordering. Counts include overlapping
@@ -514,8 +528,7 @@ public:
         // model applies -- ambient, at Character zero.
         return 25.0f
              + 15.0f * activeParameters_.calibration
-                     * (1.0f - std::exp(-static_cast<float>(
-                                            thermalWarmupSeconds_) / 900.0f));
+                     * thermalWarmupFraction_;
     }
     [[nodiscard]] float getDisplayRailDroopVolts() const noexcept
     {
@@ -1430,7 +1443,15 @@ public:
     // the engine's vcaInput node: H = 2.4 V / u_trim. The shape is odd, so
     // C59/C14/C12 see no new DC; I_tail scales with the envelope while V_d
     // does not, so the compression is the same at every envelope level; and
-    // u_trim contains no V_t, so the warm-up does not enter it. Predicted
+    // the stored u_trim is solved at a reference condition. This implementation
+    // holds the signal law at that reference; it does NOT establish physical
+    // temperature independence. After trimming, the divider stays fixed:
+    // V_t(T) widens the pair's input scale and, at fixed tail current, reduces
+    // small-signal gain as T_ref/T. A future temperature coupling must include
+    // both effects and the Tr20 current law, rather than re-trimming on every
+    // sample or merely widening H in H*tanh(v/H). General bipolar-pair law:
+    // https://www.ti.com/lit/ds/symlink/lm13700.pdf#page=9 (not a BA662 tempco).
+    // Reference-condition predicted
     // HD3 = u^2/12: -48.3 dBc at the trim level, -36.3 dBc at twice it and
     // about -30 dBc with -0.9 dB of compression on a full saw+pulse+sub
     // open-filter voice (6.8 V peak in the voiced mixer coordinate, OQ-15).
@@ -3001,7 +3022,12 @@ private:
     RateTransition rateTransition_ { RateTransition::Idle };
     float rateTransitionGain_ { 1.0f };
     float rateTransitionStep_ { 1.0f };
+    double dcoReferenceClockRatio_ { 1.0 };
     double dcoMasterClockRatio_ { 1.0 };
+    bool dcoTemperatureProxyEnabled_ { false };
+    double dcoTemperatureReferenceFactor_ { 1.0 };
+    float dcoClockTemperatureCelsius_ { -1000.0f };
+    void refreshDcoMasterClock() noexcept;
     [[nodiscard]] double actualRangeClockHz(DcoRange range) const noexcept
     {
         return rangeClockHz(range) * dcoMasterClockRatio_;
@@ -3278,10 +3304,12 @@ private:
     // physics: at a 48 kHz internal rate the freeze was at 512.0 s and
     // 31.51 C, which is exactly what `voiceEnergyFollowerSeconds` above
     // forbids for the same reason. In double the increment stays
-    // eight orders of magnitude above half an ULP and the 900 s law runs to
-    // completion at every rate.
+    // eight orders of magnitude above half an ULP. Keep this precision even
+    // with the accelerated 3 s startup, so session age still advances.
     double thermalWarmupSeconds_ { 0.0 };
-    // 1 - exp(-t/900), advanced once per internal sample beside the timer
+    bool thermalStartsSettled_ { false };
+    // 1 - (1-w0)*exp(-t/tau), where w0 is 1 for an explicitly settled start.
+    // Advanced once per internal sample beside the timer
     // above. It is chassis-wide, so recomputing it per voice recomputed the
     // same number six times.
     float thermalWarmupFraction_ { 0.0f };

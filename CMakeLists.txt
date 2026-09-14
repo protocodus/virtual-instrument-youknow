@@ -84,6 +84,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
+    Source/DSP/YouKnowDcoTemperature.h
     Source/DSP/YouKnowProductFidelity.h
     Source/DSP/YouKnowVcaControl.h
     Source/DSP/YouKnowCoupledMixer.h
@@ -641,6 +642,12 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowDcoClockTests PRIVATE cxx_std_20)
     add_test(NAME YouKnow.DcoClock COMMAND YouKnowDcoClockTests)
     set_tests_properties(YouKnow.DcoClock PROPERTIES TIMEOUT 90)
+
+    add_executable(YouKnowDcoTemperatureTests Tests/YouKnowDcoTemperatureTests.cpp)
+    target_link_libraries(YouKnowDcoTemperatureTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowDcoTemperatureTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.DcoTemperature COMMAND YouKnowDcoTemperatureTests)
+    set_tests_properties(YouKnow.DcoTemperature PROPERTIES TIMEOUT 90)
 
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)

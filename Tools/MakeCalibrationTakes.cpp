@@ -1167,9 +1167,13 @@ void selfTest()
     // Independently configure the engine's B switch coordinate. A product vs
     // nominal waveform difference alone could pass with the HPF still on A,
     // because their filter calibration and Unit Character also differ.
+    // Match the product's shared temperature proxy explicitly so that its
+    // changing DCO clock cannot masquerade as a different HPF circuit.
     auto expectedEngine = std::make_unique<YouKnowEngine>();
     require(expectedEngine->configureHighPassSwitch(110.0),
             "could not prepare the independent product HPF reference");
+    require(expectedEngine->configureDcoTemperatureProxy(true, 25.0),
+            "could not match the product HPF reference's temperature proxy");
     expectedEngine->selectConverterTimingProfile(
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     expectedEngine->prepare(renderSampleRate, 256, 4);

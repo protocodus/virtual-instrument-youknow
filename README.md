@@ -92,6 +92,9 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### 1.1.0 — unreleased
 
+- Shared DCO clock now follows the temperature model using a named Murata
+  component proxy. Startup uses a 3-second thermal time constant; voice-card
+  heat differences remain in the analog paths, and pitch movement is shared.
 - 144 presets: the original 128 factory tones plus 16 YouKnow bass and pad
   sounds, with preset navigation and hardware-format SysEx import/export.
 - VST3, CLAP and Standalone on macOS and Windows, plus Audio Unit on macOS.
@@ -841,11 +844,28 @@ saw peak and changes PWM at the physical comparator. The idle voice model
 also retains the resulting saw/pulse DC charge in C56/C50. Its periodic mean
 includes the existing finite linear discharge and +15 V supply limit; those
 remain compatibility models, not new measurements of the custom chip.
-The accepted 7.2–8.8 MHz range is an engineering test domain, not a hardware
-tolerance. The shipping reference remains exactly 8 MHz; no warm-up or random
-drift profile is inferred from the public recordings. The calibration-event
-renderer accepts the same frequency as its final optional argument, so a
-future verified value can be compared through the complete audio path.
+The accepted 7.2–8.8 MHz reference range is an engineering test domain, not a
+hardware tolerance. Raw-engine comparisons default to a fixed reference.
+The product now connects its shared temperature to the published
+[Murata CSA8.00MTZ temperature curve](https://www.homepages.ed.ac.uk/jwp/radio/projects/p16e9.pdf#page=11),
+an explicitly approximate substitute for the undocumented KMFC1034T1 curve.
+The reference is 8 MHz at 25°C. Normalizing the digitized percentage curve
+as `(1 + s(T)/100)/(1 + s(25)/100)` predicts +585.7 ppm, or +1.014 cents,
+at the model's 40°C asymptote with Unit Character 1. This is a component-proxy
+prediction, not an original-Juno measurement. The resonator reads the common
+chassis temperature; per-card heat offsets continue to affect analog voice
+circuits, never six separate DCO clocks.
+
+The existing 15°C rise now uses the user-requested **3-second time constant**
+(63.2% after 3 seconds, 95% after 9 seconds). This acceleration is a software
+startup choice, not a claim about the hardware's heating rate. Once the
+temperature settles, clock frequency settles too; no random pitch walk is
+added. `configureThermalStart(true)` starts the entire thermal model at its
+settled state immediately. Temperature and frequency survive host stops.
+`configureDcoTemperatureProxy(enabled, referenceCelsius)` permits an explicit
+reference temperature when a measured clock value is supplied. The calibration
+renderer retains fixed-clock comparisons and accepts final optional arguments
+`[master-Hz] [fixed-clock|csa8mtz-25c] [cold|settled]`.
 
 The [Kiwi-106 hardware-upgrade manual, p. 19](https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf#page=19)
 describes bass cancellation on some unison notes from the six waveforms’
@@ -862,22 +882,37 @@ statistics. The [AS3109 datasheet’s](https://www.alfatriode.lv/eng/sc/AS3109.p
 0.33%/°C is a typical frequency-control coefficient for a replacement IC,
 not an original 80017A residual-drift bound after the installed compensation.
 
+Temperature also affects voice timbre. The filter's nonlinear OTA headroom
+already follows absolute temperature, while the voice VCA's signal law is
+currently held at its service reference. A fixed physical VCA trim does not
+remove later temperature dependence: a bipolar pair's input scale grows with
+temperature and its small-signal gain falls as `1/T` at unchanged tail current
+([general OTA derivation](https://www.ti.com/lit/ds/symlink/lm13700.pdf#page=9)).
+Coupling that voice VCA requires both effects and a consistent Tr20 current
+model. Local ramp-current, capacitor and comparator changes can also alter
+saw amplitude and pulse width without independent DCO detune. Their installed
+temperature coefficients remain unknown. A static temperature gradient gives
+static differences; ongoing thermal movement requires changing conditions.
+
 The current Unit Character model’s `0.9992` recurrence at 375 updates/s,
 with uniform `±0.004` excitation, corresponds to a 3.332 s correlation time
 and approximately 2.425 cents stationary cutoff standard deviation at 100%.
-Its 15 °C/900 s chassis warm-up, spatial gradient and Aging profile remain
-voiced priors. The sample-count scheduler approximates 375 Hz when the
+Its 15 °C chassis rise, spatial gradient and Aging profile remain voiced priors;
+the 3-second thermal time constant is a user-selected software acceleration.
+The sample-count scheduler approximates 375 Hz when the
 processing rate is not an integer multiple. These numbers describe this
-implementation; they are not measurements of a typical Juno-106. The seeded VCF wander belongs to cutoff,
-not to a per-card DCO frequency offset.
+implementation; they are not measurements of a typical Juno-106. The seeded
+VCF wander is independent of temperature and belongs to cutoff, not to a
+per-card DCO frequency offset. It must not be counted again as an additional
+temperature-derived residual.
 
-An accurately calibrated future clock model should integrate **one continuous
-master phase**, using a measured reference frequency versus temperature,
-supply and age. Feed all PITs from that same phase and preserve their counts
-through changes. The separate CPU clock controls firmware cadence and needs
-its own measurement. A common DCO-clock change also changes the ramp’s
-available charging time at a fixed DAC current, so amplitude and PWM must
-follow the circuit rather than being renormalized automatically.
+The connected clock model advances **one common prescaler phase** and preserves
+PIT counts through temperature changes. A future calibration can replace the
+component proxy with measured reference frequency versus temperature, supply
+and age. The separate CPU clock controls firmware cadence and needs its own
+measurement. A common DCO-clock change also changes the ramp’s available
+charging time at a fixed DAC current, so amplitude and PWM follow the circuit
+rather than being renormalized automatically.
 
 A useful identification session records X2 frequency with a calibrated
 reference, dry DCO reset periods, local temperature and supply voltage over
@@ -885,9 +920,9 @@ repeated cold starts. Separate VCF self-oscillation captures identify analog
 filter drift. Voice-by-voice frequency residuals must be split into common
 clock movement, discrete count changes and measurement error. Audio recorded
 against an unreferenced interface clock cannot by itself establish absolute
-synthesizer drift. Until those measurements exist, retaining the 8 MHz
-nominal reference and labeling the analog character assumptions is more
-faithful than selecting arbitrary pitch-wander constants.
+synthesizer drift. Until those measurements exist, the 8 MHz reference,
+named component proxy and analog character assumptions remain explicitly
+separate from measured Juno calibration.
 
 #### Other methods assessed
 
@@ -1017,7 +1052,7 @@ declared ten-minute service state; the product adds these residuals to the
 measured card base), per-stage input offsets and capacitor staggering, slow cutoff
 wander, the two chorus lines' relative insertion
 offset inside the MN3009's ±4 dB row, and the chassis warm-up law
-`25 + 15(1 − e^{−t/900})` °C with its spatial gradient across the cards.
+`25 + 15(1 − e^{−t/3})` °C with its spatial gradient across the cards.
 These additional variations scale with the knob; the measured filter base
 and its DAC carry steps stay active at zero. Seeds are fixed, and the same
 patch renders identically every launch. Where a drawing or a procedure
@@ -1702,7 +1737,7 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   translinear gain cell's own law, and the data book's gain-versus-control
   graph draws its −25/25/75 °C lines fanning about 0 dB — so a stored VCA
   LEVEL's decibels shrink as the jack board warms over the chassis law's
-  900 s: a level reading −16.3 dB cold reads −15.5 dB at the asymptote,
+  accelerated 3-second time constant: a level reading −16.3 dB cold reads −15.5 dB at the asymptote,
   +4.7 dB reads +4.5 dB, and 0 dB never moves. Unit Character 0 holds the
   part at the data book's 25 °C condition.
 - The reported pulse duty is now the duty the comparator walk solves. Each

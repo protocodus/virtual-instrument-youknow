@@ -74,11 +74,13 @@ struct RenderOptions
     int oversampleFactor { 4 };
     bool rotary { false };
     double dcoMasterHz { 8000000.0 };
+    bool csa8MtzTemperatureProxy { false };
+    bool settledThermalStart { false };
 };
 
 RenderOptions readOptions(const std::vector<std::string>& arguments)
 {
-    if (arguments.size() > 10)
+    if (arguments.size() > 12)
         throw std::runtime_error("too many render options");
     const auto finiteRange = [](const std::string& text, float maximum, const char* label) {
         std::size_t used;
@@ -133,6 +135,10 @@ RenderOptions readOptions(const std::vector<std::string>& arguments)
             throw std::runtime_error("DCO master clock must be finite and in 7200000..8800000 Hz");
         result.dcoMasterHz = frequency;
     }
+    if (arguments.size() >= 11)
+        result.csa8MtzTemperatureProxy = choice(arguments[10], "fixed-clock", "csa8mtz-25c");
+    if (arguments.size() >= 12)
+        result.settledThermalStart = choice(arguments[11], "cold", "settled");
     return result;
 }
 
@@ -142,6 +148,10 @@ void prepareRenderEngine(YouKnowEngine& engine, const RenderOptions& options)
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     if (!engine.configureDcoMasterClockHz(options.dcoMasterHz))
         throw std::runtime_error("DCO master clock configuration was rejected");
+    if (!engine.configureDcoTemperatureProxy(options.csa8MtzTemperatureProxy, 25.0))
+        throw std::runtime_error("DCO temperature proxy configuration was rejected");
+    if (!engine.configureThermalStart(options.settledThermalStart))
+        throw std::runtime_error("thermal start configuration was rejected");
     engine.prepare(options.sampleRate, comparisonBlockSize, options.oversampleFactor);
 }
 
@@ -264,7 +274,9 @@ void selfTest()
         || !cardProfile.fixedServiceTrim || !cardProfile.referenceVcf
         || cardProfile.sampleRate != 192000u || cardProfile.oversampleFactor != 1
         || !cardProfile.rotary || defaults.dcoMasterHz != 8000000.0
-        || cardProfile.dcoMasterHz != defaults.dcoMasterHz)
+        || cardProfile.dcoMasterHz != defaults.dcoMasterHz
+        || defaults.csa8MtzTemperatureProxy || defaults.settledThermalStart
+        || cardProfile.csa8MtzTemperatureProxy || cardProfile.settledThermalStart)
         throw std::runtime_error("voice-card profile/rate/rotary options changed");
     const auto clockOptions = [](const std::string& frequency) {
         return std::vector<std::string> { "1", "shipping", "1", "nominal",
@@ -274,7 +286,8 @@ void selfTest()
     const double defaultEngineClock = defaultClockEngine.dcoMasterClockHz();
     prepareRenderEngine(defaultClockEngine, defaults);
     if (defaultEngineClock != 8000000.0
-        || defaultClockEngine.dcoMasterClockHz() != defaultEngineClock)
+        || defaultClockEngine.dcoMasterClockHz() != defaultEngineClock
+        || defaultClockEngine.getDisplayTemperatureC() != 25.0f)
         throw std::runtime_error("omitted DCO master clock changed the engine default");
     for (const auto* frequency : { "7200000", "8000000", "8800000", "8000123.125", "8.001e6" })
     {
@@ -283,6 +296,41 @@ void selfTest()
         prepareRenderEngine(clockEngine, options);
         if (std::abs(clockEngine.dcoMasterClockHz() - std::stod(frequency)) > 1.0e-8)
             throw std::runtime_error("DCO master clock option did not reach the prepared engine");
+    }
+    for (const bool proxy : { false, true })
+        for (const bool settled : { false, true })
+        {
+            auto arguments = clockOptions("8000000");
+            arguments.push_back(proxy ? "csa8mtz-25c" : "fixed-clock");
+            const auto defaultStart = readOptions(arguments);
+            if (defaultStart.csa8MtzTemperatureProxy != proxy || defaultStart.settledThermalStart)
+                throw std::runtime_error("clock profile changed the default cold start");
+            arguments.push_back(settled ? "settled" : "cold");
+            const auto options = readOptions(arguments);
+            if (options.csa8MtzTemperatureProxy != proxy || options.settledThermalStart != settled)
+                throw std::runtime_error("clock profile or thermal start option was lost");
+            YouKnowEngine clockEngine;
+            prepareRenderEngine(clockEngine, options);
+            // Independent catalog endpoint: interpolate the published shift
+            // at 25 C, then normalize 40 C against that reference ordinate.
+            const double expectedClock = proxy && settled
+                ? 8000000.0 * (1.0 + 0.0629 / 100.0) / (1.0 + 0.004325 / 100.0)
+                : 8000000.0;
+            if (std::abs(clockEngine.dcoMasterClockHz() - expectedClock) > 1.0e-7
+                || clockEngine.getDisplayTemperatureC() != (settled ? 40.0f : 25.0f))
+                throw std::runtime_error("clock profile or thermal start did not reach the engine");
+        }
+    for (const auto& suffix : std::vector<std::vector<std::string>> {
+             { "wrong" }, { "csa8mtz" }, { "fixed-clock", "warm" },
+             { "csa8mtz-25c", "" }, { "fixed-clock", "cold", "extra" } })
+    {
+        auto arguments = clockOptions("8000000");
+        arguments.insert(arguments.end(), suffix.begin(), suffix.end());
+        bool rejected = false;
+        try { (void) readOptions(arguments); }
+        catch (const std::exception&) { rejected = true; }
+        if (!rejected)
+            throw std::runtime_error("invalid clock profile or thermal start option was accepted");
     }
     for (const auto* frequency : { "", "nan", "inf", "-inf", "1e1000", "-8000000",
                                   "7199999.999", "8800000.001", "8000000junk",
@@ -451,14 +499,15 @@ void selfTest()
 int main(int argc, char** argv)
 {
     const bool selfCheck = argc == 2 && std::string(argv[1]) == "--self-test";
-    if (!selfCheck && (argc < 3 || argc > 13))
+    if (!selfCheck && (argc < 3 || argc > 15))
     {
         std::cerr << "usage: " << argv[0]
                   << " <seconds-hex-events.txt> <output.wav> [character 0..2]"
                      " [exact|shipping] [noise-scale 0..4] [nominal|a11-effective]"
                      " [dynamic|fixed-service] [nominal|serviced439522]"
                      " [sample-rate Hz] [oversample 1|2|4] [normal|rotary6]"
-                     " [dco-master-hz 7200000..8800000]\n";
+                     " [dco-master-hz 7200000..8800000]"
+                     " [fixed-clock|csa8mtz-25c] [cold|settled]\n";
         return 2;
     }
     try
@@ -536,7 +585,11 @@ int main(int argc, char** argv)
                   << ", VCF trim " << (options.fixedServiceTrim ? "fixed service" : "dynamic")
                   << ", VCF calibration " << (options.referenceVcf ? "serviced439522" : "nominal")
                   << ", allocation " << (options.rotary ? "test rotary6" : "normal")
-                  << ", DCO master " << std::setprecision(17) << engine.dcoMasterClockHz()
+                  << ", DCO profile " << (options.csa8MtzTemperatureProxy ? "csa8mtz-25c" : "fixed-clock")
+                  << ", thermal start " << (options.settledThermalStart ? "settled" : "cold")
+                  << ", DCO reference " << std::setprecision(17) << options.dcoMasterHz
+                  << (options.csa8MtzTemperatureProxy ? " Hz at 25 C" : " Hz")
+                  << ", effective DCO master " << engine.dcoMasterClockHz()
                   << std::setprecision(6) << " Hz"
                   << ", volume 1, peak "
                   << decibels(measure(audio).peak) << " dBFS\n";

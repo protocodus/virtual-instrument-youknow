@@ -508,8 +508,9 @@ void renderBlocks (YouKnowAudioProcessor& processor, juce::AudioBuffer<float>& b
 }
 
 // Read the public panel rather than sharing the product-profile helper under
-// test. The reference below selects each approved B coordinate explicitly, so
-// removing either selection from the processor cannot change its oracle too.
+// test. The reference below selects each approved circuit and temperature
+// profile explicitly, so removing a selection from the processor cannot
+// change its oracle too.
 EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& processor)
 {
     const auto patch = processor.currentPatch();
@@ -570,7 +571,8 @@ void testProductFidelitySurvivesHostLifecycle()
 {
     YouKnowAudioProcessor processor;
     // B/B, nominal-VCF/B, and B/legacy-HPF. The isolated alternatives prove
-    // that this musical probe actually detects each of the two selections.
+    // that this musical probe detects each filter selection. All three share
+    // the product's temperature proxy to keep those comparisons isolated.
     std::array<std::unique_ptr<YouKnowEngine>, 3> references;
     for (std::size_t index = 0; index < references.size(); ++index)
     {
@@ -578,6 +580,8 @@ void testProductFidelitySurvivesHostLifecycle()
         if (index != 2)
             expect (references[index]->configureHighPassSwitch (110.0),
                     "cannot configure the explicit HPF B reference");
+        expect (references[index]->configureDcoTemperatureProxy (true, 25.0),
+                "cannot configure the explicit product temperature reference");
         references[index]->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }
@@ -636,7 +640,7 @@ void testProductFidelitySurvivesHostLifecycle()
         }
         expect (finite, context + " produced non-finite product/reference audio");
         expect (differences[0] <= 1.0e-7f,
-                context + " lost the approved VCF/HPF B profile: peak difference "
+                context + " lost the approved VCF/HPF/temperature profile: peak difference "
                     + std::to_string (differences[0]));
         if (checkAlternatives)
         {

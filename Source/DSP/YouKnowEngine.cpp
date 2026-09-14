@@ -5568,10 +5568,12 @@ void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
     // untrimmed capacitor and temperature errors counts those errors twice.
     // Reuse the cascade's harmonic balance to set one fixed FREQ adjustment;
     // it never follows a played note, resonance edit or the running drift.
-    // Ten minutes is the declared reference within our provisional warm-up
-    // model, not a measurement of an original instrument's temperature.
+    // The software's accelerated warm-up is settled by the service procedure's
+    // ten-minute reference. Re-trim at that settled temperature, rather than
+    // retaining the old 900-second model's partly warmed calibration point.
     const auto& parameters = activeParameters_;
-    const double serviceWarmupFraction = 1.0 - std::exp(-600.0 / 900.0);
+    const double serviceWarmupFraction = 1.0
+        - std::exp(-600.0 / thermalWarmupTimeConstantSeconds);
     static const double nominalDroop = [] {
         std::array<double, 4> gains { 1.0, 1.0, 1.0, 1.0 };
         return limitCycleFor(2.4, otaHeadroomVolts,
@@ -6082,8 +6084,9 @@ void YouKnowEngine::reset()
     rateTransitionGain_ = 1.0f;
 
     thermalWarmupSeconds_ = 0.0;
-    thermalWarmupFraction_ = 0.0f;
-    jackBoardCelsius_ = 25.0f;
+    thermalWarmupFraction_ = thermalStartsSettled_ ? 1.0f : 0.0f;
+    jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
+    refreshDcoMasterClock();
     powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
     lfoRising_ = true;
@@ -6167,7 +6170,7 @@ void YouKnowEngine::resetForHostStop()
     // that resets on every transport stop is simply asking for a power cycle
     // each time. The reading taken here is that a transport stop is not one:
     // the modelled instrument is not switched off when the player stops the
-    // song, and a 900 s warm-up that restarts at every stop never runs at all.
+    // song. Even the accelerated software warm-up must survive transport stops.
     // `prepare()` remains the cold path, and it is the one a rate change,
     // a device change and a fresh instance all go through.
     const double warmupSeconds = thermalWarmupSeconds_;
@@ -6175,6 +6178,11 @@ void YouKnowEngine::resetForHostStop()
     reset();
     thermalWarmupSeconds_ = warmupSeconds;
     thermalWarmupFraction_ = warmupFraction;
+    jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
+    refreshDcoMasterClock();
+    // reset() primes the cleared voice nodes; prime again at the retained
+    // temperature so a host stop cannot leave cold-clock capacitor means.
+    primeStartupVoiceWaveNodes(activeParameters_);
 }
 
 // ---------------------------------------------------------------------------
@@ -6302,8 +6310,56 @@ bool YouKnowEngine::configureDcoMasterClockHz(double frequencyHz) noexcept
         || frequencyHz < 0.9 * masterClockHz
         || frequencyHz > 1.1 * masterClockHz)
         return false;
-    dcoMasterClockRatio_ = frequencyHz / masterClockHz;
+    dcoReferenceClockRatio_ = frequencyHz / masterClockHz;
+    dcoClockTemperatureCelsius_ = -1000.0f;
+    refreshDcoMasterClock();
     return true;
+}
+
+bool YouKnowEngine::configureDcoTemperatureProxy(
+    bool enabled, double referenceCelsius) noexcept
+{
+    if (prepared_ || !Csa8MtzTemperatureProxy::supports(referenceCelsius))
+        return false;
+    dcoTemperatureProxyEnabled_ = enabled;
+    dcoTemperatureReferenceFactor_ =
+        Csa8MtzTemperatureProxy::frequencyFactor(referenceCelsius);
+    dcoClockTemperatureCelsius_ = -1000.0f;
+    refreshDcoMasterClock();
+    return true;
+}
+
+bool YouKnowEngine::configureThermalStart(bool settled) noexcept
+{
+    if (prepared_)
+        return false;
+    thermalStartsSettled_ = settled;
+    thermalWarmupSeconds_ = 0.0;
+    thermalWarmupFraction_ = settled ? 1.0f : 0.0f;
+    jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
+    refreshDcoMasterClock();
+    return true;
+}
+
+void YouKnowEngine::refreshDcoMasterClock() noexcept
+{
+    if (!dcoTemperatureProxyEnabled_)
+    {
+        dcoMasterClockRatio_ = dcoReferenceClockRatio_;
+        return;
+    }
+    // One common chassis temperature approximates the ONE master resonator's
+    // local temperature. Voice-card spatial offsets must never produce six
+    // independent DCO clocks. The real IC38 thermal location is unmeasured.
+    const float temperature = jackBoardCelsius(activeParameters_);
+    if (temperature == dcoClockTemperatureCelsius_)
+        return;
+    dcoClockTemperatureCelsius_ = temperature;
+    dcoMasterClockRatio_ = dcoReferenceClockRatio_
+        * (Csa8MtzTemperatureProxy::frequencyFactor(temperature)
+           / dcoTemperatureReferenceFactor_);
+    // Change frequency only: PIT/IC35 clocks-remaining, C54 charge/current,
+    // finite reset seconds and all correction histories stay continuous.
 }
 
 bool YouKnowEngine::configureHighPassSwitch(double resistance) noexcept
@@ -6386,6 +6442,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
+    refreshDcoMasterClock();
     useCubicEarly_ =
         activeParameters_.vcfTanhMode != VcfTanhMode::Exact
         && activeParameters_.vcfFastEarlyMode == VcfFastEarlyMode::Cubic;
@@ -7302,9 +7359,12 @@ void YouKnowEngine::advanceLfoDelay(
 
 void YouKnowEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
 {
-    // A slow, bounded wander of the analogue control chain. It is deliberately
-    // small: the oscillators share one reference, so this instrument does not
-    // drift the way six free-running oscillators would.
+    // A voiced residual wander of the analogue control chain, independent of
+    // the temperature state. At 375 Hz this AR(1) prior has a 3.332 s
+    // correlation time and about 2.425 cents RMS cutoff movement at Character
+    // 1. Neither number is measured Juno thermal behavior. Do not add a second
+    // thermal wander on top without separating compensated cutoff response
+    // from this existing prior. The DCOs have a separate, shared clock.
     card.driftState = xorshift32(card.driftState);
     const float excitation =
         static_cast<float>(card.driftState & 0xffffu) * (2.0f / 65535.0f) - 1.0f;
@@ -7915,7 +7975,7 @@ float YouKnowEngine::cutoffAnalogCounts(
         + card.vcfServiceCvOffset;
     // The analogue side of the cutoff chain: the two per-voice trimmers --
     // one scales the control voltage, one offsets it -- imperfectly set, and
-    // the slow thermal wander, all riding below the converter's own
+    // the voiced residual wander, all riding below the converter's own
     // resolution on the slewed digital value. The final residual draws sit
     // within the service windows; their distribution remains voiced.
     // A sagging rail pulls the cutoff reference down with it. `calibration`
@@ -8299,7 +8359,9 @@ void YouKnowEngine::advanceThermalWarmup() noexcept
     // for the same exponential of the same elapsed time is the same answer at
     // six times the price.
     thermalWarmupFraction_ =
-        1.0f - std::exp(-static_cast<float>(thermalWarmupSeconds_) / 900.0f);
+        thermalStartsSettled_ ? 1.0f
+            : 1.0f - std::exp(-static_cast<float>(thermalWarmupSeconds_)
+                / static_cast<float>(thermalWarmupTimeConstantSeconds));
 }
 
 float YouKnowEngine::dynamicOtaHeadroomVolts(
@@ -8776,8 +8838,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
 
     // One shared event walk owns the M82C53 half-cycles, C54 ramp and
     // comparator. The timer divides the one configured ceramic-resonator
-    // reference (nominal 8 MHz by default). Card temperature has no independent
-    // DCO pitch term; no unmeasured clock drift profile is generated.
+    // reference (nominal 8 MHz before the optional common temperature proxy).
+    // Card temperature has no independent DCO pitch term.
     const float thresholdVolts = voice.pulseThresholdVolts;
     const float previousThresholdVolts = voice.pulseThresholdPrimed
         ? voice.previousPulseThresholdVolts : thresholdVolts;
@@ -8924,7 +8986,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
             : coupled * filterInputAttenuation * voice.inputCompensation;
     const float filterInput =
         compensatedDrive + microscopicNoise * noiseRateScale_;
-    // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C.
+    // V_t(T) = k * T / q, driven by the accelerated software temperature model.
     const float dynamicHeadroom =
         dynamicOtaHeadroomVolts(parameters, voice.cardIndex);
     // The same gradient enters through the control path's coefficient. Its
@@ -9421,6 +9483,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             YOUKNOW_COUNT_DOMAIN_WORK(internalFrames, 1);
             YOUKNOW_COUNT_DOMAIN_WORK(scanPolls, 1);
 #endif
+            // Hold one physical clock rate throughout this internal interval,
+            // before converter/PIT phase queries, for every voice and IC35.
+            // advanceThermalWarmup() later computes the next interval's T.
+            refreshDcoMasterClock();
             struct PhysicalPassiveHoldEvent
             {
                 bool active { false };
@@ -9477,7 +9543,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 converterNextPassPortamentoUpdated_ = false;
                 // The common VCA's control constant is proportional to
                 // absolute temperature (patchLevelGain), and the chassis
-                // warms on a 900 s exponential. Resample it here, with the
+                // follows the accelerated thermal model. Resample it here, with the
                 // pass that writes the VCA's own control byte: reading it
                 // once per callback instead would make the level depend on
                 // how the host partitions its blocks, and reading it every
@@ -9948,6 +10014,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // advance that one physical divider once after every card consumes
             // this interval.
             advanceRangeClock(parameters.range);
+            // Publish the next boundary's temperature only after all voices
+            // and the shared prescaler consumed the preceding clock rate.
+            refreshDcoMasterClock();
             displayEnvelope_ = loudestEnvelope;
 
             // The POLY/unison handler gated and cleared at the host event.

@@ -1671,13 +1671,14 @@ struct YouKnowTestAccess
     // Places the chassis at a point on its own warm-up law -- the timer and
     // the fraction the render reads off it, together -- so a fixture can
     // compare the cold instrument with the warm one without rendering the
-    // 900 s between them.
+    // elapsed interval between them.
     static void setThermalWarmupSeconds(YouKnowEngine& engine,
                                         double seconds) noexcept
     {
         engine.thermalWarmupSeconds_ = seconds;
         engine.thermalWarmupFraction_ =
-            1.0f - std::exp(-static_cast<float>(seconds) / 900.0f);
+            1.0f - std::exp(-static_cast<float>(seconds)
+                / static_cast<float>(YouKnowEngine::thermalWarmupTimeConstantSeconds));
     }
 
     static void startServiceCalibrationVoice(YouKnowEngine& engine,
@@ -1686,8 +1687,7 @@ struct YouKnowTestAccess
         // Service p. 19 isolates each card after ten minutes. Suppress only
         // random control wander while measuring its fixed trim; the entire
         // oscillator/filter/VCA/output pipeline still renders normally.
-        engine.thermalWarmupSeconds_ = 600.0;
-        engine.thermalWarmupFraction_ = 1.0f - std::exp(-600.0f / 900.0f);
+        setThermalWarmupSeconds(engine, 600.0);
         engine.driftControlCountdown_ = 1000000000;
         for (auto& voiceCard : engine.cards_)
             voiceCard.driftValue = 0.0f;
@@ -1718,8 +1718,8 @@ struct YouKnowTestAccess
     // calls, once per internal sample. It reads `inverseOversampledRate_`, so
     // the increment is whatever rate `prepare()` selected -- a fixture driving
     // this is exercising the rate dependence, not assuming it away. It skips
-    // the surrounding render work and nothing else, which is what makes a
-    // fifteen-minute warm-up affordable in a unit test.
+    // the surrounding render work and nothing else, so the thermal law and
+    // elapsed-time precision can be tested independently of filter cost.
     static void advanceThermalWarmup(YouKnowEngine& engine,
                                      long long internalSamples) noexcept
     {
@@ -12971,11 +12971,10 @@ void testRailDroopTracksLoadAtOneWallClockRate()
 
 void testThermalWarmupClockRunsToCompletionAtEveryRate()
 {
-    // The chassis warm-up is wall-clock physics: T(t) = 25 + 15(1 - e^-t/900),
-    // with the 15 C rise scaled by Unit Character. Nothing about it belongs to
-    // the numerical grid, and the comment on `voiceEnergyFollowerSeconds`
-    // in `YouKnowEngine.h` says so in words for the supply follower --
-    // a quality setting is not allowed to change what the supply does.
+    // The user-selected warm-up scenario is T(t) = 25 + 15(1 - e^-t/3),
+    // with the 15 C rise scaled by Unit Character. Three seconds is a product
+    // choice, not measured Juno thermal data. A quality setting must not
+    // change this elapsed-time law.
     //
     // What this fences is the accumulator, not the law. The timer is advanced
     // once per *internal* sample, so its increment is 5.208e-6 s at a 192 kHz
@@ -12983,9 +12982,11 @@ void testThermalWarmupClockRunsToCompletionAtEveryRate()
     // increment on a power-of-two boundary and every further addition rounds
     // away: the clock stopped dead at 128.0 s, and which boundary caught it
     // depended on the internal rate `prepare()` had selected -- 128.0 s with
-    // HQ on, 512.0 s with it off. The modelled chassis therefore froze at
-    // 26.99 C or at 31.51 C according to a quality switch, and never reached
-    // the 34.48 C its own law asks for.
+    // HQ on, 512.0 s with it off. Temperature now reaches its asymptote before
+    // either boundary, so a temperature-only check would hide that bug. The
+    // separate boundary tests below inspect the elapsed timer itself.
+    expect(YouKnowEngine::thermalWarmupTimeConstantSeconds == 3.0,
+           "the configured warm-up time constant is not the requested three seconds");
     struct Configuration
     {
         double hostRate;
@@ -13005,24 +13006,17 @@ void testThermalWarmupClockRunsToCompletionAtEveryRate()
         { 192000.0, true, "192 kHz HQ on" },
     };
 
-    struct Mark
-    {
-        double seconds;
-        double celsius;
+    // Independent analytic marks include the time constant itself, where
+    // 1 - 1/e of the rise has completed, and three/six time constants.
+    constexpr double marks[] { 1.0, 3.0, 9.0, 18.0 };
+    const auto temperatureAt = [](double seconds) {
+        return 25.0 + 15.0 * (1.0 - std::exp(-seconds / 3.0));
     };
-    // The law's own values. 128 s and 300 s are on the rise; 900 s is the time
-    // constant, where the rise has run 1 - 1/e of its course.
-    const Mark marks[] = {
-        { 128.0, 26.9886 },
-        { 300.0, 29.2520 },
-        { 900.0, 34.4818 },
-    };
-    constexpr double celsiusTolerance = 0.05;
+    constexpr double celsiusTolerance = 0.0001;
     // Unit Character 1.0: getDisplayTemperatureC() scales the rise by
     // `calibration`, so the targets above are that setting's law and no
     // other's. The spatial gradient is off because the headroom target below
-    // is the chassis mean's -- with the gradient on, card 0 sits about 4 C
-    // hotter and reads 6.6542 V.
+    // is the chassis mean's; card 0 otherwise carries a separate 4 C offset.
     const auto fixtureParameters = [] {
         auto parameters = plainPatch();
         parameters.calibration = 1.0f;
@@ -13033,7 +13027,6 @@ void testThermalWarmupClockRunsToCompletionAtEveryRate()
     constexpr std::size_t markCount = std::size(marks);
     constexpr std::size_t configurationCount = std::size(configurations);
     std::array<std::array<double, markCount>, configurationCount> readings {};
-    std::array<double, configurationCount> headroomAt900 {};
 
     for (std::size_t index = 0; index < configurationCount; ++index)
     {
@@ -13050,29 +13043,47 @@ void testThermalWarmupClockRunsToCompletionAtEveryRate()
         for (std::size_t mark = 0; mark < markCount; ++mark)
         {
             const long long target =
-                std::llround(marks[mark].seconds * internalRate);
+                std::llround(marks[mark] * internalRate);
             YouKnowTestAccess::advanceThermalWarmup(engine,
                                                        target - advanced);
             advanced = target;
             readings[index][mark] = engine.getDisplayTemperatureC();
-            expectNear(readings[index][mark], marks[mark].celsius,
+            const double expectedTemperature = temperatureAt(marks[mark]);
+            expectNear(readings[index][mark], expectedTemperature,
                        celsiusTolerance,
                        std::string("the warm-up clock does not reach the "
                                    "modelled temperature at t = ")
                            + std::to_string(static_cast<int>(
-                                 marks[mark].seconds))
+                                 marks[mark]))
                            + " s at " + configuration.name);
+            // Independent differential-pair scale and the 68k/560 divider:
+            // H(T)=2*0.026*(T+273.15)/298.15 / (560/68560).
+            const double expectedHeadroom = 2.0 * 0.026
+                * (expectedTemperature + 273.15) / 298.15
+                / (560.0 / 68560.0);
+            expectNear(YouKnowTestAccess::otaHeadroomVolts(engine, parameters, 0),
+                       expectedHeadroom, 2e-6,
+                       std::string("OTA headroom misses the analytic temperature at ")
+                           + configuration.name);
         }
 
-        headroomAt900[index] =
-            YouKnowTestAccess::otaHeadroomVolts(engine, parameters, 0);
-        // 2 Vt(T) / stageAttenuation at 34.4818 C, in module-node volts. It is
-        // the number the cascade is actually solved with, so the 2.5% error a
-        // frozen clock left in it was a real error on hot patches.
-        expectNear(headroomAt900[index], 6.5687, 0.001,
-                   std::string("the modelled OTA headroom at 900 s is not the "
-                               "warm chassis value at ")
-                       + configuration.name);
+        // Seed immediately before the historical float precision boundaries,
+        // then execute real sample increments across them. This catches a
+        // narrowed accumulator without spending minutes warming an already
+        // settled temperature. The late point also qualifies long sessions.
+        for (double boundary : { 128.0, 512.0, 1048576.0 })
+        {
+            const double start = boundary - 0.0625;
+            YouKnowTestAccess::setThermalWarmupSeconds(engine, start);
+            const long long intervals = std::llround(0.25 * internalRate);
+            YouKnowTestAccess::advanceThermalWarmup(engine, intervals);
+            expectNear(YouKnowTestAccess::thermalWarmupSeconds(engine),
+                       start + intervals / internalRate, 0.00002,
+                       std::string("elapsed thermal time stalls or changes rate at ")
+                           + std::to_string(boundary) + " s, " + configuration.name);
+            expectNear(engine.getDisplayTemperatureC(), 40.0, 0.00001,
+                       "long-session clock precision changed the settled temperature");
+        }
     }
 
     for (std::size_t mark = 0; mark < markCount; ++mark)
@@ -13087,7 +13098,7 @@ void testThermalWarmupClockRunsToCompletionAtEveryRate()
         expect(highest - lowest <= 0.01,
                std::string("the quality setting moves the modelled chassis "
                            "temperature at t = ")
-                   + std::to_string(static_cast<int>(marks[mark].seconds))
+                   + std::to_string(static_cast<int>(marks[mark]))
                    + " s (spread " + std::to_string(highest - lowest)
                    + " C across 48 kHz HQ on/off, 96 kHz HQ on and 192 kHz "
                      "HQ on)");
@@ -13476,25 +13487,41 @@ void testVcaLevelGainWarmsWithTheChassis()
             energy / static_cast<double>(rendered.left.size() - from));
     };
 
-    // A million seconds is the asymptote: 1 - exp(-1111) is exactly one.
+    // A million seconds is numerically at the three-second law's asymptote.
     constexpr double asymptote = 1.0e6;
     const double cold = levelDb(renderWarmedTo(1.0f, 0.0));
     const double warm = levelDb(renderWarmedTo(1.0f, asymptote));
     expect(cold > -90.0, "fixture: the quiet sub is not above the noise floor ("
                              + std::to_string(cold) + " dBFS)");
-    const double expected = 20.0 * std::log10(
+    const double endpointChange = 20.0 * std::log10(
         YouKnowEngine::patchLevelGain(0.0f, 40.0f)
         / YouKnowEngine::patchLevelGain(0.0f, 25.0f));
     // Independent p.13/p.15 nominal DC solve: at DAC zero IC28a holds
     // 15*(10k/39k) V. GC1=(hold/3700+15/15000)/(1/3700+1/47+1/15000)
     // is 0.0943622253 V, giving -15.9935975 dB at NEC's 5.9 mV/dB and
     // +0.7660992 dB after the 298.15/313.15 thermal ratio is applied.
-    expectNear(expected, 0.7660992, 0.01,
+    expectNear(endpointChange, 0.7660992, 0.01,
                "fixture: the law does not put +0.7661 dB on stored byte 0 at "
                "40 C");
+    // The cold take is already warming over the measured 0.5..1.0 s window.
+    // Average squared gain, matching the RMS detector, using the independent
+    // DC solve above and the requested three-second temperature law. Treating
+    // this whole window as 25 C would overstate the expected audio difference.
+    constexpr double levelAt25C = -15.9935975;
+    double coldGainSquared = 0.0;
+    for (int sample = samples / 2; sample < samples; ++sample)
+    {
+        const double seconds = (sample + 0.5) / sampleRate;
+        const double celsius = 25.0 + 15.0 * (1.0 - std::exp(-seconds / 3.0));
+        const double gainDb = levelAt25C * 298.15 / (celsius + 273.15);
+        coldGainSquared += std::pow(10.0, gainDb / 10.0);
+    }
+    coldGainSquared /= samples - samples / 2;
+    const double expected = levelAt25C * 298.15 / 313.15
+                          - 10.0 * std::log10(coldGainSquared);
     expectNear(warm - cold, expected, 0.02,
                "a quiet VCA LEVEL does not grow by the warm control constant "
-               "between t = 0 and the warm-up asymptote");
+               "between the measured cold-start window and the warm-up asymptote");
 
     const auto nominalCold = renderWarmedTo(0.0f, 0.0);
     const auto nominalWarm = renderWarmedTo(0.0f, asymptote);
