@@ -5,6 +5,7 @@
 #include "RealismComparisonSupport.h"
 
 #include <iostream>
+#include <iomanip>
 #include <chrono>
 #include <stdexcept>
 
@@ -72,11 +73,12 @@ struct RenderOptions
     std::uint32_t sampleRate { comparisonSampleRate };
     int oversampleFactor { 4 };
     bool rotary { false };
+    double dcoMasterHz { 8000000.0 };
 };
 
 RenderOptions readOptions(const std::vector<std::string>& arguments)
 {
-    if (arguments.size() > 9)
+    if (arguments.size() > 10)
         throw std::runtime_error("too many render options");
     const auto finiteRange = [](const std::string& text, float maximum, const char* label) {
         std::size_t used;
@@ -121,7 +123,26 @@ RenderOptions readOptions(const std::vector<std::string>& arguments)
     }
     if (arguments.size() >= 9)
         result.rotary = choice(arguments[8], "normal", "rotary6");
+    if (arguments.size() >= 10)
+    {
+        const auto& text = arguments[9];
+        std::size_t used;
+        const double frequency = std::stod(text, &used);
+        if (used != text.size() || text.find_first_of(" \t\n\r\f\v") != std::string::npos
+            || !std::isfinite(frequency) || frequency < 7200000.0 || frequency > 8800000.0)
+            throw std::runtime_error("DCO master clock must be finite and in 7200000..8800000 Hz");
+        result.dcoMasterHz = frequency;
+    }
     return result;
+}
+
+void prepareRenderEngine(YouKnowEngine& engine, const RenderOptions& options)
+{
+    engine.selectConverterTimingProfile(
+        YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+    if (!engine.configureDcoMasterClockHz(options.dcoMasterHz))
+        throw std::runtime_error("DCO master clock configuration was rejected");
+    engine.prepare(options.sampleRate, comparisonBlockSize, options.oversampleFactor);
 }
 
 EngineParameters parametersFor(const sysex::Patch& patch, float character,
@@ -242,8 +263,42 @@ void selfTest()
         || defaults.oversampleFactor != 4 || defaults.rotary || legacy.fixedServiceTrim
         || !cardProfile.fixedServiceTrim || !cardProfile.referenceVcf
         || cardProfile.sampleRate != 192000u || cardProfile.oversampleFactor != 1
-        || !cardProfile.rotary)
+        || !cardProfile.rotary || defaults.dcoMasterHz != 8000000.0
+        || cardProfile.dcoMasterHz != defaults.dcoMasterHz)
         throw std::runtime_error("voice-card profile/rate/rotary options changed");
+    const auto clockOptions = [](const std::string& frequency) {
+        return std::vector<std::string> { "1", "shipping", "1", "nominal",
+            "fixed-service", "nominal", "48000", "1", "normal", frequency };
+    };
+    YouKnowEngine defaultClockEngine;
+    const double defaultEngineClock = defaultClockEngine.dcoMasterClockHz();
+    prepareRenderEngine(defaultClockEngine, defaults);
+    if (defaultEngineClock != 8000000.0
+        || defaultClockEngine.dcoMasterClockHz() != defaultEngineClock)
+        throw std::runtime_error("omitted DCO master clock changed the engine default");
+    for (const auto* frequency : { "7200000", "8000000", "8800000", "8000123.125", "8.001e6" })
+    {
+        const auto options = readOptions(clockOptions(frequency));
+        YouKnowEngine clockEngine;
+        prepareRenderEngine(clockEngine, options);
+        if (std::abs(clockEngine.dcoMasterClockHz() - std::stod(frequency)) > 1.0e-8)
+            throw std::runtime_error("DCO master clock option did not reach the prepared engine");
+    }
+    for (const auto* frequency : { "", "nan", "inf", "-inf", "1e1000", "-8000000",
+                                  "7199999.999", "8800000.001", "8000000junk",
+                                  " 8000000", "8000000 " })
+    {
+        bool rejected = false;
+        try { (void) readOptions(clockOptions(frequency)); }
+        catch (const std::exception&) { rejected = true; }
+        if (!rejected)
+            throw std::runtime_error("invalid DCO master clock option was accepted");
+    }
+    bool configuredTooLateRejected = false;
+    try { prepareRenderEngine(defaultClockEngine, defaults); }
+    catch (const std::runtime_error&) { configuredTooLateRejected = true; }
+    if (!configuredTooLateRejected)
+        throw std::runtime_error("renderer ignored a rejected DCO master clock configuration");
     for (const auto& invalid : std::vector<std::vector<std::string>> {
              { "0", "shipping", "1", "nominal", "fixed-service", "wrong" },
              { "0", "shipping", "1", "nominal", "dynamic", "nominal", "7999" },
@@ -251,7 +306,8 @@ void selfTest()
              { "0", "shipping", "1", "nominal", "dynamic", "nominal", "768001" },
              { "0", "shipping", "1", "nominal", "dynamic", "nominal", "192000", "3" },
              { "0", "shipping", "1", "nominal", "dynamic", "nominal", "192000", "1", "wrong" },
-             { "0", "shipping", "1", "nominal", "dynamic", "nominal", "192000", "1", "normal", "extra" } })
+             { "0", "shipping", "1", "nominal", "dynamic", "nominal", "192000", "1", "normal", "extra" },
+             { "0", "shipping", "1", "nominal", "dynamic", "nominal", "192000", "1", "normal", "8000000", "extra" } })
     {
         bool rejected = false;
         try { (void) readOptions(invalid); }
@@ -395,13 +451,14 @@ void selfTest()
 int main(int argc, char** argv)
 {
     const bool selfCheck = argc == 2 && std::string(argv[1]) == "--self-test";
-    if (!selfCheck && (argc < 3 || argc > 12))
+    if (!selfCheck && (argc < 3 || argc > 13))
     {
         std::cerr << "usage: " << argv[0]
                   << " <seconds-hex-events.txt> <output.wav> [character 0..2]"
                      " [exact|shipping] [noise-scale 0..4] [nominal|a11-effective]"
                      " [dynamic|fixed-service] [nominal|serviced439522]"
-                     " [sample-rate Hz] [oversample 1|2|4] [normal|rotary6]\n";
+                     " [sample-rate Hz] [oversample 1|2|4] [normal|rotary6]"
+                     " [dco-master-hz 7200000..8800000]\n";
         return 2;
     }
     try
@@ -417,9 +474,7 @@ int main(int argc, char** argv)
             throw std::runtime_error("cannot open event file");
         const auto events = readEvents(input, options.sampleRate);
         YouKnowEngine engine;
-        engine.selectConverterTimingProfile(
-            YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
-        engine.prepare(options.sampleRate, comparisonBlockSize, options.oversampleFactor);
+        prepareRenderEngine(engine, options);
         sysex::Patch patch;
         bool havePatch = false;
         StereoBuffer audio;
@@ -481,6 +536,8 @@ int main(int argc, char** argv)
                   << ", VCF trim " << (options.fixedServiceTrim ? "fixed service" : "dynamic")
                   << ", VCF calibration " << (options.referenceVcf ? "serviced439522" : "nominal")
                   << ", allocation " << (options.rotary ? "test rotary6" : "normal")
+                  << ", DCO master " << std::setprecision(17) << engine.dcoMasterClockHz()
+                  << std::setprecision(6) << " Hz"
                   << ", volume 1, peak "
                   << decibels(measure(audio).peak) << " dBFS\n";
     }

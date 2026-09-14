@@ -832,6 +832,21 @@ inverter and actual loading: the catalogue's MT test uses CD4069UBE at 12 V,
 and its 30 pF values do not establish Juno C109's value. This offline tool
 does not supply a warm-up curve or change the instrument's tuning parameters.
 
+The engine's comparison-only `configureDcoMasterClockHz()` accepts a settled
+reference frequency before `prepare()`. It changes the shared prescaler and
+all six DCO timers, while keeping firmware count/CV words and the separate
+CPU cadence unchanged. Charging current and finite reset duration retain
+their existing model values: a faster reference shortens the rise, lowers the
+saw peak and changes PWM at the physical comparator. The idle voice model
+also retains the resulting saw/pulse DC charge in C56/C50. Its periodic mean
+includes the existing finite linear discharge and +15 V supply limit; those
+remain compatibility models, not new measurements of the custom chip.
+The accepted 7.2–8.8 MHz range is an engineering test domain, not a hardware
+tolerance. The shipping reference remains exactly 8 MHz; no warm-up or random
+drift profile is inferred from the public recordings. The calibration-event
+renderer accepts the same frequency as its final optional argument, so a
+future verified value can be compared through the complete audio path.
+
 The [Kiwi-106 hardware-upgrade manual, p. 19](https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf#page=19)
 describes bass cancellation on some unison notes from the six waveforms’
 relative phases, despite their stable common tuning. Preserving timer state,

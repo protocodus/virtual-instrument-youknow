@@ -454,6 +454,15 @@ public:
     // No public plug-in parameter, preset byte or shipping default selects it.
     [[nodiscard]] bool configureCoupledMixer(
         const CoupledSubMixer::Calibration& calibration) noexcept;
+    // Comparison/calibration input for one already-settled instrument. Call
+    // before prepare(); retained across reset/prepare, never a preset or host
+    // parameter. The 7.2..8.8 MHz engineering domain keeps the event walk
+    // bounded; it is NOT a measured resonator tolerance. No drift is generated.
+    [[nodiscard]] bool configureDcoMasterClockHz(double frequencyHz) noexcept;
+    [[nodiscard]] double dcoMasterClockHz() const noexcept
+    {
+        return masterClockHz * dcoMasterClockRatio_;
+    }
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     // Audio-thread query for host event ordering. Counts include overlapping
@@ -526,7 +535,7 @@ public:
     // evidence that would close each one still voiced.
     // ------------------------------------------------------------------
 
-    // Counter clock the range divider feeds the note timer: the 8 MHz master
+    // Nominal clock the range divider feeds the note timer: the 8 MHz master
     // divided by 8, 4 or 2 for 16', 8' and 4'.
     [[nodiscard]] static double rangeClockHz(DcoRange range) noexcept;
     // One B-2 pitch conversion produces both values which the voice CPU later
@@ -1575,9 +1584,9 @@ private:
     // One 8 MHz ceramic resonator (Roland 12389728 / KMFC1034T1, service
     // parts list p. 4) feeds every voice's note timer. Equal counts therefore
     // have equal steady frequency; staggered updates can still change phase.
-    // Common reference drift is physically possible, but no calibrated trace
-    // or installed-part tempco establishes its magnitude. Hold this nominal
-    // coordinate; do not invent six independent oscillator pitch walks.
+    // No installed-part measurement establishes a different shipping value.
+    // Keep this nominal coordinate for firmware tables and charging current;
+    // configureDcoMasterClockHz supplies a separate physical timer frequency.
     static constexpr double masterClockHz = 8000000.0;
     // IC29 executes one state every 250 ns. The recovered pitch-write paths
     // below are timed in these states, independently of the selected DCO clock.
@@ -2005,6 +2014,10 @@ private:
         // handoff may make the retained old-cycle remainder longer than one
         // newly selected period.
         double pitClocksToEvent { 0.0 };
+        // Nominal count/clock period in processing samples. This coordinate
+        // normalises the established CV-to-current and finite-reset model;
+        // actual timer period is this divided by dcoMasterClockRatio_. Do not
+        // renormalise current when changing the physical reference frequency.
         double periodSamples { 100.0 };
         // Linear C54 compatibility model. Positive OUT starts the discharge;
         // its exact transistor waveform remains unmeasured, so the established
@@ -2844,6 +2857,13 @@ private:
     [[nodiscard]] static float rampCurrentScaleFor(
         const VoiceCard& card, float calibration) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
+    struct SteadyDcoCycle
+    {
+        double periodSeconds, resetSeconds, slopeVoltsPerSecond, peakVolts;
+    };
+    [[nodiscard]] SteadyDcoCycle steadyDcoCycle(const Voice& voice) const noexcept;
+    [[nodiscard]] float steadyDcoPulseDuty(const Voice& voice) const noexcept;
+    [[nodiscard]] float steadyDcoSawMean(const Voice& voice) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
     // so it follows the shared held threshold for inactive cards as well.
     void updatePulseComparator(Voice& voice,
@@ -2981,8 +3001,13 @@ private:
     RateTransition rateTransition_ { RateTransition::Idle };
     float rateTransitionGain_ { 1.0f };
     float rateTransitionStep_ { 1.0f };
+    double dcoMasterClockRatio_ { 1.0 };
+    [[nodiscard]] double actualRangeClockHz(DcoRange range) const noexcept
+    {
+        return rangeClockHz(range) * dcoMasterClockRatio_;
+    }
     // IC35 terminal carry makes TP5 fall, and every M82C53 counts on that
-    // falling edge. One raw 8 MHz tick later IC35 synchronously reloads; TP5
+    // falling edge. One raw master-clock tick later IC35 synchronously reloads; TP5
     // then rises after propagation. Keep those phases separate so PIT /WR
     // ties are compared with the former and PF RANGE writes with the latter.
     // Both countdowns use periods of the currently requested range clock and

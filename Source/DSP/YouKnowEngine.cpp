@@ -2655,6 +2655,9 @@ void YouKnowEngine::beginDcoCharge(
     dco.rampValue = -1.0;
     dco.resetSecondsRemaining = 0.0;
     dco.renderScale = dcoLaunchScale(voice);
+    // Use the NOMINAL count period to retain the established charging
+    // current at this CV/range. The physical clock only schedules reset:
+    // faster ticks shorten this rise without increasing its derivative.
     const double periodSeconds = std::max(
         dco.periodSamples / oversampledRate_, 1.0e-12);
     const double resetSeconds = static_cast<double>(
@@ -2685,8 +2688,8 @@ void YouKnowEngine::beginRangeClockTransition(
     if (previous == next)
         return;
 
-    const double previousClockHz = rangeClockHz(previous);
-    const double nextClockHz = rangeClockHz(next);
+    const double previousClockHz = actualRangeClockHz(previous);
+    const double nextClockHz = actualRangeClockHz(next);
     const double rateRatio = nextClockHz / previousClockHz;
     const double clockTolerance = std::max(
         1.0e-15, (1.0 / oversampledRate_) * 1.0e-9) * previousClockHz;
@@ -2694,7 +2697,7 @@ void YouKnowEngine::beginRangeClockTransition(
     double oldClocksToReload = rangeClockClocksToReload_;
     if (!rangeClockTransitionPending_)
     {
-        const double rawTickClocks = previousClockHz / masterClockHz;
+        const double rawTickClocks = rangeClockHz(previous) / masterClockHz;
         const double highClocks = 1.0 - rawTickClocks;
         // At exact reload equality, the old preset wins before the PF write.
         // The new preset is therefore captured at the following reload. This
@@ -2708,7 +2711,7 @@ void YouKnowEngine::beginRangeClockTransition(
     const bool fallingBeforeReload =
         oldClocksToFalling + clockTolerance < oldClocksToReload;
     const double newClocksToReload = oldClocksToReload * rateRatio;
-    const double newRawTickClocks = nextClockHz / masterClockHz;
+    const double newRawTickClocks = rangeClockHz(next) / masterClockHz;
     const double firstNewFallingAfterReload =
         newClocksToReload + 1.0 - newRawTickClocks;
     const double newClocksToFalling = fallingBeforeReload
@@ -2756,7 +2759,7 @@ void YouKnowEngine::beginRangeClockTransition(
 double YouKnowEngine::rangeClockClocksToNextFallingEdge(
     double elapsedSeconds, DcoRange range) const noexcept
 {
-    const double clockHz = rangeClockHz(range);
+    const double clockHz = actualRangeClockHz(range);
     const double clocksAdvanced = std::max(0.0, elapsedSeconds) * clockHz;
     const double clockTolerance = std::max(
         1.0e-15, (1.0 / oversampledRate_) * 1.0e-9) * clockHz;
@@ -2791,12 +2794,12 @@ double YouKnowEngine::rangeClockClocksToNextFallingEdge(
     const double clocksAfterReload =
         std::max(0.0, clocksAdvanced - rangeClockClocksToReload_);
     return stablePhase(
-        1.0 - clockHz / masterClockHz - clocksAfterReload);
+        1.0 - rangeClockHz(range) / masterClockHz - clocksAfterReload);
 }
 
 void YouKnowEngine::advanceRangeClock(DcoRange range) noexcept
 {
-    const double clockHz = rangeClockHz(range);
+    const double clockHz = actualRangeClockHz(range);
     const double intervalSeconds = 1.0 / oversampledRate_;
     const double clockTolerance = std::max(
         1.0e-15, intervalSeconds * 1.0e-9) * clockHz;
@@ -6293,6 +6296,16 @@ bool YouKnowEngine::configureCoupledMixer(
     return true;
 }
 
+bool YouKnowEngine::configureDcoMasterClockHz(double frequencyHz) noexcept
+{
+    if (prepared_ || !std::isfinite(frequencyHz)
+        || frequencyHz < 0.9 * masterClockHz
+        || frequencyHz > 1.1 * masterClockHz)
+        return false;
+    dcoMasterClockRatio_ = frequencyHz / masterClockHz;
+    return true;
+}
+
 bool YouKnowEngine::configureHighPassSwitch(double resistance) noexcept
 {
     if (prepared_ || !std::isfinite(resistance) || resistance < 50 || resistance > 1000)
@@ -8068,7 +8081,6 @@ void YouKnowEngine::updatePulseComparator(
     // different amplitude than the rendered ramp put the solved edges on a
     // waveform that did not exist.
     const float cardCurrent = voice.rampCurrentScale;
-    const float amplitudeScale = voice.dco.renderScale * cardCurrent;
     // ADJUSTMENT s. 10 (p. 19) is a joint window: the one shared VR31 puts
     // CH1 at exactly 50 % with PWM at 5, and every other card is accepted
     // within 48-52 % as it stands, ramp error and comparator error together.
@@ -8098,11 +8110,68 @@ void YouKnowEngine::updatePulseComparator(
     // 6 V reported 0.5098 where the render holds exactly 0.5, and
     // pulseWaveNodeMean then primed C56/C50 and drove the freewheel mean with
     // 0.118 V of DC the rendered comparator never carries -- a false C56 step
-    // at note-on and on resume. The floor therefore moves with the offset:
-    // 6 V * rampCurrentScale * (1 - 2 netDuty), which is 6 V again at Unit
-    // Character 0.
-    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale,
-                                   6.0f + thresholdOffset);
+    // at note-on and on resume. The physical-mean helper therefore uses this
+    // threshold directly, including a card offset above the shared 6 V hold.
+    voice.pulseDuty = steadyDcoPulseDuty(voice);
+}
+
+YouKnowEngine::SteadyDcoCycle YouKnowEngine::steadyDcoCycle(
+    const Voice& voice) const noexcept
+{
+    // Roland's DCO description (p.9) separates fixed-CV charging through the
+    // RANGE resistor from timer-edge discharge and comparator threshold:
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
+    // This is the settled mean of our existing finite-linear reset/+15 V
+    // compatibility model, not a measured MC5534 reset shape. Count/CV writes
+    // still use the physical event walk, never this periodic approximation.
+    const double nominalPeriod = std::max(
+        voice.dco.periodSamples / oversampledRate_, 1.0e-12);
+    const double reset = static_cast<double>(resetFraction(nominalPeriod))
+                       * nominalPeriod;
+    const double period = nominalPeriod / dcoMasterClockRatio_;
+    const double slope = static_cast<double>(rampAmplitudeVolts)
+        * voice.dco.renderScale * voice.rampCurrentScale
+        / (nominalPeriod - reset);
+    return { period, reset, slope,
+             std::min(15.0, slope * (period - reset)) };
+}
+
+float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
+{
+    const float threshold = voice.pulseThresholdVolts;
+    if (threshold < 0.0f)
+        return 1.0f;
+    const float nominalPeak = rampAmplitudeVolts
+        * (voice.dco.renderScale * voice.rampCurrentScale);
+    // Retain the ordinary nominal float arithmetic. Unlike the public slider
+    // helper, the physical comparator must neither re-clamp an already frozen
+    // ramp scale nor clamp a real card threshold to the shared hold ceiling.
+    if (dcoMasterClockRatio_ == 1.0 && nominalPeak <= 15.0f)
+        return std::clamp(1.0f - threshold / nominalPeak, 0.0f, 1.0f);
+    const auto cycle = steadyDcoCycle(voice);
+    if (threshold > cycle.peakVolts)
+        return 0.0f;
+    const double highSeconds = std::max(0.0, cycle.periodSeconds
+        - cycle.resetSeconds - threshold / cycle.slopeVoltsPerSecond)
+        + cycle.resetSeconds * (1.0 - threshold / cycle.peakVolts);
+    return static_cast<float>(std::clamp(
+        highSeconds / cycle.periodSeconds, 0.0, 1.0));
+}
+
+float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
+{
+    const float nominalPeak = rampAmplitudeVolts
+        * (voice.dco.renderScale * voice.rampCurrentScale);
+    if (dcoMasterClockRatio_ == 1.0 && nominalPeak <= 15.0f)
+        return sawMixVolts * voice.rampCurrentScale
+             * (voice.dco.renderScale - 1.0f);
+    const auto cycle = steadyDcoCycle(voice);
+    const double riseSeconds = cycle.peakVolts / cycle.slopeVoltsPerSecond;
+    // Triangle rise + finite linear fall + any supply-held plateau.
+    const double meanVolts = cycle.peakVolts * (1.0
+        - 0.5 * (riseSeconds + cycle.resetSeconds) / cycle.periodSeconds);
+    return static_cast<float>(sawMixVolts
+        * (meanVolts / (0.5 * rampAmplitudeVolts) - voice.rampCurrentScale));
 }
 
 void YouKnowEngine::primeStartupVoiceWaveNodes(
@@ -8111,9 +8180,9 @@ void YouKnowEngine::primeStartupVoiceWaveNodes(
     // A restored pre-audio snapshot describes a powered, already-settled
     // instrument. Prime the WAVE-node coupling capacitor at the periodic
     // source's DC mean so Pulse Off's documented constant-high comparator does
-    // not become a fabricated power-on thump on the first note. Saw is
-    // bipolar; the sub is a half-wave current whose mean equals its AC
-    // amplitude; the pulse mean is level * (2*duty - 1), including +level
+    // not become a fabricated power-on thump on the first note. The saw's
+    // finite charge time can move its mean; sub is a half-wave current whose
+    // mean equals its AC amplitude; pulse mean is level * (2*duty - 1), including +level
     // for the pinned-high off state.
     for (auto& voice : voices_)
         primeVoiceWaveNode(voice, parameters);
@@ -8200,7 +8269,8 @@ void YouKnowEngine::primeVoiceWaveNode(
     voice.pulseThresholdPrimed = true;
     voice.moduleCoupling.state = static_cast<double>(
         pulseWaveNodeMean(voice, parameters)
-        + subWaveNodeMean(voice, parameters));
+        + subWaveNodeMean(voice, parameters)
+        + (parameters.sawEnabled ? steadyDcoSawMean(voice) : 0.0f));
     if (coupledMixerEnabled_)
     {
         const auto& c = coupledMixerCalibration_;
@@ -8208,7 +8278,8 @@ void YouKnowEngine::primeVoiceWaveNode(
         // This is not a claim about power-on charge or the nonlinear periodic
         // mean; the audit allows settling before measuring steady windows.
         voice.coupledMixer.prime(c,
-            c.sourceBiasVolts + c.sourceScale * pulseWaveNodeMean(voice, parameters),
+            c.sourceBiasVolts + c.sourceScale * (pulseWaveNodeMean(voice, parameters)
+                + (parameters.sawEnabled ? steadyDcoSawMean(voice) : 0.0f)),
             CoupledSubMixer::railFullScaleVolts * subCv_, 0.5);
     }
 }
@@ -8265,7 +8336,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
     // correction-table grid, but large enough to absorb final-operation ULPs.
     const double eventToleranceSeconds = std::max(
         1.0e-15, intervalSeconds * 1.0e-9);
-    const double pitClockHz = rangeClockHz(range);
+    const double pitClockHz = actualRangeClockHz(range);
     const double thresholdStart = std::isfinite(previousThresholdVolts)
         ? static_cast<double>(previousThresholdVolts) : 6.0;
     const double thresholdEnd = std::isfinite(thresholdVolts)
@@ -8616,7 +8687,7 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
     // inaudible BLEP or filter solve. Above 100 Hz use the exact duty mean: at
     // the low 8 kHz processing boundary this also avoids sampling a >Nyquist
     // comparator into false DC, while the omitted capacitor ripple is bounded
-    // to about 45 mV at the crossover and falls with frequency. Regressions
+    // to about 45 mV for pulse at the crossover and falls with frequency. Regressions
     // compare both the lowest pitch and the >1-cycle/sample extreme to Exact.
     // The legacy A/B path (both node couplings off) deliberately retains its
     // former frozen state. The sub's half-wave mean sits on the same node
@@ -8625,28 +8696,39 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
     // SUB level as a C56 step.
     const bool trackPulseNode = activeParameters_.enablePulseOffWaveNodeCoupling;
     const bool trackSubNode = activeParameters_.enableSubHalfWaveNodeCoupling;
-    if (trackPulseNode || trackSubNode)
+    const bool trackSawNode = activeParameters_.sawEnabled
+                           && (trackPulseNode || trackSubNode);
+    if (trackPulseNode || trackSubNode || trackSawNode)
     {
+        auto& dco = voice.dco;
+        const double totalScale = static_cast<double>(dco.renderScale)
+                                * static_cast<double>(voice.rampCurrentScale);
+        const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
+                               * totalScale * (dco.rampValue + 1.0);
+        constexpr double endpointTrackingMaximumHz = 100.0;
+        const double carrierHz = oversampledRate_ * dcoMasterClockRatio_
+            / std::max(dco.periodSamples, 1.0);
         float pulseNode = 0.0f;
         if (trackPulseNode)
         {
-            auto& dco = voice.dco;
-            const double totalScale = static_cast<double>(dco.renderScale)
-                                    * static_cast<double>(voice.rampCurrentScale);
-            const double rampVolts = 0.5 * static_cast<double>(rampAmplitudeVolts)
-                                   * totalScale * (dco.rampValue + 1.0);
             dco.pulseState = voice.pulsePinnedHigh
                           || rampVolts >= voice.pulseThresholdVolts
                            ? 1.0f : -1.0f;
-            constexpr double endpointTrackingMaximumHz = 100.0;
-            const double carrierHz = oversampledRate_
-                / std::max(dco.periodSamples, 1.0);
             pulseNode = carrierHz <= endpointTrackingMaximumHz
                 ? dco.pulseState * pulseMixVolts
                 : pulseWaveNodeMean(voice, activeParameters_);
         }
+        // A common-clock offset changes ramp height at fixed current, hence
+        // also the saw's DC mean. Retain its C56 charge behind the shut VCA,
+        // including the smaller nominal CV/count ripple. Low notes use the
+        // physical endpoint; high notes use the finite-reset/rail cycle mean.
+        const float sawNode = !trackSawNode ? 0.0f
+            : carrierHz <= endpointTrackingMaximumHz
+                ? static_cast<float>(sawMixVolts
+                    * (rampVolts / (0.5 * rampAmplitudeVolts) - voice.rampCurrentScale))
+                : steadyDcoSawMean(voice);
         static_cast<void>(voice.moduleCoupling.process(
-            pulseNode + subWaveNodeMean(voice, activeParameters_),
+            pulseNode + subWaveNodeMean(voice, activeParameters_) + sawNode,
             moduleCouplingG_, 0.0f, 1.0f));
         if (trackPulseNode)
         {
@@ -8693,9 +8775,9 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     };
 
     // One shared event walk owns the M82C53 half-cycles, C54 ramp and
-    // comparator. The timer divides the shared ceramic-resonator reference,
-    // held nominal here. Card temperature has no independent DCO pitch term;
-    // unmeasured common-reference drift is a separate model gap.
+    // comparator. The timer divides the one configured ceramic-resonator
+    // reference (nominal 8 MHz by default). Card temperature has no independent
+    // DCO pitch term; no unmeasured clock drift profile is generated.
     const float thresholdVolts = voice.pulseThresholdVolts;
     const float previousThresholdVolts = voice.pulseThresholdPrimed
         ? voice.previousPulseThresholdVolts : thresholdVolts;

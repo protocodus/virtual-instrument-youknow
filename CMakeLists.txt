@@ -636,6 +636,12 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowDcoRangeTests PRIVATE cxx_std_20)
     add_test(NAME YouKnow.DcoRange COMMAND YouKnowDcoRangeTests)
 
+    add_executable(YouKnowDcoClockTests Tests/YouKnowDcoClockTests.cpp)
+    target_link_libraries(YouKnowDcoClockTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowDcoClockTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.DcoClock COMMAND YouKnowDcoClockTests)
+    set_tests_properties(YouKnow.DcoClock PROPERTIES TIMEOUT 90)
+
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowEngineTests PRIVATE cxx_std_20)
