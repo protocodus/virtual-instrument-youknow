@@ -954,6 +954,44 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
     muteDriveMatrix[0][0] -= dt / (muteDriveSinkOhms * muteDriveNodeFarads);
     chain.muteDriveConductingTransition = matrixExponential(muteDriveMatrix);
+
+    for (std::size_t index = 0; index < chain.clockMuteTransitions.size(); ++index)
+    {
+        const bool tr5Conducting = (index & 2u) != 0;
+        const bool diodeConducting = (index & 1u) != 0;
+        auto& circuit = chain.clockMuteTransitions[index];
+        auto& a = circuit.generator;
+        const double sink = tr5Conducting ? 1.0 / muteDriveSinkOhms : 0.0;
+        const double diode = diodeConducting ? 1.0 / clockMuteDiodeSeriesOhms : 0.0;
+        const double branch = 1.0 / clockMuteBypassOhms + diode;
+        const double clockDown = 2.0 / (clockMuteBaseOhms + clockMuteEmitterOhms);
+        const double junctionCurrent = diode * muteDriveJunctionVolts;
+        // Current C15 -> C16 is (Vc-Vn)/R47 + max(Vc-Vn-Vj,0)/R41.
+        // Its sign reverses in the two capacitor equations. Both base-divider
+        // paths are present even though only one clock clamp would stop audio.
+        a[0] = {{ -(pullUp + series + sink + branch) / muteDriveNodeFarads,
+                    series / muteDriveNodeFarads, branch / muteDriveNodeFarads,
+                    (muteDriveRailVolts * (pullUp - sink) - junctionCurrent)
+                        / muteDriveNodeFarads }};
+        a[1] = {{ series / muteDriveHoldFarads, -(series + lower) / muteDriveHoldFarads,
+                    0.0, -muteDriveRailVolts * lower / muteDriveHoldFarads }};
+        a[2] = {{ branch / clockMuteFarads, 0.0, -(branch + clockDown) / clockMuteFarads,
+                    (junctionCurrent - muteDriveRailVolts * clockDown) / clockMuteFarads }};
+        FixedMatrix<3> dcMatrix {}, dcDrive {}, dcSolution {};
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+                dcMatrix[row][column] = a[row][column];
+            dcDrive[row][0] = -a[row][3];
+        }
+        if (matrixSolve(dcMatrix, dcDrive, dcSolution))
+            for (std::size_t row = 0; row < 3; ++row)
+                circuit.equilibrium[row] = dcSolution[row][0];
+        for (auto& row : a)
+            for (double& value : row)
+                value *= dt;
+        circuit.transition = matrixExponential(a);
+    }
     return chain;
 }
 
@@ -1336,6 +1374,9 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveNodeVolts_);
     muteDriveMuted_ = true;
     muteDriveEnabled_ = false;
+    clockMuteVolts_ = -muteDriveRailVolts;
+    clockMuteEnabled_ = false;
+    clocksStopped_ = false;
 }
 
 float Chorus::lineInsertionGainDraw() noexcept
@@ -1362,7 +1403,10 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
     // Until the wet-mute glide has decayed to exactly zero -- or before the
     // first process() call has primed the settings -- the full path still
     // contributes audible wet, so the caller must keep running it.
-    if (!primed_ || wetGain_ != 0.0f)
+    // This comparison circuit preserves stopped bucket charge and all analog
+    // filter coordinates. The old skip deliberately discards that history;
+    // keep ordinary support evolution here (clock=0 already skips BBD shifts).
+    if (!primed_ || wetGain_ != 0.0f || clockMuteEnabled_)
         return false;
 
     // Muting the return does not disconnect C16/C13 from their drive circuit
@@ -1385,6 +1429,11 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
 
 void Chorus::advanceMuteDrive(bool commandMute) noexcept
 {
+    if (clockMuteEnabled_)
+    {
+        advanceClockMuteDrive(commandMute);
+        return;
+    }
     // Both command states retain the two physical capacitor coordinates.
     // Only the prepared conductance matrix and its DC equilibrium switch;
     // there is no charge reset when Tr5 begins conducting through R46.
@@ -1400,6 +1449,70 @@ void Chorus::advanceMuteDrive(bool commandMute) noexcept
     muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
 }
 
+void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
+{
+    using State = std::array<double, 4>;
+    State state {{ muteDriveNodeVolts_, muteDriveHoldVolts_, clockMuteVolts_, 1.0 }};
+    const auto apply = [](const FixedMatrix<4>& matrix, const State& input) {
+        State result {};
+        for (std::size_t row = 0; row < 4; ++row)
+            for (std::size_t column = 0; column < 4; ++column)
+                result[row] += matrix[row][column] * input[column];
+        return result;
+    };
+    // Fractional intervals are needed only at a D3 conduction crossing.
+    // A 12-term exponential action is converged on the supported >=8 kHz
+    // grid (fastest RC ~0.7 ms), without constructing matrices on the callback.
+    const auto fractional = [&](const FixedMatrix<4>& generator,
+                                const State& input, double fraction) {
+        State result = input;
+        State term = input;
+        for (int order = 1; order <= 12; ++order)
+        {
+            term = apply(generator, term);
+            for (std::size_t row = 0; row < 4; ++row)
+            {
+                term[row] *= fraction / order;
+                result[row] += term[row];
+            }
+        }
+        return result;
+    };
+    const auto diodeVoltage = [](const State& value) {
+        return value[2] - value[0] - muteDriveJunctionVolts;
+    };
+    const bool diodeConducting = diodeVoltage(state) > 0.0;
+    const std::size_t base = commandMute ? 0u : 2u;
+    const auto& circuit = support_.clockMuteTransitions[base + (diodeConducting ? 1u : 0u)];
+    const State candidate = apply(circuit.transition, state);
+    if ((diodeVoltage(candidate) > 0.0) != diodeConducting)
+    {
+        // Locate the physical diode crossing within the sample and continue
+        // with the other conductance matrix, preserving all capacitor charge.
+        double lower = 0.0, upper = 1.0;
+        for (int iteration = 0; iteration < 32; ++iteration)
+        {
+            const double middle = 0.5 * (lower + upper);
+            const auto value = fractional(circuit.generator, state, middle);
+            if ((diodeVoltage(value) > 0.0) == diodeConducting)
+                lower = middle;
+            else
+                upper = middle;
+        }
+        const double crossing = 0.5 * (lower + upper);
+        state = fractional(circuit.generator, state, crossing);
+        const auto& next = support_.clockMuteTransitions[base + (diodeConducting ? 0u : 1u)];
+        state = fractional(next.generator, state, 1.0 - crossing);
+    }
+    else
+        state = candidate;
+    muteDriveNodeVolts_ = state[0];
+    muteDriveHoldVolts_ = state[1];
+    clockMuteVolts_ = state[2];
+    muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
+    clocksStopped_ = clockMuteVolts_ >= clockMuteThresholdVolts;
+}
+
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
                      bool enableClockBleed,
@@ -1409,7 +1522,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableNarrowOneTwo,
                      bool enableMuteDrive,
                      bool enableLineGainSpread,
-                     ChorusTimingProfile timingProfile) noexcept
+                     ChorusTimingProfile timingProfile,
+                     bool enableClockMuteCircuit) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -1431,6 +1545,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const auto target = settingsFor(mode, timingProfile);
 
     const bool commandMute = mode == ChorusMode::Off;
+    const bool nextClockMuteEnabled = enableClockMuteCircuit && enableMuteDrive;
     if (!primed_)
     {
         rateHz_ = target.rateHz;
@@ -1444,8 +1559,19 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                                           : muteDriveConductingNodeRestVolts();
         muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveNodeVolts_);
         muteDriveMuted_ = commandMute;
+        if (nextClockMuteEnabled)
+        {
+            // D3 is reverse biased at both settled command states.
+            const auto& rest = support_.clockMuteTransitions[commandMute ? 0u : 2u].equilibrium;
+            muteDriveNodeVolts_ = rest[0];
+            muteDriveHoldVolts_ = rest[1];
+            clockMuteVolts_ = rest[2];
+        }
         primed_ = true;
     }
+
+    clockMuteEnabled_ = nextClockMuteEnabled;
+    clocksStopped_ = clockMuteEnabled_ && clockMuteVolts_ >= clockMuteThresholdVolts;
 
     if (mode != ChorusMode::Off)
     {
@@ -1542,9 +1668,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
 
     const float delayA = std::max(nominalDelayA, 1.0e-4f);
     const float delayB = std::max(nominalDelayB, 1.0e-4f);
-    const float clockA = std::clamp(clockForDelaySeconds(delayA),
+    const float clockA = clocksStopped_ ? 0.0f : std::clamp(clockForDelaySeconds(delayA),
                                     minimumClockHz, maximumClockHz);
-    const float clockB = std::clamp(clockForDelaySeconds(delayB),
+    const float clockB = clocksStopped_ ? 0.0f : std::clamp(clockForDelaySeconds(delayB),
                                     minimumClockHz, maximumClockHz);
 
     // C28/C25 see the 39 kOhm mixer legs through Tr11/Tr12, so their
@@ -1572,7 +1698,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
                                 wetOutputTransition, lineNoiseScale);
 
-    if (enableClockBleed)
+    if (enableClockBleed && !clocksStopped_)
     {
         clockSpurPhaseA_ += static_cast<double>(clockA) * inverseSampleRate_;
         clockSpurPhaseB_ += static_cast<double>(clockB) * inverseSampleRate_;
@@ -1623,7 +1749,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
             optionalB += hum;
         }
 
-        if (optionalNoise_.clockSpurAmplitude != 0.0f)
+        if (optionalNoise_.clockSpurAmplitude != 0.0f && !clocksStopped_)
         {
             // Each candidate spur follows its own modulated BBD clock, on its
             // own accumulator.  The harmonic and post-line insertion level are

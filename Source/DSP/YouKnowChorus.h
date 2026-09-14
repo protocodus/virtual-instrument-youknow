@@ -275,7 +275,8 @@ public:
                  bool enableNarrowOneTwo = true,
                  bool enableMuteDrive = false,
                  bool enableLineGainSpread = false,
-                 ChorusTimingProfile timingProfile = ChorusTimingProfile::Shipping) noexcept;
+                 ChorusTimingProfile timingProfile = ChorusTimingProfile::Shipping,
+                 bool enableClockMuteCircuit = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -359,6 +360,24 @@ public:
              / (lower + muteDriveSeriesOhms);
     }
     [[nodiscard]] bool muteDriveMuted() const noexcept { return muteDriveMuted_; }
+
+    // Optional completion of the same p.15 circuit: D3's cathode is at C16,
+    // its anode reaches C15 through R41; R47 bypasses that diode/resistor pair.
+    // C15 also loads BOTH Tr23/Tr28 330k/33k base dividers. Those transistors
+    // clamp the clock oscillators while the wet-return switch remains separate.
+    // The topology/parts are anchored; D3 and both ideal transistor switches
+    // reuse the existing 0.6 V junction prior. Finite transistor base currents,
+    // clock restart phase, capacitor leakage and installed switching times are
+    // unmeasured. Stopped buckets retain charge ideally, without invented decay.
+    static constexpr double clockMuteBypassOhms = 330000.0;     // R47
+    static constexpr double clockMuteDiodeSeriesOhms = 10000.0; // R41
+    static constexpr double clockMuteFarads = 2.2e-6;           // C15
+    static constexpr double clockMuteBaseOhms = 330000.0;      // R130/R146
+    static constexpr double clockMuteEmitterOhms = 33000.0;    // R131/R145
+    static constexpr double clockMuteThresholdVolts = -muteDriveRailVolts
+        + muteDriveJunctionVolts * (clockMuteBaseOhms + clockMuteEmitterOhms)
+            / clockMuteEmitterOhms;
+    [[nodiscard]] bool clocksStopped() const noexcept { return clocksStopped_; }
 
     // ------------------------------------------------------------------
     // Panasonic specifies the MN3009's insertion loss as Min -4 / Typ 0 /
@@ -602,6 +621,16 @@ public:
         // live quality changes also avoid building the control transition.
         std::array<std::array<double, 2>, 2> muteDriveOpenTransition {};
         std::array<std::array<double, 2>, 2> muteDriveConductingTransition {};
+        struct ClockMuteTransition
+        {
+            // Augmented affine matrices act on [C16, C13, C15, 1].
+            std::array<std::array<double, 4>, 4> generator {};
+            std::array<std::array<double, 4>, 4> transition {};
+            std::array<double, 3> equilibrium {};
+        };
+        // Tr5 open/conducting, each with D3 blocked/conducting. Prepared here
+        // so a live quality change never constructs a matrix exponential.
+        std::array<ClockMuteTransition, 4> clockMuteTransitions {};
     };
     [[nodiscard]] static SupportChain supportChainFor(float sampleRate) noexcept;
 
@@ -610,6 +639,7 @@ public:
 private:
     friend struct YouKnowTestAccess;
     void advanceMuteDrive(bool commandMute) noexcept;
+    void advanceClockMuteDrive(bool commandMute) noexcept;
 
     // OQ-03 keeps the compatibility hiss and the still-unknown mechanisms as
     // distinct components.  Every number in this profile is voiced/unknown,
@@ -800,6 +830,9 @@ private:
     double muteDriveHoldVolts_ { 0.0 };
     bool muteDriveMuted_ { true };
     bool muteDriveEnabled_ { false };
+    double clockMuteVolts_ { -15.0 };
+    bool clockMuteEnabled_ { false };
+    bool clocksStopped_ { false };
     // Per-line insertion gains at the last calibration they were solved for.
     float lineGainA_ { 1.0f };
     float lineGainB_ { 1.0f };

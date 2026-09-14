@@ -247,6 +247,16 @@ struct EngineParameters
     // linear signal law solely for controlled A/B renders; the separately
     // selected thermal gain still applies to that linear path.
     bool enableVoiceVcaSignalSaturation { true };
+    // On by default: the p.19 VCA GAIN adjustment turns the same bank-3
+    // 4.8 Vp-p filter sine into 6 Vp-p at TP8. The pair's unity-normalized
+    // shape is not that physical gain. Restore the fixed service gain after
+    // the pair/control multiply, before the voice summer and chorus drive.
+    // A reciprocal scalar at the final digital boundary preserves ordinary
+    // output loudness; it never reduces the drive into a physical circuit.
+    // The existing outputLevelPolicyDb remains unchanged. This normalization
+    // also refers downstream circuit noise to the revised digital boundary.
+    // False retains the former uncalibrated unity gain for controlled A/Bs.
+    bool enableVoiceVcaServiceGain { true };
     // Hold the service input trim fixed as the BA662 warms: apply T_ref/T to
     // its differential input, changing both small-signal gain and distortion.
     // Tr20's existing control-current law is held at its reference condition;
@@ -281,6 +291,12 @@ struct EngineParameters
     // wet return mutes about 84.5 ms after CHORUS goes off and returns about
     // 113.2 ms after it comes on. False switches at the command, as before.
     bool enableChorusMuteDrive { true };
+    // Comparison circuit: include C15's loading of C16 through D3/R41/R47
+    // and the delayed Tr23/Tr28 BBD-clock clamps. The existing 0.6 V ideal-
+    // junction prior is reused; installed switching thresholds and capacitor
+    // tolerances have not been measured. Retain the established default until
+    // the complete switching model and its processing cost are qualified.
+    bool enableChorusClockMuteCircuit { false };
     // On by default: each MN3009 line carries its own fixed-seed insertion
     // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
     // keeps the two returns identical for controlled A/B renders.
@@ -1279,10 +1295,14 @@ public:
     // second digital ceiling below the current analogue policy; this is not a
     // claim that every installed IC6 reaches 13.5 V (OQ-05).
     //
-    // The bound is the steady-state one. The output coupling is a high-pass, so
-    // a large enough transient can overshoot it; the measured worst case over
-    // every source at once, six voices and both controls at maximum is -1.45
-    // dBFS, so the margin is real but is not a mathematical guarantee.
+    // The bound is the steady-state one. Output coupling can overshoot it,
+    // and outputLevelPolicyGain deliberately adds digital gain above this
+    // rail mapping. Hot mixed chords and Unison can exceed full scale; a
+    // historical sampled peak is not a bound on every patch and note history.
+    // This returns the historical boundary including outputLevelPolicyGain.
+    // With enableVoiceVcaServiceGain, process() additionally divides it by
+    // VoiceVcaSignalLaw::serviceGain() after all physical output stages.
+    // Recovering a physical noise voltage from rendered PCM must undo both.
     [[nodiscard]] static float outputBoundaryGain() noexcept;
 
     // In the supplied hash-matched B-2 image, stored continuous controls are
@@ -1559,6 +1579,12 @@ public:
         // bound including float rounding is 1e-6), the zoned Hermite tables
         // beyond it.
         [[nodiscard]] static float shape(float volts) noexcept;
+        // Fixed VR27 service gain in the model's voltage coordinate. Bank 3
+        // holds maximum stored SUSTAIN (4064/4095), not the 4095 envelope
+        // peak on which VoiceVcaControlLaw normalizes its current. Including
+        // that ratio restores the TP19-to-TP8 voltage relation without
+        // changing the existing pair drive or relative envelope law.
+        [[nodiscard]] static float serviceGain() noexcept;
     };
     // The stored VCA LEVEL trim drives a second, shared uPC1252H2 after the
     // voice sum. Roland's module- and jack-board drawings establish the

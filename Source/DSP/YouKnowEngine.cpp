@@ -3406,6 +3406,26 @@ float YouKnowEngine::VoiceVcaSignalLaw::shape(float volts) noexcept
         headroomVolts * OtaCascade::zonedHermiteTanh(drive));
 }
 
+float YouKnowEngine::VoiceVcaSignalLaw::serviceGain() noexcept
+{
+    // Roland's consecutive p.19 adjustments use the SAME bank-3 C4 sine:
+    // TP19 = 4.8 Vp-p, then VR27 sets TP8 = 6 Vp-p. The headroom derivation
+    // above uses both figures to establish distortion, but H*tanh(V/H) has
+    // unity small-signal gain and cannot itself satisfy that output target.
+    // Restore the missing fixed voltage gain. No external-output reference
+    // or unknown mixer voltage enters this ratio.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19
+    // The control law is normalized on ENV peak code4095, while full stored
+    // SUSTAIN uses code4064. Its gain at that service point is 0.992216;
+    // the complete fixed correction is about 1.2790 (+2.138 dB), not merely
+    // 6/4.8. The negligible C59 loss at 248 Hz is left inside that physical
+    // coupling rather than absorbed into another gain adjustment.
+    static const float gain = trimOutputPeakVolts
+        / (shape(trimFilterPeakVolts)
+           * VoiceVcaControlLaw::gain(4064.0f / 4095.0f));
+    return gain;
+}
+
 double YouKnowEngine::OtaCascade::closedLoopSpectralFactor(
     double feedback) noexcept
 {
@@ -5656,6 +5676,7 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     // never pays for it.
     (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
     (void) VoiceVcaControlLaw::exactGainTable();
+    (void) VoiceVcaSignalLaw::serviceGain();
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
     // one, must not be able to put a zero, a negative or a NaN on the internal
@@ -6640,10 +6661,13 @@ void YouKnowEngine::dropFromUnison(Voice& voice) noexcept
 
 bool YouKnowEngine::anyVoiceRunning() const noexcept
 {
-    // B-2's $FF11_voiceRun: a voice is running while its gate is set, and
-    // while the sustain latch holds a gate that has since been released.
+    // Use B-2's FF11 snapshot, not the assigner's current key/HOLD state.
+    // HOLD-off at 00BF clears only FF1E bit 0 and returns to the interrupted
+    // pass. Until 02FD..02FF next runs, a released voice still has FF11 set;
+    // another Voice On in that interval must not restart the LFO onset.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L155-L160
     for (const auto& voice : voices_)
-        if (voice.active && (voice.keyDown || voice.sustained))
+        if (voice.envelope.running)
             return true;
     return false;
 }
@@ -7725,8 +7749,13 @@ std::uint32_t YouKnowEngine::updateVoiceScan(
 bool YouKnowEngine::pitchChangeRequestsDcoReset(
     const Voice& voice, int voiceMidi) noexcept
 {
+    // A changed pitch branches on FF11 at 012E, before the new pass copies
+    // FF10 into it. In particular, lifting HOLD has not yet cleared FF11.
+    // Reading immediate keyDown/sustained flags here reset the note timer
+    // spuriously when a new note followed HOLD-off within the current pass.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L216-L227
     return (!voice.hasVoicePitchHistory || voice.lastVoiceMidi != voiceMidi)
-        && !voice.keyDown && !voice.sustained;
+        && !voice.envelope.running;
 }
 
 void YouKnowEngine::updateVoiceEnvelope(
@@ -9912,7 +9941,12 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
         * voiceVcaThermalDriveScale(activeParameters_, voice.cardIndex);
     const float shaped = activeParameters_.enableVoiceVcaSignalSaturation
         ? VoiceVcaSignalLaw::shape(drive) : drive;
-    const float output = shaped * voice.vca * voltsToSample;
+    // This fixed gain was formerly lost when the physical BA662 law was
+    // normalized to unity. Apply it in volts before the 2.6-V model-unit
+    // conversion, so every downstream circuit receives the service level.
+    const float serviceGain = activeParameters_.enableVoiceVcaServiceGain
+        ? VoiceVcaSignalLaw::serviceGain() : 1.0f;
+    const float output = shaped * voice.vca * serviceGain * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
@@ -10220,6 +10254,17 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     // this reference keeps the sample equations below unchanged while avoiding
     // per-host-block exponentials and divisions.
     const auto& coefficients = processingCoefficients_;
+    // The physical VCA service correction belongs ahead of HPF, common VCA,
+    // BBD and output saturation. Cancel only its constant gain at the FINAL
+    // digital boundary, after every physical stage, so this circuit fix does
+    // not also add 2.138 dB of plug-in loudness or new avoidable overloads.
+    // It changes the volts-to-digital reference, not any internal voltage or
+    // the established outputLevelPolicyDb. Large physical transients can
+    // still exceed digital full scale, as they could on the previous model.
+    // The false branch retains the exact former boundary and arithmetic.
+    const float outputBoundaryScale = parameters.enableVoiceVcaServiceGain
+        ? coefficients.outputBoundaryGain / VoiceVcaSignalLaw::serviceGain()
+        : coefficients.outputBoundaryGain;
     // Ordinary intervals use finite engine-owned state, sanitized targets and
     // precomputed finite decays. Keep exactOnePoleHoldEndpoint's full guards
     // for the rare physical event and direct hostile-input test paths.
@@ -10976,6 +11021,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // lines -- the same policy split as the voice-card freewheel.
             if (parameters.chorus != ChorusMode::Off
                 || parameters.vcfTanhMode == VcfTanhMode::Exact
+                || parameters.enableChorusClockMuteCircuit
                 || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
                                                        wetRight))
                 chorus_.process(levelled, parameters.chorus,
@@ -10988,7 +11034,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 parameters.enableNarrowOneTwoChorus,
                                 parameters.enableChorusMuteDrive,
                                 parameters.enableChorusLineGainSpread,
-                                parameters.chorusTimingProfile);
+                                parameters.chorusTimingProfile,
+                                parameters.enableChorusClockMuteCircuit);
 
             // TA75558S IC6 has finite loaded output swing inside its +/-15 V
             // supplies. The modelled 13.5 V asymptote and knee are provisional
@@ -11164,11 +11211,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
         const float transitionGain = rateTransitionGain_;
         left[sample] = std::isfinite(outputLeft)
-                     ? outputLeft * coefficients.outputBoundaryGain
+                     ? outputLeft * outputBoundaryScale
                            * transitionGain
                      : 0.0f;
         right[sample] = std::isfinite(outputRight)
-                      ? outputRight * coefficients.outputBoundaryGain
+                      ? outputRight * outputBoundaryScale
                             * transitionGain
                       : 0.0f;
 

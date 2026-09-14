@@ -99,6 +99,11 @@ std::unique_ptr<YouKnowEngine> makeEngine(float character = 1.0f,
     parameters.enableVoiceVcaTemperature = enabled;
     parameters.enableSpatialThermalGradient = spatial;
     parameters.enableVoiceVcaSignalSaturation = nonlinear;
+    // This suite isolates the fixed-current thermal law in its historical
+    // unity-normalized signal coordinate. The physical TP19-to-TP8 service
+    // gain, including the settled thermal reference, is tested separately by
+    // YouKnow.VcaService through the same finishVoiceFilter path.
+    parameters.enableVoiceVcaServiceGain = false;
     parameters.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
     parameters.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
     parameters.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;

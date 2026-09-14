@@ -10216,7 +10216,12 @@ void testFixedOutputBoundaryCorpus()
         // paired B-2 timer/DAC-code ramp law. Its timer grid and product ripple
         // change this low-note stack's phase and reconstructed crossings;
         // the fixture, window and four-percent guards remain unchanged.
-        Baseline { 0.6642484260, 1.41347, 1.41929, 1194, 4762 },
+        // The TP19-to-TP8 service gain now drives the physical output stage
+        // harder; its reciprocal is applied only at the final digital
+        // boundary. This hot Unison fixture therefore compresses further.
+        // Refresh only its three exceeded amplitude references. Every other
+        // row, fixture, four-percent tolerance and overload-count guard stays.
+        Baseline { 0.609196, 1.16688, 1.16838, 1194, 4762 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
@@ -13869,8 +13874,9 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
 
     // With the chorus switched out this fixture carries only the modelled
     // output-resistor floors and the common uPC1252H2's datasheet output
-    // noise (110 dB below the summer asymptote, about -107.5 dBFS RMS under
-    // the 2.5 dB output policy, output-referred so independent of VCA
+    // noise (110 dB below the summer asymptote, about -109.6 dBFS RMS under
+    // the 2.5 dB output policy and reciprocal service normalization,
+    // output-referred so independent of VCA
     // LEVEL). Keep it far enough below the BBD line noise that the chorus-on
     // figure remains determined by `independentLineRandomAmplitude`, rather
     // than requiring an unphysical exact zero from five warm resistors and a
@@ -13904,8 +13910,13 @@ void testIdleOutputFloorCarriesTheHissProductPolicy()
     // 0 dBFS, not part of Panasonic's separate part-output maximum. The figure
     // below was recorded when the boundary was unity; referring it to that
     // boundary keeps it testing the product normalization, not calibration.
-    const double boundaryDb =
-        20.0 * std::log10(YouKnowEngine::outputBoundaryGain());
+    // Service calibration adds physical voice gain ahead of the chorus and
+    // cancels its constant only at the final digital boundary. This idle
+    // noise never traverses the voice VCA, so its dBFS reference must include
+    // the reciprocal even though its physical recovered-line policy is fixed.
+    const double boundaryDb = 20.0 * std::log10(
+        YouKnowEngine::outputBoundaryGain()
+        / YouKnowEngine::VoiceVcaSignalLaw::serviceGain());
     expectNear(floorOne, -77.85 + boundaryDb, 0.5,
                "the idle output floor left the HISS-100 product policy");
 
@@ -14009,6 +14020,9 @@ void testCommonVcaCarriesItsDatasheetNoiseFloor()
         rms(on.left, on.right, &off.left, &off.right);
     const double ic2bVolts = differenceRms
         * static_cast<double>(YouKnowEngine::internalVoltsPerUnit)
+        // Undo the final reciprocal service normalization as well as the
+        // historical output boundary to recover the actual IC2b voltage.
+        * YouKnowEngine::VoiceVcaSignalLaw::serviceGain()
         / (static_cast<double>(Chorus::dryMixGain)
            * YouKnowEngine::outputCouplingHighGain(1.0f)
            * YouKnowEngine::outputBoundaryGain());

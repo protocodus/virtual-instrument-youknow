@@ -92,6 +92,13 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### 1.1.0 — unreleased
 
+- Voice-VCA service gain now reaches the specified 6 Vp-p from the 4.8 Vp-p
+  filter test signal. A reciprocal final digital trim preserves ordinary
+  loudness while the shared analog stages receive the corrected voltage.
+- HOLD release and immediate note reassignment now preserve the firmware's
+  running-voice snapshot for oscillator reset and vibrato fade-in decisions.
+  An optional three-capacitor chorus clock-mute model is available for
+  comparisons; its unmeasured transistor thresholds keep it out of defaults.
 - DCO charge now follows the held control current causally through pitch and
   range changes. Each card retains one C54 tolerance and three range-resistor
   tolerances; the comparator's service adjustment stays fixed.
@@ -596,6 +603,34 @@ ladder and the VCF numerical-kernel settings described under
 [performance controls](#performance-and-quality).
 
 ### Juno-106 fidelity research
+
+The latest service and state audit corrects two further discrepancies.
+Roland's consecutive [p. 19 adjustments 5 and 6](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19)
+require 4.8 Vp-p at TP19 and 6 Vp-p at TP8 under the same bank/key setting.
+The former voice-amplifier path applied its physically derived distortion
+shape at unity gain and produced about 4.69076 Vp-p. A fixed +2.1379 dB
+service gain now produces 5.99982 Vp-p through the actual converter/C59/VCA
+path; the small residual is C59's loss at 248 Hz. A reciprocal trim follows
+all modeled analog stages at the digital output, preserving ordinary
+loudness and leaving the stronger HPF/chorus drive intact. Physical noise
+voltages stay fixed, so that final trim also reduces their digital level.
+
+The HOLD correction uses B-2's latched running-voice state when deciding a
+new note's oscillator reset and LFO delay. A pedal release followed by a new
+note before the next snapshot no longer falsely observes an idle instrument.
+The regression fails 30 checks on the prior build and passes after correction;
+actual keyboard/serial timing remains a separate capture question.
+
+The optional `enableChorusClockMuteCircuit` also solves C15's loading of the
+existing C16/C13 mute driver and stops both BBD clocks while retaining their
+stored state. Its independent nodal reference agrees within 0.347 microvolts.
+Its nominal stop/restart predictions, 287.66/12.86 ms, use the existing 0.6 V
+junction prior and are **not hardware measurements**. It remains disabled by
+default because installed transistor behavior, restart phase and the extra
+cost of preserving wet-path history need further qualification. Steady
+chorus audio is unchanged. Derivations and capture requirements live beside
+the circuit code; `Tools/RenderHardwareFidelity.cpp` produces isolated
+before/after scores and `Tools/PackageHardwareFidelity.py` records RMS trims.
 
 Earlier corrections addressed filter-control arithmetic, the chorus input's
 mutual loading and the output jack's treble attenuation. Five further

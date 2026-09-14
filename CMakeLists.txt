@@ -290,6 +290,9 @@ if(YOUKNOW_BUILD_TOOLS)
     add_executable(YouKnowRenderVcaControlComparison Tools/RenderVcaControlComparison.cpp)
     target_link_libraries(YouKnowRenderVcaControlComparison PRIVATE YouKnowDSP)
 
+    add_executable(YouKnowRenderHardwareFidelity Tools/RenderHardwareFidelity.cpp)
+    target_link_libraries(YouKnowRenderHardwareFidelity PRIVATE YouKnowDSP)
+
     add_executable(YouKnowDcoFirmwareTimingAudit Tools/AuditDcoFirmwareTiming.cpp)
     target_link_libraries(YouKnowDcoFirmwareTimingAudit PRIVATE YouKnowDSP)
     target_compile_features(YouKnowDcoFirmwareTimingAudit PRIVATE cxx_std_20)
@@ -649,6 +652,18 @@ if(BUILD_TESTING)
     add_executable(YouKnowVcaControlTests Tests/YouKnowVcaControlTests.cpp)
     target_link_libraries(YouKnowVcaControlTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaControl COMMAND YouKnowVcaControlTests)
+
+    add_executable(YouKnowVcaServiceTests Tests/YouKnowVcaServiceTests.cpp)
+    target_link_libraries(YouKnowVcaServiceTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VcaService COMMAND YouKnowVcaServiceTests)
+
+    add_executable(YouKnowHoldRunSnapshotTests Tests/YouKnowHoldRunSnapshotTests.cpp)
+    target_link_libraries(YouKnowHoldRunSnapshotTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.HoldRunSnapshot COMMAND YouKnowHoldRunSnapshotTests)
+
+    add_executable(YouKnowChorusClockMuteTests Tests/YouKnowChorusClockMuteTests.cpp)
+    target_link_libraries(YouKnowChorusClockMuteTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusClockMute COMMAND YouKnowChorusClockMuteTests)
     set_tests_properties(YouKnow.VcaControl PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowEnvelopeHoldTests Tests/YouKnowEnvelopeHoldTests.cpp)
