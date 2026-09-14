@@ -8364,17 +8364,40 @@ void YouKnowEngine::advanceThermalWarmup() noexcept
                 / static_cast<float>(thermalWarmupTimeConstantSeconds));
 }
 
-float YouKnowEngine::dynamicOtaHeadroomVolts(
-    const EngineParameters& parameters, int cardIndex) const noexcept
+float YouKnowEngine::voiceCardCelsius(
+    const EngineParameters& parameters, int cardIndex,
+    float warmupFraction) noexcept
 {
     const float psuThermalOffset = parameters.enableSpatialThermalGradient
         ? chassisGradientCelsius(cardIndex) * parameters.calibration
         : 0.0f;
     const float tempRise = 15.0f * parameters.calibration;
-    const float tempC =
-        25.0f + psuThermalOffset + tempRise * thermalWarmupFraction_;
+    return 25.0f + psuThermalOffset + tempRise * warmupFraction;
+}
+
+float YouKnowEngine::dynamicOtaHeadroomVolts(
+    const EngineParameters& parameters, int cardIndex) const noexcept
+{
+    const float tempC = voiceCardCelsius(
+        parameters, cardIndex, thermalWarmupFraction_);
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     return 2.0f * dynamicThermalVoltage / stageAttenuation;
+}
+
+float YouKnowEngine::voiceVcaThermalDriveScale(
+    const EngineParameters& parameters, int cardIndex) const noexcept
+{
+    if (!parameters.enableVoiceVcaTemperature)
+        return 1.0f;
+    // The same local temperature drives the filter and VCA. Fix the service
+    // reference at this card's settled temperature, including its spatial
+    // offset. Never re-trim against the running temperature. Identical Kelvin
+    // expressions make Character 0 and a settled start exactly unity.
+    const float referenceKelvin =
+        voiceCardCelsius(parameters, cardIndex, 1.0f) + 273.15f;
+    const float actualKelvin =
+        voiceCardCelsius(parameters, cardIndex, thermalWarmupFraction_) + 273.15f;
+    return referenceKelvin / actualKelvin;
 }
 
 float YouKnowEngine::jackBoardCelsius(
@@ -9138,10 +9161,14 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     //
     // The pair itself saturates ahead of the control multiply (see
     // VoiceVcaSignalLaw); the switch only retains the linear multiply for
-    // A/B renders.
+    // A/B renders. Keep the BA662's fixed-trim thermal gain in either path,
+    // after C59: scaling the capacitor's input would create a different
+    // transient and incorrectly change the stored coupling voltage.
     const float trimmed = vcaInput * voice.vcaInputTrim;
+    const float drive = trimmed
+        * voiceVcaThermalDriveScale(activeParameters_, voice.cardIndex);
     const float shaped = activeParameters_.enableVoiceVcaSignalSaturation
-        ? VoiceVcaSignalLaw::shape(trimmed) : trimmed;
+        ? VoiceVcaSignalLaw::shape(drive) : drive;
     const float output = shaped * voice.vca * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);

@@ -13467,6 +13467,9 @@ void testVcaLevelGainWarmsWithTheChassis()
         parameters.vcaLevel = 0.0f;
         parameters.calibration = calibration;
         parameters.enableSpatialThermalGradient = false;
+        // Isolate the jack-board VCA's control constant: the voice BA662's
+        // separate temperature-dependent gain would also change this level.
+        parameters.enableVoiceVcaTemperature = false;
         return parameters;
     };
     const auto renderWarmedTo = [&](float calibration, double warmupSeconds) {

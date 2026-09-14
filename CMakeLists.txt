@@ -649,6 +649,12 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.DcoTemperature COMMAND YouKnowDcoTemperatureTests)
     set_tests_properties(YouKnow.DcoTemperature PROPERTIES TIMEOUT 90)
 
+    add_executable(YouKnowVcaTemperatureTests Tests/YouKnowVcaTemperatureTests.cpp)
+    target_link_libraries(YouKnowVcaTemperatureTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowVcaTemperatureTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.VcaTemperature COMMAND YouKnowVcaTemperatureTests)
+    set_tests_properties(YouKnow.VcaTemperature PROPERTIES TIMEOUT 90)
+
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowEngineTests PRIVATE cxx_std_20)

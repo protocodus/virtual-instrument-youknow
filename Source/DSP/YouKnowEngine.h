@@ -240,8 +240,15 @@ struct EngineParameters
     // output follows I_tail * tanh(V_d / 2 V_t) rather than a linear multiply,
     // driven as hard as Roland's own trims say through the sibling JUNO-6/60
     // drawing's 47 kOhm load (see VoiceVcaSignalLaw). False retains the former
-    // linear multiply, bit for bit, solely for controlled A/B renders.
+    // linear signal law solely for controlled A/B renders; the separately
+    // selected thermal gain still applies to that linear path.
     bool enableVoiceVcaSignalSaturation { true };
+    // Hold the service input trim fixed as the BA662 warms: apply T_ref/T to
+    // its differential input, changing both small-signal gain and distortion.
+    // Tr20's existing control-current law is held at its reference condition;
+    // this is a partial thermal model, not a fitted junction temperature law.
+    // False retains the former fixed-temperature VCA for diagnostic renders.
+    bool enableVoiceVcaTemperature { true };
     // C58 and Tr20 form one loaded control circuit. Its time constant tends
     // to 1ms as Tr20 closes and to (10k||22k)*0.1uF at high current. Retains
     // the same DC junction calibration; false is the former fixed-RC A/B.
@@ -1443,13 +1450,16 @@ public:
     // the engine's vcaInput node: H = 2.4 V / u_trim. The shape is odd, so
     // C59/C14/C12 see no new DC; I_tail scales with the envelope while V_d
     // does not, so the compression is the same at every envelope level; and
-    // the stored u_trim is solved at a reference condition. This implementation
-    // holds the signal law at that reference; it does NOT establish physical
-    // temperature independence. After trimming, the divider stays fixed:
-    // V_t(T) widens the pair's input scale and, at fixed tail current, reduces
-    // small-signal gain as T_ref/T. A future temperature coupling must include
-    // both effects and the Tr20 current law, rather than re-trimming on every
-    // sample or merely widening H in H*tanh(v/H). General bipolar-pair law:
+    // the stored u_trim is solved at the settled card's service temperature.
+    // After trimming the divider stays fixed: finishVoiceFilter applies
+    // T_ref/T to its input, making H_ref*tanh(v*T_ref/(H_ref*T)). This changes
+    // small-signal gain and distortion together while retaining the reference
+    // saturation ceiling; neither H_ref nor the trim follows temperature.
+    // The separately modeled Tr20 current is held at its reference condition.
+    // Its V_be(T), saturation-current and knee changes remain uncalibrated;
+    // this coupling implements the BA662 pair's conditional fixed-current
+    // response, not the entire installed control chain's temperature law.
+    // General bipolar-pair law:
     // https://www.ti.com/lit/ds/symlink/lm13700.pdf#page=9 (not a BA662 tempco).
     // Reference-condition predicted
     // HD3 = u^2/12: -48.3 dBc at the trim level, -36.3 dBc at twice it and
@@ -2736,6 +2746,11 @@ private:
     // volts: 2 Vt(T) / stageAttenuation at the chassis temperature the warm-up
     // clock has reached, plus this card's place in the spatial gradient.
     [[nodiscard]] float dynamicOtaHeadroomVolts(
+        const EngineParameters& parameters, int cardIndex) const noexcept;
+    [[nodiscard]] static float voiceCardCelsius(
+        const EngineParameters& parameters, int cardIndex,
+        float warmupFraction) noexcept;
+    [[nodiscard]] float voiceVcaThermalDriveScale(
         const EngineParameters& parameters, int cardIndex) const noexcept;
     // The jack board's temperature: the chassis warm-up the cards read,
     // without their spatial gradient, because it is not a voice card. Unit

@@ -359,22 +359,26 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 // The 2026-09-12 full product-B audit found B43 and B52 above the gated
 // ceiling by 0.023 and 0.309 dB. Their VR1 positions are reduced from 0.521
 // and 0.723 to 0.517 and 0.695; the hardware tone bytes stay unchanged.
+// The 2026-09-14 full bank audit includes the corrected cold BA662 response.
+// Fourteen hot programs receive further VR1 attenuation, targeting 0.05 dB
+// below the same ceiling, with their hardware tone bytes unchanged. The final
+// full-score rerenders retain at least 0.04 dB of margin.
 constexpr std::array<float, presetCount> factoryVolume {{
     0.800f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
-    0.450f, 0.547f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.446f, 0.547f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.744f, 0.800f, 0.394f, 0.596f, 0.617f, 0.800f, 0.775f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.247f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.237f,
     0.645f, 0.800f, 0.800f, 0.800f, 0.790f, 0.337f, 0.322f, 0.800f,
-    0.800f, 0.760f, 0.295f, 0.800f, 0.611f, 0.449f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.530f, 0.800f, 0.650f,
+    0.800f, 0.760f, 0.295f, 0.800f, 0.576f, 0.449f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.478f, 0.800f, 0.650f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.640f, 0.800f, 0.591f, 0.637f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.450f, 0.800f, 0.800f, 0.800f,
+    0.640f, 0.800f, 0.573f, 0.619f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.426f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.800f, 0.800f, 0.754f, 0.800f, 0.800f, 0.766f, 0.800f,
-    0.800f, 0.800f, 0.517f, 0.356f, 0.800f, 0.800f, 0.534f, 0.800f,
-    0.800f, 0.695f, 0.800f, 0.800f, 0.800f, 0.786f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.673f, 0.800f, 0.800f, 0.800f, 0.617f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.673f, 0.800f, 0.750f,
+    0.800f, 0.800f, 0.480f, 0.356f, 0.800f, 0.800f, 0.534f, 0.800f,
+    0.800f, 0.653f, 0.800f, 0.800f, 0.800f, 0.744f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.663f, 0.800f, 0.800f, 0.800f, 0.603f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.643f, 0.800f, 0.736f,
     0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.800f, 0.611f,
 }};
 
@@ -588,13 +592,16 @@ const std::array<Preset, productPresetCount> productPresets = [] {
     // Visible VR1 positions balanced against both the short stress score and
     // full phrases. Hot programs target 0.5 dB below the bank ceiling; the
     // quiet sustained square bass uses the nominal 0.80 output position.
-    result[0].controls.volume = 0.273f;   // Round Sub
-    result[4].controls.volume = 0.121f;   // Octave Weight
+    // The 2026-09-14 audit includes the corrected cold BA662 response in
+    // the Round Sub, Octave Weight, Velvet PWM and Resonant Mist trims.
+    result[0].controls.volume = 0.251f;   // Round Sub
+    result[4].controls.volume = 0.112f;   // Octave Weight
     result[7].controls.volume = 0.800f;   // Hollow Square: sustained bass balance
     result[8].controls.volume = 0.239f;   // Warm Ensemble
     result[9].controls.volume = 0.459f;   // Slow Horizon
-    result[11].controls.volume = 0.433f;  // Velvet PWM
+    result[11].controls.volume = 0.399f;  // Velvet PWM
     result[12].controls.volume = 0.427f;  // Hollow Choir
+    result[14].controls.volume = 0.442f;  // Resonant Mist
     return result;
 }();
 } // namespace

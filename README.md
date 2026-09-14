@@ -92,6 +92,11 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### 1.1.0 — unreleased
 
+- Voice-VCA gain and distortion now follow each card's temperature around
+  its fixed service trim, retaining the existing calibrated warm signal law.
+  Output-volume trims for 14 factory and four original presets keep both cold
+  and full-phrase renders within the existing loudness limits; tone bytes remain
+  unchanged.
 - Shared DCO clock now follows the temperature model using a named Murata
   component proxy. Startup uses a 3-second thermal time constant; voice-card
   heat differences remain in the analog paths, and pitch movement is shared.
@@ -883,15 +888,25 @@ statistics. The [AS3109 datasheet’s](https://www.alfatriode.lv/eng/sc/AS3109.p
 not an original 80017A residual-drift bound after the installed compensation.
 
 Temperature also affects voice timbre. The filter's nonlinear OTA headroom
-already follows absolute temperature, while the voice VCA's signal law is
-currently held at its service reference. A fixed physical VCA trim does not
-remove later temperature dependence: a bipolar pair's input scale grows with
-temperature and its small-signal gain falls as `1/T` at unchanged tail current
+follows absolute temperature, and the voice VCA now applies `T_ref/T` to its
+signal after C59 and the fixed input trim. Its reference is each card's settled
+service temperature, including the existing spatial gradient. This preserves
+the calibrated warm response while giving a cold card more small-signal gain
+and distortion. The pair's saturation ceiling stays fixed at unchanged current
 ([general OTA derivation](https://www.ti.com/lit/ds/symlink/lm13700.pdf#page=9)).
-Coupling that voice VCA requires both effects and a consistent Tr20 current
-model. Local ramp-current, capacitor and comparator changes can also alter
-saw amplitude and pulse width without independent DCO detune. Their installed
-temperature coefficients remain unknown. A static temperature gradient gives
+At Character 1 with the gradient disabled, 25→40°C reduces small-signal gain
+by about 0.426 dB; this is a conditional circuit prediction, not a Juno capture.
+Character zero and settled starts retain the previous signal law exactly.
+Setting `enableVoiceVcaTemperature=false` retains the former response;
+disabling saturation alone keeps the thermal gain in the linear path.
+
+This is a partial model: Tr20 current still follows the scanned envelope CV
+through the existing control law, but its additional temperature dependence
+and the movement of its low-current knee are omitted. No transistor temperature
+coefficient has been fitted. Local ramp-current, capacitor and comparator
+changes can also alter saw amplitude and pulse width without independent DCO
+detune. Their installed temperature coefficients remain unknown. A static
+temperature gradient gives
 static differences; ongoing thermal movement requires changing conditions.
 
 The current Unit Character model’s `0.9992` recurrence at 375 updates/s,
