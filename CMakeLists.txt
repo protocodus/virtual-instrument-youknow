@@ -664,6 +664,12 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowDcoComponentsTests PRIVATE cxx_std_20)
     add_test(NAME YouKnow.DcoComponents COMMAND YouKnowDcoComponentsTests)
 
+    add_executable(YouKnowDcoResetTests Tests/YouKnowDcoResetTests.cpp)
+    target_link_libraries(YouKnowDcoResetTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowDcoResetTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.DcoReset COMMAND YouKnowDcoResetTests)
+    set_tests_properties(YouKnow.DcoReset PROPERTIES TIMEOUT 90)
+
     add_executable(YouKnowDcoTemperatureTests Tests/YouKnowDcoTemperatureTests.cpp)
     target_link_libraries(YouKnowDcoTemperatureTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowDcoTemperatureTests PRIVATE cxx_std_20)

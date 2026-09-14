@@ -2225,7 +2225,7 @@ double YouKnowEngine::dcoPositiveBaseRail(
     // V = 6 * totalScale * (x + 1). Solve V=+15 V for x rather than clamping
     // x itself: compensation and card-current scale are part of the same
     // physical ramp and therefore move its base-coordinate supply crossing.
-    const double safeScale = std::max(totalRampScale, 1.0e-6);
+    const double safeScale = std::max(totalRampScale, 1.0e-12);
     return static_cast<double>(dcoPositiveRailVolts)
          / (0.5 * static_cast<double>(rampAmplitudeVolts) * safeScale)
          - 1.0;
@@ -2597,6 +2597,10 @@ void YouKnowEngine::Dco::reset() noexcept
     rampValue = -1.0;
     rampSlopePerSecond = 0.0;
     resetSecondsRemaining = 0.0;
+    physicalResetActive = false;
+    resetTargetValue = -1.0;
+    resetTimeConstant = 1.0;
+    resetSawCorrection.fill(0.0);
     positiveRailHeld = false;
     renderScale = 1.0f;
     pulseState = -1.0f;
@@ -2607,12 +2611,12 @@ void YouKnowEngine::Dco::reset() noexcept
 }
 
 void YouKnowEngine::beginDcoDischarge(
-    Voice& voice, float samplesAgo, bool addCorrections) noexcept
+    Voice& voice, double samplesAgo, bool addCorrections) noexcept
 {
     auto& dco = voice.dco;
     dco.positiveRailHeld = false;
     const double intervalSeconds = 1.0 / oversampledRate_;
-    const float oldSlope = static_cast<float>(
+    const double oldSlope = dcoCorrectionSlope(
         dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
     const double periodSeconds = std::max(
@@ -2622,11 +2626,17 @@ void YouKnowEngine::beginDcoDischarge(
         1.0e-12);
     dco.rampSlopePerSecond = (-1.0 - dco.rampValue) / resetSeconds;
     dco.resetSecondsRemaining = resetSeconds;
-    const float newSlope = static_cast<float>(
+    if (dcoResetCircuitEnabled_)
+    {
+        dco.physicalResetActive = true;
+        dco.resetSecondsRemaining = dcoResetCalibration_.gateSeconds;
+        refreshDcoResetTrajectory(voice);
+    }
+    const double newSlope = dcoCorrectionSlope(
         dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
     if (addCorrections && dco.saw.primed)
-        addSlope(dco.saw, newSlope - oldSlope, samplesAgo);
+        addDcoSlope(voice, newSlope - oldSlope, samplesAgo);
 
     const float nextSub = -dco.subState;
     if (addCorrections && dco.sub.primed)
@@ -2638,24 +2648,28 @@ void YouKnowEngine::beginDcoDischarge(
 }
 
 void YouKnowEngine::beginDcoCharge(
-    Voice& voice, float samplesAgo, bool addCorrections) noexcept
+    Voice& voice, double samplesAgo, bool addCorrections) noexcept
 {
     auto& dco = voice.dco;
     dco.positiveRailHeld = false;
     const double intervalSeconds = 1.0 / oversampledRate_;
-    const float oldSlope = static_cast<float>(
+    const double oldSlope = dcoCorrectionSlope(
         dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
-    dco.rampValue = -1.0;
+    const bool retainedReset = dco.physicalResetActive;
+    dco.physicalResetActive = false;
+    if (!retainedReset)
+        dco.rampValue = -1.0;
     dco.resetSecondsRemaining = 0.0;
-    dco.renderScale = std::max(dcoLaunchScale(voice), 1.0e-12f);
+    if (!retainedReset)
+        dco.renderScale = std::max(dcoLaunchScale(voice), 1.0e-12f);
     dco.rampSlopePerSecond = dcoChargingSlope(
         voice.dcoCv, activeParameters_.range) / dco.renderScale;
-    const float newSlope = static_cast<float>(
+    const double newSlope = dcoCorrectionSlope(
         dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
     if (addCorrections && dco.saw.primed)
-        addSlope(dco.saw, newSlope - oldSlope, samplesAgo);
+        addDcoSlope(voice, newSlope - oldSlope, samplesAgo);
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(dcoCycleWraps, 1);
 #endif
@@ -2707,7 +2721,7 @@ void YouKnowEngine::beginRangeClockTransition(
     for (auto& voice : voices_)
     {
         auto& dco = voice.dco;
-        if (dco.rampSlopePerSecond > 0.0)
+        if (dco.rampSlopePerSecond > 0.0 && !dco.physicalResetActive)
         {
             // Preserve C54 charge and its frozen coordinate scale. Only
             // charging current changes; the discharge transistor and a
@@ -2718,7 +2732,7 @@ void YouKnowEngine::beginRangeClockTransition(
             dco.rampSlopePerSecond *= dcoChargingResistance(previous)
                                    / dcoChargingResistance(next);
             if (dco.saw.primed)
-                addSlope(dco.saw, static_cast<float>(
+                addDcoSlope(voice, dcoCorrectionSlope(
                     (dco.rampSlopePerSecond - oldSlope)
                     * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
                     / oversampledRate_), 1.0f);
@@ -2809,7 +2823,7 @@ void YouKnowEngine::advanceRangeClock(DcoRange range) noexcept
 }
 
 void YouKnowEngine::writeDcoMode3Control(
-    Voice& voice, double clocksToNextInputEdge, float samplesAgo,
+    Voice& voice, double clocksToNextInputEdge, double samplesAgo,
     bool addCorrections) noexcept
 {
     auto& dco = voice.dco;
@@ -2824,7 +2838,7 @@ void YouKnowEngine::writeDcoMode3Control(
 }
 
 void YouKnowEngine::prestageDcoPitchTransaction(
-    Voice& voice, double clocksToNextInputEdge, float samplesAgo,
+    Voice& voice, double clocksToNextInputEdge, double samplesAgo,
     bool addCorrections) noexcept
 {
     if (activeConverterTimingProfile_ == ConverterTimingProfile::PhaseZeroDiagnostic
@@ -5975,6 +5989,7 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
             (voice.dco.rampValue + 1.0) * static_cast<double>(voice.dco.renderScale)
             * voice.rampCurrentScale - 1.0);
         voice.dco.saw.reset();
+        voice.dco.resetSawCorrection.fill(0.0);
         voice.dco.pulse.reset();
         voice.dco.sub.reset();
         voice.dco.saw.prime(saw);
@@ -6318,6 +6333,16 @@ bool YouKnowEngine::configureDcoMasterClockHz(double frequencyHz) noexcept
     dcoReferenceClockRatio_ = frequencyHz / masterClockHz;
     dcoClockTemperatureCelsius_ = -1000.0f;
     refreshDcoMasterClock();
+    return true;
+}
+
+bool YouKnowEngine::configureDcoResetCircuit(
+    const DcoResetCircuit::Calibration& calibration) noexcept
+{
+    if (prepared_ || !calibration.valid())
+        return false;
+    dcoResetCalibration_ = calibration;
+    dcoResetCircuitEnabled_ = true;
     return true;
 }
 
@@ -8152,7 +8177,17 @@ void YouKnowEngine::refreshVoiceRampCurrentScales() noexcept
         voice.rampServiceScale = rampCurrentScaleFor(
             card, activeParameters_.calibration, DcoRange::Eight);
         if (current == previous)
+        {
+            if (dco.physicalResetActive)
+            {
+                const double oldSlope = dco.rampSlopePerSecond;
+                refreshDcoResetTrajectory(voice);
+                if (dco.saw.primed)
+                    addDcoSlope(voice, (dco.rampSlopePerSecond - oldSlope)
+                        * dco.renderScale * current / oversampledRate_, 1.0);
+            }
             continue;
+        }
 
         // These coordinates describe voltage, not charge itself. Reproject
         // them when the selected component scale changes so the physical
@@ -8161,9 +8196,11 @@ void YouKnowEngine::refreshVoiceRampCurrentScales() noexcept
         const double oldSlope = dco.rampSlopePerSecond * dco.renderScale * previous;
         dco.rampValue = (dco.rampValue + 1.0)
                       * static_cast<double>(previous) / current - 1.0;
-        if (dco.resetSecondsRemaining > 0.0)
+        if (dco.resetSecondsRemaining > 0.0 && !dco.physicalResetActive)
             dco.rampSlopePerSecond *= static_cast<double>(previous) / current;
         voice.rampCurrentScale = current;
+        if (dco.physicalResetActive)
+            refreshDcoResetTrajectory(voice);
         if (dco.positiveRailHeld)
         {
             dco.rampValue = dcoPositiveBaseRail(
@@ -8172,7 +8209,7 @@ void YouKnowEngine::refreshVoiceRampCurrentScales() noexcept
         }
         const double newSlope = dco.rampSlopePerSecond * dco.renderScale * current;
         if (dco.saw.primed && !voice.freewheeling && oldSlope != newSlope)
-            addSlope(dco.saw, static_cast<float>((newSlope - oldSlope)
+            addDcoSlope(voice, dcoCorrectionSlope((newSlope - oldSlope)
                                                / oversampledRate_), 1.0f);
     }
 }
@@ -8329,6 +8366,22 @@ YouKnowEngine::SteadyDcoCycle YouKnowEngine::steadyDcoCycle(
     const double slope = 0.5 * static_cast<double>(rampAmplitudeVolts)
         * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, activeParameters_.range)
         * voice.rampCurrentScale;
+    if (dcoResetCircuitEnabled_)
+    {
+        const double gate = std::min(dcoResetCalibration_.gateSeconds, period);
+        const auto& parts = cards_[static_cast<std::size_t>(voice.cardIndex)].dcoComponents;
+        const double tau = dcoResetCalibration_.dischargeOhms
+                         * parts.capacitance(activeParameters_.calibration);
+        const double target = dcoResetCalibration_.clampVolts + slope * tau;
+        const double loss = -std::expm1(-gate / tau);
+        // Periodic fixed point of discharge followed by constant-current
+        // charge. Gate overlap means continuously active reset. The supply
+        // bounds both the charging plateau and a high reset asymptote.
+        const double peak = std::min(15.0, target + slope * (period - gate) / loss);
+        const double trough = std::min(15.0,
+            DcoResetCircuit::voltage(peak, target, tau, gate));
+        return { period, gate, slope, peak, trough, target, tau };
+    }
     return { period, reset, slope,
              std::min(15.0, slope * (period - reset)) };
 }
@@ -8343,6 +8396,20 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
         return threshold <= 0.0f ? 1.0f : 0.0f;
     if (threshold > cycle.peakVolts)
         return 0.0f;
+    if (dcoResetCircuitEnabled_)
+    {
+        const double rise = cycle.periodSeconds - cycle.resetSeconds;
+        const double highRise = cycle.slopeVoltsPerSecond > 0.0
+            ? std::clamp(rise - (threshold - cycle.troughVolts)
+                                    / cycle.slopeVoltsPerSecond, 0.0, rise)
+            : (threshold <= cycle.troughVolts ? rise : 0.0);
+        double highReset = cycle.resetSeconds;
+        if (threshold > cycle.troughVolts)
+            highReset = std::clamp(cycle.resetTauSeconds * std::log(
+                (cycle.peakVolts - cycle.resetTargetVolts)
+                / (threshold - cycle.resetTargetVolts)), 0.0, cycle.resetSeconds);
+        return static_cast<float>((highRise + highReset) / cycle.periodSeconds);
+    }
     const double highSeconds = std::max(0.0, cycle.periodSeconds
         - cycle.resetSeconds - threshold / cycle.slopeVoltsPerSecond)
         + cycle.resetSeconds * (1.0 - threshold / cycle.peakVolts);
@@ -8353,6 +8420,21 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
 float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
 {
     const auto cycle = steadyDcoCycle(voice);
+    if (dcoResetCircuitEnabled_)
+    {
+        const double rise = cycle.periodSeconds - cycle.resetSeconds;
+        const double charging = cycle.slopeVoltsPerSecond > 0.0
+            ? std::clamp((cycle.peakVolts - cycle.troughVolts)
+                            / cycle.slopeVoltsPerSecond, 0.0, rise) : 0.0;
+        const double riseArea = 0.5 * (cycle.troughVolts + cycle.peakVolts) * charging
+                              + cycle.peakVolts * (rise - charging);
+        const double resetArea = cycle.troughVolts == cycle.peakVolts
+            ? cycle.peakVolts * cycle.resetSeconds
+            : DcoResetCircuit::integral(cycle.peakVolts, cycle.resetTargetVolts,
+                                       cycle.resetTauSeconds, cycle.resetSeconds);
+        return static_cast<float>(sawMixVolts
+            * ((riseArea + resetArea) / (cycle.periodSeconds * 6.0) - 1.0));
+    }
     if (!(cycle.slopeVoltsPerSecond > 0.0))
         return -sawMixVolts;
     const double riseSeconds = cycle.peakVolts / cycle.slopeVoltsPerSecond;
@@ -8409,6 +8491,15 @@ void YouKnowEngine::updateDcoHeldCv(Voice& voice, float code) noexcept
         return;
     voice.dcoCv = code;
     auto& dco = voice.dco;
+    if (dco.physicalResetActive)
+    {
+        const double oldSlope = dco.rampSlopePerSecond;
+        refreshDcoResetTrajectory(voice);
+        if (dco.saw.primed)
+            addDcoSlope(voice, (dco.rampSlopePerSecond - oldSlope)
+                * dco.renderScale * voice.rampCurrentScale / oversampledRate_, 1.0);
+        return;
+    }
     if (dco.resetSecondsRemaining > 0.0 || dco.positiveRailHeld
         || dco.pitState == Dco::PitState::stopped)
         return;
@@ -8418,9 +8509,88 @@ void YouKnowEngine::updateDcoHeldCv(Voice& voice, float code) noexcept
     // T remains the existing DCO converter boundary poll. Future captured
     // transaction data cannot affect the preceding capacitor trajectory.
     if (dco.saw.primed)
-        addSlope(dco.saw, static_cast<float>(
+        addDcoSlope(voice, dcoCorrectionSlope(
             (dco.rampSlopePerSecond - oldSlope) * dco.renderScale
             * voice.rampCurrentScale / oversampledRate_), 1.0f);
+}
+
+void YouKnowEngine::refreshDcoResetTrajectory(Voice& voice) noexcept
+{
+    auto& dco = voice.dco;
+    const auto& parts = cards_[static_cast<std::size_t>(voice.cardIndex)].dcoComponents;
+    dco.resetTimeConstant = dcoResetCalibration_.dischargeOhms
+                         * parts.capacitance(activeParameters_.calibration);
+    const double voltsPerCoordinate = 0.5 * rampAmplitudeVolts
+                                    * dco.renderScale * voice.rampCurrentScale;
+    const double slopeVolts = 0.5 * rampAmplitudeVolts
+        * dcoChargingSlope(voice.dcoCv, activeParameters_.range) * voice.rampCurrentScale;
+    const double target = dcoResetCalibration_.clampVolts
+                        + slopeVolts * dco.resetTimeConstant;
+    dco.resetTargetValue = target / voltsPerCoordinate - 1.0;
+    dco.positiveRailHeld = target >= dcoPositiveRailVolts
+        && (dco.rampValue + 1.0) * voltsPerCoordinate >= dcoPositiveRailVolts - 1e-12;
+    dco.rampSlopePerSecond = dco.positiveRailHeld ? 0.0
+        : (dco.resetTargetValue - dco.rampValue) / dco.resetTimeConstant;
+}
+
+double YouKnowEngine::dcoCorrectionSlope(double slope) const noexcept
+{
+    // Preserve shipping float rounding while the physical path accumulates
+    // sharp onset/curvature cancellation without a float precision loss.
+    return dcoResetCircuitEnabled_ ? slope : static_cast<double>(static_cast<float>(slope));
+}
+
+void YouKnowEngine::addDcoSlope(Voice& voice, double slopeStep, double samplesAgo) noexcept
+{
+    auto& dco = voice.dco;
+    if (!dcoResetCircuitEnabled_)
+    {
+        addSlope(dco.saw, static_cast<float>(slopeStep), static_cast<float>(samplesAgo));
+        return;
+    }
+    if (voice.freewheeling || slopeStep == 0.0)
+        return;
+    const auto& table = correctionTables().slopeResidual;
+    const double offset = std::clamp(samplesAgo, 0.0, 1.0);
+    int slot = dco.saw.base;
+    for (int j = 0; j < correctionRing; ++j)
+    {
+        const double position = (j + offset) * correctionOversample;
+        const int lower = std::clamp(static_cast<int>(position), 0, correctionTableLength - 2);
+        const double fraction = std::clamp(position - lower, 0.0, 1.0);
+        const double a = table[static_cast<std::size_t>(lower)];
+        const double residual = a + (table[static_cast<std::size_t>(lower + 1)] - a) * fraction;
+        dco.resetSawCorrection[static_cast<std::size_t>(slot)] += slopeStep * residual;
+        slot = slot + 1 < correctionRing ? slot + 1 : 0;
+    }
+}
+
+void YouKnowEngine::addDcoResetCurvature(
+    Voice& voice, double slopeAtStart, double elapsed, double seconds) noexcept
+{
+    auto& dco = voice.dco;
+    if (!dco.saw.primed || slopeAtStart == 0.0 || voice.freewheeling)
+        return;
+    const double interval = 1.0 / oversampledRate_;
+    const double cell = interval / correctionOversample;
+    double consumed = 0.0;
+    double slope = slopeAtStart * dco.renderScale * voice.rampCurrentScale;
+    // Each correction-table cell is linear in event time. Its exact weighted
+    // exponential centroid and total derivative change integrate that cell;
+    // this repairs smooth reset curvature as well as the two slope corners.
+    for (int piece = 0; piece <= correctionOversample && consumed < seconds; ++piece)
+    {
+        const double t = elapsed + consumed;
+        const double nextCell = (std::floor(t / cell + 1e-10) + 1.0) * cell;
+        const double dt = std::min(seconds - consumed, nextCell - t);
+        if (!(dt > 0.0))
+            break;
+        const double change = slope * std::expm1(-dt / dco.resetTimeConstant);
+        const double centroid = DcoResetCircuit::curvatureCentroid(dco.resetTimeConstant, dt);
+        addDcoSlope(voice, change * interval, (interval - t - centroid) / interval);
+        slope += change;
+        consumed += dt;
+    }
 }
 
 bool YouKnowEngine::pulseMixEnabled(
@@ -8595,10 +8765,9 @@ void YouKnowEngine::advanceDcoPitAndRamp(
     }
 
     const auto eventSamplesAgo = [&](double elapsed) {
-        return intervalSeconds > 0.0
-            ? static_cast<float>(std::clamp(
-                  (intervalSeconds - elapsed) / intervalSeconds, 0.0, 1.0))
-            : 0.0f;
+        const double age = intervalSeconds > 0.0
+            ? std::clamp((intervalSeconds - elapsed) / intervalSeconds, 0.0, 1.0) : 0.0;
+        return dcoResetCircuitEnabled_ ? age : static_cast<double>(static_cast<float>(age));
     };
     const auto clocksToNextPitInputFalling = [&](double atElapsed) {
         return rangeClockClocksToNextFallingEdge(atElapsed, range);
@@ -8660,14 +8829,21 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             * static_cast<double>(voice.rampCurrentScale);
         const double positiveBaseRail =
             dcoPositiveBaseRail(totalRampScale);
+        const bool exponentialReset = dco.physicalResetActive && !dco.positiveRailHeld;
         const bool positiveRailNeedsValueClamp =
             dco.rampValue > positiveBaseRail;
+        const double chargingRailSeconds = exponentialReset
+            ? (dco.resetTargetValue > positiveBaseRail
+                ? dco.resetTimeConstant * std::log(
+                    (dco.resetTargetValue - dco.rampValue)
+                    / (dco.resetTargetValue - positiveBaseRail))
+                : std::numeric_limits<double>::infinity())
+            : (dco.rampSlopePerSecond > 0.0
+                ? std::max(0.0, (positiveBaseRail - dco.rampValue) / dco.rampSlopePerSecond)
+                : std::numeric_limits<double>::infinity());
         const double positiveRailSeconds = positiveRailNeedsValueClamp
             ? 0.0
-            : (dco.rampSlopePerSecond > 0.0
-                   ? std::max(0.0, (positiveBaseRail - dco.rampValue)
-                                     / dco.rampSlopePerSecond)
-                   : std::numeric_limits<double>::infinity());
+            : std::max(0.0, chargingRailSeconds);
         const double segment = std::min(
             { remaining, pitSeconds, cpuWriteSeconds, resetSeconds,
               positiveRailSeconds });
@@ -8686,7 +8862,63 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             const double rampSlopeVolts = 0.5 * rampAmplitudeVolts
                 * totalRampScale * dco.rampSlopePerSecond;
             const double relativeSlope = rampSlopeVolts - thresholdSlope;
-            if (std::abs(relativeSlope) > 1.0e-14)
+            if (exponentialReset)
+            {
+                const double targetVolts = 0.5 * rampAmplitudeVolts
+                                        * totalRampScale * (dco.resetTargetValue + 1.0);
+                const auto difference = [&](double time) {
+                    return DcoResetCircuit::voltage(rampVolts, targetVolts,
+                        dco.resetTimeConstant, time) - threshold - thresholdSlope * time;
+                };
+                // Exponential minus a moving linear threshold has at most
+                // one stationary point, hence at most two real crossings.
+                std::array<double, 3> boundaries { 0.0, segment, segment };
+                int pieces = 1;
+                const double ratio = rampSlopeVolts != 0.0
+                    ? thresholdSlope / rampSlopeVolts : -1.0;
+                if (ratio > 0.0 && ratio < 1.0)
+                {
+                    const double stationary = -dco.resetTimeConstant * std::log(ratio);
+                    if (stationary > 0.0 && stationary < segment)
+                    {
+                        boundaries[1] = stationary;
+                        pieces = 2;
+                    }
+                }
+                for (int part = 0; part < pieces; ++part)
+                {
+                    double lo = boundaries[static_cast<std::size_t>(part)];
+                    double hi = boundaries[static_cast<std::size_t>(part + 1)];
+                    const double before = difference(lo);
+                    const double after = difference(hi);
+                    if (after == 0.0 || (before != 0.0 && (before > 0.0) == (after > 0.0)))
+                        continue;
+                    if (before == 0.0)
+                        hi = lo;
+                    else
+                    {
+                        for (int iteration = 0; iteration < 44; ++iteration)
+                        {
+                            const double middle = 0.5 * (lo + hi);
+                            if ((difference(middle) > 0.0) == (before > 0.0))
+                                lo = middle;
+                            else
+                                hi = middle;
+                        }
+                    }
+                    const float state = after > 0.0 ? 1.0f : -1.0f;
+                    if (state != dco.pulseState)
+                    {
+                        addStep(dco.pulse, state - dco.pulseState,
+                                eventSamplesAgo(elapsed + 0.5 * (lo + hi)));
+                        dco.pulseState = state;
+#if defined(YOUKNOW_WORK_AUDIT)
+                        YOUKNOW_COUNT_DOMAIN_WORK(dcoComparatorTransitions, 1);
+#endif
+                    }
+                }
+            }
+            else if (std::abs(relativeSlope) > 1.0e-14)
             {
                 const double crossing = (threshold - rampVolts)
                                       / relativeSlope;
@@ -8709,7 +8941,17 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             }
         }
 
-        dco.rampValue += dco.rampSlopePerSecond * segment;
+        if (exponentialReset)
+        {
+            if (addCorrections)
+                addDcoResetCurvature(voice, dco.rampSlopePerSecond, elapsed, segment);
+            dco.rampValue = DcoResetCircuit::voltage(dco.rampValue, dco.resetTargetValue,
+                                                  dco.resetTimeConstant, segment);
+            dco.rampSlopePerSecond = (dco.resetTargetValue - dco.rampValue)
+                                  / dco.resetTimeConstant;
+        }
+        else
+            dco.rampValue += dco.rampSlopePerSecond * segment;
         if (dco.resetSecondsRemaining > 0.0)
             dco.resetSecondsRemaining = std::max(
                 0.0, dco.resetSecondsRemaining - segment);
@@ -8743,8 +8985,8 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             break;
 
         // Complete an older C54 discharge before processing a coincident new
-        // OUT edge. The ordering is deterministic; the two events cannot
-        // coincide in the supported steady-state count range.
+        // OUT edge. The ordering is deterministic; explicitly configured
+        // gates can meet or overlap the next reset edge.
         if (resetComplete)
             beginDcoCharge(
                 voice, eventSamplesAgo(elapsed), addCorrections);
@@ -8760,7 +9002,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
         {
             const double valueBeforeClamp = dco.rampValue;
             const bool chargingIntoRail = dco.rampSlopePerSecond > 0.0;
-            const float oldSlope = static_cast<float>(
+            const double oldSlope = dcoCorrectionSlope(
                 dco.rampSlopePerSecond
                 * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
                 * intervalSeconds);
@@ -8782,22 +9024,25 @@ void YouKnowEngine::advanceDcoPitAndRamp(
                 dco.rampSlopePerSecond = 0.0;
                 dco.positiveRailHeld = true;
                 if (addCorrections && dco.saw.primed)
-                    addSlope(dco.saw, -oldSlope, eventSamplesAgo(elapsed));
+                    addDcoSlope(voice, -oldSlope, eventSamplesAgo(elapsed));
             }
             else if (dco.rampSlopePerSecond < 0.0
                      && dco.resetSecondsRemaining > 0.0)
             {
-                // The value clamp shortens the remaining fall. Retarget its
-                // slope so the unchanged reset deadline still lands exactly on
-                // -1 rather than carrying the old slope below the low rail.
-                dco.rampSlopePerSecond =
-                    (-1.0 - dco.rampValue) / dco.resetSecondsRemaining;
-                const float newSlope = static_cast<float>(
+                // A physical reset retains its R/C law after this voltage
+                // clamp. The compatibility line instead keeps its original
+                // deadline and ends at -1.
+                if (dco.physicalResetActive)
+                    refreshDcoResetTrajectory(voice);
+                else
+                    dco.rampSlopePerSecond =
+                        (-1.0 - dco.rampValue) / dco.resetSecondsRemaining;
+                const double newSlope = dcoCorrectionSlope(
                     dco.rampSlopePerSecond
                     * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
                     * intervalSeconds);
                 if (addCorrections && dco.saw.primed)
-                    addSlope(dco.saw, newSlope - oldSlope,
+                    addDcoSlope(voice, newSlope - oldSlope,
                              eventSamplesAgo(elapsed));
             }
         }
@@ -9003,6 +9248,10 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
                 * card.thermalFilterOmegaScale));
     };
 
+    // Returning to full reconstruction (including a switch to Exact while
+    // idle) must resume insertion into the physical reset residual ring.
+    voice.freewheeling = false;
+
     // One shared event walk owns the M82C53 half-cycles, C54 ramp and
     // comparator. The timer divides the one configured ceramic-resonator
     // reference (nominal 8 MHz before the optional common temperature proxy).
@@ -9022,7 +9271,15 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         (dco.rampValue + 1.0) * static_cast<double>(dco.renderScale)
         * voice.rampCurrentScale - 1.0);
     const float amplitude = sawMixVolts;
-    const float sawOut = dco.saw.advance(sawNaive) * amplitude;
+    const int sawCorrectionSlot = dco.saw.base;
+    float sawReconstructed = dco.saw.advance(sawNaive);
+    if (dcoResetCircuitEnabled_)
+    {
+        sawReconstructed += static_cast<float>(
+            dco.resetSawCorrection[static_cast<std::size_t>(sawCorrectionSlot)]);
+        dco.resetSawCorrection[static_cast<std::size_t>(sawCorrectionSlot)] = 0.0;
+    }
+    const float sawOut = sawReconstructed * amplitude;
 
     // Comparator and sub transitions were inserted at their PIT/ramp event
     // timestamps above; their logic levels are independent of ramp amplitude.

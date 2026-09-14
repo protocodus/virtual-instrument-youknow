@@ -11,6 +11,7 @@
 #include "YouKnowDcoTemperature.h"
 #include "YouKnowDcoComponents.h"
 #include "YouKnowEnvelopeHold.h"
+#include "YouKnowDcoReset.h"
 
 #include <array>
 #include <bit>
@@ -477,6 +478,16 @@ public:
     // generates no drift; the separately enabled temperature proxy can move
     // the effective clock around this reference.
     [[nodiscard]] bool configureDcoMasterClockHz(double frequencyHz) noexcept;
+    // Explicit reduced reset circuit; before prepare only, retained across
+    // reset/prepare. No preset or shipping default supplies unknown MC5534A
+    // gate width, discharge resistance or clamp voltage. See parameter units
+    // and the numerical comparison domain in DcoResetCircuit::Calibration.
+    [[nodiscard]] bool configureDcoResetCircuit(
+        const DcoResetCircuit::Calibration& calibration) noexcept;
+    [[nodiscard]] bool usesDcoResetCircuit() const noexcept
+    {
+        return dcoResetCircuitEnabled_;
+    }
     [[nodiscard]] double dcoMasterClockHz() const noexcept
     {
         return masterClockHz * dcoMasterClockRatio_;
@@ -2073,6 +2084,15 @@ private:
         double rampValue { -1.0 };
         double rampSlopePerSecond { 0.0 };
         double resetSecondsRemaining { 0.0 };
+        // Optional physical reset retains capacitor voltage at gate opening.
+        // Target is expressed in this cell's fixed base-voltage coordinate.
+        bool physicalResetActive { false };
+        double resetTargetValue { -1.0 };
+        double resetTimeConstant { 1.0 };
+        // Double accumulation prevents cancellation between the sharp reset
+        // onset and its distributed exponential curvature at short Rd*C.
+        // The shipping compatibility path continues to use saw.ring alone.
+        std::array<double, correctionRing> resetSawCorrection {};
         // A supply-limited charge is distinct from every other zero-slope
         // state. While held, live card-current changes reproject rampValue so
         // the physical capacitor node remains exactly +15 V.
@@ -2708,18 +2728,18 @@ private:
                  float samplesAgo) const noexcept;
     void addSlope(BandlimitedTrack& track, float slopeStep,
                   float samplesAgo) const noexcept;
-    // Start the retained finite-linear C54 discharge on a verified positive
+    // Start the configured or compatibility C54 discharge on a verified positive
     // M82C53 OUT edge and clock the sub flip-flop at the same timestamp.
-    void beginDcoDischarge(Voice& voice, float samplesAgo,
+    void beginDcoDischarge(Voice& voice, double samplesAgo,
                            bool addCorrections) noexcept;
-    void beginDcoCharge(Voice& voice, float samplesAgo,
+    void beginDcoCharge(Voice& voice, double samplesAgo,
                         bool addCorrections) noexcept;
     void writeDcoMode3Control(Voice& voice, double clocksToNextInputEdge,
-                              float samplesAgo,
+                              double samplesAgo,
                               bool addCorrections) noexcept;
     void prestageDcoPitchTransaction(Voice& voice,
                                      double clocksToNextInputEdge,
-                                     float samplesAgo,
+                                     double samplesAgo,
                                      bool addCorrections) noexcept;
     void programDcoCount(Voice& voice, std::uint32_t count,
                          bool writesControlWord) noexcept;
@@ -2918,9 +2938,15 @@ private:
         float heldCode, DcoRange range) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
     void updateDcoHeldCv(Voice& voice, float code) noexcept;
+    void refreshDcoResetTrajectory(Voice& voice) noexcept;
+    [[nodiscard]] double dcoCorrectionSlope(double slope) const noexcept;
+    void addDcoSlope(Voice& voice, double slopeStep, double samplesAgo) noexcept;
+    void addDcoResetCurvature(Voice& voice, double slopeAtStart,
+                             double elapsed, double seconds) noexcept;
     struct SteadyDcoCycle
     {
         double periodSeconds, resetSeconds, slopeVoltsPerSecond, peakVolts;
+        double troughVolts { 0.0 }, resetTargetVolts { 0.0 }, resetTauSeconds { 0.0 };
     };
     [[nodiscard]] SteadyDcoCycle steadyDcoCycle(const Voice& voice) const noexcept;
     [[nodiscard]] float steadyDcoPulseDuty(const Voice& voice) const noexcept;
@@ -3063,6 +3089,8 @@ private:
     float rateTransitionGain_ { 1.0f };
     float rateTransitionStep_ { 1.0f };
     double dcoReferenceClockRatio_ { 1.0 };
+    bool dcoResetCircuitEnabled_ { false };
+    DcoResetCircuit::Calibration dcoResetCalibration_ {};
     double dcoMasterClockRatio_ { 1.0 };
     bool dcoTemperatureProxyEnabled_ { false };
     double dcoTemperatureReferenceFactor_ { 1.0 };
