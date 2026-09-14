@@ -593,6 +593,9 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.ControlDacTiming
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/AuditControlDacTiming.py" --self-test)
+        add_test(NAME YouKnow.ResonatorProxy
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/AnalyzeResonatorProxy.py" --self-test)
     endif()
 
     add_executable(YouKnowChorusInputLoadingTests Tests/YouKnowChorusInputLoadingTests.cpp)

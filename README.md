@@ -821,6 +821,17 @@ as typical warm-up or random-wander settings. Murata also warns that the
 oscillator’s actual IC circuit affects frequency
 ([application manual, printed p. 14](https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/2531/Ceramic%20Resonator%20(CERALOCK)%20Application%20Manual.pdf#page=16)).
 
+[`AnalyzeResonatorProxy.py`](Tools/AnalyzeResonatorProxy.py) models the older
+[Murata Erie CSA8.00MT equivalent circuit](https://dn710301.ca.archive.org/0/items/Murata-ErieCeramicResonatorsForTimingControlOCR/Murata-ErieCeramicResonatorsForTimingControlOCR.pdf#page=12)
+as an explicit substitute for electrical loading experiments. Run
+`python3 Tools/AnalyzeResonatorProxy.py --caps-pf 30 30` for the catalogue's
+capacitor pair; repeat `--caps-pf` with another pair to compare shifts in ppm
+and cents. The calculation retains motional resistance and reports passive
+parallel phase resonance. The complete oscillator also depends on its
+inverter and actual loading: the catalogue's MT test uses CD4069UBE at 12 V,
+and its 30 pF values do not establish Juno C109's value. This offline tool
+does not supply a warm-up curve or change the instrument's tuning parameters.
+
 The [Kiwi-106 hardware-upgrade manual, p. 19](https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf#page=19)
 describes bass cancellation on some unison notes from the six waveforms’
 relative phases, despite their stable common tuning. Preserving timer state,
