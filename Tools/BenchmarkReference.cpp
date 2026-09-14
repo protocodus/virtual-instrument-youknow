@@ -43,8 +43,9 @@
 // WHAT EACH MEASURE TESTS:
 //
 //   Pitch error (cents)        The DCO's integer division of the master clock.
-//                              This should be near zero: the divider arithmetic
-//                              is exact and temperature has no term in it.
+//                              Divider arithmetic is exact. This raw-engine
+//                              benchmark keeps the nominal clock; the product
+//                              separately enables a common temperature proxy.
 //   Harmonic levels (dB)       The oscillator waveform and the filter's shape
 //                              together. Deviation concentrated in the low
 //                              harmonics is a waveform or sub-oscillator

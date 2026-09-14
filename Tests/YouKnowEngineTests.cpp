@@ -3005,12 +3005,12 @@ void testNoiseLevelFollowsTr22JunctionOnset()
 void testUnisonDoesNotBeat()
 {
     // Six voices on one key must not beat against each other at *any* Unit
-    // Character setting. Every note timer divides the same crystal-derived
-    // clock by the same integer, so the six cards are exactly in tune by
-    // construction; no component tolerance, temperature or supply term can
-    // reach that division. This is the property the whole DCO architecture
-    // exists to provide, and it is what separates the instrument from its
-    // VCO contemporaries.
+    // Character setting once the shared pitch is static. Every note timer
+    // divides the same ceramic-resonator clock by the same integer. Analog
+    // card tolerance cannot independently detune those settled divisions.
+    // This fixture disables pitch modulation: sequential count updates under
+    // modulation can temporarily differ, and shared clock movement changes
+    // all six absolute pitches together.
     //
     // Beating is measured rather than inferred: the six cards start their
     // ramps at their own converter slots, so they hold fixed phase offsets
@@ -3062,7 +3062,7 @@ void testUnisonDoesNotBeat()
         expect(swingDb < 1.0,
                "unison voices beat by " + std::to_string(swingDb)
                    + " dB at Unit Character " + std::to_string(calibration)
-                   + "; the six cards share one crystal and cannot detune");
+                   + "; equal settled counts must share one frequency");
     }
 }
 
@@ -9522,7 +9522,7 @@ void testUnisonUsesEveryVoiceWithoutDetuning()
     auto parameters = plainPatch();
     parameters.keyMode = KeyMode::Unison;
     // Zero tolerance: with the analogue spread switched out, six voices sharing
-    // one reference and one count must be exactly coincident.
+    // one reference and one count must have equal steady frequencies.
     parameters.calibration = 0.0f;
     engine.setParameters(parameters);
     engine.noteOn(57, 1.0f);

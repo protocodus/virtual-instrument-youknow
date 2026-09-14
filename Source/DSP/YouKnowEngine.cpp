@@ -6816,10 +6816,9 @@ void YouKnowEngine::initialiseVoice(Voice& voice, int slot, int midiNote,
     if (voice.glideSemitonesPerScan > 0.0f)
     {
         // The glide integrator is per voice and survives retirement, so a
-        // reassigned voice slides from whatever *its CPU* last played -- notes
-        // several allocator assignments back, exactly the instrument's own
-        // poly-glide behaviour. Only a CPU that has never received a note in
-        // this run starts where it is asked to.
+        // reassigned voice slides from its retained word in the shared CPU --
+        // notes several allocator assignments back, matching poly-glide
+        // behavior. Only a slot with no earlier pitch starts at the new note.
         if (!wasSounding)
             voice.currentMidi = voice.hasVoicePitchHistory
                               ? voice.currentMidi : target;
@@ -7063,13 +7062,13 @@ void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
         finishProtectedPitWritesBeforeSerialVoiceCommand();
         // Every voice takes the same note, and every note timer divides the
         // same reference by the same integer, so there is no pitch spread at
-        // all: what separates the six is the analogue block after them. Adding
-        // a detune here would be inventing a behaviour the instrument does not
-        // have. Each slot's glide starts from that slot's own pitch history,
-        // exactly as its per-voice integrator does; on the hardware all six
-        // always share that history, so a slot woken into a wider stack than
-        // it left -- a voice count the hardware cannot change -- adopts the
-        // stack's position rather than inventing one of its own.
+        // steady state. Ordered count writes can temporarily select different
+        // counts during modulation; prior counter state also sets phase. Analog
+        // R/C variation changes waveform shape, not that timer division. Each
+        // slot's glide starts from that slot's own pitch history,
+        // as its per-voice integrator does. Entering from Poly can retain
+        // different stored glide words. Only the product extension that
+        // widens an established stack adopts its existing position.
         const int limit = voiceLimit();
         float stackMidi = 0.0f;
         bool haveStackMidi = false;
@@ -9463,10 +9462,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
     // Each converter destination owns a separately named hold network. VCF,
     // voice VCA, common VCA, PWM and SUB have evidence-backed post-hold
-    // networks; resonance keeps Step 11's explicitly voiced 522 us companion
-    // trajectory; DCO and NOISE have no post-hold network on p. 13 and their
-    // rON x C acquisition (2.8 us maximum) is a step within the slot, so they
-    // are assigned at the write. Exact full-interval decays
+    // networks. Resonance, DCO and NOISE have no post-hold network on p. 13
+    // and use ideal acquisition at the write. At the datasheet's conditional
+    // 15 V/25 C maximum Ron, 2.8 us is one RC time constant, not a maximum
+    // acquisition time; a full-scale 12-bit step needs about 25.23 us to
+    // settle within half an LSB in that ideal RC alone. Installed driver,
+    // supply and load conditions remain separate qualifications; see the
+    // source inventory beside converterHoldFarads. Exact full-interval decays
     // are precomputed when the processing rate changes; only the rare interval
     // that actually contains a fractional write needs an event-position
     // exponential.
@@ -9785,37 +9787,38 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             const float noiseSample = processMainNoiseSource(
                 rawNoise, noiseDrive, parameters.enableNoiseLevelBeforeC41);
 
-            // Polyphonic current draw loads the +/-15 V regulators, so the
-            // rails sag as more cards work. This is the DC part only. The
-            // rectifier's own 100/120 Hz ripple is deliberately NOT modelled:
+            // This audio-energy proxy produces a voiced shared cutoff shift;
+            // it does not identify actual card current or regulator impedance.
+            // The rectifier's 100/120 Hz ripple is not modelled. A conditional
+            // scale estimate, not an installed ripple or audibility bound:
             // Service Notes p. 16 gives a 3300 uF reservoir per rail behind a
             // 0.25 A secondary, so the unregulated ripple is about 0.76 Vpp at
-            // 50 Hz. The rejection after it is no longer an estimate. The
-            // rails the cards run on are IC4, a Mitsubishi M5230L dual
+            // 50 Hz under that assumed load. The cards run on IC4, an M5230L dual
             // tracking regulator (p. 16), and its data sheet -- reproduced in
             // the 1987 Mitsubishi General Purpose ICs databook, p. 4-8 --
             // specifies ripple rejection RR = 68 dB at f = 120 Hz, measured
             // with its own circuit (b) at ei = 0 dBm, alongside output noise
             // VNO = 12 uVrms over 20 Hz-100 kHz, input regulation 0.02 %/V typ
             // and 0.1 %/V max, and load regulation 0.02 % typ and 0.1 % max.
-            // Those are typicals; the part publishes no minimum rejection.
-            // That leaves about 0.30 mVpp on the rail, some 20 ppm of 15 V, or
-            // 0.011 cents of cutoff through the transfer below, which is about
-            // -104 dBc of sideband on a 24 dB/oct slope and -94 dBc on a
-            // near-self-oscillating skirt, under the instrument's own noise
-            // floor either way. Derivably inaudible, not merely unmeasured.
+            // Ripple rejection is typical with no published minimum. Applying
+            // that 120 Hz figure to the assumed ripple gives about 0.30 mVpp,
+            // some 20 ppm of 15 V, or 0.011 cents through the voiced cutoff
+            // transfer below. Neither the frequency mismatch nor this transfer
+            // establishes installed sidebands or a general audibility limit.
             //
-            // The 12-bit converter's reference does not reopen it. The
-            // reference is the output-high level of the 4050 buffers IC30-32
+            // A second conditional estimate concerns the converter reference,
+            // the output-high level of the 4050 buffers IC30-32
             // on the +5.0 V net (p. 13), and IC3 -- an M5231L, the single
             // regulator whose own sheet gives RR = 62 dB typ at 120 Hz --
             // derives that net from the already-regulated +15 V through R11
             // 100 ohm (p. 16). The two rejections cascade to about 0.05 ppm of
             // 5 V, two ten-thousandths of a 12-bit LSB, so the common-mode path
-            // that would move every held CV together carries nothing audible.
+            // in that simplified cascaded-ripple calculation. This does not
+            // bound local load transients, ground bounce, driver recovery or
+            // the installed load-to-reference transfer.
             //
-            // The sum is kept as a pure load measure. Unit Character scales the
-            // consequence once, where the droop is applied.
+            // Keep the sum as an explicit proxy. Unit Character scales its
+            // consequence once, where the cutoff shift is applied.
             float totalVoiceEnergy = 0.0f;
             for (const auto& v : voices_)
             {
@@ -10048,7 +10051,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
             // The POLY/unison handler gated and cleared at the host event.
             // Reassign only after the complete ordered pass, so every physical
-            // voice CPU has observed gate-off before any replacement Note On.
+            // envelope has observed gate-off before any replacement Note On.
             if (converterPassCompleted && assignmentRescanPending_
                 && assignmentRescanPassArmed_)
                 completeVoiceAssignmentRescan();
