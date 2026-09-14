@@ -88,6 +88,9 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowFirmwareTrace.h
     Source/DSP/YouKnowFirmwareProgram.h
     Source/DSP/YouKnowDcoTemperature.h
+    Source/DSP/YouKnowDcoComponents.h
+    Source/DSP/YouKnowDcoReset.h
+    Source/DSP/YouKnowControlDac.h
     Source/DSP/YouKnowEnvelopeHold.h
     Source/DSP/YouKnowProductFidelity.h
     Source/DSP/YouKnowVcaControl.h
@@ -99,7 +102,9 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
-    Source/DSP/YouKnowPanel.h)
+    Source/DSP/YouKnowPanel.h
+    Source/DSP/YouKnowPresets.h
+    Source/DSP/YouKnowSysEx.h)
 
 add_library(YouKnowDSP STATIC
     ${YOUKNOW_DSP_SOURCES}
@@ -375,6 +380,13 @@ if(YOUKNOW_BUILD_TOOLS)
     add_executable(YouKnowRenderControlDacProbe Tools/RenderControlDacProbe.cpp)
     target_link_libraries(YouKnowRenderControlDacProbe PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderControlDacProbe PRIVATE cxx_std_20)
+
+    add_executable(YouKnowRenderOscillatorEnvelopeCircuits
+        Tools/RenderOscillatorEnvelopeCircuits.cpp)
+    target_link_libraries(YouKnowRenderOscillatorEnvelopeCircuits PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderOscillatorEnvelopeCircuits PRIVATE cxx_std_20)
+    target_compile_definitions(YouKnowRenderOscillatorEnvelopeCircuits PRIVATE
+        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\"")
 
     add_executable(YouKnowMakeCalibrationTakes Tools/MakeCalibrationTakes.cpp)
     target_link_libraries(YouKnowMakeCalibrationTakes
