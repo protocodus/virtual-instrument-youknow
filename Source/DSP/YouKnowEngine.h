@@ -1945,9 +1945,19 @@ private:
         std::uint16_t level { 0u };
         float value { 0.0f };
 
+        // B-2 keeps these latches separately (FF07/FF08/FF33). In
+        // particular, attack overflow sets the latter two without clearing
+        // FF07; a key-up before the next calculation still takes one decay.
+        bool attackPhase { false };
+        bool decayPhase { false };
+        bool phase { false };
+        bool gate { false };       // FF10, changed by voice commands
+        bool running { false };    // FF11, sampled at the start of a pass
+
         void reset() noexcept;
         void noteOn() noexcept;
-        void noteOff() noexcept;
+        void noteOff(bool hold = false) noexcept;
+        void latchGate(bool hold) noexcept;
         float tick(std::uint16_t attackIncrement,
                    std::uint16_t decayMultiplier,
                    std::uint16_t sustain,

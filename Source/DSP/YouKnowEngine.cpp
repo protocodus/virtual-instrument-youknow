@@ -2438,85 +2438,78 @@ void YouKnowEngine::Envelope::reset() noexcept
     stage = EnvelopeStage::Idle;
     level = 0u;
     value = 0.0f;
+    attackPhase = decayPhase = phase = gate = running = false;
 }
 
 void YouKnowEngine::Envelope::noteOn() noexcept
 {
+    // 0115..013B sets gate/attack and clears FF33 only if FF11 was set.
+    // The pending run snapshot and accumulator survive a voice command.
+    gate = attackPhase = true;
+    if (running)
+        phase = false;
     stage = EnvelopeStage::Attack;
 }
 
-void YouKnowEngine::Envelope::noteOff() noexcept
+void YouKnowEngine::Envelope::noteOff(bool hold) noexcept
 {
-    if (stage != EnvelopeStage::Idle)
-        stage = EnvelopeStage::Release;
+    // 009F..00B5 never clears FF07 or FF08. HOLD also preserves FF33.
+    gate = false;
+    if (!hold)
+    {
+        phase = false;
+        if (stage != EnvelopeStage::Idle)
+            stage = EnvelopeStage::Release;
+    }
+}
+
+void YouKnowEngine::Envelope::latchGate(bool hold) noexcept
+{
+    // 02F2..02FF. Pedal release itself changes only the HOLD flag; FF11
+    // changes here, not halfway through the following converter train.
+    running = gate || (hold && running);
 }
 
 float YouKnowEngine::Envelope::tick(std::uint16_t attackIncrement,
-                                       std::uint16_t decayMultiplier,
-                                       std::uint16_t sustain,
-                                       std::uint16_t releaseMultiplier) noexcept
+                                   std::uint16_t decayMultiplier,
+                                   std::uint16_t sustain,
+                                   std::uint16_t releaseMultiplier) noexcept
 {
-    switch (stage)
+    // B-2 0503..0590. The latches, not the display stage, choose the branch.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L825-L897
+    const bool attack = running && !phase;
+    const bool decay = (running && phase)
+                    || (!running && attackPhase && decayPhase);
+    if (attack)
     {
-        case EnvelopeStage::Attack:
+        decayPhase = false;
+        const std::uint32_t next = static_cast<std::uint32_t>(level)
+                                 + attackIncrement;
+        // ONI A,$C0 tests overflow, not equality with 3FFF. Preserve FF07
+        // after overflow: a note-off can still select the decay branch once.
+        if (next > envelopePeak)
         {
-            // B-2 adds the increment and tests only bits 14 and 15 of the
-            // sum (ONI A,$C0 at 0x057c): a sum that lands exactly on 0x3FFF
-            // is stored and the voice stays in attack for one more pass, and
-            // only the pass that overshoots clamps and sets the decay bits.
-            // 0x3FFF is 3 x 43 x 127, so the increments of attack bytes 64
-            // (127) and 100 (43) divide it exactly and reach the peak on a
-            // pass boundary; testing level >= peak handed those two over one
-            // 4.2 ms pass early.
-            // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L897-L910
-            const std::uint32_t next =
-                static_cast<std::uint32_t>(level) + attackIncrement;
-            if (next > envelopePeak)
-            {
-                level = envelopePeak;
-                stage = EnvelopeStage::Decay;
-            }
-            else
-            {
-                level = static_cast<std::uint16_t>(next);
-            }
-            break;
+            level = envelopePeak;
+            phase = decayPhase = true;
+            stage = EnvelopeStage::Decay;
         }
-
-        case EnvelopeStage::Decay:
-        case EnvelopeStage::Sustain:
-            // One state, as in the firmware: above the sustain level the
-            // distance decays multiplicatively; at or below it the level
-            // snaps to the target, which is also what happens when the
-            // slider is pushed *up* mid-note.
-            if (level > sustain)
-            {
-                level = envelopeDecayLevel(level, sustain, decayMultiplier);
-                if (level <= sustain)
-                {
-                    level = sustain;
-                    stage = EnvelopeStage::Sustain;
-                }
-            }
-            else
-            {
-                level = sustain;
-                stage = EnvelopeStage::Sustain;
-            }
-            break;
-
-        case EnvelopeStage::Release:
-            level = envelopeReleaseLevel(level, releaseMultiplier);
-            if (level == 0u)
-            {
-                stage = EnvelopeStage::Idle;
-            }
-            break;
-
-        case EnvelopeStage::Idle:
-        default:
-            level = 0u;
-            break;
+        else
+        {
+            level = static_cast<std::uint16_t>(next);
+            stage = EnvelopeStage::Attack;
+        }
+    }
+    else if (decay)
+    {
+        attackPhase = false;
+        level = envelopeDecayLevel(level, sustain, decayMultiplier);
+        stage = level <= sustain ? EnvelopeStage::Sustain : EnvelopeStage::Decay;
+    }
+    else
+    {
+        attackPhase = decayPhase = phase = false;
+        level = envelopeReleaseLevel(level, releaseMultiplier);
+        stage = level == 0u ? EnvelopeStage::Idle : EnvelopeStage::Release;
     }
 
     // The two low recurrence bits stay in RAM and influence the next pass,
@@ -2524,6 +2517,7 @@ float YouKnowEngine::Envelope::tick(std::uint16_t attackIncrement,
     value = envelopeDacFraction(level);
     return value;
 }
+
 
 // ---------------------------------------------------------------------------
 // Oscillator, filter and high-pass state
@@ -6566,6 +6560,7 @@ void YouKnowEngine::releaseVoiceKey(Voice& voice) noexcept
 {
     voice.keyDown = false;
     voice.releaseStamp = ++generation_;
+    voice.envelope.noteOff(sustainPedalDown_);
     if (sustainPedalDown_)
     {
         voice.sustained = true;
@@ -6573,7 +6568,6 @@ void YouKnowEngine::releaseVoiceKey(Voice& voice) noexcept
     else
     {
         voice.releasing = true;
-        voice.envelope.noteOff();
     }
 }
 
@@ -6969,6 +6963,8 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     // uPD7810's automatic entry latency remain unmeasured and are deliberately
     // not turned into random timing here.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244
+    for (auto& voice : voices_)
+        voice.envelope.latchGate(sustainPedalDown_);
     const bool passBoundaryWasAlreadyDue = controlScanPhase_ >= 1.0;
     if (!passBoundaryWasAlreadyDue)
     {
@@ -7255,7 +7251,8 @@ void YouKnowEngine::setSustainPedal(bool down) noexcept
         {
             voice.sustained = false;
             voice.releasing = true;
-            voice.envelope.noteOff();
+            // B-2 sustain-off (00BF) does not mutate envelope phase bits.
+            // The next FF11 snapshot makes this voice stop running.
         }
 }
 
@@ -7625,7 +7622,7 @@ float YouKnowEngine::voiceVcaTarget(
     // --- Amplifier control ------------------------------------------------
     const float control = parameters.vcaMode == VcaMode::Envelope
                         ? envelope
-                        : (voice.keyDown || voice.sustained ? 1.0f : 0.0f);
+                        : (voice.envelope.running ? 1.0f : 0.0f);
     return clamp01(
         control * velocityGain(parameters, voice)
         + card.vcaControlOffset * 0.004f * tolerance);
@@ -9566,6 +9563,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 YOUKNOW_COUNT_DOMAIN_WORK(converterPassStarts, 1);
 #endif
                 controlScanPhase_ -= 1.0;
+                for (auto& voice : voices_)
+                    voice.envelope.latchGate(sustainPedalDown_);
                 nextConverterWrite_ = 0;
                 converterPassEnvelopeUpdated_.fill(false);
                 converterPassPortamentoUpdated_ = converterNextPassPortamentoUpdated_;

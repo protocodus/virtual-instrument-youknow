@@ -37,10 +37,12 @@ struct YouKnowTestAccess
         voice.keyDown = gateOpen;
         voice.sustained = false;
         voice.envelope.level = word;
-        voice.envelope.stage = YouKnowEngine::EnvelopeStage::Sustain;
+        voice.envelope.gate = voice.envelope.running = true;
+        voice.envelope.phase = true;
         // Exercise the production RAM -> discarded low bits -> normalized
         // envelope -> actual mux destination, rather than injecting a float.
         voice.envelope.tick(1u, 0u, word, 0u);
+        voice.envelope.running = gateOpen;
         engine.performConverterWrite(
             {YouKnowEngine::ConverterDestination::VoiceVca, 0}, parameters);
         voice.vcaControl = voice.vcaControlTarget;

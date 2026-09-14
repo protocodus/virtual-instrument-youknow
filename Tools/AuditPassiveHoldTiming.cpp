@@ -299,6 +299,10 @@ struct YouKnowTestAccess
             voice.keyDown = vcaMode == VcaMode::Gate
                 && voiceIndex % 2 == 0;
             voice.sustained = false;
+            // Seed the pass-held FF11 bit as well as the key state. This
+            // fixture starts inside a pass, after the hardware gate snapshot.
+            voice.envelope.gate = voice.keyDown;
+            voice.envelope.running = voice.keyDown;
             voice.dco.periodSamples = 1.0e12;
             voice.dco.renderScale = 1.0f;
             voice.dcoCv = voice.dcoCvTarget = 261.6f;
@@ -494,6 +498,10 @@ struct YouKnowTestAccess
             item.envelope.value = 0.03f + 0.02f * voice;
             item.currentMidi = 91.0f - 3.0f * voice;
             item.keyDown = !item.keyDown;
+            // Deliberately perturb the held RAM too: the latched converter
+            // payload must survive all later source changes in this oracle.
+            item.envelope.gate = item.keyDown;
+            item.envelope.running = item.keyDown;
         }
         engine.activeParameters_ = parameters;
         engine.targetParameters_ = parameters;

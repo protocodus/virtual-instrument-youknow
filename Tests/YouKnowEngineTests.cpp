@@ -145,8 +145,8 @@ struct YouKnowTestAccess
         std::uint16_t increment, int passes) noexcept
     {
         YouKnowEngine::Envelope envelope;
-        envelope.stage = YouKnowEngine::EnvelopeStage::Attack;
-        envelope.level = 0;
+        envelope.noteOn();
+        envelope.latchGate(false);
         for (int pass = 0; pass < passes; ++pass)
             envelope.tick(increment, 0u, 0u, 0u);
         return { envelope.level,

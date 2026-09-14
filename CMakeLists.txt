@@ -614,6 +614,11 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.VcfCalibration COMMAND YouKnowVcfCalibrationTests)
     set_tests_properties(YouKnow.VcfCalibration PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowEnvelopeFirmwareTests Tests/YouKnowEnvelopeFirmwareTests.cpp)
+    target_link_libraries(YouKnowEnvelopeFirmwareTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowEnvelopeFirmwareTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.EnvelopeFirmware COMMAND YouKnowEnvelopeFirmwareTests)
+
     add_executable(YouKnowVcaControlTests Tests/YouKnowVcaControlTests.cpp)
     target_link_libraries(YouKnowVcaControlTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaControl COMMAND YouKnowVcaControlTests)

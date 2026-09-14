@@ -709,6 +709,7 @@ struct YouKnowTestAccess
         envelope.level = level;
         envelope.value = YouKnowEngine::envelopeDacFraction(level);
         envelope.noteOn();
+        envelope.latchGate(false); // FF11 snapshot precedes the envelope pass.
         envelope.tick(increment, 0xffffu, 0u, 0xffffu);
         return envelope.level;
     }
