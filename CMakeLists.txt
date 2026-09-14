@@ -691,6 +691,12 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.DcoReset COMMAND YouKnowDcoResetTests)
     set_tests_properties(YouKnow.DcoReset PROPERTIES TIMEOUT 90)
 
+    add_executable(YouKnowUnisonPhaseTests Tests/YouKnowUnisonPhaseTests.cpp)
+    target_link_libraries(YouKnowUnisonPhaseTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowUnisonPhaseTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.UnisonPhase COMMAND YouKnowUnisonPhaseTests)
+    set_tests_properties(YouKnow.UnisonPhase PROPERTIES TIMEOUT 90)
+
     add_executable(YouKnowDcoTemperatureTests Tests/YouKnowDcoTemperatureTests.cpp)
     target_link_libraries(YouKnowDcoTemperatureTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowDcoTemperatureTests PRIVATE cxx_std_20)
