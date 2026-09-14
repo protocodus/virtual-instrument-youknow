@@ -4,8 +4,8 @@
 // executable-local friend seam, but neither is used as the reference.  This
 // file independently advances the physical one-pole and cascaded two-pole
 // equations in long double, then checks the states reached through the actual
-// Engine::process wiring.  Explicit early, late, legacy-sequential PWM and
-// disconnected-path candidates are retained as sensitivity controls.
+// Engine::process wiring. Explicit early, late, legacy-sequential PWM,
+// fixed-12-V ramp and disconnected-path candidates are sensitivity controls.
 
 #include "DSP/YouKnowEngine.h"
 
@@ -82,6 +82,8 @@ struct YouKnowTestAccess
     {
         std::array<float, 6> voiceVcaGain {};
         std::array<float, 6> pulseDuty {};
+        std::array<double, 6> pulseDutyPerVolt {};
+        std::array<double, 6> pulsePeakVolts {};
     };
 
     struct Latch
@@ -303,9 +305,25 @@ struct YouKnowTestAccess
             // fixture starts inside a pass, after the hardware gate snapshot.
             voice.envelope.gate = voice.keyDown;
             voice.envelope.running = voice.keyDown;
-            voice.dco.periodSamples = 1.0e12;
+            // The PWM consumer caches its duty before the PIT event walk.
+            // Seed a running counter, with its next OUT edge beyond these
+            // one/two-host-sample probes, so that the post-process oracle
+            // observes the same source geometry as that cache. A stopped PIT
+            // with a fabricated enormous period can cold-start between those
+            // two observations and is not a stable comparator fixture.
+            voice.dcoResetPending = false;
+            voice.dco.divider = voice.dco.pendingDivider = 7675u;
+            voice.dco.pitState = YouKnowEngine::Dco::PitState::running;
+            voice.dco.pitClocksToEvent = 3838.0 - 2.2e-6 * 2000000.0;
+            voice.dco.periodSamples = (7675.0 / 2000000.0)
+                                   * engine.oversampledRate_;
             voice.dco.renderScale = 1.0f;
+            // A deliberately non-reference held code keeps the duty oracle
+            // sensitive to an incorrectly normalized, fixed 12 V ramp.
             voice.dcoCv = voice.dcoCvTarget = 261.6f;
+            voice.dco.rampSlopePerSecond = 2.0
+                / (7675.0 / 2000000.0 - 2.2e-6)
+                * static_cast<double>(voice.dcoCv) / 256.0;
             voice.cutoffCounts = voice.cutoffCountsTarget = 1000.0f;
         }
         return engine;
@@ -340,12 +358,29 @@ struct YouKnowTestAccess
         for (std::size_t voice = 0; voice < result.voiceVcaGain.size(); ++voice)
         {
             result.voiceVcaGain[voice] = engine.voices_[voice].vca;
-            result.pulseDuty[voice] = engine.voices_[voice].pulseDuty;
+            const auto& cell = engine.voices_[voice];
+            result.pulseDuty[voice] = cell.pulseDuty;
+            // Observe the source's current coordinate, then integrate the
+            // comparator's low interval independently below. A held PWM
+            // voltage does not imply a permanently normalized 12 V ramp.
+            // These fixtures use nominal components, 8' and a fixed clock.
+            const double period = cell.dco.periodSamples
+                                / engine.oversampledRate_;
+            const double reset = static_cast<double>(static_cast<float>(
+                std::clamp(2.2e-6 / period, 1.0e-6, 0.25))) * period;
+            const double code = cell.dcoCv;
+            const double slope = 12.0 / (7675.0 / 2000000.0 - 2.2e-6)
+                               * code / 256.0;
+            const double peak = std::min(15.0, slope * (period - reset));
+            result.pulsePeakVolts[voice] = peak;
+            result.pulseDutyPerVolt[voice] = peak > 0.0
+                ? (1.0 / slope + reset / peak) / period : 0.0;
         }
         return result;
     }
 
-    static Consumers expectedConsumers(const Coordinates& coordinates) noexcept
+    static Consumers expectedConsumers(const Coordinates& coordinates,
+                                       const Consumers& source) noexcept
     {
         Consumers result;
         for (std::size_t voice = 0; voice < result.voiceVcaGain.size(); ++voice)
@@ -353,8 +388,11 @@ struct YouKnowTestAccess
             result.voiceVcaGain[voice] =
                 YouKnowEngine::VoiceVcaControlLaw::gain(
                     static_cast<float>(coordinates.voiceVca[voice]));
-            result.pulseDuty[voice] = YouKnowEngine::pwmDutyCycle(
-                static_cast<float>(coordinates.pwmSecond), 1.0f);
+            const double threshold = static_cast<float>(coordinates.pwmSecond);
+            result.pulseDuty[voice] = threshold < 0.0 ? 1.0f
+                : threshold > source.pulsePeakVolts[voice] ? 0.0f
+                : static_cast<float>(std::clamp(
+                    1.0 - threshold * source.pulseDutyPerVolt[voice], 0.0, 1.0));
         }
         return result;
     }
@@ -447,11 +485,34 @@ struct YouKnowTestAccess
 
     static void processOne(YouKnowEngine& engine)
     {
+        // Reading the source after process() is valid only if the source
+        // geometry did not move after updatePulseComparator cached its duty.
+        // Retain this guard so a future fixture/scheduler change fails here,
+        // rather than comparing a pre-event consumer to a post-event source.
+        std::array<double, 6> periodBefore {};
+        std::array<float, 6> cvBefore {};
+        for (std::size_t slot = 0; slot < periodBefore.size(); ++slot)
+        {
+            const auto& voice = engine.voices_[slot];
+            if (voice.dco.pitState != YouKnowEngine::Dco::PitState::running)
+                throw std::runtime_error("comparator fixture PIT is not running");
+            periodBefore[slot] = voice.dco.periodSamples;
+            cvBefore[slot] = voice.dcoCv;
+        }
         float left = 0.0f;
         float right = 0.0f;
         engine.process(&left, &right, 1);
         if (!std::isfinite(left) || !std::isfinite(right))
             throw std::runtime_error("passive-hold fixture produced non-finite audio");
+        for (std::size_t slot = 0; slot < periodBefore.size(); ++slot)
+        {
+            const auto& voice = engine.voices_[slot];
+            if (voice.dco.pitState != YouKnowEngine::Dco::PitState::running
+                || voice.dco.periodSamples != periodBefore[slot]
+                || voice.dcoCv != cvBefore[slot])
+                throw std::runtime_error(
+                    "comparator fixture source changed across its observation");
+        }
     }
 
     static Latch latch(const YouKnowEngine& engine) noexcept
@@ -627,7 +688,8 @@ struct YouKnowTestAccess
         auto& voice = engine.voices_[0];
         voice.cardIndex = 0;
         voice.dco.reset();
-        voice.dco.periodSamples = 1.0e12;
+        // A stopped CE supplies one fixed SUB polarity in this isolated
+        // diode/mixer probe; its period is not used as a PWM duty reference.
         voice.dco.renderScale = 1.0f;
         voice.moduleCoupling.reset();
         voice.inputCompensation = 1.0f;
@@ -861,6 +923,7 @@ struct Metrics
     double maximumProcessError {};
     std::uint64_t maximumStateFloatUlps {};
     std::uint64_t maximumConsumerUlps {};
+    std::uint64_t maximumFixedRampMutationUlps {};
     double maximumLateMutationError {};
     double maximumEarlyMutationError {};
     double maximumSequentialPwmMutationError {};
@@ -1202,7 +1265,16 @@ void compareProcessState(const Coordinates& actual,
         metrics.maximumStateFloatUlps, stateFloatUlps(actual, reference));
     metrics.maximumConsumerUlps = std::max(
         metrics.maximumConsumerUlps,
-        consumerUlps(consumers, Access::expectedConsumers(reference)));
+        consumerUlps(consumers, Access::expectedConsumers(reference, consumers)));
+    // Reject the old comparator oracle even when the hold timing is right:
+    // a count and a separately held charging code need not make a 12 V ramp.
+    const float fixedRampDuty = static_cast<float>(std::clamp(
+        1.0 - static_cast<double>(static_cast<float>(reference.pwmSecond))
+            / 12.0, 0.0, 1.0));
+    for (const float actualDuty : consumers.pulseDuty)
+        metrics.maximumFixedRampMutationUlps = std::max(
+            metrics.maximumFixedRampMutationUlps,
+            ulpDistance(actualDuty, fixedRampDuty));
     if (!std::isfinite(error))
         ++metrics.nonFiniteCases;
 }
@@ -1565,6 +1637,7 @@ bool passed(const Metrics& metrics) noexcept
         && metrics.maximumProcessError <= stateGate
         && metrics.maximumStateFloatUlps <= floatUlpGate
         && metrics.maximumConsumerUlps <= floatUlpGate
+        && metrics.maximumFixedRampMutationUlps > floatUlpGate
         && metrics.maximumProcessGeometryError <= 1.0e-10
         && metrics.collapsedNearEndpointCases == 0u
         && metrics.commonConsumerSamples >= 128u
@@ -1627,7 +1700,9 @@ void printReport(const Metrics& metrics)
               << " sequential_pwm="
               << metrics.maximumSequentialPwmMutationError
               << " disconnected_shipping="
-              << metrics.maximumDisconnectedMutationError << '\n';
+              << metrics.maximumDisconnectedMutationError
+              << " fixed_12v_ramp_ulp="
+              << metrics.maximumFixedRampMutationUlps << '\n';
     constexpr std::array<const char*, 4> mutationNames {
         "common-vca", "sub", "pwm", "voice-vca"
     };

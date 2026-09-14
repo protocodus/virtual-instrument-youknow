@@ -648,6 +648,11 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.DcoClock COMMAND YouKnowDcoClockTests)
     set_tests_properties(YouKnow.DcoClock PROPERTIES TIMEOUT 90)
 
+    add_executable(YouKnowDcoCurrentTests Tests/YouKnowDcoCurrentTests.cpp)
+    target_link_libraries(YouKnowDcoCurrentTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowDcoCurrentTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.DcoCurrent COMMAND YouKnowDcoCurrentTests)
+
     add_executable(YouKnowDcoTemperatureTests Tests/YouKnowDcoTemperatureTests.cpp)
     target_link_libraries(YouKnowDcoTemperatureTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowDcoTemperatureTests PRIVATE cxx_std_20)

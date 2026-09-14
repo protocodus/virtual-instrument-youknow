@@ -73,7 +73,12 @@ struct YouKnowTestAccess
         auto& voice = engine.voices_[0];
         voice.dcoPitchTransactionValid = false;
         voice.dcoCvTarget = code;
-        return engine.dcoLaunchScale(voice);
+        voice.dcoCv = code;
+        const double period = voice.dco.periodSamples / engine.oversampledRate_;
+        // Remove the known charge-time loss to isolate R*clock alone. A
+        // fixed finite reset consumes a different fraction in each range.
+        return engine.dcoLaunchScale(voice)
+             / (1.0 - YouKnowEngine::resetFraction(period));
     }
 };
 }
@@ -185,7 +190,8 @@ void checkSteadyRangeHeight()
         }
         require(std::abs(scales[0] / scales[1] - 400.0 / 399.0) < 2e-7,
                 "16-foot launch height omits printed 399k charging resistor");
-        require(scales[1] == scales[2], "8/4-foot RC-clock products disagree");
+        require(std::abs(scales[1] / scales[2] - 1.0) < 2e-7,
+                "8/4-foot RC-clock products disagree beyond float coordinate rounding");
     }
 }
 }

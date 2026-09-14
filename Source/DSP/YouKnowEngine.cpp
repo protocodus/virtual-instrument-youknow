@@ -2648,16 +2648,9 @@ void YouKnowEngine::beginDcoCharge(
         * intervalSeconds);
     dco.rampValue = -1.0;
     dco.resetSecondsRemaining = 0.0;
-    dco.renderScale = dcoLaunchScale(voice);
-    // Use the NOMINAL count period to retain the established charging
-    // current at this CV/range. The physical clock only schedules reset:
-    // faster ticks shorten this rise without increasing its derivative.
-    const double periodSeconds = std::max(
-        dco.periodSamples / oversampledRate_, 1.0e-12);
-    const double resetSeconds = static_cast<double>(
-        resetFraction(periodSeconds)) * periodSeconds;
-    dco.rampSlopePerSecond = 2.0 / std::max(
-        periodSeconds - resetSeconds, periodSeconds * 1.0e-4);
+    dco.renderScale = std::max(dcoLaunchScale(voice), 1.0e-12f);
+    dco.rampSlopePerSecond = dcoChargingSlope(
+        voice.dcoCv, activeParameters_.range) / dco.renderScale;
     const float newSlope = static_cast<float>(
         dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
         * intervalSeconds);
@@ -7695,8 +7688,6 @@ void YouKnowEngine::performConverterWrite(
                 {
                     voice.dcoCvTarget =
                         voice.dcoPitchTransactionCvTarget;
-                    if (voice.dcoPitchTransactionColdStart)
-                        voice.dcoCv = voice.dcoCvTarget;
                     voice.dcoPitchTransactionValid = false;
                     voice.dcoPitchTransactionColdStart = false;
                 }
@@ -8130,12 +8121,9 @@ void YouKnowEngine::updatePulseComparator(
     YOUKNOW_COUNT_DOMAIN_WORK(pulseComparatorUpdates, 1);
 #endif
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    // The comparator compares the threshold against the ramp actually being
-    // integrated, whose amplitude this cycle is the *frozen* per-cycle ratio
-    // -- the same one the render carries -- not the instantaneous CV ratio,
-    // which belongs to the next cycle's slope. Solving the duty against a
-    // different amplitude than the rendered ramp put the solved edges on a
-    // waveform that did not exist.
+    // The event walk compares this threshold with retained capacitor voltage.
+    // Held CV controls its derivative; changing current does not rescale the
+    // voltage already integrated earlier in the cycle.
     const float cardCurrent = voice.rampCurrentScale;
     // ADJUSTMENT s. 10 (p. 19) is a joint window: the one shared VR31 puts
     // CH1 at exactly 50 % with PWM at 5, and every other card is accepted
@@ -8180,14 +8168,22 @@ YouKnowEngine::SteadyDcoCycle YouKnowEngine::steadyDcoCycle(
     // This is the settled mean of our existing finite-linear reset/+15 V
     // compatibility model, not a measured MC5534 reset shape. Count/CV writes
     // still use the physical event walk, never this periodic approximation.
-    const double nominalPeriod = std::max(
-        voice.dco.periodSamples / oversampledRate_, 1.0e-12);
+    // A stopped/construction cell has no periodic waveform. Its default
+    // sample-count scratch value is not an oscillator period. Prime the
+    // virtual powered mean with the same coherent 0x5400 reference pair as
+    // the current normalization, rather than interpreting that scratch value
+    // as a tiny ramp and charging C56 from a fabricated near-DC step. This
+    // construction policy does not alter any PIT/CV write or running charge.
+    const bool construction = voice.dco.pitState == Dco::PitState::stopped;
+    const double nominalPeriod = construction
+        ? 7675.0 / rangeClockHz(activeParameters_.range)
+        : std::max(voice.dco.periodSamples / oversampledRate_, 1.0e-12);
     const double reset = static_cast<double>(resetFraction(nominalPeriod))
                        * nominalPeriod;
     const double period = nominalPeriod / dcoMasterClockRatio_;
-    const double slope = static_cast<double>(rampAmplitudeVolts)
-        * voice.dco.renderScale * voice.rampCurrentScale
-        / (nominalPeriod - reset);
+    const double slope = 0.5 * static_cast<double>(rampAmplitudeVolts)
+        * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, activeParameters_.range)
+        * voice.rampCurrentScale;
     return { period, reset, slope,
              std::min(15.0, slope * (period - reset)) };
 }
@@ -8197,14 +8193,9 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
     const float threshold = voice.pulseThresholdVolts;
     if (threshold < 0.0f)
         return 1.0f;
-    const float nominalPeak = rampAmplitudeVolts
-        * (voice.dco.renderScale * voice.rampCurrentScale);
-    // Retain the ordinary nominal float arithmetic. Unlike the public slider
-    // helper, the physical comparator must neither re-clamp an already frozen
-    // ramp scale nor clamp a real card threshold to the shared hold ceiling.
-    if (dcoMasterClockRatio_ == 1.0 && nominalPeak <= 15.0f)
-        return std::clamp(1.0f - threshold / nominalPeak, 0.0f, 1.0f);
     const auto cycle = steadyDcoCycle(voice);
+    if (!(cycle.peakVolts > 0.0))
+        return threshold <= 0.0f ? 1.0f : 0.0f;
     if (threshold > cycle.peakVolts)
         return 0.0f;
     const double highSeconds = std::max(0.0, cycle.periodSeconds
@@ -8216,12 +8207,9 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
 
 float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
 {
-    const float nominalPeak = rampAmplitudeVolts
-        * (voice.dco.renderScale * voice.rampCurrentScale);
-    if (dcoMasterClockRatio_ == 1.0 && nominalPeak <= 15.0f)
-        return sawMixVolts * voice.rampCurrentScale
-             * (voice.dco.renderScale - 1.0f);
     const auto cycle = steadyDcoCycle(voice);
+    if (!(cycle.slopeVoltsPerSecond > 0.0))
+        return -sawMixVolts * voice.rampCurrentScale;
     const double riseSeconds = cycle.peakVolts / cycle.slopeVoltsPerSecond;
     // Triangle rise + finite linear fall + any supply-held plateau.
     const double meanVolts = cycle.peakVolts * (1.0
@@ -8244,35 +8232,50 @@ void YouKnowEngine::primeStartupVoiceWaveNodes(
         primeVoiceWaveNode(voice, parameters);
 }
 
+double YouKnowEngine::dcoChargingSlope(float heldCode, DcoRange range) noexcept
+{
+    // Roland p.9/p.13: dV/dt = -Vheld/(Rrange*C54), independent of PIT
+    // count and clock. Use ONE 8' B-2 reference (0x5400: code256,count7675)
+    // for the established approximately 12 V excursion. This fixes model
+    // gain, not an unmeasured MC5534A volts-per-DAC-code specification.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
+    constexpr double referenceRise = 7675.0 / 2000000.0
+                                   - static_cast<double>(rampResetSeconds);
+    const double code = std::isfinite(heldCode)
+        ? std::clamp(static_cast<double>(heldCode), 0.0, 4095.0) : 0.0;
+    return (2.0 / referenceRise) * (code / 256.0)
+         * (200000.0 / dcoChargingResistance(range));
+}
+
 float YouKnowEngine::dcoLaunchScale(const Voice& voice) const noexcept
 {
-    const bool capturedCountReady = voice.dcoPitchTransactionValid
-                                 && voice.dco.pitWriteState
-                                        == Dco::PitWriteState::idle;
-    const float targetCode = capturedCountReady
-        ? voice.dcoPitchTransactionCvTarget : voice.dcoCvTarget;
+    const double period = std::max(
+        voice.dco.periodSamples / oversampledRate_, 1.0e-12);
+    const double reset = static_cast<double>(resetFraction(period)) * period;
+    // Coordinate choice only: the nominal steady peak of the currently held
+    // CV. No target or pending transaction may anticipate its converter write.
+    return static_cast<float>(0.5 * dcoChargingSlope(
+        voice.dcoCv, activeParameters_.range) * (period - reset));
+}
 
-    // The physical hold steps to the captured code at T, at most 97 us after
-    // the PIT write and so inside the cycle for every musical period, so the
-    // frozen-slope integral is the new code; before the count is active, or
-    // after T, the target and the settled hold coincide. A construction-only
-    // cold transaction, which has no earlier physical hold to inherit, is the
-    // same case: its first cell starts from the captured pair, and T installs
-    // that code as both live target and settled value. Multiplying the code
-    // by the active count retains the B-2 pair's settled ripple and its real
-    // high-note CV saturation; the centre anchor removes any need to guess
-    // DAC volts or integrator gain.
-    const float scale = targetCode
-                      * static_cast<float>(voice.dco.divider)
-                      / dcoRampReferenceProduct;
-    // Period is count/clock, so ramp height is proportional to
-    // code*count/(R*clock). R*clock agrees at 8' and 4'; the printed 399k
-    // at 16' leaves a 400/399 ratio. Apply it after the legacy CV/count
-    // bound, so that bound does not silently erase a real range relation.
-    const float rangeScale = activeParameters_.range == DcoRange::Sixteen
-        ? static_cast<float>(400000.0 / dcoChargingResistance(DcoRange::Sixteen))
-        : 1.0f;
-    return std::clamp(scale, 0.25f, 4.0f) * rangeScale;
+void YouKnowEngine::updateDcoHeldCv(Voice& voice, float code) noexcept
+{
+    if (voice.dcoCv == code)
+        return;
+    voice.dcoCv = code;
+    auto& dco = voice.dco;
+    if (dco.resetSecondsRemaining > 0.0 || dco.positiveRailHeld
+        || dco.pitState == Dco::PitState::stopped)
+        return;
+    const double oldSlope = dco.rampSlopePerSecond;
+    dco.rampSlopePerSecond = dcoChargingSlope(code, activeParameters_.range)
+                          / static_cast<double>(dco.renderScale);
+    // T remains the existing DCO converter boundary poll. Future captured
+    // transaction data cannot affect the preceding capacitor trajectory.
+    if (dco.saw.primed)
+        addSlope(dco.saw, static_cast<float>(
+            (dco.rampSlopePerSecond - oldSlope) * dco.renderScale
+            / oversampledRate_), 1.0f);
 }
 
 bool YouKnowEngine::pulseMixEnabled(
@@ -8868,9 +8871,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         voice, parameters.range, previousThresholdVolts, thresholdVolts,
         previousPinnedHigh, voice.pulsePinnedHigh, true);
 
-    // The compensation ratio is frozen when the discharge reaches the low rail.
-    // Mapping about that rail keeps the capacitor voltage continuous when the
-    // new charge slope is launched.
+    // Retained capacitor voltage supplies both the saw and PWM comparator;
+    // the CV only changes its derivative at the converter event.
     const float sawNaive = static_cast<float>(
         dco.rampValue * static_cast<double>(dco.renderScale)
         + (static_cast<double>(dco.renderScale) - 1.0));
@@ -9880,10 +9882,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 // would only write the same values twice.
                 exactVcfControlInterval_[static_cast<std::size_t>(slot)] =
                     resonanceEvent || cutoffEvent;
-                // IC24's per-voice DCO hold (C79/C78/C74/C77/C73/C76 into
-                // IC20/IC16/IC19): the same rON x C bound, a step within the
-                // slot.
-                voice.dcoCv = voice.dcoCvTarget;
+                // IC24's per-voice hold has no identified acquisition law.
+                // Ideal acquisition at the existing converter timestamp T
+                // changes current now, preserving the charge from before T.
+                updateDcoHeldCv(voice, voice.dcoCvTarget);
                 const bool voiceVcaEvent = physicalHoldEvent.active
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca

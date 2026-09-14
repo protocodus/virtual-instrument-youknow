@@ -1653,7 +1653,7 @@ private:
     // integrator's virtual ground, so capacitor current is constant and the
     // rising ramp is straight. The discharge transistor gives only the reset
     // its finite slope.
-    static constexpr float rampResetSeconds = 2.2e-6f;
+    static constexpr double rampResetSeconds = 2.2e-6;
     static constexpr float rampAmplitudeVolts = 12.0f;
     // The sub's mixer coordinate, here rather than beside its two siblings in
     // the .cpp because the DCO-scan audit's analytic Fourier reference states
@@ -2055,10 +2055,9 @@ private:
         // handoff may make the retained old-cycle remainder longer than one
         // newly selected period.
         double pitClocksToEvent { 0.0 };
-        // Nominal count/clock period in processing samples. This coordinate
-        // normalises the established CV-to-current and finite-reset model;
-        // actual timer period is this divided by dcoMasterClockRatio_. Do not
-        // renormalise current when changing the physical reference frequency.
+        // Nominal count/clock period in processing samples. Actual timer
+        // period is this divided by dcoMasterClockRatio_. Neither coordinate
+        // controls charging current at fixed held CV and RANGE.
         double periodSamples { 100.0 };
         // Linear C54 compatibility model. Positive OUT starts the discharge;
         // its exact transistor waveform remains unmeasured, so the established
@@ -2070,12 +2069,9 @@ private:
         // state. While held, live card-current changes reproject rampValue so
         // the physical capacitor node remains exactly +15 V.
         bool positiveRailHeld { false };
-        // The compensation ratio the current cycle's ramp was launched with.
-        // The physical ramp integrates whatever current its slewing CV set at
-        // the discharge, so a CV still catching up changes the *slope of the
-        // next rise*, never the value mid-cycle. Freezing the ratio per cycle
-        // is what keeps the rendered ramp value-continuous: it only takes a
-        // new value at a wrap, where both cycles share the -1 rail.
+        // Fixed coordinate scale for the retained capacitor voltage. It is
+        // selected at the zero-charge boundary only; a held-CV update changes
+        // the derivative immediately without reinterpreting existing charge.
         float renderScale { 1.0f };
         float pulseState { -1.0f };
         // The divider's output level is the whole of its state. Holding a
@@ -2597,10 +2593,9 @@ private:
         // their float-sized increment falls below half an ULP of this state.
         double vcaControl { 0.0 };
         // Oscillator compensation hold in the firmware's unshifted 12-bit DAC
-        // code. The timer's count steps independently; this code slews, and
-        // code*active-count is the momentary ramp-amplitude coordinate frozen
-        // per cycle (`Dco::renderScale`). It reaches the pulse only through
-        // the comparator's edge times.
+        // code. Ideal acquisition occurs at the physical converter timestamp;
+        // its current changes immediately while capacitor voltage is retained.
+        // The timer count steps independently of this analog state.
         float dcoCvTarget { 256.0f };
         float dcoCv { 256.0f };
         // A physical card computes one paired PIT/CV transaction at T-389.
@@ -2902,7 +2897,10 @@ private:
     // above were split out to prevent.
     [[nodiscard]] static float rampCurrentScaleFor(
         const VoiceCard& card, float calibration) noexcept;
+    [[nodiscard]] static double dcoChargingSlope(
+        float heldCode, DcoRange range) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
+    void updateDcoHeldCv(Voice& voice, float code) noexcept;
     struct SteadyDcoCycle
     {
         double periodSeconds, resetSeconds, slopeVoltsPerSecond, peakVolts;

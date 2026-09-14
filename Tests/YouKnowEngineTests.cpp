@@ -513,10 +513,14 @@ struct YouKnowTestAccess
     static float dcoCvCodeForScale(const YouKnowEngine& engine, int slot,
                                    float scale) noexcept
     {
-        const auto count = engine.voices_[static_cast<std::size_t>(slot)]
-                               .dco.divider;
-        return scale * YouKnowEngine::dcoRampReferenceProduct
-             / static_cast<float>(count);
+        const auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        const double period = voice.dco.periodSamples / engine.oversampledRate_;
+        const double rise = period * (1.0 - YouKnowEngine::resetFraction(period));
+        const double resistance = engine.activeParameters_.range == DcoRange::Sixteen
+            ? 399000.0 : engine.activeParameters_.range == DcoRange::Eight
+            ? 200000.0 : 100000.0;
+        return static_cast<float>(scale * 256.0 * (7675.0 / 2000000.0 - 2.2e-6)
+                                  / rise * resistance / 200000.0);
     }
 
     static float dcoLaunchScale(const YouKnowEngine& engine,
@@ -5149,17 +5153,19 @@ void testDcoPitchPairKeepsSettledRampProductAndCvSaturation()
     const float octaveAbove = scaleFor(0x9000u);
     expect(centre == 1.0f,
            "the B-2 centre pair moved away from its ramp-product anchor");
-    expectNear(saturationOnset, 4095.0 * 479.0 / 1964800.0, 1.0e-7,
+    expectNear(saturationOnset, (4095.0 / 256.0) * (479.0 / 2000000.0 - 2.2e-6)
+                                 / (7675.0 / 2000000.0 - 2.2e-6), 1.0e-7,
                "the first saturated DCO CV pair was normalized to unity");
-    expectNear(octaveAbove, 4095.0 * 240.0 / 1964800.0, 1.0e-7,
+    expectNear(octaveAbove, (4095.0 / 256.0) * (240.0 / 2000000.0 - 2.2e-6)
+                              / (7675.0 / 2000000.0 - 2.2e-6), 1.0e-7,
                "the saturated DCO CV stopped losing six dB per octave");
     expectNear(20.0 * std::log10(octaveAbove / saturationOnset),
-               -6.0, 0.05,
+               20.0 * std::log10((240.0 / 2000000.0 - 2.2e-6)
+                                / (479.0 / 2000000.0 - 2.2e-6)), 1.0e-6,
                "the B-2 high-note ramp did not fall by one octave in level");
 
-    // Construction has no earlier physical hold to inherit. Its deterministic
-    // first cycle must still use the captured pair's product, not the old
-    // normalized-unity convention, before T settles that same code.
+    // A captured future pair cannot alter the held voltage before T, even
+    // in a construction fixture. Initialization and acquisition are separate.
     const auto coldPair = YouKnowEngine::dcoPitchPair(0x9000u);
     YouKnowTestAccess::setMode3Running(
         engine, 0, coldPair.divider, true, 100.0);
@@ -5168,19 +5174,16 @@ void testDcoPitchPairKeepsSettledRampProductAndCvSaturation()
         256.0f, 256.0f);
     YouKnowTestAccess::setColdDcoPitchTransaction(
         engine, 0, static_cast<float>(coldPair.cvCode));
-    expectNear(YouKnowTestAccess::dcoLaunchScale(engine, 0), octaveAbove,
+    expectNear(YouKnowTestAccess::dcoLaunchScale(engine, 0), octaveAbove * 256.0 / 4095.0,
                1.0e-7,
-               "a cold B-2 transaction normalized its captured pair to unity");
+               "a future captured pair changed current before its CV write");
 }
 
 void testDcoAndNoiseHoldsAcquireAtTheWrite()
 {
-    // IC24's six DCO holds (C79/C78/C74/C77/C73/C76 into IC20/IC16/IC19) and
-    // IC26's C85 have no post-hold network on p. 13: the HD14051B's rON into
-    // 0.01 uF settles in at most 2.8 us, inside one internal sample at
-    // 192 kHz, so the launch scale is the target code's product even while
-    // the stored hold still reads an older value, and both holds equal their
-    // target after one internal sample.
+    // IC24's DCO holds and IC26's C85 have no identified acquisition law.
+    // Ideal acquisition occurs at the modeled write; a future target cannot
+    // change the current before then. rON*C is not a settling-time guarantee.
     YouKnowEngine engine;
     engine.prepare(192000.0, blockSize, false);
     const double period = YouKnowTestAccess::dcoPeriodSamples(engine, 0);
@@ -5188,9 +5191,8 @@ void testDcoAndNoiseHoldsAcquireAtTheWrite()
         engine, 0, 1.0f);
     YouKnowTestAccess::setDcoLaunchState(
         engine, 0, period, 256.0f, 1.5f * unitCode);
-    expectNear(YouKnowTestAccess::dcoLaunchScale(engine, 0), 1.5f, 1.0e-6,
-               "the DCO launch scale still weighted the stale hold against "
-               "the target code before the write");
+    expectNear(YouKnowTestAccess::dcoLaunchScale(engine, 0), 256.0f / unitCode, 1.0e-6,
+               "the DCO launch scale used the future target before the write");
     YouKnowTestAccess::setDcoLaunchState(engine, 0, period, 256.0f,
                                             4095.0f);
     YouKnowTestAccess::setNoiseHold(engine, 0.0f, 1.0f);
@@ -5202,9 +5204,8 @@ void testDcoAndNoiseHoldsAcquireAtTheWrite()
     expect(YouKnowTestAccess::noiseHeld(engine)
                == YouKnowTestAccess::noiseTarget(engine),
            "the NOISE hold did not step to its target at the write");
-    const float expectedScale = std::clamp(
-        4095.0f / YouKnowTestAccess::dcoCvCodeForScale(engine, 0, 1.0f),
-        0.25f, 4.0f);
+    const float expectedScale =
+        4095.0f / YouKnowTestAccess::dcoCvCodeForScale(engine, 0, 1.0f);
     expectNear(YouKnowTestAccess::dcoLaunchScale(engine, 0),
                expectedScale, 1.0e-6,
                "the DCO launch scale still weighted a stale hold value");
@@ -6933,29 +6934,30 @@ void testComparatorEndpointPinsAndTransitionTiming()
                       == expectedScaleFlip.ring,
            "a scale-only comparator edge was repaired at the interval end");
 
-    // Reset completes halfway through the interval and launches the next rise
-    // at renderScale 2. The fixed +6 V threshold is therefore x=-0.5 in the
-    // suffix; retaining the old scale would place the edge 3/16 sample late.
+    // Reset completes halfway through the interval. Use a valid held code and
+    // a threshold reached one quarter interval into the new rise. A nominal
+    // 12 V ramp in one sample would require an impossible >12-bit DAC code.
     YouKnowEngine rescaledSuffix;
     rescaledSuffix.prepare(192000.0, blockSize, false);
     const double suffixInterval =
         YouKnowTestAccess::internalIntervalSeconds(rescaledSuffix);
     YouKnowTestAccess::setDcoRampScales(
         rescaledSuffix, 0, 1.0f, 1.0f);
-    const float suffixUnitCode = YouKnowTestAccess::dcoCvCodeForScale(
-        rescaledSuffix, 0, 1.0f);
+    constexpr double suffixSlope = 12.0 * (1024.0 / 256.0)
+                                 / (7675.0 / 2000000.0 - 2.2e-6);
+    const float suffixThreshold = static_cast<float>(0.25 * suffixInterval * suffixSlope);
     YouKnowTestAccess::setDcoLaunchState(
-        rescaledSuffix, 0, 1.0, 2.0f * suffixUnitCode, 2.0f * suffixUnitCode);
+        rescaledSuffix, 0, 1.0, 1024.0f, 1024.0f);
     YouKnowTestAccess::setDcoResetState(
         rescaledSuffix, 0, -0.5, -1.0 / suffixInterval,
         0.5 * suffixInterval);
     YouKnowTestAccess::primePulseTrack(rescaledSuffix, 0, -1.0f);
     YouKnowTestAccess::advanceDcoPitAndRampThreshold(
         rescaledSuffix, 0, DcoRange::Eight,
-        6.0f, 6.0f, false, false, true);
+        suffixThreshold, suffixThreshold, false, false, true);
     const auto expectedSuffixPulse =
         YouKnowTestAccess::expectedPulseStep(
-            rescaledSuffix, -1.0f, 2.0f, 0.3125f);
+            rescaledSuffix, -1.0f, 2.0f, 0.25f);
     const auto actualSuffixPulse =
         YouKnowTestAccess::pulseTrackState(rescaledSuffix, 0);
     double suffixRingError = 0.0;
@@ -6964,7 +6966,9 @@ void testComparatorEndpointPinsAndTransitionTiming()
             suffixRingError,
             std::abs(static_cast<double>(actualSuffixPulse.ring[index])
                      - expectedSuffixPulse.ring[index]));
-    expect(YouKnowTestAccess::dcoRampState(rescaledSuffix, 0)[3] == 2.0
+    const auto suffixRamp = YouKnowTestAccess::dcoRampState(rescaledSuffix, 0);
+    expect(std::abs(6.0 * suffixRamp[3] * (suffixRamp[0] + 1.0)
+                    - 0.5 * suffixInterval * suffixSlope) < 1.0e-8
                && YouKnowTestAccess::dcoLogicStates(rescaledSuffix, 0)[0]
                       == 1.0f
                && suffixRingError < 1.0e-6,
@@ -7042,20 +7046,22 @@ void testPitEventBudgetCoversWorstCaseInterval()
 {
     // Inclusive worst case: 8 kHz, 1x, the 4 MHz range clock and N=8 expose
     // 500 input clocks in one sample. Starting on an OUT event puts both the
-    // left- and right-edge events in the walk while scale 4 adds one supply
-    // hit to every charge. One in-flight MSB adds the new scheduler event.
+    // left- and right-edge events in the walk. Unlike the retired per-period
+    // normalization, a real 12-bit CV cannot force a rail hit every 2 us.
+    // One in-flight MSB adds a scheduler event.
     YouKnowEngine engine;
     engine.prepare(8000.0, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.range = DcoRange::Four;
+    engine.setParameters(parameters);
     YouKnowTestAccess::setMode3Running(
         engine, 0, 8u, false, 0.0, DcoRange::Four);
     YouKnowTestAccess::programDcoCount(engine, 0, 8u, false);
     YouKnowTestAccess::primeDcoControlEdgeFixture(engine, 0);
     YouKnowTestAccess::setDcoRampScales(engine, 0, 4.0f, 1.0f);
-    const float eventBudgetUnitCode =
-        YouKnowTestAccess::dcoCvCodeForScale(engine, 0, 1.0f);
     YouKnowTestAccess::setDcoLaunchState(
         engine, 0, YouKnowTestAccess::dcoPeriodSamples(engine, 0),
-        4.0f * eventBudgetUnitCode, 4.0f * eventBudgetUnitCode);
+        4095.0f, 4095.0f);
     YouKnowTestAccess::advanceDcoPitAndRampThreshold(
         engine, 0, DcoRange::Four,
         20.0f, 20.0f, false, false, true);
@@ -7068,11 +7074,12 @@ void testPitEventBudgetCoversWorstCaseInterval()
                       == YouKnowTestAccess::idlePitWriteState()
                && YouKnowTestAccess::cpuStatesToWrite(engine, 0) == 0.0
                && !YouKnowTestAccess::pendingDcoDividerValid(engine, 0)
-               && ramp[0]
-                      == YouKnowTestAccess::dcoPositiveBaseRail(engine, 0)
-               && ramp[1] == 0.0 && ramp[2] == 0.0
-               && YouKnowTestAccess::positiveRailHeld(engine, 0),
-           "the 253-event interval stopped before its 500-clock right edge: out="
+               && std::abs(6.0 * ramp[3] * (ramp[0] + 1.0)
+                   - (12.0 * (4095.0 / 256.0) * 2.0
+                      / (7675.0 / 2000000.0 - 2.2e-6)) * 0.5e-6) < 1.0e-8
+               && ramp[1] > 0.0 && ramp[2] == 0.0
+               && !YouKnowTestAccess::positiveRailHeld(engine, 0),
+           "the high-event-count interval stopped before its 500-clock right edge: out="
                + std::to_string(YouKnowTestAccess::pitOutHigh(engine, 0))
                + " clocks=" + std::to_string(
                    YouKnowTestAccess::pitClocksToEvent(engine, 0))

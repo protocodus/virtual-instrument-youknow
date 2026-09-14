@@ -57,7 +57,7 @@ struct YouKnowTestAccess
         double sub {};
     };
 
-    static void configureDco(YouKnowEngine& engine, double internalRate,
+    static bool configureDco(YouKnowEngine& engine, double internalRate,
                              double frequency, DcoRange range,
                              Waveform waveform,
                              float duty) noexcept
@@ -94,27 +94,30 @@ struct YouKnowTestAccess
         voice.dco.pitOutHigh = true;
         voice.dco.pitClocksToEvent = static_cast<double>(
             YouKnowEngine::Dco::mode3HalfClocks(divider, true));
-        // This audit isolates numerical DCO reconstruction at a declared unit
-        // ramp scale. The production hold is now a 12-bit DAC code rather than
-        // the old hertz proxy, so choose the code whose code*count product is
-        // the centre reference. Physical B-2 pair ripple and high-note CV
-        // saturation have their own engine regression; letting either alter
-        // this fixture would compare a changed pulse duty with the analytic
-        // duty requested below and mislabel that mismatch as aliasing.
-        const float unitScaleCode =
-            YouKnowEngine::dcoRampReferenceProduct
-            / static_cast<float>(divider)
-            // Keep this reconstruction-only fixture at its declared unit
-            // amplitude: the physical 16' 399k resistor now contributes
-            // 400/399 in dcoLaunchScale. Its actual ratio and switching
-            // current are qualified by YouKnow.DcoRange, not Fourier error.
-            * (range == DcoRange::Sixteen ? 399.0f / 400.0f : 1.0f);
-        voice.dcoCv = unitScaleCode;
-        voice.dcoCvTarget = unitScaleCode;
-        voice.dco.renderScale = 1.0f;
         const double periodSeconds = voice.dco.periodSamples / internalRate;
         const double resetSeconds = static_cast<double>(
             YouKnowEngine::resetFraction(periodSeconds)) * periodSeconds;
+        // This reconstruction fixture declares a 12 V rise in T-reset. The
+        // fixed-current law is S=12/referenceRise * (code/256) * (200k/R),
+        // independently of the PIT count. Solve S*(T-reset)=12 explicitly;
+        // a constant code*count product omits reset time and changes both the
+        // amplitude and the comparator duty that the Fourier oracle assumes.
+        // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
+        constexpr double referenceRise = 7675.0 / 2000000.0 - 2.2e-6;
+        const double resistance = range == DcoRange::Sixteen ? 399000.0
+                                : range == DcoRange::Eight ? 200000.0 : 100000.0;
+        const double riseSeconds = periodSeconds - resetSeconds;
+        const double code = 256.0 * referenceRise / riseSeconds
+                          * resistance / 200000.0;
+        // This is an explicitly injected continuous current coordinate, not
+        // a claimed integer B-2 DAC word. The present matrix fits inside the
+        // production 0..4095 domain; reject a future grid that would clip it.
+        // B-2 pair ripple, DAC quantization and range tolerances are covered
+        // by their engine tests, separately from this reconstruction boundary.
+        if (!(riseSeconds > 0.0 && std::isfinite(code) && code > 0.0 && code <= 4095.0))
+            return false;
+        voice.dcoCv = voice.dcoCvTarget = static_cast<float>(code);
+        voice.dco.renderScale = 1.0f;
         voice.dco.rampValue = -1.0;
         voice.dco.rampSlopePerSecond = 2.0 / std::max(
             periodSeconds - resetSeconds, periodSeconds * 1.0e-4);
@@ -132,6 +135,7 @@ struct YouKnowTestAccess
         voice.moduleCoupling.reset();
         engine.subCv_ = waveform == Waveform::Sub ? 1.0 : 0.0;
         engine.subCvTarget_ = engine.subCv_;
+        return true;
     }
 
     // HighPass::process has s1=s0+2g(x-s0)/(1+g).  Solving that state
@@ -822,8 +826,13 @@ DcoMetrics runDcoMatrix(int host, int factor)
             const auto run = [&](Access::Waveform waveform, double duty) {
                 ++result.candidateTakes;
                 YouKnowEngine engine;
-                Access::configureDco(engine, host * factor, frequency, range,
-                                     waveform, static_cast<float>(duty));
+                if (!Access::configureDco(engine, host * factor, frequency, range,
+                                          waveform, static_cast<float>(duty)))
+                {
+                    result.candidateFinite = false;
+                    ++result.invalidCandidateTakes;
+                    return;
+                }
                 const int internalFrames = (settleHostFrames + analysisLength) * factor;
                 std::vector<float> internal(static_cast<std::size_t>(internalFrames));
                 for (auto& sample : internal)
@@ -1095,6 +1104,8 @@ int run(bool selfTest)
                  "exact exponential one-poles and affine two-pole PWM cascade\n"
               << "frequency shipping dcoDivider+dcoQuantisedFrequency; fixture "
                  "directly injects periodSamples=internal_rate/quantised_frequency\n"
+              << "current fixture explicitly injects a fractional held-code coordinate "
+                 "for a 12 V rise over period-reset; not an integer firmware DAC word\n"
               << "grid host={44100,48000} factor={1,2,4} "
                  "notes={36,48,60,72,84,96} ranges={16,8,4} "
                  "pulse_duty={0.05,0.50,0.95}\n"
