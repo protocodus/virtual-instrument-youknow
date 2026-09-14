@@ -5,6 +5,36 @@ made by ear, never written up as though a measurement had settled it, and none
 of these closes an open question — the captures named under
 [known gaps](../README.md#known-gaps) are still what would.
 
+## 2026-09-14 — Retain timing A pending a hardware comparison
+
+The owner heard the six-voice unison timing pair as "pretty close" and
+requested whichever is closer to original hardware, without preferring a
+letter. A used the shipping `MeasuredChartGeometry` profile; B used
+`FirmwareControlNoInterrupt`. The pair used identical MIDI, seeds, controls
+and the product signal path at 48 kHz/4x, with settled temperature and
+whole-file stereo RMS matching.
+
+Retain A as the product default. B has stronger evidence for nominal
+instruction placement and branch-dependent execution, but omits real ADC
+interrupt work, alternating ADC-bank service and serial-interrupt timing.
+The recovered B-2 ADC vector and handler alone consume 172 nominal states
+(43 microseconds at the model's 4 MHz state rate), before automatic entry;
+that is not a constant correction that can simply be appended to each pass.
+
+A working probe found B's idle/held-single-voice passes around
+4.154–4.175 ms and held-unison passes around 4.199–4.215 ms. A retains the
+4.2 ms reference. The existing one-unit LFO-derived 4.231–4.304 ms estimates
+use different conditions: they do not provide a matched comparison or prove
+which complete audio output is closer. A's intra-pass proportions also remain
+drawn chart geometry, not measured timestamps. Keeping A preserves the
+established default while the user's hardware-match criterion is unresolved;
+it does not establish A as physically superior to B.
+
+B remains available for timing comparisons. Adoption requires evidence that
+its complete timing, including the omitted work or an explicitly qualified
+approximation, improves hardware agreement. No tone parameter, default,
+phase randomization or independent voice detune changes in this decision.
+
 ## 2026-09-11 — Adopt filter-card and HPF candidate B in the product
 
 Following confirmation that the other three round-two B corrections were

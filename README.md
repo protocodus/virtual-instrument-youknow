@@ -841,7 +841,13 @@ in causal order. Branches determine pass length. This qualifies nominal
 instruction execution under explicit pass-start input snapshots; physical
 ADC interrupts, serial-wire delivery and installed pin-edge delays remain
 outside its claim. The product retains the chart geometry previously chosen
-by ear. This profile is a calibration/comparison path, not a new saved tone
+by ear. On September 14 the owner heard the unison A/B as close and preferred
+whichever matches hardware; A was retained because B has no demonstrated
+overall hardware advantage with its interrupt work omitted. B has stronger
+nominal instruction timing, while A's chart proportions remain unmeasured;
+this decision does not settle their complete hardware match. See the
+[timing decision](Docs/decisions.md#2026-09-14--retain-timing-a-pending-a-hardware-comparison).
+The full trace remains a calibration/comparison path, not a new saved tone
 parameter.
 
 `YouKnowRenderOscillatorEnvelopeCircuits` makes each candidate audible through
