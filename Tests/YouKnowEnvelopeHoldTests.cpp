@@ -74,6 +74,26 @@ struct YouKnowTestAccess
         e.passiveHoldEventLatch_ = {};
         return (e.envelopeMuxInhibitPhase(ordinal) - e.controlScanPhase_) / delta;
     }
+    static void advanceFirmwareToCursor(YouKnowEngine& e)
+    { e.advanceFirmwareControlEvents(e.controlScanPhase_); }
+    static float firmwareVcaTarget(const YouKnowEngine& e, int slot)
+    {
+        const auto ordinal = static_cast<std::size_t>(11 + 2 * slot);
+        return static_cast<float>(e.firmwareConverterCodes_[ordinal]) / 4095.0f;
+    }
+    static double atFirmwareWrap(YouKnowEngine& e, bool oldHold, double statesBeforeEnd)
+    {
+        e.setSustainPedal(oldHold);
+        e.refreshFirmwareControlTrace();
+        const double firstInhibitStates = e.converterInhibitPhases_[0]
+            * YouKnowEngine::voiceCpuStateHz / YouKnowEngine::controlScanHz;
+        e.controlScanPhase_ = e.converterPassEndPhase_
+            - statesBeforeEnd * YouKnowEngine::controlScanHz / YouKnowEngine::voiceCpuStateHz;
+        e.advanceFirmwareControlEvents(e.controlScanPhase_);
+        e.nextConverterWrite_ = YouKnowEngine::converterWritesPerPass;
+        e.passiveHoldEventLatch_ = {};
+        return firstInhibitStates;
+    }
 };
 } // namespace youknow
 
@@ -365,6 +385,159 @@ void windowAndRestartTest()
     require(Access::selected(*injection),"fractional target commit interrupted ongoing acquisition");
 }
 
+std::unique_ptr<Engine> makeFirmwareHold(double rate = 32000, int factor = 1,
+                                       bool coupled = false)
+{
+    auto e = std::make_unique<Engine>();
+    auto c = configuration(10000);
+    for (auto& channel : c) channel.turnOffChargeCoulombs = 7e-12;
+    require(e->configureEnvelopeHolds(c), "firmware hold configuration rejected");
+    e->selectConverterTimingProfile(Engine::ConverterTimingProfile::FirmwareControlNoInterrupt);
+    auto p = parameters(coupled);
+    p.keyMode = youknow::KeyMode::Unison;
+    p.sustain = .6f;
+    e->setParameters(p);
+    e->prepare(rate, 256, factor);
+    e->noteOn(60, 1);
+    return e;
+}
+
+void firmwareHoldHandoffTest()
+{
+    constexpr double resistance = 10000, capacitance = 1e-8, injection = 7e-12;
+    constexpr double initial = .2;
+    const auto acquiredVolts = [](double target, double seconds) {
+        return Access::offset() + Access::span()
+            * (target + (initial - target) * std::exp(-seconds / (resistance * capacitance)));
+    };
+    for (double rate : {32000., 48000., 192000.})
+    {
+        for (int slot : {0, 5})
+        {
+            auto e = makeFirmwareHold(rate);
+            const double position = Access::atEnable(*e, slot, .37);
+            Access::advanceFirmwareToCursor(*e);
+            const float target = Access::firmwareVcaTarget(*e, slot);
+            require(target > .3f, "firmware acquisition witness has no target step");
+            Access::seed(*e, initial, .03f); // traced code must win over this later scalar
+            process(*e);
+            near(Access::held(*e, slot), acquiredVolts(target, (1-position)/rate), 2e-10,
+                 "firmware fractional enable did not acquire the traced DAC code");
+            require(Access::selected(*e, slot), "firmware enable did not open the real hold");
+            process(*e);
+            near(Access::held(*e, slot), acquiredVolts(target, (2-position)/rate), 2e-10,
+                 "firmware target commit interrupted or reinjected the acquired hold");
+            near(Access::target(*e, slot), target, 0, "firmware target commit lost its captured code");
+        }
+        auto e = makeFirmwareHold(rate);
+        const double position = Access::atInhibit(*e, .43);
+        Access::advanceFirmwareToCursor(*e);
+        Access::seed(*e, initial, .9f);
+        Access::select(*e, 0, .9f);
+        process(*e);
+        const double expected = acquiredVolts(static_cast<double>(.9f), position/rate)
+                              + injection/capacitance;
+        near(Access::held(*e), expected, 2e-10, "same-pass firmware inhibit missed its actual timestamp");
+        require(!Access::selected(*e), "same-pass firmware inhibit left the hold selected");
+        process(*e);
+        near(Access::held(*e), expected, 2e-10, "later VCF enable injected a second turn-off charge");
+    }
+
+    // At 32 kHz an interval spans125 nominal CPU states. Place its beginning
+    // five states before the real pass end. The next RES inhibit is inside
+    // this interval for HOLDoff (5+111), but outside for HOLDon (5+129).
+    // Its enable is outside either way. Check both snapshot-change directions.
+    for (bool oldHold : {false, true})
+        for (bool nextHold : {false, true})
+        {
+            auto e = makeFirmwareHold();
+            near(Access::atFirmwareWrap(*e, oldHold, 5), oldHold ? 129 : 111, 1e-10,
+                 "independent first-inhibit instruction sum differs from current trace");
+            Access::seed(*e, initial, .9f);
+            // This deliberately selected capacitor is a circuit witness for
+            // the inhibit edge, independent of the ordinary NOISE selection.
+            Access::select(*e, 5, .9f);
+            e->setSustainPedal(nextHold);
+            const double inhibitSeconds = (5.0 + (nextHold ? 129.0 : 111.0))/4000000.0;
+            process(*e);
+            const double firstSeconds = std::min(1.0/32000, inhibitSeconds);
+            const double expectedFirst = acquiredVolts(static_cast<double>(.9f), firstSeconds)
+                + (nextHold ? 0 : injection/capacitance);
+            near(Access::held(*e, 5), expectedFirst, 2e-10,
+                 "next-pass inhibit used a normalized period or stale HOLD snapshot");
+            require(Access::selected(*e, 5) == nextHold,
+                    "next-pass inhibit/enable ownership is incorrect at the wrap");
+            process(*e);
+            const double expectedFinal = acquiredVolts(static_cast<double>(.9f), inhibitSeconds)
+                                       + injection/capacitance;
+            near(Access::held(*e, 5), expectedFinal, 2e-10,
+                 "next-pass inhibit did not preserve the exact acquisition prefix");
+            require(!Access::selected(*e, 5), "next-pass RES inhibit never closed the hold");
+            process(*e); // commit the already consumed fractional RES enable
+            near(Access::held(*e, 5), expectedFinal, 2e-10,
+                 "next-pass RES target commit injected turn-off charge twice");
+        }
+}
+
+struct FirmwareHoldRender
+{
+    std::vector<float> audio;
+    std::array<double, 6> holds {}, controls {};
+};
+FirmwareHoldRender renderFirmwareHold(int block, int factor = 1)
+{
+    auto e = makeFirmwareHold(32000.0/factor, factor, true);
+    // Event times are expressed on the common 32 kHz internal clock and
+    // divisible by four, so 8k/4x and 32k/1x receive the same physical inputs.
+    constexpr std::array eventFrames {256, 512, 768, 900, 1020, 1476, 2560};
+    FirmwareHoldRender result;
+    result.audio.resize(2560/static_cast<std::size_t>(factor));
+    std::vector<float> right(result.audio.size());
+    int at = 0;
+    for (std::size_t event = 0; event < eventFrames.size(); ++event)
+    {
+        const int end = eventFrames[event]/factor;
+        while (at < end)
+        {
+            const int count = std::min(block, end-at);
+            e->process(result.audio.data()+at, right.data()+at, count);
+            at += count;
+        }
+        if (event == 0 || event == 2) e->setSustainPedal(true);
+        else if (event == 1 || event == 4) e->setSustainPedal(false);
+        else if (event == 3) e->noteOff(60);
+        else if (event == 5) e->noteOn(67, 1);
+    }
+    for (int slot = 0; slot < 6; ++slot)
+    {
+        result.holds[static_cast<std::size_t>(slot)] = Access::held(*e, slot);
+        result.controls[static_cast<std::size_t>(slot)] = Access::control(*e, slot);
+    }
+    return result;
+}
+
+void firmwareHoldBlockTest()
+{
+    const auto reference = renderFirmwareHold(1);
+    for (int block : {97, 256})
+    {
+        const auto other = renderFirmwareHold(block);
+        require(reference.audio == other.audio && reference.holds == other.holds
+                && reference.controls == other.controls,
+                "firmware/hold audio or state depends on callback partition");
+    }
+    double energy = 0;
+    for (float value : reference.audio)
+    {
+        require(std::isfinite(value), "firmware/hold audio is non-finite");
+        energy += value*value;
+    }
+    require(energy > 1e-5, "firmware/hold comparison did not reach the audio path");
+    const auto oversampled = renderFirmwareHold(97, 4);
+    require(reference.holds == oversampled.holds && reference.controls == oversampled.controls,
+            "equal physical clocks changed firmware/hold state across host rates");
+}
+
 std::vector<float> render(double resistance, int block, double rate=48000, int factor=1,
                           bool coupled=true)
 {
@@ -434,7 +607,7 @@ int main()
     try
     {
         configurationTest(); signedDomainTest(); circuitTest(); fractionalEngineTest();
-        windowAndRestartTest(); audioAndRateTest();
+        windowAndRestartTest(); firmwareHoldHandoffTest(); firmwareHoldBlockTest(); audioAndRateTest();
         std::cout<<"Envelope hold circuit tests passed\n";
     }
     catch(const std::exception& error)

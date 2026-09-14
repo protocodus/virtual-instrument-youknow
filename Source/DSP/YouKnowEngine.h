@@ -8,6 +8,7 @@
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
 #include "YouKnowControlDac.h"
+#include "YouKnowFirmwareTrace.h"
 #include "YouKnowDcoTemperature.h"
 #include "YouKnowDcoComponents.h"
 #include "YouKnowEnvelopeHold.h"
@@ -1077,7 +1078,12 @@ public:
         MeasuredChartGeometry,
         // Comparison-only partial reconstruction: chart anchors outside the
         // DCO train, instruction-count intervals inside it. Not serialised.
-        FirmwareDcoNoInterrupt
+        FirmwareDcoNoInterrupt,
+        // Executes one nominal B-2 control pass from explicit host snapshots.
+        // No serial/ADC ISR entry, wire or pin propagation time is invented.
+        // Returning mid-pass parameter changes wait for the next snapshot;
+        // Voice On/Off keeps completed RAM writes and starts a new trace.
+        FirmwareControlNoInterrupt
     };
     // NormalizedServiceChart is an explicit compatibility/product profile: it
     // preserves the chart's sequential writes across one pass without claiming
@@ -1105,6 +1111,10 @@ public:
         return 867 + (nextVoiceReset ? 106 : 0)
             + (pitchHighByte <= 47 ? 12 : pitchHighByte >= 151 ? 26 : 0);
     }
+    // Entry 02EC through the first loadDac ORI PA. Only HOLD branches here;
+    // these also predict a next-pass inhibit inside the preceding audio interval.
+    [[nodiscard]] static constexpr unsigned firmwareFirstConverterInhibitStates(bool hold) noexcept
+    { return hold ? 129u : 111u; }
     // Selects the profile reset()/prepare() install, so a comparison profile
     // can drive the complete shipping signal path (the A-Z rules forbid
     // offline approximations). Mid-pass switching is deliberately
@@ -1112,6 +1122,20 @@ public:
     // under a running pass would invent an event discontinuity no hardware
     // has, so a selection takes effect at the next reset()/prepare().
     void selectConverterTimingProfile(ConverterTimingProfile profile) noexcept;
+    // The selected ADC bank is frozen for this no-interrupt profile. Supply
+    // captured raw/previous bytes to explore its exact main-loop branches;
+    // the default is lower bank, zero samples, conversion flag clear.
+    struct FirmwareAdcSnapshot {
+        std::array<std::uint8_t, 4> raw {}, previous {};
+        bool upperBank { false }, conversionComplete { false };
+    };
+    void configureFirmwareAdcSnapshot(const FirmwareAdcSnapshot& input) noexcept
+    { firmwareAdcSnapshot_ = input; }
+    [[nodiscard]] bool firmwareControlTraceValid() const noexcept
+    { return firmwareControlTraceValid_; }
+    [[nodiscard]] std::uint32_t firmwareControlPassStates() const noexcept
+    { return firmwareControlTrace_.states; }
+
 
     // Comparison-only, before prepare(): solve the literal C14/IC3/HPF
     // network with an explicit finite switch resistance (50..1000 ohms).
@@ -2863,6 +2887,9 @@ private:
     // converter queue below.
     [[nodiscard]] std::uint32_t updateVoiceScan(
         Voice& voice, const EngineParameters& parameters) noexcept;
+    void refreshFirmwareControlTrace(bool initialise = false) noexcept;
+    void advanceFirmwareControlEvents(double phase) noexcept;
+    [[nodiscard]] float firmwareConverterTarget(const ConverterWrite&) const noexcept;
     void updateVoiceEnvelope(
         Voice& voice, const EngineParameters& parameters) noexcept;
     void updateEnvelopeBeforeConverterWrite(
@@ -3122,6 +3149,15 @@ private:
         ConverterTimingProfile::NormalizedServiceChart };
     std::array<double, converterWritesPerPass> converterEventPhases_ {};
     std::size_t nextConverterWrite_ { 0 };
+    double converterPassEndPhase_ { 1.0 };
+    std::array<double, converterWritesPerPass> converterInhibitPhases_ {};
+    FirmwareAdcSnapshot firmwareAdcSnapshot_ {};
+    FirmwareControlTrace::State firmwareControlState_ {};
+    FirmwareControlTrace::Result firmwareControlTrace_ {};
+    std::array<std::uint16_t, converterWritesPerPass> firmwareConverterCodes_ {};
+    std::size_t nextFirmwareControlEvent_ { 0 };
+    bool firmwareControlTraceValid_ { true };
+
     // PWM has its own exact FF4F-derived DAC code, computed beside the
     // late-loop LFO update and held until the next PWM converter write so a
     // host edit cannot splice two firmware passes together. The DCO and VCF

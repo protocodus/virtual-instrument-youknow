@@ -1475,7 +1475,10 @@ std::array<double, YouKnowEngine::converterWritesPerPass>
 YouKnowEngine::converterEventPhases(ConverterTimingProfile profile) noexcept
 {
     std::array<double, converterWritesPerPass> phases {};
-    if (profile == ConverterTimingProfile::PhaseZeroDiagnostic)
+    // A traced pass has no data-independent layout: reset/refresh installs
+    // its actual offsets from the supplied CPU state, not these zeroes.
+    if (profile == ConverterTimingProfile::PhaseZeroDiagnostic
+        || profile == ConverterTimingProfile::FirmwareControlNoInterrupt)
         return phases;
 
     if (profile == ConverterTimingProfile::FirmwareDcoNoInterrupt)
@@ -5664,6 +5667,7 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     oversamplingRequested_ = sanitiseOversampleFactor(requestedFactor);
     oversamplingApplied_ = oversamplingRequested_;
     chorus_.prepareSupportRates(sampleRate_);
+    activeConverterTimingProfile_ = converterTimingProfile_;
     updateProcessingRate();
     prepared_ = true;
     reset();
@@ -5832,7 +5836,11 @@ int YouKnowEngine::effectiveOversampleFactor(int requestedFactor) const noexcept
     else
         ceilingFactor = maximumOversampleFactor;
 
-    return std::min(sanitiseOversampleFactor(requestedFactor), ceilingFactor);
+    int result = std::min(sanitiseOversampleFactor(requestedFactor), ceilingFactor);
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+        while (sampleRate_ * result < 32000.0 && result < maximumOversampleFactor)
+            result *= 2;
+    return result;
 }
 
 bool YouKnowEngine::setOversamplingEnabled(bool enabled) noexcept
@@ -6161,6 +6169,13 @@ void YouKnowEngine::reset()
     // A reset leaves nothing in the output path, so a quality change asked for
     // before the first block does not have to wait for one that never comes.
     oversamplingIdleSamples_ = oversamplingQuietSamples_;
+    converterPassEndPhase_ = 1.0;
+    for (std::size_t i = 0; i < converterWritesPerPass; ++i)
+        converterInhibitPhases_[i] = std::max(0.0, converterEventPhases_[i]
+            - 75.0 * controlScanHz / voiceCpuStateHz);
+    refreshFirmwareControlTrace(true);
+    controlScanPhase_ = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
+        ? 0.0 : converterPassEndPhase_;
 }
 
 void YouKnowEngine::resetForHostStop()
@@ -6513,6 +6528,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         subCv_ = subCvTarget_;
         noiseCv_ = noiseCvTarget_;
         primeStartupVoiceWaveNodes(next);
+        refreshFirmwareControlTrace();
     }
 
     // The original assigner handles either POLY-button transition by gating
@@ -6991,6 +7007,17 @@ void YouKnowEngine::finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept
 
 void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+    {
+        controlScanPhase_ = 0.0;
+        nextConverterWrite_ = 0;
+        converterPassEnvelopeUpdated_.fill(false);
+        converterPassPortamentoUpdated_ = converterNextPassPortamentoUpdated_ = false;
+        passiveHoldEventLatch_ = {};
+        refreshFirmwareControlTrace();
+        return;
+    }
+
     // The recovered B-2 serial ISR does not RETI from Voice On/Off. It loads
     // SP with $ffff and jumps through $02eb to the beginning of the main loop,
     // so an interrupted converter pass resumes at RESONANCE rather than at its
@@ -7026,6 +7053,213 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     converterNextPassPortamentoUpdated_ = false;
     passiveHoldEventLatch_ = {};
     refreshFirmwareDcoTiming();
+}
+
+void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
+{
+    if (activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt)
+        return;
+    static const auto tables = [] {
+        FirmwareControlTrace::Tables result;
+        for (unsigned i = 0; i < 128; ++i)
+        {
+            result.attack[i] = attackIncrementForByte(static_cast<std::uint8_t>(i));
+            result.portamento[i] = portamentoIncrementForIndex(static_cast<std::uint8_t>(i));
+        }
+        for (int i = 0; i < 104; ++i)
+        {
+            result.pitchCv[static_cast<std::size_t>(i)] = derivedDcoCvAnchor(i);
+            result.pitchDivider[static_cast<std::size_t>(i)] =
+                static_cast<std::uint16_t>(derivedDcoDividerAnchor(i));
+        }
+        return result;
+    }();
+    auto& ram = firmwareControlState_.ram;
+    if (initialise)
+    {
+        firmwareControlState_ = {};
+        ram[0x1e] = 8; // idle-pass hangtime latch; note command can rearm it
+        ram[0x4a] = 0;
+    }
+    const auto putWord = [&ram](unsigned address, unsigned value) {
+        ram[address] = static_cast<std::uint8_t>(value);
+        ram[address + 1] = static_cast<std::uint8_t>(value >> 8);
+    };
+    const auto& p = activeParameters_;
+    // Explicit host adapter: panel/serial controls are held at the pass-start
+    // snapshot. The ADC ISR is absent from this nominal trace; its input bank,
+    // four raw samples and preceding hysteresis memory are supplied separately.
+    // With no capture configured, use a frozen lower-bank ADC snapshot. Its
+    // calculated outputs are overwritten by the next host snapshot. This is a
+    // repeatable nominal path, not a claim about the real ADC interrupt phase.
+    const auto tune = masterTunePitchWordOffset(p.masterTuneCents);
+    const auto bend = dcoBendCommand(pitchBendTarget_);
+    ram[0x1e] = static_cast<std::uint8_t>((ram[0x1e] & 0x0e)
+        | (sustainPedalDown_ ? 1 : 0) | (p.pulseEnabled ? 0x40 : 0)
+        | (tune < 0 ? 0x80 : 0) | (bend < 0 ? 0x20 : 0));
+    ram[0x37] = static_cast<std::uint8_t>((p.pwmSource == PwmSource::Lfo ? 1 : 0)
+        | (p.envPolarity == EnvPolarity::Normal ? 2 : 0)
+        | (p.vcaMode == VcaMode::Envelope ? 4 : 0));
+    putWord(0x21, envelopeDecayReleaseMultiplier(p.decay));
+    putWord(0x23, storedControlByte(p.sustain) * 128u);
+    putWord(0x25, envelopeDecayReleaseMultiplier(p.release));
+    putWord(0x39, storedControlByte(p.noiseLevel) * 128u);
+    putWord(0x3b, storedControlByte(p.subLevel) * 128u);
+    putWord(0x3d, storedControlByte(p.cutoff) * 128u);
+    putWord(0x3f, storedControlByte(p.resonance) * 128u);
+    putWord(0x43, storedControlByte(p.vcaLevel) * 128u);
+    ram[0x41] = static_cast<std::uint8_t>(storedControlByte(p.envDepth) * 2u);
+    ram[0x42] = static_cast<std::uint8_t>(storedControlByte(p.keyFollow) * 2u);
+    ram[0x45] = storedControlByte(p.attack);
+    ram[0x47] = static_cast<std::uint8_t>(storedControlByte(p.pwmDepth) * 2u);
+    ram[0x48] = static_cast<std::uint8_t>(storedControlByte(p.vcfLfoDepth) * 2u);
+    ram[0x49] = dcoLfoDepthScale(storedControlByte(p.dcoLfoDepth));
+    putWord(0x4b, lfoRateIncrement(p.lfoRate));
+    putWord(0x58, envelopeAttackIncrement(p.lfoDelay));
+    putWord(0x6c, lfoDelayFadeIncrement(p.lfoDelay));
+    ram[0x61] = static_cast<std::uint8_t>(std::abs(tune));
+    ram[0x63] = static_cast<std::uint8_t>(2u * storedControlByte(modWheelTarget_));
+    ram[0x64] = static_cast<std::uint8_t>((ram[0x63] * controlAdcByte(p.benderLfoDepth)) >> 8);
+    putWord(0x65, static_cast<unsigned>(std::abs(vcfBendCountsWord(bend, controlAdcByte(p.benderVcfDepth)))));
+    putWord(0x68, static_cast<unsigned>(std::abs(dcoBendWordForCommand(bend, controlAdcByte(p.benderDcoDepth)))));
+    ram[0x7d] = portamentoIncrement(portamentoTravelAdcFraction(p.portamento));
+    ram[0x07] = ram[0x08] = ram[0x10] = ram[0x11] = ram[0x33] = 0;
+    for (int card = 0; card < hardwareVoices; ++card)
+    {
+        auto& voice = voices_[static_cast<std::size_t>(card)];
+        const auto bit = static_cast<std::uint8_t>(1u << card);
+        const auto& env = voice.envelope;
+        if (voice.dcoResetPending) ram[0] |= bit;
+        if (env.attackPhase) ram[7] |= bit;
+        if (env.decayPhase) ram[8] |= bit;
+        if (env.gate) ram[0x10] |= bit;
+        if (env.running) ram[0x11] |= bit;
+        if (env.phase) ram[0x33] |= bit;
+        const float target = voice.rootMidi >= 0
+            ? static_cast<float>(voice.rootMidi + p.keyTranspose) : voice.targetMidi;
+        // The optional host transpose extends below the board's unsigned byte;
+        // this profile clamps that extension at zero, explicitly like RAM.
+        ram[9 + card] = static_cast<std::uint8_t>(std::clamp(std::lround(target), 0L, 255L));
+        putWord(0x71 + 2 * card, static_cast<unsigned>(std::clamp(
+            std::lround(voice.currentMidi * 256.0f), 0L, 65535L)));
+        putWord(0x27 + 2 * card, env.level);
+    }
+    ram[0x5c] = firmwareAdcSnapshot_.upperBank ? 8 : 0;
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        ram[0x5d + i] = firmwareAdcSnapshot_.raw[i];
+        ram[0x80 + (firmwareAdcSnapshot_.upperBank ? 4 : 0) + i] =
+            firmwareAdcSnapshot_.previous[i];
+    }
+    firmwareControlState_.adcComplete = firmwareAdcSnapshot_.conversionComplete;
+    firmwareControlTrace_ = FirmwareControlTrace::run(firmwareControlState_, tables);
+    firmwareControlTraceValid_ = firmwareControlTrace_.valid;
+    nextFirmwareControlEvent_ = 0;
+    if (!firmwareControlTraceValid_)
+        return;
+    constexpr double phasePerState = controlScanHz / voiceCpuStateHz;
+    converterPassEndPhase_ = firmwareControlTrace_.states * phasePerState;
+    for (std::size_t i = 0; i < firmwareControlTrace_.count; ++i)
+    {
+        const auto& event = firmwareControlTrace_.events[i];
+        if (event.kind == FirmwareControlTrace::EventKind::Converter)
+        {
+            converterEventPhases_[event.card] = event.states * phasePerState;
+            firmwareConverterCodes_[event.card] = event.value;
+        }
+        else if (event.kind == FirmwareControlTrace::EventKind::Inhibit)
+            converterInhibitPhases_[event.card] = event.states * phasePerState;
+    }
+}
+
+void YouKnowEngine::advanceFirmwareControlEvents(double phase) noexcept
+{
+    if (activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt
+        || !firmwareControlTraceValid_)
+        return;
+    const double elapsedStates = phase * voiceCpuStateHz / controlScanHz;
+    auto& ram = firmwareControlState_.ram;
+    const auto word = [&ram](unsigned address) {
+        return static_cast<unsigned>(ram[address]) + 256u * ram[address + 1];
+    };
+    while (nextFirmwareControlEvent_ < firmwareControlTrace_.count)
+    {
+        const auto& event = firmwareControlTrace_.events[nextFirmwareControlEvent_];
+        if (event.states > elapsedStates + 1.0e-7)
+            break;
+        ++nextFirmwareControlEvent_;
+        if (event.kind == FirmwareControlTrace::EventKind::RamByte)
+        {
+            ram[event.card] = static_cast<std::uint8_t>(event.value);
+            if (event.card == 7 || event.card == 8 || event.card == 0x10
+                || event.card == 0x11 || event.card == 0x33)
+                for (int card = 0; card < hardwareVoices; ++card)
+                {
+                    auto& env = voices_[static_cast<std::size_t>(card)].envelope;
+                    env.attackPhase = (ram[7] & (1u << card)) != 0;
+                    env.decayPhase = (ram[8] & (1u << card)) != 0;
+                    env.gate = (ram[0x10] & (1u << card)) != 0;
+                    env.running = (ram[0x11] & (1u << card)) != 0;
+                    env.phase = (ram[0x33] & (1u << card)) != 0;
+                }
+        }
+        else if (event.kind == FirmwareControlTrace::EventKind::Envelope)
+        {
+            auto& env = voices_[event.card].envelope;
+            env.level = event.value;
+            env.value = static_cast<float>(env.level >> 2u) / 4095.0f;
+            env.stage = !env.running ? (env.level == 0 ? EnvelopeStage::Idle : EnvelopeStage::Release)
+                : !env.phase ? EnvelopeStage::Attack
+                : env.level <= word(0x23) ? EnvelopeStage::Sustain : EnvelopeStage::Decay;
+            converterPassEnvelopeUpdated_[event.card] = true;
+        }
+        else if (event.kind == FirmwareControlTrace::EventKind::Portamento)
+        {
+            voices_[event.card].currentMidi = static_cast<float>(event.value) / 256.0f;
+            converterPassPortamentoUpdated_ = event.card == 5;
+        }
+    }
+    lfoAccumulator_ = static_cast<std::uint16_t>(word(0x4d));
+    lfoRising_ = (ram[0x4a] & 1u) == 0;
+    lfoPolarity_ = (ram[0x4a] & 2u) == 0 ? 1.0f : -1.0f;
+    lfoValue_ = lfoPolarity_ * static_cast<float>(lfoAccumulator_) / 8191.0f;
+    lfoDelayHoldoff_ = word(0x56);
+    lfoDelayFade_ = (ram[0x1e] & 4) ? 65536u : word(0x5a);
+    lfoDelayByte_ = (ram[0x1e] & 4) ? 255 : static_cast<std::uint8_t>(lfoDelayFade_ >> 8);
+    lfoDelayLevel_ = static_cast<float>(lfoDelayByte_) / 255.0f;
+    displayLfo_ = lfoValue_ * lfoDelayLevel_;
+    dcoLfoPitchWord_ = static_cast<std::int32_t>(word(0x51)) * (lfoPolarity_ > 0 ? 1 : -1);
+    vcfLfoCountsWord_ = static_cast<std::int32_t>(word(0x53)) * (lfoPolarity_ > 0 ? 1 : -1);
+}
+
+float YouKnowEngine::firmwareConverterTarget(const ConverterWrite& write) const noexcept
+{
+    const auto& order = converterWriteOrder();
+    std::size_t ordinal = 0;
+    for (; ordinal < order.size(); ++ordinal)
+        if (order[ordinal].destination == write.destination && order[ordinal].voice == write.voice)
+            break;
+    if (ordinal == order.size()) return 0;
+    const float code = static_cast<float>(firmwareConverterCodes_[ordinal]);
+    if (write.destination == ConverterDestination::Pwm)
+        return pwmDacVolts(firmwareConverterCodes_[ordinal]);
+    if (write.destination == ConverterDestination::Vcf)
+    {
+        // Keep the optional velocity path an explicit product extension.
+        if (activeParameters_.velocityDepth != 0)
+            return voiceVcfTarget(voices_[static_cast<std::size_t>(write.voice)], activeParameters_);
+        const float counts = code * 4.0f;
+        return counts + vcfConverterCarryCounts(counts)
+            * (activeParameters_.useServiced439522VcfCalibration ? 1.0f : activeParameters_.calibration);
+    }
+    if (write.destination == ConverterDestination::VoiceVca)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
+        const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+        return clamp01(code / 4095.0f * velocityGain(activeParameters_, voice)
+            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+    }
+    return code / 4095.0f;
 }
 
 void YouKnowEngine::refreshFirmwareDcoTiming() noexcept
@@ -7466,6 +7700,9 @@ void YouKnowEngine::updateVoiceEnvelope(
 void YouKnowEngine::updateEnvelopeBeforeConverterWrite(
     const ConverterWrite& write, const EngineParameters& parameters) noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+        return;
+
     const int envelopeCard = write.destination == ConverterDestination::Pwm
         ? 0 : write.destination == ConverterDestination::VoiceVca
             && write.voice >= 0 && write.voice < hardwareVoices - 1
@@ -7521,6 +7758,9 @@ void YouKnowEngine::updateVoicePortamento(
 void YouKnowEngine::updatePortamentoBeforeConverterWrite(
     const ConverterWrite& write, const EngineParameters& parameters) noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+        return;
+
     if (write.destination != ConverterDestination::Sub
         || converterPassPortamentoUpdated_)
         return;
@@ -7568,10 +7808,11 @@ std::uint32_t YouKnowEngine::updateVoicePitch(
     // did before, but its current pitch word remains that earlier snapshot
     // until the next glide pass. No late edit adds a second per-card step.
 
-    const std::int32_t controlOffset =
-        static_cast<std::int32_t>(
-            masterTunePitchWordOffset(parameters.masterTuneCents))
-        + dcoPitchBendWord_ + dcoLfoPitchWord_;
+    const std::int32_t controlOffset = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
+        ? static_cast<std::int32_t>(firmwareControlState_.ram[0x6f]
+            + 256u * firmwareControlState_.ram[0x70]) - 0x1818
+        : static_cast<std::int32_t>(masterTunePitchWordOffset(parameters.masterTuneCents))
+            + dcoPitchBendWord_ + dcoLfoPitchWord_;
 
     const DcoPitchPair pitch = dcoPitchPair(aggregatePitchWord(
         static_cast<double>(voice.currentMidi), controlOffset));
@@ -7692,6 +7933,12 @@ void YouKnowEngine::performConverterWrite(
     const ConverterWrite& write, const EngineParameters& parameters,
     const float* passiveHoldTargetOverride) noexcept
 {
+    const bool traced = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt;
+    const auto targetFor = [&](float legacyTarget) {
+        return passiveHoldTargetOverride != nullptr ? *passiveHoldTargetOverride
+            : traced ? firmwareConverterTarget(write) : legacyTarget;
+    };
+
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(converterWrites, 1);
 #endif
@@ -7713,19 +7960,13 @@ void YouKnowEngine::performConverterWrite(
     switch (write.destination)
     {
         case ConverterDestination::Resonance:
-            resonanceCvTarget_ = passiveHoldTargetOverride != nullptr
-                ? *passiveHoldTargetOverride
-                : converterDacFraction(parameters.resonance);
+            resonanceCvTarget_ = targetFor(converterDacFraction(parameters.resonance));
             break;
         case ConverterDestination::CommonVca:
-            sharedVcaTarget_ = passiveHoldTargetOverride != nullptr
-                ? *passiveHoldTargetOverride
-                : converterDacFraction(parameters.vcaLevel);
+            sharedVcaTarget_ = targetFor(converterDacFraction(parameters.vcaLevel));
             break;
         case ConverterDestination::Sub:
-            subCvTarget_ = passiveHoldTargetOverride != nullptr
-                ? *passiveHoldTargetOverride
-                : converterDacFraction(parameters.subLevel);
+            subCvTarget_ = targetFor(converterDacFraction(parameters.subLevel));
             break;
         case ConverterDestination::Pitch:
             if (validPhysicalVoice())
@@ -7763,7 +8004,7 @@ void YouKnowEngine::performConverterWrite(
                 pwmVoltsTarget_ = *passiveHoldTargetOverride;
                 break;
             }
-            pwmVoltsTarget_ = pwmDacVolts(converterPassPwmDacCode_);
+            pwmVoltsTarget_ = targetFor(pwmDacVolts(converterPassPwmDacCode_));
             break;
         case ConverterDestination::Vcf:
             if (validPhysicalVoice())
@@ -7772,6 +8013,8 @@ void YouKnowEngine::performConverterWrite(
                     voices_[static_cast<std::size_t>(write.voice)];
                 if (passiveHoldTargetOverride != nullptr)
                     voice.cutoffCountsTarget = *passiveHoldTargetOverride;
+                else if (traced)
+                    voice.cutoffCountsTarget = firmwareConverterTarget(write);
                 else
                     updateVoiceVcfTarget(voice, parameters);
             }
@@ -7782,6 +8025,8 @@ void YouKnowEngine::performConverterWrite(
                 auto& voice = voices_[static_cast<std::size_t>(write.voice)];
                 if (passiveHoldTargetOverride != nullptr)
                     voice.vcaControlTarget = *passiveHoldTargetOverride;
+                else if (traced)
+                    voice.vcaControlTarget = firmwareConverterTarget(write);
                 else
                     updateVoiceVcaTarget(voice, parameters);
                 if (envelopeHoldsConfigured_ && passiveHoldTargetOverride == nullptr)
@@ -7789,7 +8034,8 @@ void YouKnowEngine::performConverterWrite(
             }
             break;
         case ConverterDestination::Noise:
-            noiseCvTarget_ = converterDacFraction(parameters.noiseLevel);
+            noiseCvTarget_ = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
+                ? firmwareConverterTarget(write) : converterDacFraction(parameters.noiseLevel);
             break;
     }
 }
@@ -7811,6 +8057,8 @@ void YouKnowEngine::beginEnvelopeHoldAcquisition(int slot, float target) noexcep
 
 double YouKnowEngine::envelopeMuxInhibitPhase(std::size_t ordinal) const noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+        return converterInhibitPhases_[ordinal];
     // All normal B-2 loadDac callers enable immediately after its RET.
     // 082F..083C: 20+7+10+4+10+4+10+10 = 75 nominal CPU states.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1295-L1304
@@ -7881,13 +8129,29 @@ void YouKnowEngine::advanceEnvelopeHoldControls(
     // interval can contain the inhibit while the next enable is still later.
     // A serial restart abandons future edges, but leaves the capacitor and
     // selected channel alive until the replacement pass actually inhibits it.
-    for (int pass = 0; pass < 2; ++pass)
+    const auto appendInhibit = [&](double event) {
+        if (event > phase + 1.0e-12 && event <= phase + phaseStep + 1.0e-12)
+            edges[count++] = { std::clamp((event - phase) / phaseStep, 0.0, 1.0), false };
+    };
+    for (std::size_t ordinal = 0; ordinal < converterWritesPerPass; ++ordinal)
+        appendInhibit(envelopeMuxInhibitPhase(ordinal));
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+    {
+        // This profile's 32 kHz floor bounds one interval to 125 CPU states.
+        // The next pass's first inhibit can be inside it (111 states after
+        // entry without HOLD), although its first enable is still later.
+        // HOLD moves those edges to 129/204 states instead of 111/186.
+        // HOLD is frozen afresh at that pass's entry, so the old trace's first
+        // offset cannot predict the new prefix after a pedal change. No other
+        // next-pass inhibit can occur in this interval. Keep the actual pass
+        // duration: the instruction trace is not a normalized 4.2 ms grid.
+        appendInhibit(converterPassEndPhase_
+            + firmwareFirstConverterInhibitStates(sustainPedalDown_)
+                * controlScanHz / voiceCpuStateHz);
+    }
+    else
         for (std::size_t ordinal = 0; ordinal < converterWritesPerPass; ++ordinal)
-        {
-            const double event = pass + envelopeMuxInhibitPhase(ordinal);
-            if (event > phase + 1.0e-12 && event <= phase + phaseStep + 1.0e-12)
-                edges[count++] = { std::clamp((event - phase) / phaseStep, 0.0, 1.0), false };
-        }
+            appendInhibit(converterPassEndPhase_ + envelopeMuxInhibitPhase(ordinal));
     if (hasEnable)
         edges[count++] = { enablePosition, true };
     std::sort(edges.begin(), edges.begin() + static_cast<std::ptrdiff_t>(count),
@@ -7933,6 +8197,9 @@ float YouKnowEngine::passiveHoldWriteTarget(
     const ConverterWrite& write,
     const EngineParameters& parameters) const noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+        return firmwareConverterTarget(write);
+
     switch (write.destination)
     {
         case ConverterDestination::Resonance:
@@ -7986,7 +8253,7 @@ void YouKnowEngine::scheduleUpcomingDcoPitchPrestages(
             nextConverterWrite_ < converterWritesPerPass
             && ordinal >= nextConverterWrite_;
         const double nominalEventPhase = converterEventPhases_[ordinal]
-                                       + (remainsInCurrentPass ? 0.0 : 1.0);
+                                       + (remainsInCurrentPass ? 0.0 : converterPassEndPhase_);
 
         // T is the converter event's actual left-boundary poll, rather than
         // the policy profile's ideal phase. Count those exact internal
@@ -8017,7 +8284,10 @@ bool YouKnowEngine::latchUpcomingPassiveHoldEvent(
     // prepare() clamps the host to at least 8 kHz. Even with HQ disabled this
     // is at most 5/168 of a pass, smaller than the normalized 1/23 ordinal
     // spacing, so a physical interval can contain no more than one converter
-    // write. That fixed bound keeps this a scalar latch rather than a queue.
+    // write. The complete firmware profile instead enforces a 32 kHz
+    // internal floor. AuditFirmwareControlTrace proves a conservative minimum
+    // of 216 states between enables, including NOISE→next RES; a 32 kHz
+    // interval spans125 states. Thus it uses this same scalar latch safely.
     static_assert(5.0 / 168.0 < 1.0 / converterWritesPerPass);
     if (passiveHoldEventLatch_.valid || !(phasePerInternalSample > 0.0))
         return false;
@@ -8029,11 +8299,11 @@ bool YouKnowEngine::latchUpcomingPassiveHoldEvent(
     double eventPhase = 0.0;
     if (ordinal < writes.size())
         eventPhase = converterEventPhases_[ordinal];
-    else if (intervalEnd >= 1.0)
+    else if (intervalEnd >= converterPassEndPhase_)
     {
         ordinal = 0u;
         nextPass = true;
-        eventPhase = 1.0 + converterEventPhases_[ordinal];
+        eventPhase = converterPassEndPhase_ + converterEventPhases_[ordinal];
     }
     else
         return false;
@@ -9961,14 +10231,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // normalized timing profile preserves that qualitative fact while
             // leaving exact physical offsets open.
             bool converterPassCompleted = false;
-            if (controlScanPhase_ >= 1.0)
+            advanceFirmwareControlEvents(controlScanPhase_);
+            if (controlScanPhase_ >= converterPassEndPhase_)
             {
 #if defined(YOUKNOW_WORK_AUDIT)
                 YOUKNOW_COUNT_DOMAIN_WORK(converterPassStarts, 1);
 #endif
-                controlScanPhase_ -= 1.0;
-                for (auto& voice : voices_)
-                    voice.envelope.latchGate(sustainPedalDown_);
+                controlScanPhase_ -= converterPassEndPhase_;
+                if (activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt)
+                    for (auto& voice : voices_)
+                        voice.envelope.latchGate(sustainPedalDown_);
                 nextConverterWrite_ = 0;
                 converterPassEnvelopeUpdated_.fill(false);
                 converterPassPortamentoUpdated_ = converterNextPassPortamentoUpdated_;
@@ -9984,6 +10256,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 jackBoardCelsius_ = jackBoardCelsius(parameters);
                 if (assignmentRescanPending_)
                     assignmentRescanPassArmed_ = true;
+                if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+                {
+                    refreshFirmwareControlTrace();
+                    advanceFirmwareControlEvents(controlScanPhase_);
+                }
+                else
+                {
                 const std::int16_t bendCommand = dcoBendCommand(pitchBendTarget_);
                 dcoPitchBendWord_ = dcoBendWordForCommand(
                     bendCommand, controlAdcByte(parameters.benderDcoDepth));
@@ -10003,6 +10282,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                  lfoAccumulator_, lfoPolarity_ >= 0.0f)
                     : 0u;
                 refreshFirmwareDcoTiming();
+
+                }
 
                 // Slots above the six physical cards are an explicit product
                 // extension. They reuse one complete logical update at the
@@ -10070,6 +10351,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
             scheduleUpcomingDcoPitchPrestages(
                 controlScanPhase_, coefficients.scanPhasePerInternalSample);
+
+            advanceFirmwareControlEvents(controlScanPhase_ + coefficients.scanPhasePerInternalSample);
 
             if (!physicalHoldEvent.active
                 && latchUpcomingPassiveHoldEvent(
@@ -10467,10 +10750,39 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // The POLY/unison handler gated and cleared at the host event.
             // Reassign only after the complete ordered pass, so every physical
             // envelope has observed gate-off before any replacement Note On.
-            if (converterPassCompleted && assignmentRescanPending_
+            if (activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt
+                && converterPassCompleted && assignmentRescanPending_
                 && assignmentRescanPassArmed_)
                 completeVoiceAssignmentRescan();
             controlScanPhase_ += coefficients.scanPhasePerInternalSample;
+            if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
+                && controlScanPhase_ >= converterPassEndPhase_)
+            {
+                advanceFirmwareControlEvents(controlScanPhase_);
+                controlScanPhase_ -= converterPassEndPhase_;
+                nextConverterWrite_ = 0;
+                converterPassEnvelopeUpdated_.fill(false);
+                converterPassPortamentoUpdated_ = converterNextPassPortamentoUpdated_ = false;
+                jackBoardCelsius_ = jackBoardCelsius(parameters);
+                // Complete the logical assigner rescan only when the entire
+                // 02EC→07B5 pass has returned, after every off-gate VCA hold.
+                if (assignmentRescanPending_ && assignmentRescanPassArmed_)
+                    completeVoiceAssignmentRescan();
+                if (assignmentRescanPending_) assignmentRescanPassArmed_ = true;
+                refreshFirmwareControlTrace();
+                advanceFirmwareControlEvents(controlScanPhase_);
+#if defined(YOUKNOW_WORK_AUDIT)
+                YOUKNOW_COUNT_DOMAIN_WORK(converterPassStarts, 1);
+#endif
+                for (int slot = hardwareVoices; slot < maxVoices; ++slot)
+                {
+                    auto& voice = voices_[static_cast<std::size_t>(slot)];
+                    voice.envelope.latchGate(sustainPedalDown_);
+                    const auto count = updateVoiceScan(voice, parameters);
+                    programDcoCount(voice, count, voice.dcoResetPending);
+                    voice.dcoResetPending = false;
+                }
+            }
 
             // One high-pass, on the summed voices. The schematic carries a
             // single set of parts for it -- on the jack board, downstream of

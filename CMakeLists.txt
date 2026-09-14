@@ -78,12 +78,15 @@ include(CTest)
 
 set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowEngine.cpp
+    Source/DSP/YouKnowFirmwareTrace.cpp
     Source/DSP/YouKnowChorus.cpp
     Source/DSP/YouKnowPanel.cpp
     Source/DSP/YouKnowPresets.cpp
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
+    Source/DSP/YouKnowFirmwareTrace.h
+    Source/DSP/YouKnowFirmwareProgram.h
     Source/DSP/YouKnowDcoTemperature.h
     Source/DSP/YouKnowEnvelopeHold.h
     Source/DSP/YouKnowProductFidelity.h
@@ -403,6 +406,7 @@ if(YOUKNOW_BUILD_TOOLS)
 
     add_library(YouKnowDSPWorkAudit STATIC
         Source/DSP/YouKnowEngine.cpp
+    Source/DSP/YouKnowFirmwareTrace.cpp
         Source/DSP/YouKnowChorus.cpp
         Source/DSP/YouKnowEngine.h
         Source/DSP/YouKnowChorus.h
@@ -614,6 +618,11 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowVcfCalibrationTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcfCalibration COMMAND YouKnowVcfCalibrationTests)
     set_tests_properties(YouKnow.VcfCalibration PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareControlTraceTests Tests/YouKnowFirmwareControlTraceTests.cpp)
+    target_link_libraries(YouKnowFirmwareControlTraceTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareControlTraceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareControlTrace COMMAND YouKnowFirmwareControlTraceTests)
 
     add_executable(YouKnowEnvelopeFirmwareTests Tests/YouKnowEnvelopeFirmwareTests.cpp)
     target_link_libraries(YouKnowEnvelopeFirmwareTests PRIVATE YouKnowDSP)
