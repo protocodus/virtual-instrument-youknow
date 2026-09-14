@@ -543,8 +543,9 @@ struct YouKnowTestAccess
     static void setRampCurrentError(YouKnowEngine& engine, int card,
                                     float error) noexcept
     {
-        engine.cards_[static_cast<std::size_t>(card)]
-            .rampCurrentError = error;
+        auto& components = engine.cards_[static_cast<std::size_t>(card)].dcoComponents;
+        components.capacitorDraw = -error;
+        components.resistorDraw.fill(0.0f);
     }
 
     static float rampCurrentScale(const YouKnowEngine& engine,
@@ -573,10 +574,11 @@ struct YouKnowTestAccess
 
     static void primeSawTrack(YouKnowEngine& engine, int slot) noexcept
     {
-        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        auto& dco = voice.dco;
         const float rendered = static_cast<float>(
-            dco.rampValue * static_cast<double>(dco.renderScale)
-            + (static_cast<double>(dco.renderScale) - 1.0));
+            (dco.rampValue + 1.0) * static_cast<double>(dco.renderScale)
+            * voice.rampCurrentScale - 1.0);
         dco.saw.reset();
         dco.saw.prime(rendered);
     }
@@ -6755,9 +6757,9 @@ void testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces()
                15.0, 1.0e-12,
                "the calibration/control edge did not start at +15 V");
 
-    // A scale increase can also discover an active falling reset above the new
-    // coordinate bound. Clamp its value at t=0 and retarget the fall to reach
-    // -1 at the existing deadline, bandlimiting both changed coordinates.
+    // Inject an inconsistent coordinate scale above the physical rail (live
+    // parameter edits already preserve voltage). The defensive clamp belongs
+    // at t=0; the compatibility fall must still reach -1 at its old deadline.
     YouKnowEngine falling;
     falling.prepare(192000.0, blockSize, false);
     YouKnowTestAccess::setMode3Running(
@@ -6780,9 +6782,9 @@ void testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces()
         (-1.0 - fallingRail) / fallingReset;
     const auto expectedClamp =
         YouKnowTestAccess::expectedSawStepAndSlope(
-            falling, 1.4f, static_cast<float>(fallingRail - 1.4),
-            static_cast<float>(retargetedSlope * fallingInterval)
-                - static_cast<float>(fallingSlope * fallingInterval),
+            falling, 1.4f, static_cast<float>((fallingRail - 1.4) * 1.25),
+            static_cast<float>(retargetedSlope * 1.25 * fallingInterval)
+                - static_cast<float>(fallingSlope * 1.25 * fallingInterval),
             1.0f);
     expect(fallingAfter[0] >= -1.0 && fallingAfter[0] < fallingRail
                && fallingAfter[1] == retargetedSlope
@@ -6836,9 +6838,11 @@ void testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces()
 
     const auto actual = YouKnowTestAccess::sawTrackState(coincident, 0);
     const auto after = YouKnowTestAccess::dcoRampState(coincident, 0);
-    const float directSlopeStep = static_cast<float>(
-        (after[1] - incomingSlope) * static_cast<double>(renderScale)
-        * coincidentInterval);
+    // Reconstruction is V/6-1, so each physical slope includes both scales.
+    // Retain the primitive's separate float rounding of incoming/outgoing
+    // slopes; this checks one direct correction with exact ring equality.
+    const float directSlopeStep = static_cast<float>(after[1] * totalScale * coincidentInterval)
+                               - static_cast<float>(incomingSlope * totalScale * coincidentInterval);
     const auto expected = YouKnowTestAccess::expectedSawSlope(
         coincident, directSlopeStep, 0.1f);
     expect(actual.ring == expected.ring,
@@ -6913,9 +6917,9 @@ void testComparatorEndpointPinsAndTransitionTiming()
                && lowScalePulse.ring == expectedLowScalePulse.ring,
            "the raw +6 V comparator threshold was lost on a low-scale hybrid half");
 
-    // A live Unit Character edit can move a stationary physical ramp from one
-    // side of the comparator to the other before the interval starts. That
-    // edge belongs at samplesAgo=1, not the end-of-sample reconciliation.
+    // Inject a left-boundary voltage mismatch into the event-walk fixture.
+    // Reconciliation belongs at samplesAgo=1. Real component edits preserve
+    // voltage and are covered separately by YouKnowDcoComponentsTests.
     YouKnowEngine scaleFlip;
     scaleFlip.prepare(192000.0, blockSize, false);
     YouKnowTestAccess::setMode3Running(
@@ -6948,8 +6952,11 @@ void testComparatorEndpointPinsAndTransitionTiming()
     const float suffixThreshold = static_cast<float>(0.25 * suffixInterval * suffixSlope);
     YouKnowTestAccess::setDcoLaunchState(
         rescaledSuffix, 0, 1.0, 1024.0f, 1024.0f);
+    // Start the falling prefix BELOW this deliberately small threshold so
+    // the fixture isolates the new-rise crossing, not three separate edges.
+    const double prefixHeight = 0.5 * suffixThreshold / 6.0;
     YouKnowTestAccess::setDcoResetState(
-        rescaledSuffix, 0, -0.5, -1.0 / suffixInterval,
+        rescaledSuffix, 0, -1.0 + prefixHeight, -prefixHeight / (0.5 * suffixInterval),
         0.5 * suffixInterval);
     YouKnowTestAccess::primePulseTrack(rescaledSuffix, 0, -1.0f);
     YouKnowTestAccess::advanceDcoPitAndRampThreshold(
@@ -7002,6 +7009,9 @@ void testComparatorEndpointPinsAndTransitionTiming()
     {
         YouKnowEngine engine;
         engine.prepare(192000.0, blockSize, false);
+        // These diagnostic duty endpoints mean an exact 12 V ramp. Explicit
+        // unit scales avoid a rounded component scale displacing equality.
+        YouKnowTestAccess::setDcoRampScales(engine, 0, 1.0f, 1.0f);
         YouKnowTestAccess::setDcoRampState(
             engine, 0, transition.ramp, 0.0);
         YouKnowTestAccess::primePulseTrack(
@@ -7236,8 +7246,8 @@ void testPitStateMatchesFastFreewheel()
     // intentionally skips it and must already have the same scale.
     YouKnowTestAccess::updatePulseComparator(exact, 0, exactParameters);
     // A full-scale draw lands on C54's drawn G class, +/-2 %.
-    expect(YouKnowTestAccess::rampCurrentScale(exact, 0) == 1.02f
-               && YouKnowTestAccess::rampCurrentScale(fast, 0) == 1.02f,
+    expect(YouKnowTestAccess::rampCurrentScale(exact, 0) == static_cast<float>(1.0 / 0.98)
+               && YouKnowTestAccess::rampCurrentScale(fast, 0) == static_cast<float>(1.0 / 0.98),
            "a live calibration edit left the fast retired card's ramp scale stale");
 
     bool sawHeldRail = false;
@@ -7271,7 +7281,7 @@ void testPitStateMatchesFastFreewheel()
            "the matched retired-card fixture missed its hold or next rising OUT");
 
     fast.reset();
-    expect(YouKnowTestAccess::rampCurrentScale(fast, 0) == 1.02f,
+    expect(YouKnowTestAccess::rampCurrentScale(fast, 0) == static_cast<float>(1.0 / 0.98),
            "reset discarded the live calibration's fast-card ramp scale");
 }
 
@@ -11089,20 +11099,15 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
                          summary(values, &Observation::heldOneTimeConstant));
             printSummary("output-onset-proxy", outputOnset);
         }
-        // Unlike the converter/VCA milestones above, this threshold also sees
-        // DCO phase. The remaining HQ split is reconstruction-grid behavior;
-        // serial restart has removed the old one-pass scan-phase split. The
-        // HQ-on extremes moved one sample later when the voice VCA took Tr20's
-        // exact junction law, which sits up to 2.5 dB under the former
-        // softplus where the attack crosses this threshold.
-        // The corrected DAC buffer/gain laws move the HQ-on maximum back
-        // one sample to 223: this is an amplitude-threshold crossing, not a
-        // MIDI/converter latency improvement. All physical milestones above
-        // and the timing/paired-grid bounds below remain unchanged.
+        // This output-amplitude threshold also sees DCO phase and waveform
+        // shape. Causal held current, coherent construction charge and joint
+        // R/C identities change it without moving the physical milestones
+        // above. Keep the exact measured fingerprint separate from latency:
+        // all converter/VCA timing and the one-sample HQ grid bounds stand.
         expectSummary(outputOnset,
                       quality != 0
-                          ? std::array<double, 3> { 132.0, 177.5, 223.0 }
-                          : std::array<double, 3> { 113.0, 159.5, 205.0 },
+                          ? std::array<double, 3> { 131.0, 177.0, 219.0 }
+                          : std::array<double, 3> { 113.0, 159.0, 203.0 },
                       0.0, mode + " output-onset-proxy");
     }
     int maximumOnsetDifference = 0;
@@ -11128,7 +11133,7 @@ void testNoteOnPlayingLatencyAcrossConverterPhases()
            "the restarted-loop HQ converter-grid difference moved to "
                + std::to_string(maximumPitchDifference) + "/"
                + std::to_string(maximumTargetDifference));
-    expect(maximumOnsetDifference == 23,
+    expect(maximumOnsetDifference == 22,
            "the restarted-loop paired HQ onset-grid bound moved to "
                + std::to_string(maximumOnsetDifference));
 }
@@ -12572,6 +12577,7 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     struct CouplingRun
     {
         float duty { 0.0f };
+        double expectedDuty { 0.0 };
         double vcaInputDcVolts { 0.0 };
         double subAudioDb { 0.0 };
     };
@@ -12666,6 +12672,19 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
 
         CouplingRun run;
         run.duty = YouKnowTestAccess::pulseDuty(engine, 0);
+        // Independent triangle occupancy: at a fixed threshold, both linear
+        // legs spend threshold/peak of their duration below it. Compute peak
+        // from held current and the actual clock, without the engine's duty
+        // helper or its old count-dependent current normalization.
+        const double period = 4.0 * YouKnowTestAccess::activeDcoDivider(engine, 0)
+                            / engine.dcoMasterClockHz();
+        const double slope = 12.0 / (7675.0 / 2000000.0 - 2.2e-6)
+            * YouKnowTestAccess::dcoCv(engine, 0) / 256.0
+            * YouKnowTestAccess::rampCurrentScale(engine, 0);
+        const double peak = slope * (period - 2.2e-6);
+        expect(peak > 0.0 && peak < 15.0,
+               "the coupling fixture no longer has an unclipped triangle");
+        run.expectedDuty = 1.0 - YouKnowTestAccess::pulseThresholdVolts(engine, 0) / peak;
         run.vcaInputDcVolts = weightedSum / weight;
         run.subAudioDb = 20.0 * std::log10(subAudioPeak / rms);
         return run;
@@ -12680,21 +12699,14 @@ void testFilterToVcaCouplingRemovesTheDutyDependentThump()
     const CouplingRun open = measure(0.00f);
     const CouplingRun middle = measure(0.50f);
     const CouplingRun narrow = measure(nominalPwmPanelMaximum);
-    // Voice 0 is CH1, the card the shared VR31 trims to exactly 50 % at the
-    // trim point, so no comparator draw of its own enters here. What is left
-    // is the B-2 DAC pair's residual and this note's ramp amplitude: the
-    // threshold is fixed in volts while the ramp is the pitch's own
-    // code x divider product, so the duty the comparator solves drifts off
-    // the trim point away from the trimmed note, and the reported figure is
-    // that solved duty (testReportedPulseDutyIsTheSolvedDutyAtTheTrimPoint
-    // meters the two against each other). The retired 0.500498 was the old
-    // helper clamping the card's own threshold back to the shared hold's 6 V.
-    expectNear(open.duty, 0.497578, 1.0e-3,
-               "the coupling fixture's PWM panel 0.00 left its solved duty");
-    expectNear(narrow.duty, 0.944239, 1.0e-3,
-               "the coupling fixture's loaded PWM maximum left its card-specific duty");
+    // CH1's fixed 8-foot/B2 service reference never retrims against this note
+    // or a running temperature. The three physical thresholds must agree
+    // with the independently calculated triangle occupancy, while the DC
+    // and audible-thump assertions below retain their existing limits.
     for (const auto& run : { open, middle, narrow })
     {
+        expectNear(run.duty, run.expectedDuty, 1.0e-6,
+                   "the coupling fixture's PWM duty left its physical triangle occupancy");
         expect(std::abs(run.vcaInputDcVolts) < 1.0e-3,
                "the voice amplifier is multiplying filter DC again at duty "
                    + std::to_string(run.duty) + " (pin 9 mean "
@@ -16182,6 +16194,20 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW_DCO_FIXTURE_TESTS_ONLY") != nullptr)
+    {
+        testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();
+        testComparatorEndpointPinsAndTransitionTiming();
+        testFilterToVcaCouplingRemovesTheDutyDependentThump();
+        if (failures != 0)
+        {
+            std::cerr << failures << " DCO/coupling fixture check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All DCO/coupling fixture checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW_OUTPUT_TESTS_ONLY") != nullptr)
     {
         testMainVolumeLoadedLinearPotLaw();

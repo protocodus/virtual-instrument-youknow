@@ -2613,7 +2613,7 @@ void YouKnowEngine::beginDcoDischarge(
     dco.positiveRailHeld = false;
     const double intervalSeconds = 1.0 / oversampledRate_;
     const float oldSlope = static_cast<float>(
-        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
     const double periodSeconds = std::max(
         dco.periodSamples / oversampledRate_, 1.0e-12);
@@ -2623,7 +2623,7 @@ void YouKnowEngine::beginDcoDischarge(
     dco.rampSlopePerSecond = (-1.0 - dco.rampValue) / resetSeconds;
     dco.resetSecondsRemaining = resetSeconds;
     const float newSlope = static_cast<float>(
-        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
     if (addCorrections && dco.saw.primed)
         addSlope(dco.saw, newSlope - oldSlope, samplesAgo);
@@ -2644,7 +2644,7 @@ void YouKnowEngine::beginDcoCharge(
     dco.positiveRailHeld = false;
     const double intervalSeconds = 1.0 / oversampledRate_;
     const float oldSlope = static_cast<float>(
-        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
     dco.rampValue = -1.0;
     dco.resetSecondsRemaining = 0.0;
@@ -2652,7 +2652,7 @@ void YouKnowEngine::beginDcoCharge(
     dco.rampSlopePerSecond = dcoChargingSlope(
         voice.dcoCv, activeParameters_.range) / dco.renderScale;
     const float newSlope = static_cast<float>(
-        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale)
+        dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
     if (addCorrections && dco.saw.primed)
         addSlope(dco.saw, newSlope - oldSlope, samplesAgo);
@@ -2720,7 +2720,7 @@ void YouKnowEngine::beginRangeClockTransition(
             if (dco.saw.primed)
                 addSlope(dco.saw, static_cast<float>(
                     (dco.rampSlopePerSecond - oldSlope)
-                    * static_cast<double>(dco.renderScale)
+                    * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
                     / oversampledRate_), 1.0f);
         }
         if (dco.pitState == Dco::PitState::stopped
@@ -5452,7 +5452,12 @@ void YouKnowEngine::buildVoiceCards() noexcept
     {
         auto& card = cards_[static_cast<std::size_t>(index)];
         const std::uint32_t seed = static_cast<std::uint32_t>(index) * 2654435761u + 17u;
-        card.rampCurrentError = hashBipolar(seed);
+        // Preserve the previous card draw's direction of charging-current
+        // error while expressing the physical inverse capacitance relation.
+        card.dcoComponents.capacitorDraw = -hashBipolar(seed);
+        for (std::size_t range = 0; range < 3; ++range)
+            card.dcoComponents.resistorDraw[range] =
+                hashBipolar(seed + 40u + static_cast<std::uint32_t>(range));
         card.comparatorOffset = hashBipolar(seed + 1u);
         card.cutoffOffsetError = hashBipolar(seed + 2u);
         card.resonanceError = hashBipolar(seed + 3u);
@@ -5967,8 +5972,8 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
         // in selected-clock periods and the ramp slope in volts per second, so
         // neither physical state is retimed by this sample-grid rebuild.
         const float saw = static_cast<float>(
-            voice.dco.rampValue * static_cast<double>(voice.dco.renderScale)
-            + (static_cast<double>(voice.dco.renderScale) - 1.0));
+            (voice.dco.rampValue + 1.0) * static_cast<double>(voice.dco.renderScale)
+            * voice.rampCurrentScale - 1.0);
         voice.dco.saw.reset();
         voice.dco.pulse.reset();
         voice.dco.sub.reset();
@@ -6389,7 +6394,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         || next.enableSpatialThermalGradient
                != activeParameters_.enableSpatialThermalGradient;
     const bool rampCurrentScalesChanged = startupSnapshot
-        || next.calibration != activeParameters_.calibration;
+        || next.calibration != activeParameters_.calibration || rangeChanged;
     const bool agingChanged = next.aging != activeParameters_.aging;
     if (next.useFixedVcfServiceFrequencyTrim
             != activeParameters_.useFixedVcfServiceFrequencyTrim
@@ -7995,45 +8000,46 @@ float YouKnowEngine::cutoffAnalogCounts(
 }
 
 float YouKnowEngine::rampCurrentScaleFor(
-    const VoiceCard& card, float calibration) noexcept
+    const VoiceCard& card, float calibration, DcoRange range) noexcept
 {
-    // Nothing trims a card's ramp: VR33 (DCO CV OFFSET, p. 18 s. 2) is one
-    // shared converter zero, and the per-card trimmers are VCF, RES, VCA
-    // and VCA OFFSET only. What bounds it is the drawing: module board
-    // p. 13 prints the integrator as "C54 .001G" -- the G code is +/-2 % --
-    // and the three range resistors as "399K MF / 200K MF / 100K MF",
-    // metal film -- 399 kOhm, not the 400 kOhm an exact 2:1 against 200 kOhm
-    // would need. dcoLaunchScale includes the resulting 400/399 nominal
-    // 16' factor separately from this card's component dispersion.
-    // The +/-2 % capacitor class is therefore the anchored
-    // bound the dispersion sits inside (a 1 % film resistor adds 2.24 %
-    // in quadrature); the former 0.03 was a voiced class with no part
-    // behind it. Anchored bound, point at the bound's own class.
-    // updatePulseComparator solves the comparator crossing against this
-    // cycle's ramp slope, and renderVoice's amplitude has to scale the
-    // rendered ramp by that identical slope; the former resolves it here
-    // and caches it on the voice (Voice::rampCurrentScale) so the latter
-    // reads the exact value the comparator was solved against instead of
-    // re-deriving it.
-    return 1.0f + card.rampCurrentError * rampCapacitorToleranceClass * calibration;
+    return card.dcoComponents.chargingScale(
+        static_cast<std::size_t>(range), calibration);
 }
 
 void YouKnowEngine::refreshVoiceRampCurrentScales() noexcept
 {
     for (auto& voice : voices_)
     {
-        const auto& card =
-            cards_[static_cast<std::size_t>(voice.cardIndex)];
-        voice.rampCurrentScale =
-            rampCurrentScaleFor(card, activeParameters_.calibration);
-        if (voice.dco.positiveRailHeld)
+        const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+        auto& dco = voice.dco;
+        const float previous = voice.rampCurrentScale;
+        const float current = rampCurrentScaleFor(
+            card, activeParameters_.calibration, activeParameters_.range);
+        voice.rampServiceScale = rampCurrentScaleFor(
+            card, activeParameters_.calibration, DcoRange::Eight);
+        if (current == previous)
+            continue;
+
+        // These coordinates describe voltage, not charge itself. Reproject
+        // them when the selected component scale changes so the physical
+        // capacitor voltage remains continuous. Its NEW derivative follows
+        // the new current/C; an existing linear reset retains its deadline.
+        const double oldSlope = dco.rampSlopePerSecond * dco.renderScale * previous;
+        dco.rampValue = (dco.rampValue + 1.0)
+                      * static_cast<double>(previous) / current - 1.0;
+        if (dco.resetSecondsRemaining > 0.0)
+            dco.rampSlopePerSecond *= static_cast<double>(previous) / current;
+        voice.rampCurrentScale = current;
+        if (dco.positiveRailHeld)
         {
-            const double totalScale =
-                static_cast<double>(voice.dco.renderScale)
-                * static_cast<double>(voice.rampCurrentScale);
-            voice.dco.rampValue = dcoPositiveBaseRail(totalScale);
-            voice.dco.rampSlopePerSecond = 0.0;
+            dco.rampValue = dcoPositiveBaseRail(
+                static_cast<double>(dco.renderScale) * current);
+            dco.rampSlopePerSecond = 0.0;
         }
+        const double newSlope = dco.rampSlopePerSecond * dco.renderScale * current;
+        if (dco.saw.primed && !voice.freewheeling && oldSlope != newSlope)
+            addSlope(dco.saw, static_cast<float>((newSlope - oldSlope)
+                                               / oversampledRate_), 1.0f);
     }
 }
 
@@ -8124,7 +8130,7 @@ void YouKnowEngine::updatePulseComparator(
     // The event walk compares this threshold with retained capacitor voltage.
     // Held CV controls its derivative; changing current does not rescale the
     // voltage already integrated earlier in the cycle.
-    const float cardCurrent = voice.rampCurrentScale;
+    const float cardCurrent = voice.rampServiceScale;
     // ADJUSTMENT s. 10 (p. 19) is a joint window: the one shared VR31 puts
     // CH1 at exactly 50 % with PWM at 5, and every other card is accepted
     // within 48-52 % as it stands, ramp error and comparator error together.
@@ -8136,10 +8142,15 @@ void YouKnowEngine::updatePulseComparator(
     // ramp independently, which put some cards outside the window Roland
     // ships them inside. Pulse Off remains separate at -0.8 V and pins the
     // comparator high even while this card's VCA is shut.
-    const float netDuty = voice.cardIndex == 0
-        ? 0.0f
-        : card.comparatorOffset * pwmDutyAcceptanceHalfWidth
-              * parameters.calibration;
+    // At the second service point, D(.6V) = D(6V) + .45/serviceScale.
+    // Draw inside the intersection of BOTH acceptance windows. The bounded
+    // deterministic population is a product prior, not measured statistics.
+    const float halfWidth = pwmDutyAcceptanceHalfWidth * parameters.calibration;
+    const float lowerResidual = std::max(-halfWidth, 0.45f - halfWidth - 0.45f / cardCurrent);
+    const float upperResidual = std::min(halfWidth, 0.45f + halfWidth - 0.45f / cardCurrent);
+    const float netDuty = voice.cardIndex == 0 ? 0.0f
+        : lowerResidual + (0.5f + 0.5f * card.comparatorOffset)
+                            * (upperResidual - lowerResidual);
     // duty = 1 - V_th / (12 V * scale) at the 6 V hold, so the threshold
     // that lands 0.5 + netDuty is 6 V * scale * (1 - 2 netDuty).
     const float thresholdOffset =
@@ -8209,13 +8220,13 @@ float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
 {
     const auto cycle = steadyDcoCycle(voice);
     if (!(cycle.slopeVoltsPerSecond > 0.0))
-        return -sawMixVolts * voice.rampCurrentScale;
+        return -sawMixVolts;
     const double riseSeconds = cycle.peakVolts / cycle.slopeVoltsPerSecond;
     // Triangle rise + finite linear fall + any supply-held plateau.
     const double meanVolts = cycle.peakVolts * (1.0
         - 0.5 * (riseSeconds + cycle.resetSeconds) / cycle.periodSeconds);
     return static_cast<float>(sawMixVolts
-        * (meanVolts / (0.5 * rampAmplitudeVolts) - voice.rampCurrentScale));
+        * (meanVolts / (0.5 * rampAmplitudeVolts) - 1.0));
 }
 
 void YouKnowEngine::primeStartupVoiceWaveNodes(
@@ -8275,7 +8286,7 @@ void YouKnowEngine::updateDcoHeldCv(Voice& voice, float code) noexcept
     if (dco.saw.primed)
         addSlope(dco.saw, static_cast<float>(
             (dco.rampSlopePerSecond - oldSlope) * dco.renderScale
-            / oversampledRate_), 1.0f);
+            * voice.rampCurrentScale / oversampledRate_), 1.0f);
 }
 
 bool YouKnowEngine::pulseMixEnabled(
@@ -8617,7 +8628,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             const bool chargingIntoRail = dco.rampSlopePerSecond > 0.0;
             const float oldSlope = static_cast<float>(
                 dco.rampSlopePerSecond
-                * static_cast<double>(dco.renderScale)
+                * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
                 * intervalSeconds);
             dco.rampValue = positiveBaseRail;
             if (addCorrections && dco.saw.primed
@@ -8625,7 +8636,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             {
                 const float valueStep = static_cast<float>(
                     (positiveBaseRail - valueBeforeClamp)
-                    * static_cast<double>(dco.renderScale));
+                    * static_cast<double>(dco.renderScale) * voice.rampCurrentScale);
                 addStep(dco.saw, valueStep, eventSamplesAgo(elapsed));
             }
 
@@ -8649,7 +8660,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
                     (-1.0 - dco.rampValue) / dco.resetSecondsRemaining;
                 const float newSlope = static_cast<float>(
                     dco.rampSlopePerSecond
-                    * static_cast<double>(dco.renderScale)
+                    * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
                     * intervalSeconds);
                 if (addCorrections && dco.saw.primed)
                     addSlope(dco.saw, newSlope - oldSlope,
@@ -8809,7 +8820,7 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
         const float sawNode = !trackSawNode ? 0.0f
             : carrierHz <= endpointTrackingMaximumHz
                 ? static_cast<float>(sawMixVolts
-                    * (rampVolts / (0.5 * rampAmplitudeVolts) - voice.rampCurrentScale))
+                    * (rampVolts / (0.5 * rampAmplitudeVolts) - 1.0))
                 : steadyDcoSawMean(voice);
         static_cast<void>(voice.moduleCoupling.process(
             pulseNode + subWaveNodeMean(voice, activeParameters_) + sawNode,
@@ -8874,9 +8885,9 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Retained capacitor voltage supplies both the saw and PWM comparator;
     // the CV only changes its derivative at the converter event.
     const float sawNaive = static_cast<float>(
-        dco.rampValue * static_cast<double>(dco.renderScale)
-        + (static_cast<double>(dco.renderScale) - 1.0));
-    const float amplitude = sawMixVolts * voice.rampCurrentScale;
+        (dco.rampValue + 1.0) * static_cast<double>(dco.renderScale)
+        * voice.rampCurrentScale - 1.0);
+    const float amplitude = sawMixVolts;
     const float sawOut = dco.saw.advance(sawNaive) * amplitude;
 
     // Comparator and sub transitions were inserted at their PIT/ramp event

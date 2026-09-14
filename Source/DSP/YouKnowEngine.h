@@ -9,6 +9,7 @@
 #include "YouKnowOutputJack.h"
 #include "YouKnowControlDac.h"
 #include "YouKnowDcoTemperature.h"
+#include "YouKnowDcoComponents.h"
 
 #include <array>
 #include <bit>
@@ -2471,7 +2472,7 @@ private:
     // G class (rampCapacitorToleranceClass).
     struct VoiceCard
     {
-        float rampCurrentError { 0.0f };
+        DcoComponentTolerance dcoComponents {};
         float comparatorOffset { 0.0f };
         float cutoffOffsetError { 0.0f };
         float cutoffScaleError { 0.0f };
@@ -2630,11 +2631,13 @@ private:
         // write. Keeping volts also survives a renderScale change mid-sample.
         float pulseThresholdVolts { 6.0f };
         bool pulsePinnedHigh { false };
-        // rampCurrentScaleFor(card, calibration), refreshed when calibration
-        // moves and by updatePulseComparator for rendered cards. renderVoice
-        // then consumes this exact cached scale, including on the retired fast
-        // path that deliberately skips the comparator update.
+        // Selected R*C charging scale, refreshed on Character/RANGE edits.
+        // Voltage coordinates are reprojected to retain the capacitor state.
+        // The retired fast path consumes the same cached component values.
         float rampCurrentScale { 1.0f };
+        // Comparator service coordinate remains the nominal 8' B-2 0x5400
+        // reference. RANGE, clock and live temperature never re-trim it.
+        float rampServiceScale { 1.0f };
         // PWM is a moving comparator threshold, not a pulse oscillator whose
         // edge position is frozen for one sample.  Retaining the previous
         // threshold lets renderVoice solve crossings caused by both the ramp
@@ -2896,7 +2899,7 @@ private:
     // two cannot drift apart the way resonanceFeedbackFor/cutoffAnalogCounts
     // above were split out to prevent.
     [[nodiscard]] static float rampCurrentScaleFor(
-        const VoiceCard& card, float calibration) noexcept;
+        const VoiceCard& card, float calibration, DcoRange range) noexcept;
     [[nodiscard]] static double dcoChargingSlope(
         float heldCode, DcoRange range) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
