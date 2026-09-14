@@ -1122,6 +1122,20 @@ public:
     // under a running pass would invent an event discontinuity no hardware
     // has, so a selection takes effect at the next reset()/prepare().
     void selectConverterTimingProfile(ConverterTimingProfile profile) noexcept;
+    // Diagnostic replay of already-decoded B-2 command service boundaries.
+    // Select before reset/prepare; requires FirmwareControlNoInterrupt. Ordinary
+    // keyboard note APIs and automatic assigner rescans are bypassed in this
+    // mode. The caller supplies the ordered service times; no MIDI wire, RXB,
+    // interrupt-entry or handler-execution duration is synthesized. All six
+    // cards still divide the same clock. The existing boundary policy first
+    // finishes an already-DI-protected PIT store without inventing its elapsed
+    // ISR duration; that old store may change OUT/sub state. The new command
+    // preserves capacitor voltage and requests any new reset through the later
+    // traced PIT path. It does not assign a new random or per-card pitch phase.
+    void selectVoiceBoardCommandReplay(bool enabled) noexcept
+    { voiceBoardCommandReplayRequested_ = enabled; }
+    [[nodiscard]] bool serviceVoiceBoardNoteOn(int card, int boardPitchByte) noexcept;
+    [[nodiscard]] bool serviceVoiceBoardNoteOff(int card) noexcept;
     // The selected ADC bank is frozen for this no-interrupt profile. Supply
     // captured raw/previous bytes to explore its exact main-loop branches;
     // the default is lower bank, zero samples, conversion flag clear.
@@ -3151,10 +3165,13 @@ private:
     std::size_t nextConverterWrite_ { 0 };
     double converterPassEndPhase_ { 1.0 };
     std::array<double, converterWritesPerPass> converterInhibitPhases_ {};
+    bool voiceBoardCommandReplayRequested_ { false };
+    bool voiceBoardCommandReplayActive_ { false };
     FirmwareAdcSnapshot firmwareAdcSnapshot_ {};
     FirmwareControlTrace::State firmwareControlState_ {};
     FirmwareControlTrace::Result firmwareControlTrace_ {};
     std::array<std::uint16_t, converterWritesPerPass> firmwareConverterCodes_ {};
+    std::uint8_t firmwarePassResetMask_ { 0 };
     std::size_t nextFirmwareControlEvent_ { 0 };
     bool firmwareControlTraceValid_ { true };
 

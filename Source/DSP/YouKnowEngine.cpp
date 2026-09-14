@@ -2864,7 +2864,13 @@ void YouKnowEngine::prestageDcoPitchTransaction(
     const float cvTarget = voice.dcoCvTarget;
     voice.dcoCvTarget = previousCvTarget;
 
-    const bool writesControlWord = voice.dcoResetPending;
+    // FF00 is cleared at04B8 before the later DI/control instruction. The
+    // continuing trace has already selected that branch even though its RAM
+    // request is now clear; only a command restart abandons that local choice.
+    const bool writesControlWord = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
+        && voice.cardIndex < hardwareVoices
+        ? (firmwarePassResetMask_ & (1u << voice.cardIndex)) != 0
+        : voice.dcoResetPending;
     voice.dcoResetPending = false;
     voice.dcoPitchTransactionValid = true;
     voice.dcoPitchTransactionColdStart = writesControlWord
@@ -6068,6 +6074,7 @@ void YouKnowEngine::reset()
 {
     for (auto& hold : envelopeHolds_)
         hold.reset(VoiceVcaSignalLaw::holdStandoffVolts);
+    voiceBoardCommandReplayActive_ = voiceBoardCommandReplayRequested_;
     for (auto& voice : voices_)
     {
         voice = Voice {};
@@ -6536,7 +6543,8 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     // mutable plug-in voice-count has no hardware counterpart, but rebuilding
     // a live Unison stack is the only coherent equivalent when that count
     // changes.
-    if (prepared_ && (assignModeChanged || unisonVoiceCountChanged))
+    if (prepared_ && !voiceBoardCommandReplayActive_
+        && (assignModeChanged || unisonVoiceCountChanged))
         beginVoiceAssignmentRescan();
 }
 
@@ -6928,8 +6936,63 @@ void YouKnowEngine::silenceVoice(Voice& voice) noexcept
     // currentMidi and releaseStamp for the assigner/portamento policy.
 }
 
+bool YouKnowEngine::serviceVoiceBoardNoteOn(int card, int boardPitchByte) noexcept
+{
+    if (!prepared_ || !voiceBoardCommandReplayActive_
+        || activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt
+        || card < 0 || card >= hardwareVoices || boardPitchByte < 0 || boardPitchByte > 127)
+        return false;
+
+    // The service point means the logical handler has completed. As with the
+    // normal host command policy, finish only the already-protected PIT byte
+    // pair; its duration and the actual ISR entry latency are not reconstructed.
+    finishProtectedPitWritesBeforeSerialVoiceCommand();
+    auto& voice = voices_[static_cast<std::size_t>(card)];
+    const bool wasRunning = voice.envelope.running; // actual FF11 snapshot
+    const bool changedPitch = firmwareControlState_.ram[9 + card] != boardPitchByte;
+    const bool alreadyPending = voice.dcoResetPending
+        || (firmwareControlState_.ram[0] & (1u << card)) != 0;
+    const float currentWord = voice.currentMidi;
+    initialiseVoice(voice, card, boardPitchByte - activeParameters_.keyTranspose, 1.0f);
+    // Voice On changes FF09, gate and phase latches, never FF71's glide word.
+    // Even PORTAMENTO off transfers the new byte only at the later 03EC store.
+    // Using -1 also keeps later host transpose edits out of an already-decoded
+    // board byte; the diagnostic's next service command owns the next byte.
+    voice.rootMidi = -1;
+    voice.targetMidi = static_cast<float>(boardPitchByte);
+    voice.currentMidi = currentWord;
+    voice.lastVoiceMidi = boardPitchByte;
+    voice.dcoResetPending = alreadyPending || (changedPitch && !wasRunning);
+    voice.unisonMember = false;
+    // 0128→0144 bypasses FF00 on an equal byte, even when FF11 is clear.
+    // A changed byte tests FF11 at 012E, not the just-written gate at 0118.
+    // Envelope::noteOn implements the separate 0132/0145 phase-latch branches.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L245
+    updateActiveVoiceCount();
+    restartVoiceBoardScanAfterSerialVoiceCommand();
+    return true;
+}
+
+bool YouKnowEngine::serviceVoiceBoardNoteOff(int card) noexcept
+{
+    if (!prepared_ || !voiceBoardCommandReplayActive_
+        || activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt
+        || card < 0 || card >= hardwareVoices)
+        return false;
+    finishProtectedPitWritesBeforeSerialVoiceCommand();
+    // Every decoded 80..85 command restarts, including a duplicate voice off.
+    // It clears the addressed gate and, unless HOLD is set, FF33; pitch RAM,
+    // FF07/08, FF11 and the capacitor/timer phase all survive the service.
+    releaseVoiceKey(voices_[static_cast<std::size_t>(card)]);
+    updateActiveVoiceCount();
+    restartVoiceBoardScanAfterSerialVoiceCommand();
+    return true;
+}
+
 void YouKnowEngine::noteOn(int midiNote, float velocity)
 {
+    if (voiceBoardCommandReplayActive_)
+        return;
     if (midiNote < 0 || midiNote > 127)
         return;
     noteOnInternal(midiNote, std::clamp(velocity, 0.0f, 1.0f));
@@ -6980,10 +7043,13 @@ void YouKnowEngine::finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept
         const bool pitchScanWouldRequestReset = voice.rootMidi >= 0
             && pitchChangeRequestsDcoReset(
                 voice, voice.rootMidi + activeParameters_.keyTranspose);
+        const bool capturedResetBranch = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
+            ? (firmwarePassResetMask_ & (1u << slot)) != 0
+            : voice.dcoResetPending || pitchScanWouldRequestReset;
         const bool resetPrestageIsProtected =
             dco.pitWriteState
                     == Dco::PitWriteState::awaitingPitchPrestage
-            && (voice.dcoResetPending || pitchScanWouldRequestReset)
+            && capturedResetBranch
             && dco.cpuStatesToWrite <= pitResetDiToControlStates;
         if (resetPrestageIsProtected)
             prestageDcoPitchTransaction(
@@ -7152,6 +7218,7 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
             firmwareAdcSnapshot_.previous[i];
     }
     firmwareControlState_.adcComplete = firmwareAdcSnapshot_.conversionComplete;
+    firmwarePassResetMask_ = ram[0];
     firmwareControlTrace_ = FirmwareControlTrace::run(firmwareControlState_, tables);
     firmwareControlTraceValid_ = firmwareControlTrace_.valid;
     nextFirmwareControlEvent_ = 0;
@@ -7191,6 +7258,10 @@ void YouKnowEngine::advanceFirmwareControlEvents(double phase) noexcept
         if (event.kind == FirmwareControlTrace::EventKind::RamByte)
         {
             ram[event.card] = static_cast<std::uint8_t>(event.value);
+            if (event.card == 0)
+                for (int card = 0; card < hardwareVoices; ++card)
+                    voices_[static_cast<std::size_t>(card)].dcoResetPending =
+                        (ram[0] & (1u << card)) != 0;
             if (event.card == 7 || event.card == 8 || event.card == 0x10
                 || event.card == 0x11 || event.card == 0x33)
                 for (int card = 0; card < hardwareVoices; ++card)
@@ -7395,6 +7466,8 @@ void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
 
 void YouKnowEngine::noteOff(int midiNote)
 {
+    if (voiceBoardCommandReplayActive_)
+        return;
     if (midiNote < 0 || midiNote > 127)
         return;
     noteOffInternal(midiNote);
@@ -7402,7 +7475,7 @@ void YouKnowEngine::noteOff(int midiNote)
 
 void YouKnowEngine::reassertKeyMode() noexcept
 {
-    if (prepared_)
+    if (prepared_ && !voiceBoardCommandReplayActive_)
         beginVoiceAssignmentRescan();
 }
 

@@ -631,6 +631,11 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.VcfCalibration COMMAND YouKnowVcfCalibrationTests)
     set_tests_properties(YouKnow.VcfCalibration PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowVoiceBoardCommandReplayTests Tests/YouKnowVoiceBoardCommandReplayTests.cpp)
+    target_link_libraries(YouKnowVoiceBoardCommandReplayTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowVoiceBoardCommandReplayTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.VoiceBoardCommandReplay COMMAND YouKnowVoiceBoardCommandReplayTests)
+
     add_executable(YouKnowFirmwareControlTraceTests Tests/YouKnowFirmwareControlTraceTests.cpp)
     target_link_libraries(YouKnowFirmwareControlTraceTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowFirmwareControlTraceTests PRIVATE cxx_std_20)
