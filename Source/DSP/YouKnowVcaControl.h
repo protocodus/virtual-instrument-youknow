@@ -75,6 +75,40 @@ public:
         return control;
     }
 
+    // The upstream 10 nF comparison hold is a time-varying source. Sample
+    // its exact trajectory at every RK stage; freezing it at the beginning
+    // or endpoint would erase or anticipate its acquisition interval.
+    // Preserve this solver's calibrated 0..1 domain. An upstream capacitor
+    // can retain voltages outside it; clamping here is a model boundary,
+    // not a claim about the original circuit's analog overrange response.
+    template <class Drive>
+    [[nodiscard]] double advanceDriven(double control, double seconds,
+                                       const Drive& drive, int steps) const noexcept
+    {
+        const double dt = seconds / steps;
+        const auto derivative = [this](double u, double target) {
+            const double position = std::clamp(u, 0.0, 1.0) * tableSteps;
+            const auto index = static_cast<std::size_t>(std::min(
+                static_cast<int>(position), tableSteps - 1));
+            const double slope = differential_[index]
+                + (position - static_cast<double>(index))
+                    * (differential_[index + 1] - differential_[index]);
+            return (std::clamp(target, 0.0, 1.0) - u)
+                / (inputOhms * capacitanceFarads * slope);
+        };
+        for (int step = 0; step < steps; ++step)
+        {
+            const double t = step * dt;
+            const double a = derivative(control, drive(t));
+            const double b = derivative(control + dt * a * 0.5, drive(t + dt * 0.5));
+            const double c = derivative(control + dt * b * 0.5, drive(t + dt * 0.5));
+            const double d = derivative(control + dt * c, drive(t + dt));
+            control = std::clamp(control + dt * (a + 2.0 * b + 2.0 * c + d) / 6.0,
+                                 0.0, 1.0);
+        }
+        return control;
+    }
+
 private:
     [[nodiscard]] double advanceRk4(double control, double target, double seconds) const noexcept
     {

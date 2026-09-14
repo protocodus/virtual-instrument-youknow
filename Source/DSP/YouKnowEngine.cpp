@@ -6043,6 +6043,8 @@ void YouKnowEngine::applyLatencyPad(float& left, float& right) noexcept
 
 void YouKnowEngine::reset()
 {
+    for (auto& hold : envelopeHolds_)
+        hold.reset(VoiceVcaSignalLaw::holdStandoffVolts);
     for (auto& voice : voices_)
     {
         voice = Voice {};
@@ -6293,6 +6295,17 @@ bool YouKnowEngine::configureCoupledMixer(
         return false;
     coupledMixerCalibration_ = calibration;
     coupledMixerEnabled_ = true;
+    return true;
+}
+
+bool YouKnowEngine::configureEnvelopeHolds(
+    const std::array<EnvelopeHoldCircuit::Configuration, 6>& configuration) noexcept
+{
+    if (prepared_ || !std::all_of(configuration.begin(), configuration.end(),
+                                  [](const auto& value) { return value.valid(); }))
+        return false;
+    envelopeHoldConfiguration_ = configuration;
+    envelopeHoldsConfigured_ = true;
     return true;
 }
 
@@ -7661,13 +7674,17 @@ void YouKnowEngine::performConverterWrite(
         return write.voice >= 0 && write.voice < hardwareVoices;
     };
 
-    // No charge-injection or converter-glitch term is applied here. Both were
-    // written into cutoffCountsTarget / vcaControlTarget, which the switch
-    // below assigns from scratch on the very same write, so neither could ever
-    // reach the output -- the isolated comparison renders measured both at
-    // -360 dBc, bit-identical. A physical injection would have to land on the
-    // *slewed hold state*. The installed mux and 0.01-uF hold are known, but
-    // the loaded injection and acquisition behavior are not (OQ-07/08).
+    // A fractional enable has already advanced the physical capacitor in the
+    // previous interval. Its later software target commit must not inhibit,
+    // inject charge or reopen that same acquisition window a second time.
+    if (envelopeHoldsConfigured_ && passiveHoldTargetOverride == nullptr)
+        inhibitEnvelopeHold();
+
+    // Do not add glitches to a target that this same write replaces. The
+    // explicitly configured envelope comparison puts any supplied turn-off
+    // charge on the independent 10 nF capacitor at inhibit. With no supplied
+    // circuit configuration there is no injection or acquisition parameter;
+    // the original installed parasitics remain unmeasured (OQ-07/08).
     switch (write.destination)
     {
         case ConverterDestination::Resonance:
@@ -7742,12 +7759,129 @@ void YouKnowEngine::performConverterWrite(
                     voice.vcaControlTarget = *passiveHoldTargetOverride;
                 else
                     updateVoiceVcaTarget(voice, parameters);
+                if (envelopeHoldsConfigured_ && passiveHoldTargetOverride == nullptr)
+                    beginEnvelopeHoldAcquisition(write.voice, voice.vcaControlTarget);
             }
             break;
         case ConverterDestination::Noise:
             noiseCvTarget_ = converterDacFraction(parameters.noiseLevel);
             break;
     }
+}
+
+void YouKnowEngine::inhibitEnvelopeHold() noexcept
+{
+    for (std::size_t index = 0; index < envelopeHolds_.size(); ++index)
+        envelopeHolds_[index].inhibit(envelopeHoldConfiguration_[index]);
+}
+
+void YouKnowEngine::beginEnvelopeHoldAcquisition(int slot, float target) noexcept
+{
+    inhibitEnvelopeHold();
+    if (slot >= 0 && slot < hardwareVoices)
+        envelopeHolds_[static_cast<std::size_t>(slot)].select(
+            VoiceVcaSignalLaw::holdStandoffVolts
+            + static_cast<double>(target) * VoiceVcaControlLaw::controlFullScaleVolts);
+}
+
+double YouKnowEngine::envelopeMuxInhibitPhase(std::size_t ordinal) const noexcept
+{
+    // All normal B-2 loadDac callers enable immediately after its RET.
+    // 082F..083C: 20+7+10+4+10+4+10+10 = 75 nominal CPU states.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1295-L1304
+    // Tools/AuditControlDacTiming.py independently audits the sequence and NEC
+    // timing. These are instruction-start conventions, not measured PA edges.
+    // Existing chart profiles retain their diagnostic enable anchors: adding
+    // the known routine duration does NOT qualify them as execution traces.
+    // The first inhibit lies before phase-zero RES enable in the old grids;
+    // at bootstrap/restart performConverterWrite owns the boundary fallback.
+    return converterEventPhases_[ordinal] - 75.0 * controlScanHz / voiceCpuStateHz;
+}
+
+void YouKnowEngine::advanceEnvelopeHolds(
+    double seconds, const EngineParameters& parameters) noexcept
+{
+    if (!(seconds > 0.0))
+        return;
+    constexpr double span = VoiceVcaControlLaw::controlFullScaleVolts;
+    constexpr double offset = VoiceVcaSignalLaw::holdStandoffVolts;
+    for (std::size_t index = 0; index < envelopeHolds_.size(); ++index)
+    {
+        auto& hold = envelopeHolds_[index];
+        auto& control = voices_[index].vcaControl;
+        const auto volts = hold.trajectory(envelopeHoldConfiguration_[index]);
+        const EnvelopeHoldCircuit::Trajectory input {
+            (volts.constant - offset) / span, volts.exponential / span,
+            volts.slope / span, volts.tau };
+        if (!parameters.enableCoupledVoiceVcaControl)
+        {
+            control = input.throughOnePole(control, seconds, voiceVcaHoldSlewSeconds);
+        }
+        else
+        {
+            const auto& circuit = voiceVcaControlCircuit();
+            // Resolve the upstream RC boundary layer independently of host
+            // rate. After 16 time constants its residual is <1.13e-7 of the
+            // initial step. Quarter-tau RK stages integrate that trajectory;
+            // the remaining slow C58 interval uses eight stages as it does
+            // near its nonlinear knee. The voltage itself remains exact.
+            const double fast = std::abs(input.exponential) > 1.0e-12
+                ? std::min(seconds, 16.0 * input.tau) : 0.0;
+            if (fast > 0.0)
+                control = circuit.advanceDriven(control, fast,
+                    [&input](double t) { return input.at(t); },
+                    std::max(1, static_cast<int>(std::ceil(4.0 * fast / input.tau))));
+            const double rest = seconds - fast;
+            if (rest > 0.0)
+            {
+                if (input.exponential == 0.0 && input.slope == 0.0)
+                    control = circuit.advance(control, input.constant, rest);
+                else
+                    control = circuit.advanceDriven(control, rest,
+                        [&input, fast](double t) { return input.at(t + fast); }, 8);
+            }
+        }
+        hold.advance(volts, seconds);
+    }
+}
+
+void YouKnowEngine::advanceEnvelopeHoldControls(
+    double phase, double phaseStep, bool hasEnable, int slot, float target,
+    double enablePosition, const EngineParameters& parameters) noexcept
+{
+    struct Edge { double position; bool enable; };
+    std::array<Edge, converterWritesPerPass * 2 + 1> edges {};
+    std::size_t count = 0;
+    // Walk inhibit edges independently of enable peeks: a short internal
+    // interval can contain the inhibit while the next enable is still later.
+    // A serial restart abandons future edges, but leaves the capacitor and
+    // selected channel alive until the replacement pass actually inhibits it.
+    for (int pass = 0; pass < 2; ++pass)
+        for (std::size_t ordinal = 0; ordinal < converterWritesPerPass; ++ordinal)
+        {
+            const double event = pass + envelopeMuxInhibitPhase(ordinal);
+            if (event > phase + 1.0e-12 && event <= phase + phaseStep + 1.0e-12)
+                edges[count++] = { std::clamp((event - phase) / phaseStep, 0.0, 1.0), false };
+        }
+    if (hasEnable)
+        edges[count++] = { enablePosition, true };
+    std::sort(edges.begin(), edges.begin() + static_cast<std::ptrdiff_t>(count),
+        [](const Edge& a, const Edge& b) {
+            return a.position < b.position || (a.position == b.position && !a.enable && b.enable);
+        });
+    const double seconds = processingCoefficients_.internalIntervalSeconds;
+    double previous = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const auto& edge = edges[index];
+        advanceEnvelopeHolds((edge.position - previous) * seconds, parameters);
+        if (edge.enable)
+            beginEnvelopeHoldAcquisition(slot, target);
+        else
+            inhibitEnvelopeHold();
+        previous = edge.position;
+    }
+    advanceEnvelopeHolds((1.0 - previous) * seconds, parameters);
 }
 
 bool YouKnowEngine::isPassiveHoldWrite(
@@ -9697,6 +9831,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             const bool resonanceEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::Resonance;
+            if (envelopeHoldsConfigured_)
+                advanceEnvelopeHoldControls(
+                    controlScanPhase_, coefficients.scanPhasePerInternalSample,
+                    physicalHoldEvent.active && physicalHoldEvent.position > 0.0
+                        && physicalHoldEvent.write.destination == ConverterDestination::VoiceVca,
+                    physicalHoldEvent.write.voice, physicalHoldEvent.target,
+                    physicalHoldEvent.position, parameters);
             const bool cutoffHoldEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::Vcf;
@@ -9901,7 +10042,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca
                     && physicalHoldEvent.write.voice == slot;
-                if (parameters.enableCoupledVoiceVcaControl)
+                if (envelopeHoldsConfigured_ && slot < hardwareVoices)
+                {
+                    // The independent upstream capacitor and C58 have already
+                    // advanced together through this interval's mux edges.
+                }
+                else if (parameters.enableCoupledVoiceVcaControl)
                 {
                     const auto& circuit = voiceVcaControlCircuit();
                     const double dt = coefficients.internalIntervalSeconds;

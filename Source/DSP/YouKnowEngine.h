@@ -10,6 +10,7 @@
 #include "YouKnowControlDac.h"
 #include "YouKnowDcoTemperature.h"
 #include "YouKnowDcoComponents.h"
+#include "YouKnowEnvelopeHold.h"
 
 #include <array>
 #include <bit>
@@ -463,6 +464,12 @@ public:
     // No public plug-in parameter, preset byte or shipping default selects it.
     [[nodiscard]] bool configureCoupledMixer(
         const CoupledSubMixer::Calibration& calibration) noexcept;
+    // Comparison only, before prepare(): six IC26 ENV/GATE holds with an
+    // explicitly supplied effective resistance and ideal bus. No calibrated
+    // installed profile or shipping/preset parameter is implied. All six
+    // configurations must validate; rejection leaves the previous set intact.
+    [[nodiscard]] bool configureEnvelopeHolds(
+        const std::array<EnvelopeHoldCircuit::Configuration, 6>& configuration) noexcept;
     // Comparison/calibration reference frequency for one instrument. Call
     // before prepare(); retained across reset/prepare, never a preset or host
     // parameter. The 7.2..8.8 MHz engineering domain keeps the event walk
@@ -2852,6 +2859,13 @@ private:
         const Voice& voice, const EngineParameters& parameters) const noexcept;
     void updateVoiceVcaTarget(Voice& voice,
                               const EngineParameters& parameters) noexcept;
+    void inhibitEnvelopeHold() noexcept;
+    void beginEnvelopeHoldAcquisition(int slot, float target) noexcept;
+    void advanceEnvelopeHolds(double seconds, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] double envelopeMuxInhibitPhase(std::size_t ordinal) const noexcept;
+    void advanceEnvelopeHoldControls(double phase, double phaseStep,
+        bool hasEnable, int slot, float target, double enablePosition,
+        const EngineParameters& parameters) noexcept;
     [[nodiscard]] float voiceVcaTarget(
         const Voice& voice, const EngineParameters& parameters) const noexcept;
     // The velocity extension's one gain. The modelled hardware has no velocity
@@ -3093,6 +3107,9 @@ private:
     // PhaseZeroDiagnostic has to bootstrap its next pass before PIT prep.
     bool converterNextPassPortamentoUpdated_ { false };
     PassiveHoldEventLatch passiveHoldEventLatch_ {};
+    bool envelopeHoldsConfigured_ { false };
+    std::array<EnvelopeHoldCircuit::Configuration, hardwareVoices> envelopeHoldConfiguration_ {};
+    std::array<EnvelopeHoldCircuit, hardwareVoices> envelopeHolds_ {};
     VcfHoldInterval resonanceVcfHoldInterval_ {};
     std::array<VcfHoldInterval, maxVoices> cutoffVcfHoldIntervals_ {};
     std::array<bool, maxVoices> exactVcfControlInterval_ {};

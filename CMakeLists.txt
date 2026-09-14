@@ -85,6 +85,7 @@ set(YOUKNOW_DSP_SOURCES
 set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
     Source/DSP/YouKnowDcoTemperature.h
+    Source/DSP/YouKnowEnvelopeHold.h
     Source/DSP/YouKnowProductFidelity.h
     Source/DSP/YouKnowVcaControl.h
     Source/DSP/YouKnowCoupledMixer.h
@@ -623,6 +624,11 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowVcaControlTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaControl COMMAND YouKnowVcaControlTests)
     set_tests_properties(YouKnow.VcaControl PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowEnvelopeHoldTests Tests/YouKnowEnvelopeHoldTests.cpp)
+    target_link_libraries(YouKnowEnvelopeHoldTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.EnvelopeHold COMMAND YouKnowEnvelopeHoldTests)
+    set_tests_properties(YouKnow.EnvelopeHold PROPERTIES TIMEOUT 90)
     add_executable(YouKnowControlDacBufferTests Tests/YouKnowControlDacBufferTests.cpp)
     target_link_libraries(YouKnowControlDacBufferTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowControlDacBufferTests PRIVATE cxx_std_20)
