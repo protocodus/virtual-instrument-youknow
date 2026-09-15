@@ -401,7 +401,8 @@ struct EngineParameters
     bool enableCommonVcaNoise { true };
     // On by default: four independent 68k/560 Johnson sources enter their
     // own OTA differential nodes, after the input-compensation branch. The
-    // resistance reads and sqrt(4kTR) law fix the density; the remaining
+    // resistance reads and sqrt(4kTR) law at the live card temperature fix
+    // the density; the remaining
     // poles fix each source's different output spectrum. False retains the
     // former input-only voiced 20 uV seed for comparisons. Not serialised.
     bool enableCardJohnsonFloor { true };
@@ -2577,6 +2578,10 @@ private:
         // then applies it without rebuilding the same exponent-derived card
         // coordinate every internal sample.
         double thermalFilterOmegaScale { 1.0 };
+        // sqrt(T_card / 298.15 K) for the four independent resistor sources.
+        // Refreshed on the existing wall-clock control cadence, including
+        // idle cards; host block boundaries never resample this coordinate.
+        float johnsonTemperatureScale { 1.0f };
         // Fixed FREQ adjustment at the declared service temperature. Removes
         // the pole spread and static thermal contribution already absorbed
         // by each card's trimmer, before adding its final trim residual.
@@ -2834,6 +2839,7 @@ private:
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
     void refreshVoiceCardThermalScales() noexcept;
+    void refreshCardJohnsonTemperatureScales() noexcept;
     void refreshVoiceCardServiceTrims() noexcept;
     void refreshVoiceRampCurrentScales() noexcept;
     void refreshAgedUnitState() noexcept;

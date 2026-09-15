@@ -285,7 +285,12 @@ constexpr float outputJackCapacitanceF = 1.0e-9f;
 // outputSummerResistorNoiseDensity). Each transconductor stage's input node is
 // the 68 kOhm feedback against the 560 Ohm shunt, so the source resistance is
 // their parallel combination, 555.43 Ohm, giving sqrt(4kTR) = 3.02 nV/rtHz at
-// the same 25 C the adjacent anchors use. That node sits behind the stage's own
+// the 25 C reference. The live card-temperature ratio scales that reference
+// density at both rendering and idle-card injection sites. This follows
+// sqrt(4kTR), without assigning an avalanche-noise temperature coefficient:
+// https://www.ti.com/document-viewer/lit/html/SBOA345/GUID-F87CE11A-8998-4FB4-BEA6-8D520E81351E
+// The chassis warm-up remains the existing software model, not an original
+// 80017A temperature measurement. That node sits behind the stage's own
 // 560/(68000+560) attenuator, so referred to the filter-module input coordinate
 // the model works in it is 3.02 nV / 0.0081680 = 370.2 nV/rtHz.
 //
@@ -5594,6 +5599,23 @@ void YouKnowEngine::refreshVoiceCardThermalScales() noexcept
                        - static_cast<double>(chassisGradientMeanCelsius()))
                 : 1.0;
     }
+    refreshCardJohnsonTemperatureScales();
+}
+
+void YouKnowEngine::refreshCardJohnsonTemperatureScales() noexcept
+{
+    // Thermal noise power is proportional to absolute temperature. Cache the
+    // amplitude ratio on the existing ~375 Hz wall-clock control cadence,
+    // rather than performing a square root for every card on every audio
+    // sample. Even the accelerated 15 C / 3 s warm-up changes this ratio by
+    // less than 0.000023 between updates. The cadence survives quality changes.
+    for (int index = 0; index < maxVoices; ++index)
+    {
+        const float kelvin = voiceCardCelsius(
+            activeParameters_, index, thermalWarmupFraction_) + 273.15f;
+        cards_[static_cast<std::size_t>(index)].johnsonTemperatureScale =
+            std::sqrt(kelvin / outputNoiseTemperatureKelvin);
+    }
 }
 
 void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
@@ -6130,6 +6152,7 @@ void YouKnowEngine::reset()
 
     thermalWarmupSeconds_ = 0.0;
     thermalWarmupFraction_ = thermalStartsSettled_ ? 1.0f : 0.0f;
+    refreshCardJohnsonTemperatureScales();
     jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
     refreshDcoMasterClock();
     powerSupplyDroop_ = 0.0f;
@@ -6230,6 +6253,7 @@ void YouKnowEngine::resetForHostStop()
     reset();
     thermalWarmupSeconds_ = warmupSeconds;
     thermalWarmupFraction_ = warmupFraction;
+    refreshCardJohnsonTemperatureScales();
     jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
     refreshDcoMasterClock();
     // reset() primes the cleared voice nodes; prime again at the retained
@@ -6409,6 +6433,7 @@ bool YouKnowEngine::configureThermalStart(bool settled) noexcept
     thermalStartsSettled_ = settled;
     thermalWarmupSeconds_ = 0.0;
     thermalWarmupFraction_ = settled ? 1.0f : 0.0f;
+    refreshCardJohnsonTemperatureScales();
     jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
     refreshDcoMasterClock();
     return true;
@@ -9519,12 +9544,15 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
     // the continuously rendered card behind its closed VCA.
     std::array<double, 4> stageNoise {};
     const int draws = activeParameters_.enableCardJohnsonFloor ? 4 : 1;
+    const float temperatureScale =
+        cards_[static_cast<std::size_t>(voice.cardIndex)].johnsonTemperatureScale;
     for (int stage = 0; stage < draws; ++stage)
     {
         voice.noiseState = xorshift32(voice.noiseState);
         if (activeParameters_.enableCardJohnsonFloor)
             stageNoise[static_cast<std::size_t>(stage)] =
-                bipolarFromState(voice.noiseState) * filterNoiseVoltsDerived * noiseRateScale_;
+                bipolarFromState(voice.noiseState) * filterNoiseVoltsDerived
+                * noiseRateScale_ * temperatureScale;
     }
     voice.filter.setStageNoise(stageNoise);
 
@@ -9732,7 +9760,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
             if (stage != 0)
                 voice.noiseState = xorshift32(voice.noiseState);
             stageNoise[stage] = bipolarFromState(voice.noiseState)
-                * filterNoiseVoltsDerived * noiseRateScale_;
+                * filterNoiseVoltsDerived * noiseRateScale_
+                * card.johnsonTemperatureScale;
         }
     voice.filter.setStageNoise(stageNoise);
 
@@ -10568,6 +10597,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 // differently depending on a quality setting.
                 driftControlCountdown_ = std::max(
                     1, static_cast<int>(oversampledRate_ / driftUpdateHz));
+                refreshCardJohnsonTemperatureScales();
                 for (auto& card : cards_)
                     updateVoiceCardDrift(card);
             }

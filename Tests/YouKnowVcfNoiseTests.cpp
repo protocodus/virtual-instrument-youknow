@@ -28,10 +28,20 @@ struct YouKnowTestAccess
             const auto& first = a.voices_[card];
             const auto& second = b.voices_[card];
             if (first.noiseState != second.noiseState
-                || first.filter.stageNoiseHistory != second.filter.stageNoiseHistory)
+                || first.filter.stageNoiseHistory != second.filter.stageNoiseHistory
+                || a.cards_[card].johnsonTemperatureScale
+                       != b.cards_[card].johnsonTemperatureScale)
                 return false;
         }
         return true;
+    }
+    static float temperatureScale(const YouKnowEngine& engine, int card = 0)
+    {
+        return engine.cards_[static_cast<std::size_t>(card)].johnsonTemperatureScale;
+    }
+    static double processingRate(const YouKnowEngine& engine)
+    {
+        return engine.oversampledRate_;
     }
     static std::array<double, 4> draw(YouKnowEngine& engine, int card)
     {
@@ -125,6 +135,9 @@ void streams()
     {
         youknow::YouKnowEngine engine;
         engine.prepare(fs, 1, 1);
+        youknow::EngineParameters nominal;
+        nominal.calibration = 0.0f; // Explicit 25 C density reference.
+        engine.setParameters(nominal);
         std::array<double, 4> sum{}, power{};
         std::array<std::array<double, 4>, 4> cross{};
         double across = 0.0, otherPower = 0.0;
@@ -173,6 +186,9 @@ void integratedPsd()
     constexpr int count = 262144, settle = 4096;
     youknow::YouKnowEngine source;
     source.prepare(fs, 1, 1);
+    youknow::EngineParameters nominal;
+    nominal.calibration = 0.0f;
+    source.setParameters(nominal);
     Cascade filter;
     double sum = 0.0, power = 0.0;
     for (int n = 0; n < count + settle; ++n)
@@ -194,12 +210,103 @@ void integratedPsd()
     require(std::abs(error) < 0.5, "rendered noise power disagrees with continuous PSD integral");
 }
 
+void temperatureDensity()
+{
+    for (const double fs : { 48000.0, 192000.0 })
+    {
+        youknow::YouKnowEngine nominal, cold, warm;
+        require(warm.configureThermalStart(true), "settled thermal start was rejected");
+        nominal.prepare(fs, 1, 1);
+        cold.prepare(fs, 1, 1);
+        warm.prepare(fs, 1, 1);
+        youknow::EngineParameters p;
+        p.calibration = 0.0f;
+        nominal.setParameters(p);
+        p.calibration = 1.0f;
+        p.enableSpatialThermalGradient = false;
+        cold.setParameters(p);
+        p.enableSpatialThermalGradient = true;
+        warm.setParameters(p);
+
+        // Identically seeded draws isolate the exact physical power ratio,
+        // avoiding a statistical test too loose to see a 0.21 dB change.
+        // The existing chassis model settles 15 C above ambient, plus a
+        // 4*exp(-card/2.5) C gradient. Those remain software coordinates.
+        for (const int card : { 0, 5 })
+        {
+            double referencePower = 0.0, warmPower = 0.0;
+            for (int n = 0; n < 4096; ++n)
+            {
+                const auto a = youknow::YouKnowTestAccess::draw(nominal, card);
+                const auto b = youknow::YouKnowTestAccess::draw(cold, card);
+                const auto c = youknow::YouKnowTestAccess::draw(warm, card);
+                require(a == b, "25 C Johnson draws changed with other Character effects");
+                for (std::size_t stage = 0; stage < 4; ++stage)
+                {
+                    referencePower += a[stage] * a[stage];
+                    warmPower += c[stage] * c[stage];
+                }
+            }
+            const double expected = (313.15 + 4.0 * std::exp(-card / 2.5)) / 298.15;
+            require(std::abs(warmPower / referencePower - expected) < 5e-7,
+                    "Johnson power does not follow absolute local card temperature");
+        }
+        require(youknow::YouKnowTestAccess::temperatureScale(nominal) == 1.0f,
+                "Character zero changed the nominal noise amplitude");
+
+        // Character automation must refresh the cached physical coordinate
+        // before another internal audio interval can consume it.
+        p.calibration = 0.0f;
+        warm.setParameters(p);
+        require(youknow::YouKnowTestAccess::temperatureScale(warm) == 1.0f,
+                "Character automation retained a stale hot-card noise scale");
+    }
+}
+
+void temperatureLifecycle()
+{
+    youknow::YouKnowEngine engine;
+    engine.prepare(8000.0, 64, 1);
+    youknow::EngineParameters p;
+    p.chorus = youknow::ChorusMode::Off;
+    p.enableSpatialThermalGradient = false;
+    p.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
+    p.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
+    p.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
+    engine.setParameters(p);
+    std::array<float, 64> left{}, right{};
+    for (int block = 0; block < 320; ++block)
+        engine.process(left.data(), right.data(), 64);
+    const auto scale = [&] {
+        return youknow::YouKnowTestAccess::temperatureScale(engine);
+    };
+    const double expectedKelvin = 298.15 + 15.0 * (1.0 - std::exp(-2.56 / 3.0));
+    require(std::abs(scale() * scale() - expectedKelvin / 298.15) < 5e-5,
+            "running thermal noise fails to follow wall-clock warm-up");
+    const float beforeStop = scale();
+    engine.resetForHostStop();
+    require(scale() >= beforeStop && std::abs(scale() - beforeStop) < 0.000025f,
+            "host stop lost the retained card temperature");
+
+    // The quiet quality change retimes the existing control countdown and
+    // changes only sampled bandwidth, without returning the chassis to 25 C.
+    (void) engine.setOversamplingFactor(2);
+    for (int block = 0; block < 256; ++block)
+        engine.process(left.data(), right.data(), 64);
+    require(youknow::YouKnowTestAccess::processingRate(engine) == 16000.0,
+            "thermal fixture did not exercise a live quality change");
+    require(scale() > beforeStop, "quality change reset or froze thermal noise");
+    engine.reset();
+    require(scale() == 1.0f, "power-cycle reset retained a warm noise scale");
+}
+
 void engineHistories()
 {
     youknow::YouKnowEngine continuous, fast;
     continuous.prepare(48000, 128, 4);
     fast.prepare(48000, 128, 4);
     youknow::EngineParameters p;
+    p.calibration = 1.0f;
     p.chorus = youknow::ChorusMode::Off;
     p.vcfTanhMode = youknow::VcfTanhMode::Exact;
     continuous.setParameters(p);
@@ -231,6 +338,8 @@ void engineHistories()
         require(youknow::YouKnowTestAccess::sameNoiseState(continuous, fast),
                 "Exact/freewheel/SIMD or host block boundaries change resistor-noise history");
     }
+    require(youknow::YouKnowTestAccess::temperatureScale(continuous) > 1.0f,
+            "history fixture did not exercise warm card-noise scaling");
 }
 
 void vectorAndState()
@@ -354,6 +463,8 @@ int main()
     transfer();
     streams();
     integratedPsd();
+    temperatureDensity();
+    temperatureLifecycle();
     engineHistories();
     vectorAndState();
     if (failures)

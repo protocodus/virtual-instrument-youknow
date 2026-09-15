@@ -92,6 +92,9 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### 1.1.0 — unreleased
 
+- Each voice's four filter-resistor noise sources now follow its local
+  temperature through the Johnson–Nyquist law, including while the card is
+  idle. The shared NOISE source keeps its existing calibration.
 - Voice-VCA service gain now reaches the specified 6 Vp-p from the 4.8 Vp-p
   filter test signal. A reciprocal final digital trim preserves ordinary
   loudness while the shared analog stages receive the corrected voltage.
@@ -831,6 +834,14 @@ stage, the resistor-derived node density at 25 °C is approximately
 sources enter their corresponding differential inputs, outside the external
 signal’s resonance compensation.
 
+Their amplitude follows `sqrt(Tcard / 298.15 K)` using the same local
+temperature as the voice's other analog paths. Warming from 25 to 40 °C
+therefore raises resistor-noise power by 5.03%, or 0.213 dB; nominal
+Unit Character 0 remains at 25 °C. This extends the
+[Johnson–Nyquist temperature law](https://www.ti.com/document-viewer/lit/html/SBOA345/GUID-F87CE11A-8998-4FB4-BEA6-8D520E81351E)
+to the existing resistor sources. The temperature trajectory remains the
+documented software character model, not an installed-unit measurement.
+
 An independent small-signal reference gives each source the transfer
 `H^(4-j)/(1+k*H^4)`, where `H=1/(1+s/ωc)` and `j=0..3`. Independent powers
 add. At zero resonance this yields four times the former low-frequency PSD,
@@ -1070,6 +1081,28 @@ against an unreferenced interface clock cannot by itself establish absolute
 synthesizer drift. Until those measurements exist, the 8 MHz reference,
 named component proxy and analog character assumptions remain explicitly
 separate from measured Juno calibration.
+
+#### Clock, thermal and noise proposals
+
+The September 15 assessment distinguishes supported mechanisms from proposed
+magnitudes that the cited parts and drawings do not establish:
+
+| Proposal | Assessment and implementation |
+| --- | --- |
+| Master-clock phase noise and PWM threshold jitter | A common noisy clock is physically plausible, but the claimed 50–180 ps jitter and −80 dBc/Hz spectrum are not established by the Murata reference. Common clock drift, divider phase and independent PIT state already exist. No extra jitter is added. Threshold timing error is voltage noise divided by ramp slew, not the derivative of voltage noise divided by ramp slew. |
+| Separate VCF die/tempco thermal lag | Plausible in principle, but the proposed internal construction and 3/25-second time constants are unmeasured. Roland shows an external R111 positor in the control divider. A universal cutoff multiplier omits that divider and the exponential control dependence; existing headroom, service trims and cutoff wander already model distinct analog effects. No extra lag is added. |
+| Temperature-dependent DCO reset switch | Finite reset and an explicitly calibrated exponential-reset comparison already exist. Roland's internal drawing shows an analog differentiator driving the reset transistor; it does not establish a 125 ns gate, 50–80 Ω switch or its temperature law. At 2093 Hz even an assumed 250 ns lost charging interval gives only 0.052% amplitude loss, about 0.0045 dB. No switch parameters are invented. |
+| Shared avalanche noise plus local Johnson noise | The shared C42/BA662/C41 path and independent per-stage resistor sources already exist. The missing local resistor-temperature scaling is implemented above. Neither a fixed low-frequency burst spectrum nor an avalanche-noise gain coefficient follows from breakdown-voltage tempco alone, so those remain unmodelled. |
+| Chorus heterodyne, delay drift and bucket noise | Clocked independent BBD noise and support filtering already exist. MN3009's `td = 256/(2 fCP)` gives 1.07–3.20 ms at 120–40 kHz, not 1.4–6.4 ms. Carrier coupling amplitudes and net clock-circuit temperature drift are unmeasured. Audio-grid MHz carriers would introduce sample-rate-dependent aliases, and aggregate BBD noise cannot be identified as pure kTC noise. No new carriers or thermal coefficients are added. |
+
+Circuit references: Roland's [DCO internals, p. 9](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9),
+[module board, p. 13](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=13),
+and [chorus board, p. 15](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15).
+The [Panasonic MN3009 datasheet](https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf)
+defines its clock/delay relation; Analog Devices derives the
+[voltage-noise/slew-rate jitter relation](https://www.analog.com/en/resources/design-notes/measuring-the-output-jitter-of-the-max999-comparator.html).
+The resistor-noise change corrects the model's temperature dependence;
+its audible effect has not been established.
 
 #### Other methods assessed
 
