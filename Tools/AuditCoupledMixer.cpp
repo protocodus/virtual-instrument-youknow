@@ -4,7 +4,8 @@
 // independent long-double KCL bisection, then with a continuous RC transient.
 // Test resistances are synthetic numerical fixtures, not installed Juno data.
 //
-// --sub-level DIR renders the measured SUB law against its linear baseline.
+// --sub-level DIR renders the shipping measured SUB law as A and the former
+// linear law as B. The historical audition files stay frozen.
 //
 // --render DIR Rs Rload scale bias diode collector
 // accepts ALL unpublished calibration coordinates explicitly. It renders the
@@ -19,6 +20,7 @@
 // patch bytes, and validate separate all-source/timing takes without refitting.
 
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowProductFidelity.h"
 #include "RealismComparisonSupport.h"
 
 #include <iostream>
@@ -35,6 +37,33 @@ void require(bool result, const std::string& detail)
 {
     if (!result)
         throw std::runtime_error(detail);
+}
+
+struct RenderPlan
+{
+    const Calibration* calibration {};
+    youknow::EngineParameters parameters;
+};
+
+std::array<RenderPlan, 2> auditionPlans(const Calibration* calibration)
+{
+    youknow::EngineParameters p;
+    youknow::ProductFidelityProfile::applyTo(p);
+    p.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
+    p.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
+    p.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
+    p.sawEnabled = false; p.pulseEnabled = false; p.subLevel = 1.0f;
+    p.noiseLevel = 0.0f; p.chorus = youknow::ChorusMode::Off;
+    p.cutoff = 0.9f; p.resonance = 0.0f; p.envDepth = 0.0f;
+    p.keyFollow = 0.0f; p.attack = 0.0f; p.sustain = 1.0f; p.release = 0.0f;
+    p.vcaMode = youknow::VcaMode::Gate; p.vcaLevel = 0.7f; p.volume = 0.5f;
+    std::array<RenderPlan, 2> plans { RenderPlan { nullptr, p },
+        RenderPlan { calibration, p } };
+    // A retains the current product in both modes. A calibrated B replaces
+    // the mixer/C56 circuit; an uncalibrated B changes only the SUB level law.
+    if (!calibration)
+        plans[1].parameters.enableSubDiodeControl = false;
+    return plans;
 }
 
 // KCL independently spells out the printed 33k/27k paths and uses a monotonic
@@ -66,6 +95,24 @@ long double referenceWave(const Calibration& c, long double source,
 
 void audit()
 {
+    const Calibration fixture { 10000, 47000, 0.5, 0, 0.6, 0.1 };
+    const auto coupledPlans = auditionPlans(&fixture);
+    auto levelPlans = auditionPlans(nullptr);
+    require(!coupledPlans[0].calibration && !levelPlans[0].calibration
+        && coupledPlans[0].parameters == levelPlans[0].parameters
+        && coupledPlans[0].parameters.enableSubDiodeControl
+        && coupledPlans[0].parameters.useServiced439522VcfCalibration,
+        "audition A does not retain the current product baseline");
+    require(coupledPlans[1].calibration == &fixture
+        && coupledPlans[1].parameters == coupledPlans[0].parameters,
+        "coupled audition changed controls beyond the supplied circuit");
+    require(!levelPlans[1].calibration
+        && !levelPlans[1].parameters.enableSubDiodeControl,
+        "SUB-level audition B did not select the former linear law");
+    levelPlans[1].parameters.enableSubDiodeControl = true;
+    require(levelPlans[1].parameters == levelPlans[0].parameters,
+        "SUB-level audition changed more than its control law");
+
     double worstLawResidual = 0.0, worstTableDb = 0.0;
     for (int n = 1; n <= 100000; ++n)
     {
@@ -152,24 +199,16 @@ void audit()
         << " worst_table_error_db=" << worstTableDb << '\n';
 }
 
-StereoBuffer render(const Calibration* calibration, bool subDiode)
+StereoBuffer render(const RenderPlan& plan)
 {
     auto engine = std::make_unique<youknow::YouKnowEngine>();
-    if (calibration)
-        require(engine->configureCoupledMixer(*calibration), "render calibration rejected");
+    youknow::ProductFidelityProfile::configureBeforePrepare(*engine);
+    if (plan.calibration)
+        require(engine->configureCoupledMixer(*plan.calibration), "render calibration rejected");
     engine->selectConverterTimingProfile(
         youknow::YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine->prepare(comparisonSampleRate, comparisonBlockSize, 4);
-    youknow::EngineParameters p;
-    p.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
-    p.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
-    p.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
-    p.enableSubDiodeControl = subDiode;
-    p.sawEnabled = false; p.pulseEnabled = false; p.subLevel = 1.0f;
-    p.noiseLevel = 0.0f; p.chorus = youknow::ChorusMode::Off;
-    p.cutoff = 0.9f; p.resonance = 0.0f; p.envDepth = 0.0f;
-    p.keyFollow = 0.0f; p.attack = 0.0f; p.sustain = 1.0f; p.release = 0.0f;
-    p.vcaMode = youknow::VcaMode::Gate; p.vcaLevel = 0.7f; p.volume = 0.5f;
+    auto p = plan.parameters;
     engine->setParameters(p);
     StereoBuffer result;
     const auto block = [&](int frames, bool keep) {
@@ -209,7 +248,8 @@ void audition(const std::filesystem::path& directory, const Calibration* calibra
     require(!std::filesystem::exists(directory / "A.wav")
         && !std::filesystem::exists(directory / "B.wav"), "refusing to replace an existing audition");
     std::filesystem::create_directories(directory / "raw");
-    const auto a = render(nullptr, false), b = render(calibration, !calibration);
+    const auto plans = auditionPlans(calibration);
+    const auto a = render(plans[0]), b = render(plans[1]);
     std::string error;
     require(validate(a, error) && validate(b, error), error);
     const auto levelA = measure(a), levelB = measure(b);
@@ -225,9 +265,10 @@ void audition(const std::filesystem::path& directory, const Calibration* calibra
     const double residualDb = decibels(measure(residual).rms / levelA.rms);
     std::ofstream key(directory / "key.md");
     key << std::setprecision(15)
-        << "# Coupled mixer comparison\n\nA is the unchanged shipping mixer. "
+        << "# Coupled mixer comparison\n\nA is the current shipping mixer, including "
+           "the measured SUB diode control law and centralized product fidelity profile. "
         << (calibration ? "B is the coupled, constant-drop D6 / Tr19 / C56 circuit.\n\n"
-            : "B is the SUB diode control law calibrated on Juno-106 #439522. "
+            : "B restores the former linear SUB control law. "
               "Only the held-rail-to-sub-current law changes; full-scale gain stays fixed.\n\n");
     if (calibration)
     {

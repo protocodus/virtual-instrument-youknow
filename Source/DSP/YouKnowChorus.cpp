@@ -654,10 +654,11 @@ Chorus::ModeSettings Chorus::settingsFor(
     // contradictions under OQ-01, which still requests a calibrated capture
     // of an original unit.
     //
-    // Modes I and II differ in speed alone, not in depth: the mode line changes
-    // a timing resistance, while the triangle's amplitude is set by the
-    // comparator's threshold ratio, which the mode line does not touch. That
-    // is why II reads as more agitated rather than wider.
+    // In the nominal circuit, modes I and II differ in speed alone: the mode
+    // line changes a timing resistance, while the triangle's amplitude is set
+    // by the comparator's unchanged threshold ratio. This derives equal
+    // nominal excursion; it does not measure Mode II's installed endpoints
+    // or transfer the effective Mode-I fit below to that mode.
     constexpr float centre = 0.5f * (0.0014f + 0.0064f);
     constexpr float sweep = 0.5f * (0.0064f - 0.0014f);
     constexpr float rateOne = static_cast<float>(derivedRateHz(true));
@@ -676,9 +677,9 @@ Chorus::ModeSettings Chorus::settingsFor(
             // measurements, a population nominal, or a Mode-II calibration.
             // AIFF SHA256: b235ba2236c1a509627ce1e84fa35004b0d7c3e99eb36899c4c5de63cc668662
             // https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/16#issuecomment-4184997000
-            // The three comparison candidates OQ-01 brackets this mode with.
-            // Each is a published reading rather than a fitted parameter; see
-            // ChorusTimingProfile for what stands behind each one.
+            // Three OQ-01 comparison candidates with distinct evidence; see
+            // ChorusTimingProfile. The spectral coordinates above are fitted,
+            // while the circuit estimate below depends on unmeasured values.
             switch (timingProfile)
             {
                 case ChorusTimingProfile::A11Spectral:
@@ -686,9 +687,20 @@ Chorus::ModeSettings Chorus::settingsFor(
                 case ChorusTimingProfile::A11ClickTiming:
                     return { 0.514f, 0.00330f, 0.00213f, lineGain };
                 case ChorusTimingProfile::DerivedNominal:
-                    // Centre at the bracket's own nominal 3.02 ms and half-depth
-                    // at the middle of 1.72-1.94 ms, so this reads as the
-                    // oscillator's central case and not as either extreme.
+                    // Conditional estimate, not a measured hardware bound:
+                    // Roland p. 15 puts R123=1.8k and R125=10k in the base
+                    // divider; R124=8.2k is Tr19's emitter resistor. Ignoring
+                    // base current, I0 ~= (15*R123/(R123+R125)-Vbe)/R124,
+                    // or 199.77 uA at assumed Vbe=0.65 V. Even independent
+                    // +/-1% resistors give 193.14-206.60 uA at those fixed
+                    // supply/junction voltages, not a 195-203 uA guarantee.
+                    // d(delay)/dV = 256*C53/I0; TP4 is +/-beta*Vsat, so its
+                    // ~9.48 V PEAK at Vsat=13.5 V gives ~1.83 ms half-depth
+                    // with C53=150 pF and I0=199 uA. The 3.02 ms centre also
+                    // assumes junction drops and an unmeasured reset dead time.
+                    // Roland p. 15 and Panasonic MN3101 (fCP=fosc/2):
+                    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
+                    // https://www.experimentalistsanonymous.com/diy/Datasheets/MN3101.pdf#page=3
                     return { rateOne, 0.00302f, 0.00183f, lineGain };
                 case ChorusTimingProfile::Shipping:
                 default:
@@ -696,13 +708,12 @@ Chorus::ModeSettings Chorus::settingsFor(
             }
             return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
-        // Product compatibility policy, not a claim about a third resistance
-        // in the original circuit. The audited Roland Cloud JUNO-106 exposes
-        // only Off/I/II, and no calibrated original-unit both-button trace is
-        // published. Retain this plug-in's established summed-rate sound so
-        // the fourth state is stable and audibly distinct. The shared centre,
-        // depth and gain are the least speculative continuation of the two
-        // measured modes; a qualifying I+II capture can replace this policy.
+        // Product extension. Roland's original owner manual permits Off/I/II
+        // and excludes simultaneous I+II; the board has an enable line plus
+        // one binary rate line, not a third timing resistance. Retain the
+        // established summed-rate sound as a product compatibility choice.
+        // No JUNO-6/60 fast-mode calibration is inferred for this extension.
+        // https://cdn.roland.com/assets/media/pdf/JUNO-106_OM.pdf#page=3
         case ChorusMode::OneTwo:
             return { rateOne + rateTwo, centre, sweep, lineGain };
         case ChorusMode::Off:
@@ -1772,14 +1783,11 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetB += optionalB * noiseScale;
     }
 
-    // Both ordinary modes carry dry plus one wet line per channel. I+II is a
-    // live product extension rather than a tone-memory state, and its former
-    // implementation simply reused that wide routing. An original-unit owner
-    // remembers the physical both-button result as conspicuously narrow and
-    // coloured. Equal mid folding is the only zero-parameter continuation of
-    // the known two-line circuit: it preserves the exact mono sum (and thus
-    // the comb colour heard in mono) while removing only the unsupported side.
-    // The comparison switch retains the former wide result pending a capture.
+    // Both ordinary modes carry dry plus one wet line per channel. The I+II
+    // product extension uses the owner's chosen narrow colour: equal mid
+    // folding preserves the exact mono sum while removing the wet side.
+    // This is a product routing choice, not a stock JUNO-106 both-button
+    // circuit. The comparison switch retains the former wide routing.
     // Each MN3009 carries its own insertion gain inside Panasonic's +/-4 dB
     // row and nothing on the board trims it; solved only when Unit Character
     // moves. The narrow I+II fold below then averages the two returns exactly

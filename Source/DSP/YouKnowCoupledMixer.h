@@ -16,8 +16,10 @@ namespace youknow
 // Tr19 off therefore gives a 60k source from SUB LEVEL. With Tr19 on,
 // the source is its collector voltage through 27k, NOT an open circuit:
 // D6 can still conduct if WAVE falls below that voltage minus its drop.
-// The MC5534A's internal resistors, D6 part/drop, installed collector swing
-// and loaded module input impedance are not specified by that drawing.
+// The p.12 module-board legend identifies D6 as 1SS133 (printed 1SS-133):
+// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=12
+// Its installed forward drop, the MC5534A's internal resistors, collector
+// swing and loaded module input impedance remain unmeasured.
 //
 // Those quantities are deliberately REQUIRED calibration inputs. Zero-filled
 // Calibration is invalid, and the engine never enables this model by default.

@@ -2,6 +2,7 @@
 // hardware comparison uses the source file's actual SysEx and tempo, avoiding
 // hand-transcribed patches and host-dependent MIDI-file playback speed.
 #include "DSP/YouKnowSysEx.h"
+#include "DSP/YouKnowProductFidelity.h"
 #include "RealismComparisonSupport.h"
 
 #include <iostream>
@@ -36,6 +37,10 @@ struct YouKnowTestAccess
                 return slot;
         return -1;
     }
+    static double highPassSwitchOhms(const YouKnowEngine& engine)
+    {
+        return engine.highPassSwitchResistance_;
+    }
 };
 }
 
@@ -46,28 +51,45 @@ using namespace youknow::tools::realism;
 
 bool shippingMode(const std::string& name)
 {
-    if (name == "shipping")
+    if (name == "shipping" || name == "product")
         return true;
     if (name == "exact")
         return false;
-    throw std::runtime_error("kernel must be exact or shipping");
+    throw std::runtime_error("render mode must be exact, shipping or product");
 }
 
-bool effectiveChorusProfile(const std::string& name)
+ChorusTimingProfile chorusProfile(const std::string& name)
 {
     if (name == "nominal")
-        return false;
+        return ChorusTimingProfile::Shipping;
     if (name == "a11-effective")
-        return true;
-    throw std::runtime_error("chorus profile must be nominal or a11-effective");
+        return ChorusTimingProfile::A11Spectral;
+    if (name == "a11-click")
+        return ChorusTimingProfile::A11ClickTiming;
+    if (name == "derived")
+        return ChorusTimingProfile::DerivedNominal;
+    throw std::runtime_error("chorus profile must be nominal, a11-effective, a11-click or derived");
+}
+
+const char* chorusProfileName(ChorusTimingProfile profile)
+{
+    switch (profile)
+    {
+        case ChorusTimingProfile::A11Spectral: return "a11-effective";
+        case ChorusTimingProfile::A11ClickTiming: return "a11-click";
+        case ChorusTimingProfile::DerivedNominal: return "derived";
+        case ChorusTimingProfile::Shipping: return "nominal";
+    }
+    throw std::runtime_error("invalid chorus profile");
 }
 
 struct RenderOptions
 {
     float character { 1.0f };
     bool shipping { false };
+    bool product { false };
     float noiseScale { 1.0f };
-    bool a11EffectiveChorus { false };
+    ChorusTimingProfile chorusTimingProfile { ChorusTimingProfile::Shipping };
     bool fixedServiceTrim { true };
     bool referenceVcf { false };
     std::uint32_t sampleRate { comparisonSampleRate };
@@ -94,11 +116,25 @@ RenderOptions readOptions(const std::vector<std::string>& arguments)
     if (!arguments.empty())
         result.character = finiteRange(arguments[0], 2.0f, "character");
     if (arguments.size() >= 2)
+    {
         result.shipping = shippingMode(arguments[1]);
+        result.product = arguments[1] == "product";
+        if (result.product)
+        {
+            // Keep historical exact/shipping defaults intact. Product selects
+            // the maintained plug-in circuit choices; later explicit options
+            // remain comparison overrides, including nominal VCF or clock.
+            EngineParameters product;
+            ProductFidelityProfile::applyTo(product);
+            result.referenceVcf = product.useServiced439522VcfCalibration;
+            result.chorusTimingProfile = product.chorusTimingProfile;
+            result.csa8MtzTemperatureProxy = true;
+        }
+    }
     if (arguments.size() >= 3)
         result.noiseScale = finiteRange(arguments[2], 4.0f, "noise scale");
     if (arguments.size() >= 4)
-        result.a11EffectiveChorus = effectiveChorusProfile(arguments[3]);
+        result.chorusTimingProfile = chorusProfile(arguments[3]);
     const auto choice = [](const std::string& value, const char* off, const char* on) {
         if (value == off) return false;
         if (value == on) return true;
@@ -144,6 +180,8 @@ RenderOptions readOptions(const std::vector<std::string>& arguments)
 
 void prepareRenderEngine(YouKnowEngine& engine, const RenderOptions& options)
 {
+    if (options.product)
+        ProductFidelityProfile::configureBeforePrepare(engine);
     engine.selectConverterTimingProfile(
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     if (!engine.configureDcoMasterClockHz(options.dcoMasterHz))
@@ -157,11 +195,13 @@ void prepareRenderEngine(YouKnowEngine& engine, const RenderOptions& options)
 
 EngineParameters parametersFor(const sysex::Patch& patch, float character,
                                bool shipping, float noiseScale = 1.0f,
-                               bool a11EffectiveChorus = false,
+                               ChorusTimingProfile timingProfile = ChorusTimingProfile::Shipping,
                                bool fixedServiceTrim = true,
-                               bool referenceVcf = false)
+                               bool referenceVcf = false, bool product = false)
 {
     EngineParameters p;
+    if (product)
+        ProductFidelityProfile::applyTo(p);
     p.lfoRate = patch.lfoRate; p.lfoDelay = patch.lfoDelay;
     p.dcoLfoDepth = patch.dcoLfo; p.pwmDepth = patch.pwm;
     p.pwmSource = patch.pwmSource; p.range = patch.range;
@@ -179,9 +219,7 @@ EngineParameters parametersFor(const sysex::Patch& patch, float character,
     // output gain. Keep it ahead of the actual filter/VCA/nonlinearities,
     // exactly where the shared noise rail enters the shipping engine.
     p.mainNoiseLevelScale = noiseScale;
-    p.chorusTimingProfile = a11EffectiveChorus
-                          ? ChorusTimingProfile::A11Spectral
-                          : ChorusTimingProfile::Shipping;
+    p.chorusTimingProfile = timingProfile;
     p.useFixedVcfServiceFrequencyTrim = fixedServiceTrim;
     p.useServiced439522VcfCalibration = referenceVcf;
     // Match fresh plug-in instances, including the inactive-card/chorus skips.
@@ -210,8 +248,8 @@ bool patchParametersForEvent(const std::vector<std::uint8_t>& bytes,
     // Both a new full patch and a single-control update preserve the render's
     // explicitly selected comparison coordinates.
     result = parametersFor(patch, options.character, options.shipping,
-                           options.noiseScale, options.a11EffectiveChorus,
-                           options.fixedServiceTrim, options.referenceVcf);
+                           options.noiseScale, options.chorusTimingProfile,
+                           options.fixedServiceTrim, options.referenceVcf, options.product);
     return true;
 }
 
@@ -261,10 +299,13 @@ void selfTest()
     const auto upper = readOptions({ "2", "shipping", "4", "a11-effective" });
     const auto selected = readOptions({ "0.75", "shipping", "3.44", "a11-effective" });
     if (defaults.character != 1.0f || defaults.shipping || defaults.noiseScale != 1.0f
-        || defaults.a11EffectiveChorus || lower.character != 0.0f || lower.shipping
-        || lower.noiseScale != 0.0f || lower.a11EffectiveChorus
+        || defaults.product || upper.product
+        || defaults.chorusTimingProfile != ChorusTimingProfile::Shipping
+        || lower.character != 0.0f || lower.shipping
+        || lower.noiseScale != 0.0f || lower.chorusTimingProfile != ChorusTimingProfile::Shipping
         || upper.character != 2.0f || !upper.shipping || upper.noiseScale != 4.0f
-        || !upper.a11EffectiveChorus || selected.noiseScale != 3.44f)
+        || upper.chorusTimingProfile != ChorusTimingProfile::A11Spectral
+        || selected.noiseScale != 3.44f)
         throw std::runtime_error("render option defaults, endpoints or combined candidates changed");
     const auto cardProfile = readOptions({ "0", "shipping", "1", "nominal",
         "fixed-service", "serviced439522", "192000", "1", "rotary6" });
@@ -403,13 +444,13 @@ void selfTest()
     if (!invalidKernelRejected)
         throw std::runtime_error("unknown kernel was accepted");
     const auto profile = parametersFor(sysex::Patch {}, 1.0f, true, 1.0f,
-                                       effectiveChorusProfile("a11-effective"));
+                                       chorusProfile("a11-effective"));
     if (profile.chorusTimingProfile != ChorusTimingProfile::A11Spectral
         || shipping.chorusTimingProfile != ChorusTimingProfile::Shipping
-        || effectiveChorusProfile("nominal"))
+        || chorusProfile("nominal") != ChorusTimingProfile::Shipping)
         throw std::runtime_error("chorus profile selection changed the nominal default");
     bool invalidProfileRejected = false;
-    try { (void) effectiveChorusProfile("a11"); }
+    try { (void) chorusProfile("a11"); }
     catch (const std::runtime_error&) { invalidProfileRejected = true; }
     if (!invalidProfileRejected)
         throw std::runtime_error("unknown chorus profile was accepted");
@@ -424,8 +465,7 @@ void selfTest()
     EngineParameters changed;
     const auto checkSelection = [&] {
         if (changed.mainNoiseLevelScale != selected.noiseScale
-            || (changed.chorusTimingProfile == ChorusTimingProfile::A11Spectral)
-                   != selected.a11EffectiveChorus
+            || changed.chorusTimingProfile != selected.chorusTimingProfile
             || changed.calibration != selected.character
             || changed.vcfTanhMode != VcfTanhMode::PolyZoned
             || changed.cutoff != decoded.cutoff || changed.chorus != decoded.chorus)
@@ -447,6 +487,43 @@ void selfTest()
         || !patchParametersForEvent(cutoffUpdate, decoded, havePatch, cardProfile, changed)
         || !changed.useFixedVcfServiceFrequencyTrim || !changed.useServiced439522VcfCalibration)
         throw std::runtime_error("patch update lost the voice-card profile");
+    const auto productDefaults = readOptions({ "1", "product" });
+    if (!productDefaults.product || !productDefaults.shipping
+        || !productDefaults.referenceVcf || !productDefaults.csa8MtzTemperatureProxy
+        || productDefaults.settledThermalStart)
+        throw std::runtime_error("product render defaults lost the maintained circuit choices");
+    const auto productOverride = readOptions({ "1", "product", "1", "nominal",
+        "fixed-service", "nominal", "48000", "4", "normal", "8000000", "fixed-clock" });
+    if (productOverride.referenceVcf || productOverride.csa8MtzTemperatureProxy)
+        throw std::runtime_error("product mode ignored explicit comparison overrides");
+    for (const auto* name : { "nominal", "a11-effective", "a11-click", "derived" })
+    {
+        const auto options = readOptions({ "1", "product", "1", name,
+            "fixed-service", "serviced439522", "48000", "4", "normal", "8000000",
+            "csa8mtz-25c", "settled" });
+        if (std::string(chorusProfileName(options.chorusTimingProfile)) != name)
+            throw std::runtime_error("chorus profile parser/name round trip failed");
+        YouKnowEngine productEngine;
+        prepareRenderEngine(productEngine, options);
+        const double expectedClock = 8000000.0 * (1.0 + 0.0629 / 100.0)
+                                     / (1.0 + 0.004325 / 100.0);
+        if (YouKnowTestAccess::highPassSwitchOhms(productEngine)
+                != ProductFidelityProfile::highPassSwitchOhms
+            || productEngine.getDisplayTemperatureC() != 40.0f
+            || std::abs(productEngine.dcoMasterClockHz() - expectedClock) > 1.0e-7)
+            throw std::runtime_error("product HPF/clock/settled configuration did not reach the engine");
+        for (const auto& event : { fullPatch, cutoffUpdate })
+        {
+            if (!patchParametersForEvent(event, decoded, havePatch, options, changed)
+                || !changed.useServiced439522VcfCalibration
+                || changed.chorusTimingProfile != chorusProfile(name)
+                || changed.vcfTanhMode != VcfTanhMode::PolyZoned
+                || changed.vcfFastEarlyMode != VcfFastEarlyMode::Cubic
+                || changed.vcfSolverMode != VcfSolverMode::Rk4Single)
+                throw std::runtime_error("product patch update lost its profile or chorus candidate");
+            productEngine.setParameters(changed);
+        }
+    }
     std::istringstream highRateInput("0 903c7f\n0.1 803c00\n");
     if (readEvents(highRateInput, 192000u).back().frame != 19200u)
         throw std::runtime_error("event timing ignored the requested sample rate");
@@ -503,11 +580,15 @@ int main(int argc, char** argv)
     {
         std::cerr << "usage: " << argv[0]
                   << " <seconds-hex-events.txt> <output.wav> [character 0..2]"
-                     " [exact|shipping] [noise-scale 0..4] [nominal|a11-effective]"
+                     " [exact|shipping|product] [noise-scale 0..4]"
+                     " [nominal|a11-effective|a11-click|derived]"
                      " [dynamic|fixed-service] [nominal|serviced439522]"
                      " [sample-rate Hz] [oversample 1|2|4] [normal|rotary6]"
                      " [dco-master-hz 7200000..8800000]"
-                     " [fixed-clock|csa8mtz-25c] [cold|settled]\n";
+                     " [fixed-clock|csa8mtz-25c] [cold|settled]\n"
+                     "product: current HPF/filter/clock choices with shipping kernels;"
+                     " later explicit options override comparison coordinates.\n"
+                     "exact/shipping retain historical circuit defaults.\n";
         return 2;
     }
     try
@@ -580,8 +661,9 @@ int main(int argc, char** argv)
                   << options.oversampleFactor << "x, "
                   << "applied " << engine.getOversamplingFactor() << "x, "
                   << (options.shipping ? "Poly/Cubic/RK4 x1" : "Exact/Merson")
+                  << ", circuit setup " << (options.product ? "current product" : "historical")
                   << ", noise scale " << options.noiseScale
-                  << ", chorus " << (options.a11EffectiveChorus ? "A11 effective Mode I" : "nominal")
+                  << ", chorus " << chorusProfileName(options.chorusTimingProfile)
                   << ", VCF trim " << (options.fixedServiceTrim ? "fixed service" : "dynamic")
                   << ", VCF calibration " << (options.referenceVcf ? "serviced439522" : "nominal")
                   << ", allocation " << (options.rotary ? "test rotary6" : "normal")

@@ -157,8 +157,8 @@ constexpr double boostAmplifierDcGain = 1.0 + boostFeedbackOhms / boostGroundOhm
 // Per-voice module-input coupling, module board p. 13: the summed WAVE node
 // reaches the voice module's pin 1 VCF IN only through C56/C50 10 uF NP. The
 // topology is settled -- the 2026-08-07 designator read lists this capacitor
-// with the rest of the mixer node -- and it is why no mixer DC can reach the
-// filter core or the voice VCA behind it.
+// with the rest of the mixer node. It rejects settled mixer DC; changes in
+// the node's mean still pass as decaying transients into the nonlinear filter.
 //
 // The capacitor is the read part; the resistance it works against is not.
 // R99/R102 33 kOhm is *not* this pole's load -- the 2026-08-20 p. 13 junction
@@ -169,10 +169,10 @@ constexpr double boostAmplifierDcGain = 1.0 + boostFeedbackOhms / boostGroundOhm
 // termination, together with the WAVE output's
 // source impedance, is exactly OQ-15's remaining measurement. 33 kOhm is
 // therefore a voiced stand-in, taken by analogy with the two settled
-// 10 uF NP / 33 kOhm couplings downstream (C14/R39 and C12/R36), and what
-// this pole does is insensitive to the choice: every plausible 10-100 kOhm
-// termination lands the corner between 0.16 and 1.6 Hz, far below the lowest
-// note either way. The audible content is the DC block itself, not the corner.
+// 10 uF NP / 33 kOhm couplings downstream (C14/R39 and C12/R36). A
+// hypothetical 10-100 kOhm total resistance puts the corner between 0.16
+// and 1.6 Hz. That is below the keybed, but changes the settling transient;
+// it does not establish the installed time constant or its audible effect.
 constexpr float moduleCouplingCapacitanceF = 10.0e-6f;      // C56 / C50
 constexpr float moduleCouplingResistanceOhms = 33000.0f;    // voiced, OQ-15
 
@@ -9713,7 +9713,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // remain OQ-15/OQ-11.
     // The sub's single series diode makes its current unipolar -- the rail
     // sources (9.92 V * subCv - V_D6) / 60k, roughly 155 uA at full scale
-    // for a ~0.6 V drop (the D6 part is unread), on the half-cycle Tr19 is
+    // for an assumed ~0.6 V drop (p.12 identifies D6 as 1SS133), while Tr19 is
     // off and nothing on the other -- so its mean rides on this node for
     // C56/C50 to remove. SubLevelDiodeLaw supplies the measured aggregate
     // onset/soft knee at a settled WAVE bias; false enableSubDiodeControl
@@ -9767,13 +9767,15 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
 
     // --- Filter, amplifier -------------------------------------------------
     // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the
-    // module -- and the voice VCA behind it -- never see the mixer's DC. An
-    // enabled pulse carries the largest of it: the comparator's output is a
+    // module rejects the mixer's settled DC. Changes in that mean pass as
+    // decaying transients into the nonlinear filter below. An enabled pulse
+    // carries a substantial mean: the comparator's output is a
     // duty-asymmetric square, so its mean walks with PWM (at the 95 % duty the
     // hold's 0.6 V endpoint reaches, mean = 6 V * (2d - 1) = 5.4 V at the
-    // node). Passed straight through, that DC would multiply by the envelope
-    // in the voice VCA and leave an envelope-shaped thump that got *louder*
-    // with PWM depth -- a step the instrument does not make.
+    // node). The capacitor state follows the running source behind a shut
+    // VCA, so a new note does not replay the entire settled mean as a step.
+    // Actual PWM/SUB/source changes still charge C56 and can bias the filter
+    // transiently. Their decay depends on the unresolved source/load network.
     //
     // The panel HPF is a different stage and stays where it is: the schematic
     // puts it on the jack board, downstream of the summing amplifier, so it is

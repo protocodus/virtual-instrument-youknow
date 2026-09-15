@@ -356,12 +356,22 @@ forty-year-old unit will null against the plug-in.
   IC's reset curve remains unmeasured: the shipping finite-linear reset is
   retained, while an explicitly configured exponential discharge integrates
   retained C54 charge through the same PWM and audio path.
+  Finite amplifier gain could curve the charge ramp and parasitic switching
+  could add flyback feedthrough, but Roland supplies neither the MC5534A's
+  open-loop gain nor a measured glitch waveform. A gain of 2500, a 100–300 mV
+  spike and a 0.5 µs decay would be new assumptions. Comparator propagation
+  delays and input-noise spectra are likewise unmeasured; existing per-card
+  threshold offsets already share the two service duty-cycle constraints
+  with ramp tolerances. An extra independent offset would count that mismatch
+  twice, and a per-sample random transition would not identify its bandwidth.
 
 **Mixer and noise**
 
 - Fixed legs, not switchable mixer resistors: saw and pulse arrive summed on
   one WAVE node, Pulse Off leaves its comparator's constant-high state there,
-  the sub joins as a diode-gated half-cycle current (its half-wave mean
+  the sub joins through the module-board legend's
+  [1SS133 diode](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=12)
+  as a half-cycle current (its half-wave mean
   rides on the WAVE node and is what C56/C50 remove when the SUB level
   changes). The held SUB rail now crosses a soft silicon-diode threshold:
   one aggregate resistor/current scale, 8.896 V, fitted on alternating levels
@@ -388,8 +398,15 @@ forty-year-old unit will null against the plug-in.
   and Noise 1/10 sits near −24 dB rather than −20 dB re full. The OTA's
   input saturation of the noise is not modelled: its drive depends on Tr21's
   selected amplitude and on VR32, neither fixed (OQ-16).
-- C56/C50 couple the mixer into the filter, keeping duty-dependent DC out
-  of the signal path (anchored).
+- C56/C50 reject the mixer's settled DC while passing changes in its mean as
+  decaying transients into the nonlinear filter. Their state already follows
+  pulse duty, the half-wave SUB mean and saw amplitude, including behind closed
+  voice VCAs; Note On does not reconnect an idle oscillator as a fresh DC step.
+  The 10 µF capacitor is anchored, but the full WAVE source/load impedance is
+  not. The shipping 33 kΩ stand-in gives 330 ms settling; multiplying 10 µF by
+  an internal 68 kΩ stage resistor does not establish a 680 ms installed pole.
+  The OTA input also includes its 68 kΩ/560 Ω attenuation, so WAVE-node volts
+  must not be applied directly to a bare `tanh(v / (2 V_T))`.
 
 **Filter and voice amplifier**
 
@@ -533,15 +550,24 @@ forty-year-old unit will null against the plug-in.
   whose rates (0.5533/0.8983 Hz) and mode ratio are derived from this
   instrument's own oscillator circuit; the 1.4–6.4 ms sweep endpoints are a
   third-party measurement of a designator-faithful build (below the
-  anchoring bar; OQ-01). The separate I+II selector is a live product mode at
+  anchoring bar; OQ-01). The separate I+II selector is a product extension at
   the established summed-rate policy; its two wet returns fold to their exact
-  mid, preserving the mono colour while matching an original-unit owner's
-  report that the both-button result is conspicuously narrow. Residual width
-  still requires an identified-unit stereo capture. Its 1.4516 Hz rate matches
-  [Roland's current JUNO-106-chorus mode vocabulary](https://static.roland.com/manuals/sh-4d/eng/68126343.html);
-  that fourth transfer is explicit
-  compatibility policy pending an identified-unit capture, not a third
-  resistance inferred from the original schematic.
+  mid, preserving the chosen mono colour. Roland's
+  [original owner's manual](https://cdn.roland.com/assets/media/pdf/JUNO-106_OM.pdf#page=3)
+  excludes simultaneous I and II; its
+  [Boutique developers confirm](https://www.roland.com/au/promos/roland_boutique/interview_1/)
+  that JU-06 adds this feature beyond the JUNO-106. The product's rate and
+  folded wet returns are not a stock JUNO-106 calibration.
+  [Roland's current effect documentation](https://static.roland.com/manuals/sh-4d/eng/68126343.html)
+  names an I+II mode but supplies no rate; it does not validate this product's
+  1.4516 Hz choice. That fourth transfer is explicit compatibility policy.
+  For the ideal delay-only calculation, `4 * half-depth * rate` gives slopes
+  of 0.005533 for shipping Mode I and 0.003636 for the A11 spectral candidate,
+  approximately ±9.6 and ±6.3 cents. The former slope is 52% greater; adopting
+  the candidate would reduce it by 34%. Comparing corresponding centre delays,
+  the ideal first dry/wet cancellation moves from 128 to 148 Hz, about 0.21
+  octaves. Comparing one profile's minimum with another's centre overstates
+  that shift; unequal gains and the support filters also change actual nulls.
 - BBD write nonlinearity fitted to the MN3009's typical 0.3%/0.78 Vrms table
   point and approximately 2%/2 Vrms curve while retaining its 2.5% input-swing
   guarantee and saturation rail; explicit zero-order hold plus residual
@@ -1064,6 +1090,56 @@ VCF wander is independent of temperature and belongs to cutoff, not to a
 per-card DCO frequency offset. It must not be counted again as an additional
 temperature-derived residual.
 
+The DCO timers continue clocking behind closed voice VCAs, so the number of
+held notes is not a measurement of digital-rail load. Supply-dependent master
+clock pulling is plausible, but its coefficient needs an installed supply-to-
+frequency measurement; neither a gate's propagation delay nor a resonator's
+temperature curve supplies it. No active-voice-count pitch-sag term is added.
+
+The processed TUNE byte contributes one 1/256-semitone unit per step
+(0.390625 cents in the pitch word, before integer PIT quantization). This does
+not imply raw ADC code hunting. Roland's
+[control drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=8)
+assigns TUNE to AN0, portamento to AN1 and bender CV to AN7; IC30–32 are 4050
+buffers. The [jack-board drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15)
+identifies TUNE as VR4, 50 kΩ B. B-2's
+[ADC handler](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1256-L1280)
+retains the preceding reading when the new raw code differs by at most one,
+then applies endpoint conditioning. The later
+[TUNE routine](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1107-L1119)
+reads the stored value and separates sign and magnitude; it does not sample
+AN1 and simply subtract 128. Independent adjacent-code noise added
+after that handler would bypass its hysteresis. A uniform potentiometer
+resistance temperature coefficient also does not establish divider-ratio
+drift. Installed noise, contact behavior and differential heating need
+measurements before adding an analog TUNE-wander model.
+
+Analog ramp crosstalk can move a PWM crossing or alter waveform shape. It
+does not establish mutual DCO injection locking: Roland's
+[internal drawing](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9)
+resets C54 from the PIT edge, while the PWM comparator supplies the pulse
+output. It shows no comparator-to-PIT feedback that would pull the counter
+phase. The [Kiwi-106 manual's unison discussion](https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf#page=19)
+likewise describes programmable-divider phase relationships, not parasitic
+locking. The configured exponential-reset model already retains charge and
+its effect on PWM; unmeasured temperature coefficients are not added to it.
+For a rising ramp at fixed slope and comparator threshold,
+`t_cross = (V_PWM - V_base) / slope`: raising the baseline advances the crossing
+by `delta_t = -delta_V_base / slope`. Moving that one pulse edge changes duty
+cycle and harmonic amplitudes as well as phases; it is not a uniform time
+shift of the waveform or a change to the PIT-controlled fundamental.
+
+A resonance peak alone is not a second sustained tone. Below self-oscillation,
+a fixed linear filter driven by a steady periodic DCO changes the existing
+harmonics' levels and phases; it does not generate a new tone at its cutoff.
+This follows the [steady-state filter response](https://dsprelated.com/freebooks/filters/Transient_Response_Steady_State.html).
+An attack can excite decaying ringing, noise can excite the resonant band,
+and autonomous self-oscillation or time-varying/nonlinear behavior can produce
+additional components. Those can interact with DCO harmonics through the
+existing filter. A universal extra beating oscillator or drift offset could
+double-count existing effects or invent an absent component; either requires
+separate evidence.
+
 The connected clock model advances **one common prescaler phase** and preserves
 PIT counts through temperature changes. A future calibration can replace the
 component proxy with measured reference frequency versus temperature, supply
@@ -1362,6 +1438,16 @@ page and examples to 3 October 2004. The normal and unison A48 examples are
 separate performances; the archival name alone does not establish the
 performance mode of a recording.
 
+[`YouKnowRenderCalibrationEvents`](Tools/RenderCalibrationEvents.cpp) renders
+timestamped MIDI/SysEx event files. Its `product` mode applies the current
+product HPF, VCF and master-clock choices with the shipping kernels; historical
+`exact` and `shipping` modes retain their earlier circuit defaults. Chorus
+profile arguments are `nominal`, `a11-effective`, `a11-click` and `derived`;
+the last three change Mode I only. Later explicit arguments remain comparison
+overrides, including `cold|settled` startup. Use identical events and settings
+and match whole-file stereo RMS when comparing timing candidates. The tool's
+usage lists the full positional argument order.
+
 [`YouKnowRenderPresetScore`](Tools/RenderPresetScore.cpp) accepts
 `<preset> <out.wav> --score notes.txt --sample-rate 96000` for short reference
 passages. Score lines are `note <on seconds> <off seconds> <MIDI key>` and an
@@ -1513,7 +1599,7 @@ Not to be reopened without contradictory primary evidence:
   I/II line, and its
   [owner manual](https://cdn.roland.com/assets/media/pdf/JUNO-106_OM.pdf)
   says I and II cannot be used together. This product nevertheless supports
-  the user-requested physical both-button combination as a distinct
+  the user-requested both-button combination as a distinct
   live/session mode at the established summed-rate policy; it is not claimed
   as a third original analogue setting, and hardware-format tone memory
   degrades it to II. The audited Roland Cloud JUNO-106 exposes only Off/I/II,
@@ -1722,7 +1808,7 @@ unit; the priority column is this project's own ranking of audible impact.
 
 | # | Open | Priority |
 | --- | --- | --- |
-| OQ-01 | Absolute chorus timing. Topology, waveform and scale are derived from the instrument's own schematic — a µPC062 integrator plus Schmitt comparator giving a symmetric triangle at 0.5532934 / 0.8982608 Hz, ratio 1.6234799 from the mode switch's T-network. A repeatable local audit of Roland Cloud JUNO-106 v2.0.2's deterministic chorus self-noise found median rates of 0.542613 Hz (estimator range 0.542609–0.542617) and 0.880013 Hz (0.880011–0.880016) across 48/96 kHz captures and analysis windows. The median ratio 1.62181 is within 0.103% of the schematic-derived ratio: useful manufacturer-model corroboration, but about 2% slower in absolute rate and therefore not grounds to replace the hardware-derived nominal values. That model exposes only Off/I/II and the authorization-limited run supplied no dry excitation from which to recover delay. The shipped 1.4–6.4 ms sweep endpoints still come from a third-party measurement of a designator-faithful build, which sits below the anchoring bar. An opt-in `useA11EffectiveChorusTimingProfile` now reproduces effective Mode I coordinates fitted to the verified A11 recording: centre 3.3803 ms, depth 1.7618 ms, rate 0.51593 Hz. Fitting whole C1/C3/C5 notes and holding out C2/C4 reduces spectral-ratio RMSE from 0.4571 to 0.1131 with timing fixed per profile and phase/channel gain fitted only on training notes. Widening nuisance-gain bounds gives 0.3779 to 0.1131; the nominal fit still reaches a bound, so these remain conditional diagnostic errors rather than an overall fidelity score. Synthetic recovery checks the estimator; these effective coordinates still absorb recording-path and unit differences and do not establish absolute MN3009 delay or change other modes. The live I+II product mode uses the established 1.4515542 Hz summed-rate compatibility policy. The sweep *law* is now derived rather than borrowed: the [p. 15 clock oscillator](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15) is Tr19 (R123 1.8 kΩ / R124 8.2 kΩ / R125 10 kΩ), a fixed current source charging C53 150 pF through R132 6.8 kΩ, with the TP4 triangle setting the upper threshold through Tr21/R129/D9 and Tr22 resetting C53 from the MN3101's OX3 — so the clock period is affine in the LFO voltage, the delay linear in it and the clock hyperbolic in it, which is the shipped default; KR-106's click-timing series (16 µs RMS straight-line residual) corroborates a derivation instead of standing alone, and the `enableChorusHyperbolicSweep` comparison describes a current-modulated oscillator this board does not have. The same click-timing series on identified unit #439522, whose chorus board is original, reads Mode I centre 3.30 ms, half-swing ±2.13 ms and rate 0.514 Hz, against the spectral fit's 3.38 ms / 1.76 ms / 0.516 Hz on the same unit: two estimators bracket that unit at centre 3.30–3.38 ms and depth 1.76–2.13 ms, about 15 % under the shipped clone centre, and its rate sits inside the 0.1 µF integrator's ordinary ±10 % class about the derived 0.5533 Hz (0.503–0.615 Hz). The same oscillator also brackets the sweep from its own parts: with Tr19's 195–203 µA into C53 the delay moves 256·C53/I0 = 0.189–0.197 ms per volt of threshold, the TP4 triangle's (R7/R6)·V_sat = 9.1–9.8 V swing gives a half-depth of 1.72–1.94 ms, and the centre — the threshold's mean above the −14.4…−14.65 V reset plus 256 dead times of 0.3–2.5 µs — lands at 2.79–3.43 ms (nominal 3.02 ms). The identified unit's spectral fit sits inside that bracket, its click-timing depth 10 % above the stacked-tolerance top, and the shipped clone endpoints outside on both counts, so the derived bracket, the two measurements and the shipped values are the candidates: which ships is an A–Z listening decision (recorded as pending in the decision log), not a fit; an identified original-unit capture of Mode II remains open | P0 |
+| OQ-01 | Absolute chorus timing. Topology, waveform and scale are derived from the instrument's own schematic — a µPC062 integrator plus Schmitt comparator giving a symmetric triangle at 0.5532934 / 0.8982608 Hz, ratio 1.6234799 from the mode switch's T-network. A repeatable local audit of Roland Cloud JUNO-106 v2.0.2's deterministic chorus self-noise found median rates of 0.542613 Hz (estimator range 0.542609–0.542617) and 0.880013 Hz (0.880011–0.880016) across 48/96 kHz captures and analysis windows. The median ratio 1.62181 is within 0.103% of the schematic-derived ratio: useful manufacturer-model corroboration, but about 2% slower in absolute rate and therefore not grounds to replace the hardware-derived nominal values. That model exposes only Off/I/II and the authorization-limited run supplied no dry excitation from which to recover delay. The shipped 1.4–6.4 ms sweep endpoints still come from a third-party measurement of a designator-faithful build, which sits below the anchoring bar. The opt-in `ChorusTimingProfile::A11Spectral` reproduces effective Mode I coordinates fitted to the verified A11 recording: centre 3.3803 ms, depth 1.7618 ms, rate 0.51593 Hz. Fitting whole C1/C3/C5 notes and holding out C2/C4 reduces spectral-ratio RMSE from 0.4571 to 0.1131 with timing fixed per profile and phase/channel gain fitted only on training notes. Widening nuisance-gain bounds gives 0.3779 to 0.1131; the nominal fit still reaches a bound, so these remain conditional diagnostic errors rather than an overall fidelity score. Synthetic recovery checks the estimator; these effective coordinates still absorb recording-path and unit differences and do not establish absolute MN3009 delay or change other modes. The live I+II product mode uses the established 1.4515542 Hz summed-rate compatibility policy. The sweep *law* is now derived rather than borrowed: the [p. 15 clock oscillator](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15) is Tr19 (R123 1.8 kΩ / R124 8.2 kΩ / R125 10 kΩ), a fixed current source charging C53 150 pF through R132 6.8 kΩ, with the TP4 triangle setting the upper threshold through Tr21/R129/D9 and Tr22 resetting C53 from the MN3101's OX3 — so the clock period is affine in the LFO voltage, the delay linear in it and the clock hyperbolic in it, which is the shipped default; KR-106's click-timing series (16 µs RMS straight-line residual) corroborates a derivation instead of standing alone, and the `enableChorusHyperbolicSweep` comparison describes a current-modulated oscillator this board does not have. The same click-timing series on identified unit #439522, whose chorus board is original, reads Mode I centre 3.30 ms, half-swing ±2.13 ms and rate 0.514 Hz, against the spectral fit's 3.38 ms / 1.76 ms / 0.516 Hz on the same unit: the two estimators give centre estimates spanning 3.30–3.38 ms and depth estimates spanning 1.76–2.13 ms, without bounding the actual unit, about 15 % under the shipped clone centre, and its rate sits inside the 0.1 µF integrator's ordinary ±10 % class about the derived 0.5533 Hz (0.503–0.615 Hz). A conditional oscillator calculation assumes Tr19 current 195–203 µA and nominal C53=150 pF: the delay moves 256·C53/I0 = 0.189–0.197 ms per volt of threshold, the TP4 triangle's (R7/R6)·V_sat = 9.1–9.8 V peak amplitude (18.2–19.6 V peak-to-peak) gives a half-depth of 1.72–1.94 ms, and the centre — the threshold's mean above the −14.4…−14.65 V reset plus 256 assumed reset dead times of 0.3–2.5 µs — would land at 2.79–3.43 ms (nominal 3.02 ms). The current, saturation, reset-voltage and dead-time intervals are assumptions, not measured installed-part tolerance bounds. The spectral fit lies inside that conditional interval, the click depth is about 10 % above it, and the shipped clone endpoints are outside it on both counts; none of this proves the clone endpoints physically impossible. The two recording estimates and shipping values remain comparison candidates: which ships is an A–Z listening decision (recorded as pending in the decision log), not a fit; an identified original-unit capture of Mode II remains open | P0 |
 | OQ-03 | Chorus noise and SNR under calibrated conditions. Two manufacturer scans differ: the [standalone MN3009 sheet](https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf), printed p.43, gives 0.20 mVrms maximum; the [Panasonic BBD book](https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf), printed p.37, gives 0.15 mVrms maximum under the same stated A-weighted, 100 kHz conditions. Neither supplies a dated revision or typical noise PSD, and other table rows also differ. HISS 100% retains 0.20 mVrms as a separate recovered-wet-line product normalization, not the part-output measurand; the 29.86% default remains compatibility policy. The standalone sheet's U-shaped THD–Vi plot supports only a derived wideband noise bracket, not a typical A-weighted voltage. Mode II retains the reported relative 3.95 dB lift. A separate emulation's louder/brighter hiss is useful comparison material but cannot establish either hardware output voltage. Clock-event reconstruction now removes the extra power introduced by numerical sampling of random steps: the shipping 1×/4× silence-level spread is about 0.002 dB, versus 0.458 dB previously. The held-out-clock audit retains explicit coarse-grid upper-band residuals. KR-106's noise-calibration header records a background capture of the same identified unit (original chorus board): one saw voice at C4 with VCA LEVEL and VOLUME full reads −8.5 dBFS RMS, the idle floor −76.3 dBFS with the chorus off and −57.0 dBFS in mode I, so engaging the chorus lifts the idle floor 19.3 dB and the wet hiss sits 48.5 dB below one voice where this engine's A11 comparison measured 64.4 dB. That figure is quoted from a third party's source header rather than hash-pinned here, its bands include the 120 Hz rail hum and 15–30 kHz, and the earlier datasheet objection set an A-weighted, 100 kHz-clock row against it unweighted; the chorus-on minus chorus-off idle ratio is the chain-independent check a pinned capture would settle, and the default does not move on a quoted number. Installed-unit absolute level, PSD, correlation, clock law and parasitic layers remain open | P0 |
 | OQ-05 | Loaded TA75558S IC6 and High-output clipping swing. Device identity, resistor gains and ±15 V supply rails are settled. The traced maximum-volume, no-external-load midband impedance is about 8.22 kΩ; an approximate symmetric reading of the datasheet's 25 °C typical Vop-p graph is roughly ±13.9 V around 8–9 kΩ. The modelled ±13.5 V asymptote is therefore plausible and about 0.4 V below that typical curve, but is not a guaranteed limit. Toshiba's [era-correct table](https://datasheet.datasheetarchive.com/originals/scans/Scans-99/DSAIHSC000102822.pdf#page=3) specifies 1.0 V/µs slew as a typical value only at unity gain, 2 kΩ and 25 °C; the model now uses that nominal value while the installed-load slew, exact swing and knee remain open | P0 |
 | OQ-15 | Oscillator-mixer levels and filter-drive calibration. Node anchors are settled (saw/pulse ≈12 Vpp, noise 4.0 Vpp at TP8, the 68 kΩ/560 Ω core attenuator) and the mixer topology is designator-complete; the level coordinates remain voiced. The WAVE node's absolute DC and its DC/AC impedance also set the sub's mean and the diode onset; the nominal model assumes ~0 V and a ratio of 1. The sub coordinate moved 5.0 → 7.57 V on 2026-09-04, on the owner's decision, after two independent third-party models both read it low: frequency-matched at 261.63 Hz, sub against saw reads +8.49 dB on Ultramaster KR-106 and +6.87 on Arturia's Jun-6 V against this model's former +4.89, while pulse against saw has this model and Arturia within 0.3 dB. It follows KR-106, the one of the two that models the 106 rather than the JUNO-6, and it **remains voiced**: two models cannot close a question, they disagree by 1.6 dB on the size, and because this project consumes KR-106's measurements elsewhere the shared value can never later be cited as independent corroboration. An earlier move in the other direction, on a hardware recording of A64, was withdrawn because a recording witnesses the slider rather than the stored byte. The identified original-DCO SUB sweep now anchors the relative slider law: a soft-diode model with one fitted 8.896 V aggregate scale gives 0.282 dB worst error on interleaved held-out levels, versus 18.50 dB for the previous linear law. This changes partial SUB levels while preserving zero and full-scale coordinates. It does not identify absolute WAVE impedance/bias or six-card spread; the optional coupled mixer requires those inputs explicitly. Original-card absolute filter-drive calibration remains open | P0 |

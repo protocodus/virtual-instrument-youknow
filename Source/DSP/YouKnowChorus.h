@@ -27,19 +27,20 @@ namespace youknow
 //
 // The original instrument's owner manual and recovered control path describe
 // one enable bit plus one binary I/II bit, not a third analogue clock setting.
-// Keep the user-requested physical both-button combination as a fourth product
-// state; `settingsFor()` documents its compatibility policy while the exact
-// original-unit transfer remains unmeasured. The audited Roland Cloud
-// JUNO-106 exposes only Off/I/II and therefore supplies no I+II precedent.
+// Keep the user-requested both-button combination as a fourth product state;
+// `settingsFor()` documents this extension's compatibility policy. Roland's
+// original owner manual explicitly disallows simultaneous I and II, also
+// confirmed by its Boutique developers when describing the JU-06 extension:
+// https://www.roland.com/au/promos/roland_boutique/interview_1/
 enum class ChorusMode { Off, One, Two, OneTwo };
 
 // Which Mode I timing coordinates the chorus runs on.
 //
 // Comparison-only. Shipping is the default and the only one a product build
 // selects; the rest exist so the four candidates OQ-01 names can be rendered
-// against each other, which is what that decision needs and what no amount of
-// further derivation can supply. None of them is a fit: each is a figure some
-// evidence already stands behind.
+// against each other. Their evidence differs: one is an effective recording
+// fit, one a clock-click estimate, and one a conditional circuit calculation.
+// None establishes original-unit population calibration.
 //
 //   Shipping        The third-party scope measurement of a designator-faithful
 //                   clone board: 3.9 ms centre, +/-2.5 ms, at the schematic's
@@ -50,9 +51,9 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 //   A11ClickTiming  The same unit read by a different estimator entirely, the
 //                   clock-click series, whose 16 us straight-line residual is
 //                   independent of the spectral fit's assumptions.
-//   DerivedNominal  The p. 15 oscillator's own parts: Tr19's 195-203 uA into
-//                   C53 against the TP4 threshold, taken at the middle of the
-//                   stacked-tolerance bracket rather than at either edge.
+//   DerivedNominal  Conditional p. 15 oscillator estimate with nominal C53
+//                   and assumed current, junction drops, output saturation
+//                   and reset dead time. Not an installed tolerance bound.
 enum class ChorusTimingProfile
 {
     Shipping,
@@ -400,9 +401,8 @@ public:
     // usable even though its absolute dBFS figures and true-peak statistic
     // cannot calibrate this model. Apply 3.95 dB empirically by default while
     // leaving mode I's explicit recovered-wet-line product normalization
-    // untouched. There is no corresponding
-    // calibrated I+II capture, so that product mode provisionally retains the
-    // measured mode-II profile until one exists.
+    // untouched. The I+II product extension retains the mode-II noise profile
+    // as a compatibility choice, not an original JUNO-106 noise calibration.
     static constexpr float measuredModeTwoNoiseDeltaDb = 3.95f;
     static constexpr float measuredModeTwoNoiseGain = 1.57579602f;
     [[nodiscard]] static constexpr float measuredModeNoiseGain(
