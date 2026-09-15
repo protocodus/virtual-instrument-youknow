@@ -56,6 +56,58 @@ struct Options
     std::filesystem::path output;
 };
 
+class ProgressWatchdog
+{
+public:
+    explicit ProgressWatchdog (std::uint32_t watchdogSeed)
+        : thread ([this, watchdogSeed]
+          {
+              auto previous = progress.load();
+              auto previousUi = uiProgress.load();
+              auto lastProgress = Clock::now();
+              auto lastUiProgress = Clock::now();
+              while (! stop.load())
+              {
+                  std::this_thread::sleep_for (std::chrono::milliseconds (100));
+                  const auto current = progress.load();
+                  if (current != previous)
+                  {
+                      previous = current;
+                      lastProgress = Clock::now();
+                  }
+                  const auto ui = uiProgress.load();
+                  if (! editorPhase.load() || ui != previousUi)
+                  {
+                      previousUi = ui;
+                      lastUiProgress = Clock::now();
+                  }
+                  if (Clock::now() - lastProgress > std::chrono::seconds (30)
+                      || Clock::now() - lastUiProgress > std::chrono::seconds (30))
+                  {
+                      std::cerr << "FAIL watchdog: seed=" << watchdogSeed << " scenario="
+                                << currentScenario.load() << " block=" << currentBlock.load() << '\n';
+                      std::_Exit (EXIT_FAILURE);
+                  }
+              }
+          })
+    {
+    }
+
+    ~ProgressWatchdog()
+    {
+        stop.store (true);
+        if (thread.joinable())
+            thread.join();
+    }
+
+    ProgressWatchdog (const ProgressWatchdog&) = delete;
+    ProgressWatchdog& operator= (const ProgressWatchdog&) = delete;
+
+private:
+    std::atomic<bool> stop { false };
+    std::thread thread;
+};
+
 double cpuSeconds()
 {
 #if defined(_WIN32)
@@ -682,28 +734,7 @@ int main (int argc, char** argv)
         juce::ScopedJuceInitialiser_GUI initialise;
         std::cout << "Control fuzz seed=" << options.seed << " mode="
                   << (options.quick ? "quick" : "full") << " clock=thread-cpu\n" << std::flush;
-        std::jthread watchdog ([seed = options.seed] (std::stop_token stop) {
-            auto previous = progress.load();
-            auto previousUi = uiProgress.load();
-            auto lastProgress = Clock::now();
-            auto lastUiProgress = Clock::now();
-            while (! stop.stop_requested())
-            {
-                std::this_thread::sleep_for (std::chrono::milliseconds (100));
-                const auto current = progress.load();
-                if (current != previous) { previous = current; lastProgress = Clock::now(); }
-                const auto ui = uiProgress.load();
-                if (! editorPhase.load() || ui != previousUi)
-                { previousUi = ui; lastUiProgress = Clock::now(); }
-                if (Clock::now() - lastProgress > std::chrono::seconds (30)
-                    || Clock::now() - lastUiProgress > std::chrono::seconds (30))
-                {
-                    std::cerr << "FAIL watchdog: seed=" << seed << " scenario="
-                              << currentScenario.load() << " block=" << currentBlock.load() << '\n';
-                    std::_Exit (EXIT_FAILURE);
-                }
-            }
-        });
+        ProgressWatchdog watchdog (options.seed);
         std::vector<FuzzResult> results;
         const auto run = [&] (std::string name, double rate, int channels, int frames,
                               const char* focused = nullptr) {
