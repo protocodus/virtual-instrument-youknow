@@ -978,6 +978,26 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.PluginProcessor COMMAND YouKnowPluginProcessorTests)
         set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 60)
 
+        # Exercise the shipping processor and editor with reproducible control
+        # storms. Timing is reported separately from correctness: shared CI
+        # machines cannot provide a meaningful audio-deadline guarantee.
+        find_package(Threads REQUIRED)
+        add_executable(YouKnowControlFuzz Tools/FuzzControls.cpp)
+        target_link_libraries(YouKnowControlFuzz PRIVATE YouKnow Threads::Threads)
+        if(APPLE)
+            target_link_libraries(YouKnowControlFuzz PRIVATE "-framework CoreFoundation")
+        endif()
+        target_include_directories(YouKnowControlFuzz PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source"
+            "$<TARGET_PROPERTY:YouKnow,JUCE_GENERATED_SOURCES_DIRECTORY>"
+            "$<TARGET_PROPERTY:YouKnow,INCLUDE_DIRECTORIES>")
+        target_compile_features(YouKnowControlFuzz PRIVATE cxx_std_20)
+        add_test(NAME YouKnow.ControlFuzz COMMAND YouKnowControlFuzz --quick)
+        set_tests_properties(YouKnow.ControlFuzz PROPERTIES TIMEOUT 90 LABELS stress)
+        if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS)
+            set_tests_properties(YouKnow.ControlFuzz PROPERTIES TIMEOUT 300)
+        endif()
+
         if(YOUKNOW_BUILD_CLAP)
             find_package(Threads REQUIRED)
             add_executable(YouKnowCLAPBundleSmokeTests
