@@ -456,9 +456,16 @@ void YouKnowLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y,
                                                       sliderPos) });
     g.setColour (juce::Colours::black.withAlpha (0.24f * alpha));
     g.fillRoundedRectangle (cap.translated (0.0f, sizeScale), 2.5f * sizeScale);
-    g.setColour (fromPalette (panel::colour::control)
-                     .brighter (highlighted ? 0.08f : 0.0f).withAlpha (alpha));
+    const auto ivory = fromPalette (panel::colour::control)
+                           .brighter (highlighted ? 0.08f : 0.0f);
+    g.setGradientFill (juce::ColourGradient (
+        ivory.brighter (0.035f).withAlpha (alpha), cap.getX(), cap.getY(),
+        ivory.darker (0.035f).withAlpha (alpha), cap.getX(), cap.getBottom(), false));
     g.fillRoundedRectangle (cap, 2.5f * sizeScale);
+    g.setColour (juce::Colours::white.withAlpha (0.18f * alpha));
+    g.drawLine (cap.getX() + 2.5f * sizeScale, cap.getY() + sizeScale,
+                cap.getRight() - 2.5f * sizeScale, cap.getY() + sizeScale,
+                0.7f * sizeScale);
 
     g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.70f * alpha));
     g.fillRoundedRectangle (cap.withSizeKeepingCentre (cap.getWidth() - 8.0f * sizeScale,
@@ -516,9 +523,17 @@ void YouKnowLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
                                                   juce::PathStrokeType::rounded));
     }
 
-    g.setColour (fromPalette (panel::colour::faceplateHigh)
-                     .brighter (highlighted ? 0.10f : 0.0f).withAlpha (alpha));
-    g.fillEllipse (knob.reduced (4.5f * sizeScale));
+    const auto face = knob.reduced (4.5f * sizeScale);
+    const auto graphite = fromPalette (panel::colour::faceplateHigh)
+                              .brighter (highlighted ? 0.10f : 0.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.18f * alpha));
+    g.fillEllipse (face.translated (0.0f, sizeScale));
+    g.setGradientFill (juce::ColourGradient (
+        graphite.brighter (0.045f).withAlpha (alpha), face.getX(), face.getY(),
+        graphite.darker (0.06f).withAlpha (alpha), face.getX(), face.getBottom(), false));
+    g.fillEllipse (face);
+    g.setColour (fromPalette (panel::colour::edge).withAlpha (0.14f * alpha));
+    g.drawEllipse (face.reduced (0.5f * sizeScale), 0.7f * sizeScale);
     const float pointerInner = diameter * 0.10f;
     const float pointerOuter = diameter * 0.32f;
     g.setColour (fromPalette (panel::colour::control).withAlpha (alpha));
@@ -574,7 +589,8 @@ void YouKnowLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& 
         return;
     }
 
-    const auto key = bounds.reduced (0.5f * sizeScale);
+    // The preset keys and selectors share the same outer edge and corner inset.
+    const auto key = bounds;
     g.setColour (face);
     g.fillRoundedRectangle (key, 3.0f * sizeScale);
     g.setColour (outline);
@@ -670,8 +686,8 @@ void YouKnowLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& bu
 
     if (compact && (text == "<" || text == ">"))
     {
-        const auto area = bounds.reduced (bounds.getWidth() * 0.30f,
-                                          bounds.getHeight() * 0.26f);
+        const auto area = bounds.withSizeKeepingCentre (
+            7.0f * sizeScale, 12.0f * sizeScale);
         juce::Path chevron;
         if (text == "<")
         {
@@ -686,8 +702,7 @@ void YouKnowLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& bu
             chevron.lineTo (area.getX(), area.getBottom());
         }
         g.strokePath (chevron,
-                      juce::PathStrokeType (juce::jmax (1.4f,
-                                                       bounds.getHeight() * 0.09f),
+                      juce::PathStrokeType (1.6f * sizeScale,
                                             juce::PathStrokeType::curved,
                                             juce::PathStrokeType::rounded));
         return;
@@ -880,7 +895,20 @@ void YouKnowKeyboard::drawWhiteNote (int midiNoteNumber, juce::Graphics& g,
         ivory = ivory.interpolatedWith (fromPalette (panel::colour::led), 0.26f);
     else if (isOver)
         ivory = ivory.brighter (0.06f);
-    g.setColour (ivory);
+    if (isDown)
+    {
+        g.setColour (ivory);
+    }
+    else
+    {
+        // A quiet change in tone gives the long ivory faces a physical depth.
+        juce::ColourGradient keySurface (ivory.darker (0.035f),
+                                          area.getX(), area.getY(),
+                                          ivory.brighter (0.015f),
+                                          area.getX(), area.getBottom(), false);
+        keySurface.addColour (0.36, ivory);
+        g.setGradientFill (keySurface);
+    }
     g.fillRect (area);
 
     // Each white key owns one separator so neighbouring seams stay a pixel wide.
@@ -921,6 +949,12 @@ void YouKnowKeyboard::drawBlackNote (int, juce::Graphics& g,
         ebony = ebony.interpolatedWith (fromPalette (panel::colour::led), 0.34f);
     g.setColour (ebony);
     g.fillRoundedRectangle (face, 2.0f);
+    if (! isDown)
+    {
+        // The inset rim gently separates the shoulder from the key's dark face.
+        g.setColour (fromPalette (panel::colour::control).withAlpha (0.055f));
+        g.drawRoundedRectangle (face.reduced (0.45f), 1.6f, 0.7f);
+    }
     g.setColour (isDown ? fromPalette (panel::colour::led)
                         : fromPalette (panel::colour::textDim).withAlpha (0.13f));
     g.fillRoundedRectangle ({ face.getX() + 1.0f, face.getBottom() - 3.0f,
@@ -3501,14 +3535,13 @@ void YouKnowAudioProcessorEditor::paint (juce::Graphics& g)
         const char* title;
         float x;
         float width;
-        bool drawSpan;
     } programmerSections[] = {
-        { "VOICE MODE", 218.0f, 242.0f, true },
-        { "GROUP",      470.0f,  70.0f, true },
-        { "BANK",       550.0f, 282.0f, true },
-        { "PROGRAM",    842.0f,  64.0f, false },
-        { "PATCH",      916.0f, 282.0f, true },
-        { "TOOLS",     1218.0f, 272.0f, true }
+        { "VOICE MODE", 218.0f, 242.0f },
+        { "GROUP",      470.0f,  70.0f },
+        { "BANK",       550.0f, 282.0f },
+        { "PROGRAM",    842.0f,  64.0f },
+        { "PATCH",      916.0f, 282.0f },
+        { "TOOLS",     1218.0f, 272.0f }
     };
     g.setColour (fromPalette (panel::colour::redBar));
     for (const auto& section : programmerSections)
@@ -3520,7 +3553,7 @@ void YouKnowAudioProcessorEditor::paint (juce::Graphics& g)
     if (surfaceTexture.isValid())
     {
         juce::Graphics::ScopedSaveState state (g);
-        g.setOpacity (0.24f);
+        g.setOpacity (0.16f);
         g.drawImageWithin (surfaceTexture, 0, 0, getWidth(), getHeight(),
                            juce::RectanglePlacement::stretchToFit);
     }
@@ -3616,7 +3649,7 @@ void YouKnowAudioProcessorEditor::paint (juce::Graphics& g)
                                 panel::programmerKeyHeight - 14.0f));
         }
         drawMinorHeading (section.title, section.x, programmerHeadingTop,
-                          section.width, section.drawSpan);
+                          section.width, false);
         previousSectionRight = section.x + section.width;
     }
 
