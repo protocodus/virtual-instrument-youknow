@@ -9,6 +9,8 @@ Export its frozen MIDI prefix, then render using YouKnowRenderCalibrationEvents:
 Hardware WAV must preserve the first 11.5 seconds at the original 192 kHz.
 This serviced Juno-106 has Borish replacement VCF/VCA cards and original DCOs.
 Ratios within each file cancel fixed recording gain, not card/trim variation.
+These are steady output-chain spectra, not isolated MC5534A or 80017A probes.
+They do not measure attack-H2 growth, C56 settling, or reset-spike timing.
 """
 
 import argparse
@@ -181,6 +183,7 @@ def main():
               "conditions": "VCA gate64, HPF1, chorus Off, range16foot, note60; pulse PWM0/manual; selfosc cutoff49/res127/all sound sources off.",
               "limitations": ["One serviced unit; replacement-card gain and noise trim are not original-card calibration evidence.",
                               "Ratios cancel only constant gain within each file; no cross-session absolute gain comparison.",
+                              "Output harmonic residuals include waveform duty, DCO, replacement VCF/VCA and recording-chain effects; they do not identify a component or calibrate finite gain, charge injection or capacitor leakage.",
                               "Three subwindow ranges describe local variation, not confidence intervals or independent hardware units.",
                               "Steady measurement windows do not qualify onset, MIDI serialization or switching timing.",
                               "Peak estimates assume an in-band dominant tone; unknown recordings are unverified."],

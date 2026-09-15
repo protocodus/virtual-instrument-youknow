@@ -173,8 +173,11 @@ constexpr double boostAmplifierDcGain = 1.0 + boostFeedbackOhms / boostGroundOhm
 // hypothetical 10-100 kOhm total resistance puts the corner between 0.16
 // and 1.6 Hz. That is below the keybed, but changes the settling transient;
 // it does not establish the installed time constant or its audible effect.
+// Nor is 68k + 560 ohms the pin-1 load: that stage attenuator omits the
+// hybrid's 4.7k summing and 24k/1.5k resonance-input paths (see the
+// resonance-compensation derivation). Do not infer a C56 pole from it alone.
 constexpr float moduleCouplingCapacitanceF = 10.0e-6f;      // C56 / C50
-constexpr float moduleCouplingResistanceOhms = 33000.0f;    // voiced, OQ-15
+constexpr float moduleCouplingResistanceOhms = 33000.0f;    // legacy raw reference; product selects hybrid load
 
 // Per-voice coupling out of the filter and into the amplifier, module board
 // pp. 18-19: pin 3 VCF OUT reaches pin 9 VCA IN only through C59 1 uF/50 V NP
@@ -5800,8 +5803,11 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         pi * highPassCornerHz(HighPassMode::Three) * highPassDepartRatio
         * inverseOversampledRate_);
     updateBoostBranchCoefficients();
+    const float moduleCouplingCorner = rcCornerHz(
+        moduleCouplingCapacitanceF,
+        static_cast<float>(moduleInputCouplingResistanceOhms()));
     moduleCouplingG_ = std::tan(
-        pi * moduleCouplingCornerHz() * inverseOversampledRate_);
+        pi * moduleCouplingCorner * inverseOversampledRate_);
     vcaInputCouplingG_ = std::tan(
         pi * vcaInputCouplingCornerHz() * inverseOversampledRate_);
     commonVcaInputCouplingG_ = std::tan(
@@ -6373,11 +6379,29 @@ float YouKnowEngine::processMainNoiseSource(
 bool YouKnowEngine::configureCoupledMixer(
     const CoupledSubMixer::Calibration& calibration) noexcept
 {
-    if (prepared_ || !calibration.valid())
+    if (prepared_ || moduleInputCouplingResistanceOverrideOhms_ > 0.0
+        || !calibration.valid())
         return false;
     coupledMixerCalibration_ = calibration;
     coupledMixerEnabled_ = true;
     return true;
+}
+
+bool YouKnowEngine::configureModuleInputCouplingResistanceOhms(
+    double totalResistanceOhms) noexcept
+{
+    if (prepared_ || coupledMixerEnabled_ || !std::isfinite(totalResistanceOhms)
+        || totalResistanceOhms < 1000.0 || totalResistanceOhms > 1000000.0)
+        return false;
+    moduleInputCouplingResistanceOverrideOhms_ = totalResistanceOhms;
+    return true;
+}
+
+double YouKnowEngine::moduleInputCouplingResistanceOhms() const noexcept
+{
+    return moduleInputCouplingResistanceOverrideOhms_ > 0.0
+        ? moduleInputCouplingResistanceOverrideOhms_
+        : static_cast<double>(moduleCouplingResistanceOhms);
 }
 
 bool YouKnowEngine::configureEnvelopeHolds(

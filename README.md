@@ -92,6 +92,10 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### 1.1.0 — unreleased
 
+- The voice input's C56 coupling now uses the documented hybrid resistor
+  network's nominal reduction, shortening mean-shift settling from 330 ms
+  to about 39.7 ms. PWM and SUB changes retain their continuous capacitor
+  history through the nonlinear filter.
 - Each voice's four filter-resistor noise sources now follow its local
   temperature through the Johnson–Nyquist law, including while the card is
   idle. The shared NOISE source keeps its existing calibration.
@@ -364,6 +368,18 @@ forty-year-old unit will null against the plug-in.
   threshold offsets already share the two service duty-cycle constraints
   with ramp tolerances. An extra independent offset would count that mismatch
   twice, and a per-sample random transition would not identify its bandwidth.
+  For a constant-gain Miller integrator, `tau = R*C*(A+1)` and
+  `v(t) = -A*Vin + (Vreset + A*Vin)*exp(-t/tau)`. This is a conditional
+  circuit model, not a measurement of the MC5534A's gain. With instantaneous
+  reset, its harmonic ratio is `abs(Hn/H1) = sqrt((1+b*b)/(n*n+b*b))`,
+  where `b = 1/(2*pi*f*tau)`. At 130.0797 Hz with assumed gain 2000,
+  399 kΩ and 1 nF, H2 is only 0.00000765 dB above the ideal `1/2` ratio;
+  it does not explain the 0.0286 dB deficit in the
+  [historical steady-output benchmark](Docs/benchmarks/harmonics-2026-09-05.json).
+  That recording includes replacement VCF/VCA cards and the recording chain;
+  its harmonic magnitudes do not identify a DCO component or an attack transient.
+  Charge injection likewise needs a measured switch waveform: `Q/C` gives
+  a voltage step from an assumed charge, not its polarity or recovery time.
 
 **Mixer and noise**
 
@@ -403,10 +419,29 @@ forty-year-old unit will null against the plug-in.
   pulse duty, the half-wave SUB mean and saw amplitude, including behind closed
   voice VCAs; Note On does not reconnect an idle oscillator as a fresh DC step.
   The 10 µF capacitor is anchored, but the full WAVE source/load impedance is
-  not. The shipping 33 kΩ stand-in gives 330 ms settling; multiplying 10 µF by
-  an internal 68 kΩ stage resistor does not establish a 680 ms installed pole.
-  The OTA input also includes its 68 kΩ/560 Ω attenuation, so WAVE-node volts
-  must not be applied directly to a bare `tanh(v / (2 V_T))`.
+  not. The product uses `4.7 kΩ || (24 kΩ + 1.5 kΩ)` = 3.969 kΩ, giving
+  about 39.7 ms settling in the low-frequency, stiff-source approximation.
+  This replaces the voiced 33 kΩ / 330 ms stand-in following the owner's
+  [delegated evidence choice](Docs/decisions.md#2026-09-15--adopt-coupling-b-on-circuit-evidence).
+  The resistor proportions come from the
+  [hybrid reconstruction](https://github.com/ThomHPL/Open80017a/blob/5561ee3ea8eaa6299c9ce0c79df4df43658f9efa/Outputs/Open80017a.pdf);
+  the JUNO-6/60's corresponding 10 kΩ / 47 kΩ network supports the same
+  topology but gives a different input load. Multiplying 10 µF by an internal
+  68 kΩ stage resistor does not establish a 680 ms installed pole.
+  In particular, the 68 kΩ/560 Ω stage attenuator is not the complete pin-1
+  load: the reconstructed hybrid also has a 4.7 kΩ summing path and a
+  24 kΩ/1.5 kΩ resonance-input branch. SUB current also loads the WAVE
+  source, while C56 blocks its settled DC; multiplying that current by
+  68.56 kΩ alone does not establish a 5.3 V step. Inside the OTA cascade,
+  the differential drive includes the evolving capacitor state and feedback.
+  A biased memoryless `tanh` can generate even harmonics, but it cannot
+  establish the filter's attack spectrum or its decay from C56 alone.
+  `YouKnowRenderOscillatorEnvelopeCircuits coupling OUT TOTAL_OHMS` auditions
+  an explicit effective resistance against the current product profile,
+  preserving gains and capacitor state. Its held-note control changes and
+  bass/pluck score isolate that pole; raw and stereo-RMS-matched WAVs retain
+  the comparison without changing a preset or product default. The raw-engine
+  reference retains 33 kΩ for legacy fixtures and explicit comparisons.
 
 **Filter and voice amplifier**
 
@@ -933,7 +968,14 @@ build-fidelity-research/YouKnowRenderOscillatorEnvelopeCircuits timing out/uniso
 # Supply explicit coordinates; these variable names carry no suggested values.
 build-fidelity-research/YouKnowRenderOscillatorEnvelopeCircuits reset out/reset-pair "$RESET_OHMS" "$GATE_US" "$CLAMP_VOLTS"
 build-fidelity-research/YouKnowRenderOscillatorEnvelopeCircuits hold out/hold-pair "$HOLD_OHMS" "$BIAS_NA" "$LEAKAGE_NA" "$CHARGE_PC"
+build-fidelity-research/YouKnowRenderOscillatorEnvelopeCircuits coupling out/coupling-pair "$TOTAL_OHMS" --complex
 ```
+
+For reset and coupling comparisons, append `--complex` to use longer material
+with exposed oscillator sections or moving PWM and overlapping voices. The
+candidate coordinates stay explicit; the flag changes the shared score only.
+The original short score remains available without the flag. Each key records
+the score and level trims, so repeat auditions can preserve the first set.
 
 The basis is [Roland's DCO and module drawings](https://www.vintagesynthparts.com/wp-content/uploads/2017/03/JUNO-106_SERVICE_NOTES.pdf),
 the pinned [B-2 program](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt),

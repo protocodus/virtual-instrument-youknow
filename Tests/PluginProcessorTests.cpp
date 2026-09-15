@@ -582,6 +582,12 @@ void testProductFidelitySurvivesHostLifecycle()
                     "cannot configure the explicit HPF B reference");
         expect (references[index]->configureDcoTemperatureProxy (true, 25.0),
                 "cannot configure the explicit product temperature reference");
+        // Independently derive the adopted C56 input-load reduction. Keep
+        // it common to all references so the two other circuit contrasts
+        // remain isolated throughout preset/session/quality transitions.
+        expect (references[index]->configureModuleInputCouplingResistanceOhms (
+                    1.0 / (1.0 / 4700.0 + 1.0 / 25500.0)),
+                "cannot configure the explicit product C56 reference");
         references[index]->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }

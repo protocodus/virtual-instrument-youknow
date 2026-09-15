@@ -6,6 +6,7 @@
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowPanel.h"
 #include "DSP/YouKnowPresets.h"
+#include "DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -890,6 +891,23 @@ struct YouKnowTestAccess
     {
         return engine.voices_[static_cast<std::size_t>(slot)]
             .moduleCoupling.state;
+    }
+
+    static void resetModuleCouplingProbe(YouKnowEngine& engine) noexcept
+    {
+        engine.voices_[0].moduleCoupling.reset();
+    }
+
+    static float processModuleCouplingProbe(YouKnowEngine& engine,
+                                            float input) noexcept
+    {
+        return engine.voices_[0].moduleCoupling.process(
+            input, engine.moduleCouplingG_, 0.0f, 1.0f);
+    }
+
+    static float moduleCouplingCoefficient(const YouKnowEngine& engine) noexcept
+    {
+        return engine.moduleCouplingG_;
     }
 
     static float currentMidi(const YouKnowEngine& engine, int slot) noexcept
@@ -12463,6 +12481,137 @@ void testQualityChangePreservesFreeRunningClocks()
                "a quality rebuild left the DCO period in old-rate samples");
 }
 
+void testModuleInputCouplingComparisonConfiguration()
+{
+    // These source-stiff, ideal virtual-ground estimates are comparison
+    // coordinates, not measured C56 loads: the hybrid reconstruction and
+    // JUNO-6/60 drawing have different input/resonance branch resistors.
+    constexpr double hybridOhms = 4700.0 * 25500.0 / (4700.0 + 25500.0);
+    constexpr double siblingOhms = 10000.0 * 48500.0 / (10000.0 + 48500.0);
+    auto engine = std::make_unique<YouKnowEngine>();
+    expectNear(engine->moduleInputCouplingResistanceOhms(), 33000.0, 0.0,
+               "the raw-engine C56 reference resistance changed");
+    expect(engine->configureModuleInputCouplingResistanceOhms(hybridOhms),
+           "the hybrid C56 comparison was rejected before prepare");
+    for (const double invalid : { 0.0, -1.0, 999.0, 1000001.0,
+             std::numeric_limits<double>::quiet_NaN(),
+             std::numeric_limits<double>::infinity() })
+    {
+        expect(!engine->configureModuleInputCouplingResistanceOhms(invalid),
+               "an invalid C56 comparison resistance was accepted");
+        expectNear(engine->moduleInputCouplingResistanceOhms(), hybridOhms, 0.0,
+                   "a rejected C56 comparison changed the prior selection");
+    }
+    const CoupledSubMixer::Calibration circuit { 10000, 47000, 0.5, 0, 0.6, 0.1 };
+    expect(!engine->configureCoupledMixer(circuit),
+           "the full mixer silently replaced the selected independent C56 pole");
+    auto coupled = std::make_unique<YouKnowEngine>();
+    expect(coupled->configureCoupledMixer(circuit)
+               && !coupled->configureModuleInputCouplingResistanceOhms(hybridOhms),
+           "an independent C56 pole was accepted behind the full coupled circuit");
+    auto coupledProduct = std::make_unique<YouKnowEngine>();
+    ProductFidelityProfile::configureBeforePrepare(*coupledProduct, &circuit);
+    expect(!coupledProduct->configureModuleInputCouplingResistanceOhms(hybridOhms),
+           "a product full-mixer comparison also enabled the independent C56 pole");
+
+    const auto verifyStep = [](YouKnowEngine& candidate) {
+        const double rate = candidate.getSampleRate() * candidate.getOversamplingFactor();
+        const double tau = 10.0e-6 * candidate.moduleInputCouplingResistanceOhms();
+        YouKnowTestAccess::resetModuleCouplingProbe(candidate);
+        double worst = 0.0;
+        for (int n = 0; n < static_cast<int>(rate * 0.2); ++n)
+        {
+            const double actual = YouKnowTestAccess::processModuleCouplingProbe(candidate, 1.0f);
+            // Independent continuous one-volt step response. The TPT step
+            // lies half a sample before its first returned endpoint.
+            const double expected = std::exp(-(n + 0.5) / (rate * tau));
+            worst = std::max(worst, std::abs(actual - expected));
+        }
+        // Prewarped trapezoidal integration has a second-order difference
+        // from continuous RC at coarse grids. Keep that error allowance
+        // explicit for the 1k/8kHz numerical-domain boundary.
+        const double stepToTau = 1.0 / (rate * tau);
+        const double tolerance = 2.0e-6 + 0.25 * stepToTau * stepToTau;
+        expect(worst < tolerance,
+               "the selected C56 pole misses its continuous RC step by "
+                   + std::to_string(worst));
+    };
+    for (const double resistance : { 1000.0, hybridOhms, siblingOhms, 33000.0, 1000000.0 })
+    {
+        auto candidate = std::make_unique<YouKnowEngine>();
+        expect(candidate->configureModuleInputCouplingResistanceOhms(resistance),
+               "a valid C56 comparison resistance was rejected");
+        for (const auto [rate, factor] :
+             { std::pair { 8000.0, 1 }, std::pair { 48000.0, 4 }, std::pair { 96000.0, 2 } })
+        {
+            candidate->prepare(rate, blockSize, factor);
+            expectNear(candidate->moduleInputCouplingResistanceOhms(), resistance, 0.0,
+                       "prepare forgot the C56 comparison");
+            verifyStep(*candidate);
+        }
+        candidate->reset();
+        verifyStep(*candidate);
+        candidate->resetForHostStop();
+        verifyStep(*candidate);
+        expect(!candidate->configureModuleInputCouplingResistanceOhms(siblingOhms),
+               "reset unlocked live C56 circuit reconfiguration");
+        expectNear(candidate->moduleInputCouplingResistanceOhms(), resistance, 0.0,
+                   "a live C56 request changed the selected circuit");
+    }
+
+    // Explicitly selecting the raw reference value preserves its coefficient.
+    auto nominal = std::make_unique<YouKnowEngine>();
+    auto explicitNominal = std::make_unique<YouKnowEngine>();
+    expect(explicitNominal->configureModuleInputCouplingResistanceOhms(33000.0),
+           "the explicit raw-reference C56 comparison was rejected");
+    nominal->prepare(48000.0, blockSize, 4);
+    explicitNominal->prepare(48000.0, blockSize, 4);
+    const float previousShippingCoefficient = std::tan(
+        std::numbers::pi_v<float> * YouKnowEngine::moduleCouplingCornerHz()
+        * static_cast<float>(1.0 / (48000.0 * 4.0)));
+    expect(YouKnowTestAccess::moduleCouplingCoefficient(*nominal)
+               == previousShippingCoefficient
+               && previousShippingCoefficient
+                   == YouKnowTestAccess::moduleCouplingCoefficient(*explicitNominal),
+           "explicit raw-reference C56 configuration changed its coefficient");
+
+    // The product selects the hybrid resistor-derived approximation centrally;
+    // the raw engine above remains its frozen 33k reference. Derive the expected
+    // value from the two input branches, not the product profile's constant.
+    auto product = std::make_unique<YouKnowEngine>();
+    ProductFidelityProfile::configureBeforePrepare(*product);
+    expectNear(product->moduleInputCouplingResistanceOhms(), hybridOhms, 0.0,
+               "the product did not select the hybrid C56 resistance");
+    product->prepare(48000.0, blockSize, 4);
+    EngineParameters parameters;
+    ProductFidelityProfile::applyTo(parameters);
+    parameters.chorus = ChorusMode::Off;
+    parameters.chorusNoise = 0.0f;
+    product->setParameters(parameters);
+    const auto verifyProductCoupling = [&] {
+        expectNear(product->moduleInputCouplingResistanceOhms(), hybridOhms, 0.0,
+                   "product initialization or lifecycle lost the C56 selection");
+        verifyStep(*product);
+    };
+    verifyProductCoupling();
+    product->reset();
+    verifyProductCoupling();
+    product->resetForHostStop();
+    verifyProductCoupling();
+    product->prepare(48000.0, blockSize, 4);
+    product->setParameters(parameters);
+    verifyProductCoupling();
+
+    // A live quality transition rebuilds the coefficient at the new internal
+    // rate, retaining the product's selected physical time constant.
+    renderExact(*product, 4800);
+    static_cast<void>(product->setOversamplingFactor(1));
+    renderExact(*product, 4800);
+    expect(product->getOversamplingFactor() == 1,
+           "the product C56 fixture did not complete its quality transition");
+    verifyProductCoupling();
+}
+
 void testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca()
 {
     // Module board p. 13: the summed WAVE node reaches pin 1 VCF IN only
@@ -16480,6 +16629,7 @@ int main()
     testQualityChangeFadesRateDependentOutputPath();
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();
+    testModuleInputCouplingComparisonConfiguration();
     testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca();
     testFilterToVcaCouplingRemovesTheDutyDependentThump();
     testFinalOutputCouplingRemovesManualPwmDc();

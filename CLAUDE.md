@@ -51,6 +51,28 @@ letter them, and let the user decide the direction by ear.** A listening test is
 a legitimate way to choose between candidates. It is not a way to fit a number —
 see the limit below.
 
+**Accepted evidence (owner decision, 2026-09-15).** When original-instrument
+data is unavailable, documented sibling circuits and models are acceptable
+bases for implementation and listening candidates. Prefer the same component
+and topology, then a closely related circuit, then applicable component
+datasheets. Match operating conditions where possible and identify borrowed
+values, idealizations and remaining uncertainty. A sibling-derived estimate
+need not wait for an original-unit capture, but it is not an original-unit
+measurement. A listening preference may select that approximate model for
+the product; it does not establish the borrowed parameters as measured facts.
+Assess transferability circuit by circuit: research the relevant differences
+between instruments and decide whether they materially affect the quantity
+being modeled. A different model name alone does not disqualify evidence.
+Use directly transferable values, adapt them for documented component or
+operating-point differences, and keep only the remaining assumptions explicit.
+The owner authorizes this engineering judgment without a separate approval
+for each sibling-derived value.
+When listening is inconclusive, the owner's preference is for the more complete
+supported component model, including subtle interactions in complex patches.
+Do not treat an inconclusive A/B as a veto or require an explicit letter choice
+before an otherwise justified implementation. Component count alone does not
+justify inconsistent voltage scales, topology or unsupported parameter values.
+
 **When to run one.** Whenever any of these is true:
 
 - two or more formulations are each derivable and the model cannot say which
@@ -100,3 +122,6 @@ written up as though a measurement had settled it.
 defensible on their own physics. It does not license drawing a constant, fitting
 a curve, or keeping a formulation the measurements reject. If every candidate
 needs an invented number, the answer is still that none of them ships.
+Explicit estimates from the accepted sibling evidence above qualify; arbitrary
+values chosen only to make a difference audible do not. Reproducible numerical
+conventions used to explore an uncertain mechanism must be identified as such.

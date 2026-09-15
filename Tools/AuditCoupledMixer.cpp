@@ -202,9 +202,7 @@ void audit()
 StereoBuffer render(const RenderPlan& plan)
 {
     auto engine = std::make_unique<youknow::YouKnowEngine>();
-    youknow::ProductFidelityProfile::configureBeforePrepare(*engine);
-    if (plan.calibration)
-        require(engine->configureCoupledMixer(*plan.calibration), "render calibration rejected");
+    youknow::ProductFidelityProfile::configureBeforePrepare(*engine, plan.calibration);
     engine->selectConverterTimingProfile(
         youknow::YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine->prepare(comparisonSampleRate, comparisonBlockSize, 4);

@@ -1,9 +1,86 @@
 # YouKnow — decision log
 
-Model directions and listening verdicts. A choice made by ear is recorded as
-made by ear, never written up as though a measurement had settled it, and none
-of these closes an open question — the captures named under
-[known gaps](../README.md#known-gaps) are still what would.
+Model directions and listening verdicts. Choices made by ear and delegated
+engineering choices are identified as such; neither turns an assumed parameter
+into a measured value. Remaining calibration limits stay under
+[known gaps](../README.md#known-gaps).
+
+## 2026-09-15 — Adopt coupling B on circuit evidence
+
+After the richer coupling audition, the owner delegated the choice:
+"your choice - whatever is closer to hardware evidence (no matter what synth
+exactly)". Select B for the product. This is an engineering choice authorized
+by the owner, not a reported by-ear preference.
+
+The selected C56 resistance is `4.7 kΩ || (24 kΩ + 1.5 kΩ)` = approximately
+3.969 kΩ, giving 39.685 ms with 10 µF. It uses the documented hybrid network
+in the existing low-frequency, stiff-source approximation. The sibling
+JUNO-6/60 circuit supports that topology, with different resistors giving
+8.291 kΩ (C). B therefore has the strongest applicable component basis of
+the auditioned choices; the former 33 kΩ (A) was a voiced stand-in. Unknown
+WAVE source impedance and active feedback dynamics remain outside this
+one-pole reduction. This decision does not add a full mixer circuit or identify
+its missing voltage scales.
+
+The plug-in and maintained product renderers select B centrally, including
+restored sessions and preset recalls. Raw-engine reference fixtures retain
+33 kΩ; explicit comparisons can still select A or C. The prior audition files
+remain frozen, and new audition keys report their current product baseline.
+
+Retain the product's finite-linear oscillator reset. The rejected exponential
+B used a 2.2 kΩ misreading of the sibling's 2.2 Ω resistor, and has no valid
+claim to improve hardware fidelity. The corrected sibling circuit supports
+a future transistor-drive/amplifier model; it does not justify promoting that
+resistor-only candidate. No new reset default is selected by this decision.
+
+## 2026-09-15 — Coupling and reset auditions: no clear preference
+
+The owner reported no clear winner in the first coupling A/B/C set: C sounded
+"a bit darker", but the difference was small. The reset A/B set also produced
+"no big difference", with the qualification that its musical material might
+not be the best way to judge it. Neither response selects a candidate or
+establishes that the mechanisms are inaudible in other patches.
+
+The coupling set compared the existing C56 effective resistance of 33 kΩ (A)
+against approximately 3.969 kΩ (B, original-module reconstruction) and
+8.291 kΩ (C, JUNO-6/60 input network). B and C are low-frequency input-load
+estimates with an ideal stiff source. All three use the existing stateful
+10 µF coupling model; this test changes its time constant, not the number of
+components simulated.
+
+Reset A used the product's finite linear discharge. B used the exponential
+comparison circuit with a resistor then described as a borrowed JUNO-6/60
+2.2 kΩ value, an ideal
+zero-volt clamp, and a 10.131374409 µs gate window. That window is the
+`ln(100) RC` settling convention for nominal 1 nF, not a measured MC5534A gate
+duration. This changes the discharge trajectory and its endpoint together.
+
+**Correction after re-reading both original sibling drawings:** R35 prints
+**2.2 Ω**, not 2.2 kΩ; the edge-drive return R34 is **10 kΩ**, not the 47 kΩ
+stated in the first key. The first reset B therefore has no valid basis for
+its claimed borrowed resistor. Preserve the files and listening verdict as
+history, but withdraw that candidate from product consideration. A replacement
+must represent the transistor drive and amplifier slew/recovery that matter
+with the actual small series resistance. This correction concerns a schematic
+reading error, not a rejection of sibling evidence.
+
+Both sets used identical controls, note events, seeds and the product signal
+path at 48 kHz/4×, with whole-file stereo RMS matching. The original auditions
+remain frozen under `out/sibling-circuit-auditions-2026-09-15/`.
+
+The owner favors simulating additional credible components because their
+interactions may create subtle differences in complex patches. This is a
+modeling direction, alongside the accepted use of documented sibling evidence,
+and is not a claim that either first-round candidate sounded better. The owner
+also explicitly authorizes researching differences between sibling instruments
+and judging whether those differences materially affect each proposed transfer;
+evidence is not rejected merely because it comes from a JUNO-6 or JUNO-60.
+An inconclusive A/B does not veto an otherwise supported, more complete model
+or require a separate letter selection before implementation. Retain
+the current product defaults for now. The follow-up coupling audition uses richer
+modulation and overlapping voices with the same candidate parameters, so that
+only the test material changes. More exposed reset material is available in the
+renderer, but the invalid first-round reset coordinates are not rendered again.
 
 ## 2026-09-14 — Retain timing A pending a hardware comparison
 

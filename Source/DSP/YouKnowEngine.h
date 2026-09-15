@@ -483,6 +483,15 @@ public:
     // No public plug-in parameter, preset byte or shipping default selects it.
     [[nodiscard]] bool configureCoupledMixer(
         const CoupledSubMixer::Calibration& calibration) noexcept;
+    // Before prepare(): effective TOTAL resistance seen by
+    // C56/C50 in the independent one-pole model, including source impedance.
+    // The 1k..1M numerical domain is not an installed-unit tolerance. Retained
+    // across reset/prepare/quality changes; the raw reference stays 33k and
+    // ProductFidelityProfile selects the documented hybrid input estimate.
+    // Mutually exclusive with configureCoupledMixer, which solves C56 itself.
+    [[nodiscard]] bool configureModuleInputCouplingResistanceOhms(
+        double totalResistanceOhms) noexcept;
+    [[nodiscard]] double moduleInputCouplingResistanceOhms() const noexcept;
     // Comparison only, before prepare(): six IC26 ENV/GATE holds with an
     // explicitly supplied effective resistance and ideal bus. No calibrated
     // installed profile or shipping/preset parameter is implied. All six
@@ -1667,6 +1676,8 @@ public:
     // the voice module's pin 1 VCF IN (module board p. 13). The capacitor is a
     // designator-level read; the resistance it works against is not, so the
     // corner itself is voiced -- see the constant's note in the .cpp.
+    // This static helper reports the shipping reference; a comparison's total
+    // resistance is reported by moduleInputCouplingResistanceOhms().
     [[nodiscard]] static float moduleCouplingCornerHz() noexcept;
     // C59 1 uF/50 V NP, the per-voice coupling from pin 3 VCF OUT into the
     // VR27/R108 network and pin 9 VCA IN (module board p. 13). R108 82 kOhm
@@ -3500,6 +3511,9 @@ private:
     // memo can never return anything the unconditional call would not have.
     CoupledSubMixer::Calibration coupledMixerCalibration_ {};
     bool coupledMixerEnabled_ { false };
+    // Zero selects the existing voiced resistance; no preset selects an
+    // override. Keeping this separate also detects incompatible calibration.
+    double moduleInputCouplingResistanceOverrideOhms_ { 0.0 };
 
     float glideLawPortamento_ { -1.0f };
     float glideLawStepPerScan_ { 0.0f };

@@ -509,9 +509,11 @@ void selfTest()
                                      / (1.0 + 0.004325 / 100.0);
         if (YouKnowTestAccess::highPassSwitchOhms(productEngine)
                 != ProductFidelityProfile::highPassSwitchOhms
+            || productEngine.moduleInputCouplingResistanceOhms()
+                != ProductFidelityProfile::moduleInputCouplingResistanceOhms
             || productEngine.getDisplayTemperatureC() != 40.0f
             || std::abs(productEngine.dcoMasterClockHz() - expectedClock) > 1.0e-7)
-            throw std::runtime_error("product HPF/clock/settled configuration did not reach the engine");
+            throw std::runtime_error("product HPF/C56/clock/settled configuration did not reach the engine");
         for (const auto& event : { fullPatch, cutoffUpdate })
         {
             if (!patchParametersForEvent(event, decoded, havePatch, options, changed)
