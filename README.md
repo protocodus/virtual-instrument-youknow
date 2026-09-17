@@ -1324,6 +1324,45 @@ the capture that would decide it. The rest are reported with their numbers.
 | OUT1/OUT2 mismatch leaving a clock carrier | MN3009 sheet: "clock component cancellation capability", no residual figure; the jack board has no balance pot, only the two 3.3 kΩ legs | With an assumed 50 mV follower DC mismatch the carrier at the 20 kHz clock end would sit near −49 dB re a 1 V wet signal after the tap RC and the ×4 reconstruction; the only capture, KR-106's chorus-on idle floor, does not isolate it (OQ-03). The signal's physical clock images are already rendered. Not added. |
 | BBD bias trimmer drift and asymmetric clipping | Jack-board VR1/VR2 set the MN3009 input bias; fresh service nulls the asymmetry, and the 0.3 %/0.78 Vrms sheet point is already fitted | The drifted state is a measurement on an aged unit; the identified unit's chorus is original but no wet-only capture isolates H2. A candidate for the Aging control once measured. |
 
+#### Ten circuit proposals, 17 September 2026
+
+A third list arrived the same day, ten circuit mechanisms each with a
+component reference, values and a pitch, with the request that none be
+dismissed quickly. Each was checked against the engine source rather than
+against this document, and the one numeric disagreement was settled on the
+jack-board drawing (p. 15, read at 400 dpi). Every one of the ten is already
+in the shipping engine, nine of them on by default in the raw engine and the
+tenth turned on by the product profile; in eight cases the proposal quotes
+the engine's own numbers.
+
+| Proposal | Shipping as | Where the proposal and the engine differ |
+| --- | --- | --- |
+| 1. IR3109 stage input offsets, ±0.8–1.5 mV per stage, inside the tanh | `enableVcfStageOffsets` (on): ±1.5 mV per stage, seeded per card, referred to the node through the 560/68560 divider, scaled by Unit Character, added to each stage's differential input before its tanh; the resonance BA662's own offset joined it on 17 September | Nothing. |
+| 2. Voice VCA translinear saturation with the 4.8 → 6 Vp-p TP8 service gain | `enableVoiceVcaSignalSaturation` (on): the BA662 pair's I_tail·tanh(V_d / 2V_t) law under the JUNO-6/60 drawing's 47 kΩ load; `enableVoiceVcaServiceGain` (on): the p. 19 6 Vp-p TP8 gain; the older softplus stand-in survives only as `useSoftplusVoiceVcaCompatibilityLaw` (off) | Nothing. |
+| 3. Sub through D6 as a unipolar half-wave current, AC-coupled by C56 into 3.969 kΩ (39.685 ms) | `enableSubHalfWaveNodeCoupling` and `enableSubDiodeControl` (on); the product profile couples the WAVE node through C56/C50 into 4.7 kΩ ∥ (24 kΩ + 1.5 kΩ) = 3.969 kΩ, 39.685 ms, or through the full coupled-mixer solve where a calibration exists | The proposal's "R102 10 kΩ pull-up" misreads p. 13: R102 is Tr19's collector load; the leg is R101 and D6. |
+| 4. Tr20's dynamic emitter impedance loading C58, 1 ms → 687 µs | `enableCoupledVoiceVcaControl` (on): C58 and Tr20 as one loaded circuit, 1 ms as Tr20 closes, (10 kΩ ∥ 22 kΩ)·0.1 µF = 687 µs at high current, the emitter junction solved by the Wright omega law; already listed as shipped in the previous table | Nothing. |
+| 5. Switched HPF with continuous capacitor states and departing-leg tails | `enableHighPassDepartingLegTail` (on): C10 15 nF and C11 4.7 nF legs bleeding through their 1 MΩ and 47 kΩ into IC4a, 15.71 ms leaving Two and 4.92 ms leaving Three; Boost as the C9/C8/C6 network with 0.37 and 2.77 ms eigenmodes; the TC4052 at 110 Ω in the product profile | The proposal's Boost capacitors (C8 0.068 µF, C9 0.01 µF) are wrong: p. 15 prints C9 = .047, C8 = .01, C10 = .015, C11 = .0047 and C6 = .022, and IC4 is an M5218L, not a TA75558. Its eigenmodes are the engine's. |
+| 6. MN3009 insertion-gain spread ±4 dB per line plus the BBD noise floor | `enableChorusLineGainSpread` (on): one fixed-seed relative draw between the two lines inside Panasonic's Min −4 / Typ 0 / Max +4 dB row, 1.6 dB full span, scaled by Unit Character; the 0.200 mVrms part endpoint shaped by the reconstruction filter is the noise master `chorusNoise` | The proposal draws each line anywhere inside the ±4 dB limits, so up to 8 dB between lines. The sheet gives limits, not a distribution, so either span is a convention; the shipped one is the same conservative fraction of the bound the IR3109 stage capacitors use. Widening it is a listening decision (A 1.6 dB, B 4 dB, C 8 dB spans), offered, not taken. |
+| 7. Differential resonance drive with BA662 tanh limiting, 0.2751–0.3078 compensation, 4.8 Vp-p at TP8 | `enableDifferentialResonanceInput` (on) with the compensation bracket's floor as `ResonanceCompensationShape::Reconstruction`, the loop tanh headroom from the 100 kΩ/1.5 kΩ divider, and the p. 19 4.8 Vp-p self-oscillation trim | Nothing. |
+| 8. Six-card calibration coordinates from serviced #439522 | `useServiced439522VcfCalibration`: off in the raw engine, **on in the product profile** of both the plug-in and the Rack Extension (owner decision 2026-09-11, filter candidate B); every card also carries its own seeded tolerance draws under Unit Character | The unit's cards are Borish replacements, so the fit is comparison coordinates rather than original-module facts; the proposal presents it as a lab measurement of original hardware. |
+| 9. Pulse Off leaves the MC5534A pinned high; WAVE node DC removed by C56 | `enablePulseOffWaveNodeCoupling` (on): the comparator's rail stays on the node and C56/C50 remove it with the same 39.685 ms | Nothing. |
+| 10. Johnson noise of the 68 kΩ/560 Ω network into each OTA stage, plus the µPC1252H2's −94 dBV floor | `enableCardJohnsonFloor` (on): four independent sqrt(4kTR) sources at the live card temperature into their own differential nodes; `enableCommonVcaNoise` (on): NEC's −94 dBV typical on the bus ahead of the chorus split | The proposal injects fresh noise at every Runge–Kutta evaluation, which would make the noise power depend on the step size; the engine draws once per sample and lets the stages shape it. |
+
+**What is off, why, and what enabling it takes.** Among the ten, only the
+serviced-unit calibration (row 8) defaults off in the raw engine, because the
+capture is of replacement cards; the product profile turns it on for every
+snapshot, so nothing is required. The switches around these mechanisms that
+stay off are comparison candidates, each waiting on a specific measurement:
+the complete chorus clock-mute switching circuit (`enableChorusClockMuteCircuit`)
+on installed switching thresholds and capacitor tolerances plus a processing
+budget; the BBD clock-bleed tone (`enableChorusClockBleed`) on OQ-03's
+amplitude; the II–I rate-proportional noise hypothesis on OQ-03's causality;
+C14's voltage coefficient (`enableElectrolyticC14Nonlinearity`) on a measured
+installed 10 µF non-polar part, since the manufacturer guidance says bias does
+not change its capacitance; and the hyperbolic chorus sweep on nothing, because
+it describes an oscillator this board does not have. The softplus VCA law is
+the superseded stand-in, kept only for A/B renders.
+
 #### Other methods assessed
 
 The following decisions distinguish a useful research method from evidence
