@@ -198,6 +198,18 @@ float bufferPeak (const juce::AudioBuffer<float>& buffer)
 // rather than a level chosen in this file, and it tracks whatever the model
 // does to the floor later. Measure over at least as many blocks as the check
 // spans: the peak of a random process grows with the window.
+// The output stage's resistor floors follow the jack board's temperature
+// through Johnson's law, so a processor whose chassis is warm idles above
+// a cold reference's floor by sqrt (T / 298.15 K) with T the chassis law the
+// display reports (the same expression the engine scales the floor with).
+// Read after the block under test, so the bound is the block's highest
+// temperature; the tiny margin covers the engine's per-pass resampling.
+float warmIdleFloorBound (const YouKnowAudioProcessor& processor, float coldFloor)
+{
+    const float kelvinRatio = (processor.getTemperatureForDisplay() + 273.15f) / 298.15f;
+    return coldFloor * std::sqrt (kelvinRatio) * (1.0f + 1.0e-5f);
+}
+
 template <typename SetUp>
 float idleNoiseFloor (SetUp&& setUp, int blocks)
 {
@@ -3615,7 +3627,7 @@ void testHostResetClearsRuntimeStateWithoutUnpreparing()
     juce::MidiBuffer empty;
     buffer.clear();
     processor.processBlock (buffer, empty);
-    expect (bufferPeak (buffer) <= resetFloor,
+    expect (bufferPeak (buffer) <= warmIdleFloorBound (processor, resetFloor),
             "old voice or delay state resumed after host reset");
 
     juce::MidiBuffer nextNote;
@@ -3671,7 +3683,7 @@ void testHostResetKeepsTheModelledChassisWarm()
 
     buffer.clear();
     processor.processBlock (buffer, empty);
-    expect (bufferPeak (buffer) <= warmFloor,
+    expect (bufferPeak (buffer) <= warmIdleFloorBound (processor, warmFloor),
             "a voice survived the host reset that kept the chassis warm");
     // And it keeps advancing from where it was rather than from zero.
     for (int block = 0; block < 8; ++block)

@@ -81,11 +81,15 @@ void near(double actual, double expected, double tolerance, const char* message)
         throw std::runtime_error(message);
     }
 }
+// T_ref / T on the card's own law: the settled service temperature over the
+// running one. Both the common 15 C rise and the card's share of the supply
+// gradient develop on the warm-up clock -- the gradient is the supply's heat,
+// absent at power-on -- so the fraction scales their sum.
 double physicalRatio(double character, int card, double fraction, bool spatial)
 {
     const double gradient = spatial ? 4.0 * std::exp(-card / 2.5) : 0.0;
     return (298.15 + character * (15.0 + gradient))
-         / (298.15 + character * (15.0 * fraction + gradient));
+         / (298.15 + character * (15.0 + gradient) * fraction);
 }
 std::unique_ptr<YouKnowEngine> makeEngine(float character = 1.0f,
     bool enabled = true, bool spatial = false, bool nonlinear = true,

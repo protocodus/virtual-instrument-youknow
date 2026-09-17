@@ -105,6 +105,14 @@ struct YouKnowTestAccess
             loopHeadroomVolts;
     }
 
+    // The return's headroom for a card solved with `headroom`: the engine's
+    // one-temperature law, so a reference integrator can follow a moving
+    // stage headroom the way the kernels do.
+    static constexpr double feedbackHeadroomFor(double headroom) noexcept
+    {
+        return YouKnowEngine::resonanceHeadroomFor(headroom);
+    }
+
     static constexpr double earlyCoefficient() noexcept
     {
         return YouKnowEngine::otaEarlyEffectCoefficient;
@@ -130,8 +138,9 @@ struct YouKnowTestAccess
         EngineParameters parameters;
         parameters.enableSpatialThermalGradient = true;
         parameters.calibration = static_cast<float>(calibration);
+        // Settled: the gradient's factor at the end of the warm-up law.
         return YouKnowEngine::boundedThermalFilterOmegaStep(
-            static_cast<float>(baseOmega), parameters, cardIndex);
+            static_cast<float>(baseOmega), parameters, cardIndex, 1.0f);
     }
 
     static double clampOmegaStep(double value) noexcept
@@ -628,8 +637,11 @@ void testFastReciprocalNormalizationBound()
     };
     for (int card = 0; card < 6; ++card)
         for (double warmup : { 0.0, 1.0 })
-            headrooms.push_back(
-                Access::maximumCharacterHeadroom(card, warmup));
+        {
+            const double stage = Access::maximumCharacterHeadroom(card, warmup);
+            headrooms.push_back(stage);
+            headrooms.push_back(Access::feedbackHeadroomFor(stage));
+        }
     std::sort(headrooms.begin(), headrooms.end());
     headrooms.erase(std::unique(headrooms.begin(), headrooms.end()),
                     headrooms.end());
@@ -1002,9 +1014,10 @@ struct ReferenceCascade
             else
                 drive = independentReconstruction(
                     input, inputHistory, position);
-            double previous = drive - runningFeedback
-                * Access::feedbackHeadroom()
-                * std::tanh(value[3] / Access::feedbackHeadroom());
+            const double loopHeadroom =
+                Access::feedbackHeadroomFor(runningHeadroom);
+            double previous = drive - runningFeedback * loopHeadroom
+                * std::tanh(value[3] / loopHeadroom);
             std::array<double, 4> result {};
             for (std::size_t stage = 0; stage < result.size(); ++stage)
             {
@@ -1545,6 +1558,78 @@ void testSolverLadderPreservesTheSelfOscillationAnchor()
     }
 }
 
+void testResonanceReturnHeadroomFollowsTheStages()
+{
+    // Both OTA headrooms are 2 Vt through a resistor ratio, and the two
+    // dies sit in one potted module: a warm card raises the resonance
+    // return's headroom with the stages'. Under that joint scaling every
+    // ratio in the loop is unchanged, so the limit cycle keeps its
+    // frequency exactly and its amplitude grows by the scale -- the
+    // invariance the frequency-trim table relies on. With the return held
+    // at 25 C only the stages soften and the cycle barely moves.
+    const auto limitCycle = [](double scale, bool followsStage) {
+        Cascade cascade;
+        cascade.reset();
+        cascade.resonanceHeadroomFollowsStage = followsStage;
+        Access::setState(cascade, { 1.0, 1.0, 1.0, 1.0 });
+        const float headroom = static_cast<float>(Access::headroom() * scale);
+        constexpr float omega = 0.0081f; // about 248 Hz on a 192 kHz grid
+        constexpr float feedback = 4.504f;
+        for (int sample = 0; sample < 200000; ++sample)
+            cascade.process(0.0f, omega, feedback, headroom, true, 1.0f);
+        double minimum = std::numeric_limits<double>::infinity();
+        double maximum = -std::numeric_limits<double>::infinity();
+        std::vector<double> trace;
+        trace.reserve(48000u);
+        for (int sample = 0; sample < 48000; ++sample)
+        {
+            cascade.process(0.0f, omega, feedback, headroom, true, 1.0f);
+            const double volts = Access::state(cascade)[3];
+            minimum = std::min(minimum, volts);
+            maximum = std::max(maximum, volts);
+            trace.push_back(volts);
+        }
+        int crossings = 0;
+        std::size_t first = 0;
+        std::size_t last = 0;
+        for (std::size_t index = 1; index < trace.size(); ++index)
+            if (trace[index - 1] <= 0.0 && trace[index] > 0.0)
+            {
+                if (crossings++ == 0)
+                    first = index;
+                last = index;
+            }
+        const double cycles = crossings > 1
+            ? static_cast<double>(crossings - 1)
+                  / static_cast<double>(last - first)
+            : 0.0;
+        return std::array<double, 2> { maximum - minimum, cycles };
+    };
+
+    const auto nominal = limitCycle(1.0, true);
+    expect(nominal[0] > 0.5 && nominal[1] > 0.0,
+           "the joint-headroom fixture did not oscillate");
+    const auto nominalHeld = limitCycle(1.0, false);
+    expect(nominal == nominalHeld,
+           "the 25 C return is not the nominal card's own bit for bit");
+
+    constexpr double scale = 1.0503; // 40 C over 25 C in kelvin
+    const auto warm = limitCycle(scale, true);
+    const double amplitudeRatio = warm[0] / nominal[0];
+    const double cents = 1200.0 * std::log2(warm[1] / nominal[1]);
+    std::cout << "VCF joint headroom x" << scale << ": amplitude x"
+              << amplitudeRatio << ", " << cents << " cents\n";
+    expect(std::abs(amplitudeRatio - scale) < 0.003,
+           "a warm card's limit cycle does not grow with both headrooms");
+    expect(std::abs(cents) < 0.5,
+           "a warm card's limit cycle moved in frequency under joint scaling");
+
+    const auto held = limitCycle(scale, false);
+    expect(std::abs(held[0] / nominal[0] - 1.0) < 0.02,
+           "with the return held at 25 C the limit cycle still grew with the "
+           "stages");
+}
+
 void testSolverRungMayBeSwitchedUnderASoundingNote()
 {
     using youknow::VcfSolverMode;
@@ -2021,6 +2106,7 @@ int main()
     testSolverLadderReadsOnlyItsOwnControlNodes();
     testSolverLadderAgainstIndependentReference();
     testSolverLadderPreservesTheSelfOscillationAnchor();
+    testResonanceReturnHeadroomFollowsTheStages();
     testSolverRungMayBeSwitchedUnderASoundingNote();
     testMersonRungIsTheUnchangedDefault();
     testProductGridOmegaCapAndThermalContainment();

@@ -68,6 +68,10 @@ struct YouKnowTestAccess
         parameters.sawEnabled = waveform == Waveform::Saw;
         parameters.pulseEnabled = waveform == Waveform::Pulse;
         parameters.enablePulseOffWaveNodeCoupling = false;
+        // The reference below is a rectangular sub series; Tr19's storage
+        // time skews the sub's rising edge and puts an even harmonic on it,
+        // so it is held off here like the pulse-off node coupling.
+        parameters.enableSubStorageSkew = false;
         parameters.subLevel = waveform == Waveform::Sub ? 1.0f : 0.0f;
         parameters.noiseLevel = 0.0f;
         parameters.cutoff = 0.0f;

@@ -1704,10 +1704,13 @@ struct YouKnowTestAccess
         return engine.thermalWarmupFraction_;
     }
 
-    // Places the chassis at a point on its own warm-up law -- the timer and
-    // the fraction the render reads off it, together -- so a fixture can
-    // compare the cold instrument with the warm one without rendering the
-    // elapsed interval between them.
+    // Places the chassis at a point on its own warm-up law -- the timer, the
+    // fraction the render reads off it, and the per-card and jack-board
+    // caches the control cadence would have refreshed from it -- so a
+    // fixture can compare the cold instrument with the warm one without
+    // rendering the elapsed interval between them. The caches matter: the
+    // gradient's cutoff factor rides the drift cadence, which the service
+    // fixture below freezes to suppress wander.
     static void setThermalWarmupSeconds(YouKnowEngine& engine,
                                         double seconds) noexcept
     {
@@ -1715,6 +1718,40 @@ struct YouKnowTestAccess
         engine.thermalWarmupFraction_ =
             1.0f - std::exp(-static_cast<float>(seconds)
                 / static_cast<float>(YouKnowEngine::thermalWarmupTimeConstantSeconds));
+        engine.refreshVoiceCardThermalScales();
+        engine.refreshJackBoardTemperature(engine.activeParameters_);
+    }
+
+    // Removes the voiced post-trim RES residual from every card and
+    // re-solves the fixed trims, so an amplitude check can see what the
+    // adjustment itself realises rather than the draw on top of it.
+    static void clearResonanceResidual(YouKnowEngine& engine) noexcept
+    {
+        for (auto& card : engine.cards_)
+            card.resonanceError = 0.0f;
+        engine.refreshVoiceCardServiceTrims();
+    }
+
+    static float serviceTrimCounts(const YouKnowEngine& engine,
+                                   int cardIndex) noexcept
+    {
+        return engine.cards_[static_cast<std::size_t>(cardIndex)]
+            .vcfServiceTrimCounts;
+    }
+
+    static float jackBoardJohnsonScale(const YouKnowEngine& engine) noexcept
+    {
+        return engine.jackBoardJohnsonScale_;
+    }
+
+    // The gradient's cutoff factor applied to one omega step at a point on
+    // the warm-up law, through the engine's own bounded law.
+    static float thermalOmegaStepAt(const EngineParameters& parameters,
+                                    int cardIndex, float baseOmegaStep,
+                                    float warmupFraction) noexcept
+    {
+        return YouKnowEngine::boundedThermalFilterOmegaStep(
+            baseOmegaStep, parameters, cardIndex, warmupFraction);
     }
 
     static void startServiceCalibrationVoice(YouKnowEngine& engine,
@@ -1741,7 +1778,8 @@ struct YouKnowTestAccess
                 static_cast<double>(baseOmegaStep)
                     * card.thermalFilterOmegaScale));
         const float direct = YouKnowEngine::boundedThermalFilterOmegaStep(
-            baseOmegaStep, engine.activeParameters_, cardIndex);
+            baseOmegaStep, engine.activeParameters_, cardIndex,
+            engine.thermalWarmupFraction_);
         return { cached, direct };
     }
 
@@ -9411,6 +9449,10 @@ void testCompleteVoiceHonoursServiceFrequencyWindows()
     // gradient and four capacitor errors surrounding those drawn residuals.
     // These are actual output frequencies at both Roland p. 19 check points.
     // This validates the simulated circuit's calibration, not a hardware A/B.
+    // The cascade is kicked into its limit cycle, as the procedure reads a
+    // settled oscillation: measured while it still grows from the card's
+    // noise floor, the smaller amplitude droops less and reads a few cents
+    // sharp of what the trim was set against.
     constexpr double sampleRate = 48000.0;
     double worstCents = 0.0;
     for (const int note : { 60, 84 })
@@ -9436,6 +9478,7 @@ void testCompleteVoiceHonoursServiceFrequencyWindows()
             parameters.aging = 0.0f;
             engine.setParameters(parameters);
             YouKnowTestAccess::startServiceCalibrationVoice(engine, card, note);
+            YouKnowTestAccess::setFilterState(engine, card, { 1.0f, 1.0f, 1.0f, 1.0f });
             const auto output = render(engine, 72000);
             const double frequency = measuredFrequency(
                 output.left, output.left.size() / 2, sampleRate);
@@ -11509,6 +11552,46 @@ std::vector<float> probeVcaInput(YouKnowEngine& engine, int hostSamples)
         value = YouKnowTestAccess::vcaInputVolts(engine, 0);
     }
     return probe;
+}
+
+void testSubStorageSkewAddsTheSecondHarmonic()
+{
+    // Tr19 leaves saturation late by its storage time, so the D6-conducting
+    // half-cycle starts late and the sub carries H2 = pi * t_s * f_sub. The
+    // top 4' key puts the sub near 1 kHz, where that is about -64 dBc; the
+    // instantaneous edge has no even harmonics at all. Character 0 keeps the
+    // cascade's own stage offsets out of the measurement.
+    constexpr double sampleRate = 48000.0;
+    const auto renderSub = [&](bool skew) {
+        YouKnowEngine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = subHalfWavePatch(true);
+        parameters.range = DcoRange::Four;
+        parameters.calibration = 0.0f;
+        parameters.enableSubStorageSkew = skew;
+        engine.setParameters(parameters);
+        engine.noteOn(84, 1.0f);
+        return render(engine, static_cast<int>(sampleRate * 2.0));
+    };
+    const auto with = renderSub(true);
+    const auto without = renderSub(false);
+    const std::size_t from = with.left.size() / 2;
+    constexpr int window = 16384;
+    const double subHz = measuredFrequency(without.left, from, sampleRate);
+    expect(subHz > 900.0 && subHz < 1200.0,
+           "the 4' top key's sub measured " + std::to_string(subHz) + " Hz");
+    const double fundamental = magnitudeAt(with.left, from, window, subHz, sampleRate);
+    const double secondWith = magnitudeAt(with.left, from, window, 2.0 * subHz, sampleRate);
+    const double secondWithout = magnitudeAt(without.left, from, window, 2.0 * subHz, sampleRate);
+    const double measuredDb = 20.0 * std::log10(secondWith / fundamental);
+    const double expectedDb = 20.0 * std::log10(
+        pi * YouKnowEngine::subSwitchStorageSeconds * subHz);
+    expect(std::abs(measuredDb - expectedDb) < 1.0,
+           "the storage skew's H2 measured " + std::to_string(measuredDb)
+               + " dBc against the expected " + std::to_string(expectedDb));
+    expect(secondWithout < 0.1 * secondWith,
+           "the instantaneous edge carries H2 at "
+               + std::to_string(20.0 * std::log10(secondWithout / fundamental)) + " dBc");
 }
 
 void testSubLevelJumpCouplesThroughC56AndC59()
@@ -15131,6 +15214,219 @@ void testVcfEarlyEffectBelongsToUnitCharacter()
            "the IR3109 Early effect does nothing at full Unit Character");
 }
 
+void testResonanceAdjustmentPinsTheWarmLimitCycle()
+{
+    // Service Notes p. 19: RES is set for a 4.8 Vp-p self-oscillation at
+    // code 6272 after at least ten minutes, before FREQ. The warm card's
+    // return headroom has grown with its stages by then (both are 2 Vt in
+    // one module), which on its own carries the limit cycle past 5 Vp-p;
+    // the adjustment is what puts it back on 4.8 on every card, pole spread
+    // and gradient included. The voiced post-trim residual is cleared so
+    // the check sees the adjustment rather than the draw on top of it.
+    constexpr double sampleRate = 48000.0;
+    struct Take { double peakToPeak; double hertz; };
+    const auto oscillate = [&](int card, float calibration, bool adjust,
+                               bool warmReturn) {
+        YouKnowEngine engine;
+        engine.configureThermalStart(true);
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = calibration;
+        parameters.enableSpatialThermalGradient = true;
+        parameters.enableResonanceServiceTrim = adjust;
+        parameters.enableResonanceHeadroomTemperature = warmReturn;
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.resonance = 1.0f;
+        parameters.keyFollow = 0.0f;
+        parameters.cutoff = 49.0f / 127.0f; // converter code 6272
+        engine.setParameters(parameters);
+        YouKnowTestAccess::clearResonanceResidual(engine);
+        YouKnowTestAccess::startServiceCalibrationVoice(engine, card, 60);
+        std::array<float, 4> kick {};
+        kick.fill(1.0f);
+        YouKnowTestAccess::setFilterState(engine, card, kick);
+        render(engine, static_cast<int>(sampleRate * 1.5));
+        float minimum = 1.0e30f;
+        float maximum = -1.0e30f;
+        std::vector<float> trace;
+        float left = 0.0f;
+        float right = 0.0f;
+        const int window = static_cast<int>(sampleRate / 4);
+        trace.reserve(static_cast<std::size_t>(window));
+        for (int index = 0; index < window; ++index)
+        {
+            engine.process(&left, &right, 1);
+            const float volts = YouKnowTestAccess::filterOutputVolts(engine, card);
+            minimum = std::min(minimum, volts);
+            maximum = std::max(maximum, volts);
+            trace.push_back(volts);
+        }
+        double mean = 0.0;
+        for (const float volts : trace)
+            mean += volts;
+        mean /= static_cast<double>(trace.size());
+        std::size_t first = 0;
+        std::size_t last = 0;
+        int crossings = 0;
+        for (std::size_t index = 1; index < trace.size(); ++index)
+            if (trace[index - 1] <= mean && trace[index] > mean)
+            {
+                if (crossings++ == 0)
+                    first = index;
+                last = index;
+            }
+        const double hertz = crossings > 1
+            ? (crossings - 1) * sampleRate / static_cast<double>(last - first)
+            : 0.0;
+        return Take { static_cast<double>(maximum - minimum), hertz };
+    };
+
+    for (int card = 0; card < YouKnowEngine::hardwareVoices; ++card)
+    {
+        const auto adjusted = oscillate(card, 1.0f, true, true);
+        const auto unadjusted = oscillate(card, 1.0f, false, true);
+        std::cout << "RES adjustment card " << (card + 1) << ": "
+                  << adjusted.peakToPeak << " Vp-p at " << adjusted.hertz
+                  << " Hz, unadjusted " << unadjusted.peakToPeak << " Vp-p\n";
+        // One per cent: the harmonic-balance solve lands the render on the
+        // procedure's figure to a few millivolts once the draw is cleared.
+        expectNear(adjusted.peakToPeak, 4.8, 0.048,
+                   "the RES adjustment leaves card " + std::to_string(card + 1)
+                       + " off the service procedure's 4.8 Vp-p");
+        expect(std::abs(1200.0 * std::log2(adjusted.hertz / 248.0)) < 25.0,
+               "the adjusted card " + std::to_string(card + 1)
+                   + " oscillates at " + std::to_string(adjusted.hertz)
+                   + " Hz, not near the 248 Hz anchor");
+        expect(unadjusted.peakToPeak > 4.95,
+               "the warm return did not grow card " + std::to_string(card + 1)
+                   + "'s limit cycle past the trim figure ("
+                   + std::to_string(unadjusted.peakToPeak) + " Vp-p)");
+    }
+
+    // Unit Character 0 is the calibrated nominal: both switches are exact
+    // no-ops there, in every kernel the quality setting can select.
+    for (const bool highQuality : { true, false })
+    {
+        const auto chord = [&](bool on) {
+            YouKnowEngine engine;
+            engine.prepare(sampleRate, blockSize, highQuality);
+            auto parameters = plainPatch();
+            parameters.cutoff = 0.5f;
+            parameters.resonance = 0.9f;
+            parameters.chorus = ChorusMode::One;
+            parameters.enableResonanceServiceTrim = on;
+            parameters.enableResonanceHeadroomTemperature = on;
+            engine.setParameters(parameters);
+            for (const int note : { 48, 55, 60, 64, 67, 72 })
+                engine.noteOn(note, 1.0f);
+            return render(engine, 24000);
+        };
+        const auto on = chord(true);
+        const auto off = chord(false);
+        expect(on.left == off.left && on.right == off.right,
+               "the RES adjustment or the warm return colours the nominal "
+               "model at Unit Character zero");
+    }
+}
+
+void testSpatialGradientDevelopsWithTheChassis()
+{
+    // The gradient across the card cage is the supply's heat reaching the
+    // cards unequally. At power-on everything is at ambient, so every card
+    // is solved with the same 25 C headroom and no cutoff spread; the
+    // settled gradient is what the service trims were set against, so the
+    // trims do not follow the clock.
+    YouKnowEngine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.calibration = 1.0f;
+    parameters.enableSpatialThermalGradient = true;
+    engine.setParameters(parameters);
+
+    const double nominalHeadroom = 2.0 * 0.026 / (560.0 / 68560.0);
+    std::array<float, YouKnowEngine::maxVoices> coldTrims {};
+    for (int card = 0; card < YouKnowEngine::maxVoices; ++card)
+    {
+        expectNear(YouKnowTestAccess::otaHeadroomVolts(engine, parameters, card),
+                   nominalHeadroom, 1e-6,
+                   "card " + std::to_string(card + 1)
+                       + " carries a gradient offset at power-on");
+        expect(YouKnowTestAccess::thermalOmegaStepAt(
+                   parameters, card, 0.01f, 0.0f) == 0.01f,
+               "card " + std::to_string(card + 1)
+                   + " carries the gradient's cutoff spread at power-on");
+        coldTrims[static_cast<std::size_t>(card)] =
+            YouKnowTestAccess::serviceTrimCounts(engine, card);
+    }
+
+    YouKnowTestAccess::setThermalWarmupSeconds(engine, 1.0e6);
+    const auto settledHeadroom = [&](double celsius) {
+        return 2.0 * 0.026 * (celsius + 273.15) / 298.15 / (560.0 / 68560.0);
+    };
+    expectNear(YouKnowTestAccess::otaHeadroomVolts(engine, parameters, 0),
+               settledHeadroom(25.0 + 15.0 + 4.0), 2e-6,
+               "the settled card nearest the supply misses its 44 C headroom");
+    expectNear(YouKnowTestAccess::otaHeadroomVolts(engine, parameters, 5),
+               settledHeadroom(25.0 + 15.0 + 4.0 * std::exp(-5.0 / 2.5)), 2e-6,
+               "the settled card farthest from the supply misses its headroom");
+    expect(YouKnowTestAccess::thermalOmegaStepAt(
+               parameters, 0, 0.01f, 1.0f) != 0.01f,
+           "the settled gradient carries no cutoff spread");
+    for (int card = 0; card < YouKnowEngine::maxVoices; ++card)
+        expect(YouKnowTestAccess::serviceTrimCounts(engine, card)
+                   == coldTrims[static_cast<std::size_t>(card)],
+               "the service trim on card " + std::to_string(card + 1)
+                   + " follows the running warm-up instead of the service "
+                     "reference");
+}
+
+void testOutputFloorFollowsTheJackBoard()
+{
+    // The output summer's and the volume wiper's resistor floors are
+    // Johnson noise, so their power is proportional to the board's absolute
+    // temperature, exactly as the cards' floors already were. Two settled
+    // renders differ in Unit Character alone: the floors scale by the
+    // Character ratio times sqrt(T1 / T0.5), with T = 25 C + 15 C * Character.
+    constexpr double sampleRate = 48000.0;
+    const auto idleFloorRms = [&](float calibration) {
+        YouKnowEngine engine;
+        engine.configureThermalStart(true);
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = calibration;
+        parameters.volume = 1.0f;
+        parameters.vcaLevel = 1.0f;
+        parameters.enableCommonVcaNoise = false;
+        parameters.enableCardJohnsonFloor = false;
+        engine.setParameters(parameters);
+        render(engine, static_cast<int>(sampleRate * 0.5));
+        const auto take = render(engine, static_cast<int>(sampleRate * 0.5));
+        double energy = 0.0;
+        for (std::size_t index = 0; index < take.left.size(); ++index)
+            energy += static_cast<double>(take.left[index]) * take.left[index]
+                    + static_cast<double>(take.right[index]) * take.right[index];
+        return std::sqrt(energy / static_cast<double>(2 * take.left.size()));
+    };
+    const double full = idleFloorRms(1.0f);
+    const double half = idleFloorRms(0.5f);
+    expect(full > 0.0 && half > 0.0, "the idle resistor floor rendered silence");
+    const double expected = 2.0 * std::sqrt((25.0 + 15.0 + 273.15)
+                                            / (25.0 + 7.5 + 273.15));
+    expectNear(full / half, expected, expected * 0.005,
+               "the output resistor floor does not follow the jack board's "
+               "temperature (ratio " + std::to_string(full / half) + ")");
+    YouKnowEngine cold;
+    cold.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.calibration = 1.0f;
+    cold.setParameters(parameters);
+    expect(YouKnowTestAccess::jackBoardJohnsonScale(cold) == 1.0f,
+           "the jack board's Johnson scale is not exactly one at power-on");
+}
+
 void testSpatialThermalGradientBelongsToUnitCharacter()
 {
     // A held polyphonic chord spread across every card is where a systematic,
@@ -15185,7 +15481,15 @@ void testSpatialThermalScaleCacheTracksLiveDependencies()
             {
                 const auto values = YouKnowTestAccess::thermalOmegaPair(
                     engine, card, base);
-                expect(values[0] == values[1],
+                // The gradient now develops on the warm-up clock, so the
+                // cache is refreshed on the ~375 Hz control cadence rather
+                // than only on edits, and between refreshes the direct law
+                // walks ahead of it by at most the cadence interval's share
+                // of the warm-up: 0.0033/C * 2 * 2.6 C * (1/375 s)/(3 s),
+                // under 2e-5 of the step. A stale cache after an edit,
+                // reset or rate change is orders larger than that.
+                expect(std::abs(values[0] - values[1])
+                           <= 2.0e-5f * std::max(1.0e-6f, values[1]),
                        std::string("the cached thermal cutoff scale is stale ")
                            + when + " on card " + std::to_string(card));
             }
@@ -16492,6 +16796,23 @@ int main()
         return EXIT_SUCCESS;
     }
 
+    if (std::getenv("YOUKNOW_THERMAL_TESTS_ONLY") != nullptr)
+    {
+        testResonanceAdjustmentPinsTheWarmLimitCycle();
+        testSpatialGradientDevelopsWithTheChassis();
+        testOutputFloorFollowsTheJackBoard();
+        testSpatialThermalScaleCacheTracksLiveDependencies();
+        testCompleteVoiceHonoursServiceFrequencyWindows();
+        testSelfOscillationMatchesTheServiceTrim();
+        if (failures != 0)
+        {
+            std::cerr << failures << " thermal check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All thermal checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW_OUTPUT_TESTS_ONLY") != nullptr)
     {
         testMainVolumeLoadedLinearPotLaw();
@@ -16731,6 +17052,7 @@ int main()
     testExactPwmHoldEndpointNonFiniteGuards();
     testSubHoldUsesItsR11C1TimeConstant();
     testSubHalfWaveIsLevelMatchedAtFullScale();
+    testSubStorageSkewAddsTheSecondHarmonic();
     testStartupPrimesC56WithTheSubMean();
     testSubLevelJumpCouplesThroughC56AndC59();
     testNoteOnDoesNotBumpC56WithTheSubOn();
@@ -16792,6 +17114,9 @@ int main()
     testVcfEarlyEffectBelongsToUnitCharacter();
     testSpatialThermalGradientBelongsToUnitCharacter();
     testSpatialThermalScaleCacheTracksLiveDependencies();
+    testResonanceAdjustmentPinsTheWarmLimitCycle();
+    testSpatialGradientDevelopsWithTheChassis();
+    testOutputFloorFollowsTheJackBoard();
     testDeterminismAndSilence();
     testRepeatedSanitisedParameterSnapshotsAreInert();
     testResetLeavesNoHistoryInTheOutputPath();

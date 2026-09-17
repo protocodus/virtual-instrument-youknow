@@ -77,6 +77,11 @@ struct YouKnowTestAccess
             loopHeadroomVolts;
     }
 
+    static constexpr double feedbackHeadroomFor(double headroom) noexcept
+    {
+        return YouKnowEngine::resonanceHeadroomFor(headroom);
+    }
+
     static constexpr float earlyEffectCoefficient() noexcept
     {
         return YouKnowEngine::otaEarlyEffectCoefficient;
@@ -981,7 +986,7 @@ std::vector<double> referenceCascade(const std::vector<double>& input, double sa
                                      double calibration = 0.70)
 {
     const double headroom = YouKnowTestAccess::headroom();
-    const double loopHeadroom = YouKnowTestAccess::feedbackHeadroom();
+    const double loopHeadroom = YouKnowTestAccess::feedbackHeadroomFor(headroom);
     const double earlyCoefficient =
         YouKnowTestAccess::earlyEffectCoefficient();
     const double omega = 2.0 * pi * cutoffHz;

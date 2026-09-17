@@ -147,6 +147,9 @@ struct YouKnowTestAccess
         parameters.calibration = character;
         parameters.enableVcfStageOffsets = true;
         parameters.enableResonanceOtaOffset = true;
+        parameters.enableSubStorageSkew = true;
+        parameters.enableResonanceHeadroomTemperature = true;
+        parameters.enableResonanceServiceTrim = true;
         parameters.enableVcfEarlyEffect = true;
         parameters.enableSpatialThermalGradient = true;
         engine.setParameters(parameters);
@@ -273,6 +276,11 @@ struct YouKnowTestAccess
     {
         return YouKnowEngine::VoicedResonanceCompatibilityProfile::
             loopHeadroomVolts;
+    }
+
+    static constexpr double feedbackHeadroomFor(double headroom) noexcept
+    {
+        return YouKnowEngine::resonanceHeadroomFor(headroom);
     }
 
     static constexpr double earlyCoefficient() noexcept
@@ -521,6 +529,9 @@ struct YouKnowTestAccess
             parameters.noiseLevel = 0.0f;
             parameters.enableVcfStageOffsets = false;
             parameters.enableResonanceOtaOffset = false;
+            parameters.enableSubStorageSkew = false;
+            parameters.enableResonanceHeadroomTemperature = false;
+            parameters.enableResonanceServiceTrim = false;
             parameters.enableSpatialThermalGradient = false;
             parameters.useCircuitDerivedResonanceShape = circuitDerivedShape;
             engine.setParameters(parameters);
@@ -613,7 +624,8 @@ struct YouKnowTestAccess
                                       * engine.inverseOversampledRate_;
                 return MappedControl {
                     YouKnowEngine::boundedThermalFilterOmegaStep(
-                        baseOmega, parameters, card),
+                        baseOmega, parameters, card,
+                        engine.thermalWarmupFraction_),
                     feedback
                 };
             };
@@ -1250,7 +1262,7 @@ private:
         const double beta = YouKnowTestAccess::earlyCoefficient()
                           * static_cast<double>(profile_.character);
         const double feedbackHeadroom =
-            YouKnowTestAccess::feedbackHeadroom();
+            YouKnowTestAccess::feedbackHeadroomFor(headroom);
         std::array<double, 4> result {};
         double drive = controls.input
             - controls.feedback * feedbackHeadroom
@@ -1947,7 +1959,7 @@ public:
             const double beta = YouKnowTestAccess::earlyCoefficient()
                               * static_cast<double>(profile_.character);
             const double feedbackHeadroom =
-                YouKnowTestAccess::feedbackHeadroom();
+                YouKnowTestAccess::feedbackHeadroomFor(headroom);
             double previous = drive - feedbackAt[point] * feedbackHeadroom
                 * std::tanh(value[3] / feedbackHeadroom);
             for (std::size_t stage = 0; stage < result.size(); ++stage)
@@ -3004,7 +3016,7 @@ private:
         const std::array<double, 4>& value, double input) const
     {
         const double feedbackHeadroom =
-            YouKnowTestAccess::feedbackHeadroom();
+            YouKnowTestAccess::feedbackHeadroomFor(headroom_);
         std::array<double, 4> result {};
         double drive = input - static_cast<double>(hotFeedback)
             * feedbackHeadroom * std::tanh(value[3] / feedbackHeadroom);
