@@ -8,6 +8,24 @@ plug-in for your music host or a standalone instrument.
 
 ## Download
 
+### Where the binaries are
+
+- **Continuous builds.** Every passing push or manually dispatched
+  [CI run](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=is%3Asuccess+-event%3Apull_request)
+  attaches three artifacts under its **Artifacts** section: `ci-macos`
+  (universal `.pkg` installer plus a manual-install `.zip`), `ci-windows`
+  (`.zip`) and `ci-linux` (`.tar.gz`). Pull-request runs do not package macOS.
+  macOS and Windows artifacts expire after 30 days, Linux after seven.
+- **Signed releases.** Tagged `youknow-v*` releases publish the signed,
+  notarized macOS `.pkg`, its `.manifest.txt` and `-SHA256SUMS.txt` on the
+  [GitHub Releases page](https://github.com/protocodus/virtual-instrument-youknow/releases);
+  Windows and Linux packages come from CI. No tagged release has been
+  published for 1.1.0 yet.
+- **Local builds.** The packaging scripts write the same customer files under
+  `build-macos/dist/`, `build-win/dist/` and `build-dsp/dist/` in the
+  checkout; plug-in bundles themselves sit in each build directory's
+  `YouKnow_artefacts/` tree.
+
 **For the e-shop, the two main customer downloads are the macOS `.pkg`
 installer and the Windows `.zip` below.** Each contains all formats for its
 platform, so customers do not need a separate download for each plug-in format.
@@ -92,6 +110,10 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### 1.1.0 — unreleased
 
+- The resonance BA662's own input offset now rides its control current into
+  the filter under Unit Character, inside the BA6110 sibling sheet's 3 mV
+  maximum: fast RES moves under a held note thump slightly and self-oscillation
+  settles per card, as an un-nulled OTA does. Unit Character zero is unchanged.
 - The voice input's C56 coupling now uses the documented hybrid resistor
   network's nominal reduction, shortening mean-shift settling from 330 ms
   to about 39.7 ms. PWM and SUB changes retain their continuous capacitor
@@ -468,6 +490,16 @@ forty-year-old unit will null against the plug-in.
   unit's resonance sweep, spectral-ratio error falls from 2.931 to 1.982 dB
   RMS with the same noise calibration in both renders. This supports the
   wiring correction without identifying every resonance component value.
+- The resonance BA662 carries its own input offset into the loop: a signed
+  per-card draw up to ±1.5 mV at the pair, inside the Rohm BA6110 sibling
+  sheet's 3 mV maximum (the BA662 publishes no typical, and nothing on the
+  board nulls it), referred to the node through the OTA's 100 kΩ/1.5 kΩ
+  divider and added to the pair's differential input inside the loop return,
+  so its gm·V_os feedthrough follows the resonance control current and is
+  exactly zero with the loop open. A RES change moves the loop's DC operating
+  point, which C59 turns into a small thump, and self-oscillation settles per
+  card. Scaled by Unit Character and absent at zero (sibling-bounded span;
+  the point inside it is voiced).
 - The product enables `useServiced439522VcfCalibration`, assigning fitted
   FREQ/WIDTH and effective current-ceiling coordinates to six fixed card
   slots. Native 192 kHz renders reduce per-card held-out tuning error from
@@ -1222,6 +1254,76 @@ defines its clock/delay relation; Analog Devices derives the
 The resistor-noise change corrects the model's temperature dependence;
 its audible effect has not been established.
 
+#### Proposed analog artefacts, 17 September 2026
+
+A third-party list of twenty-five "analog circuit simulation techniques",
+each named after a switch this engine does not have, was checked against the
+code and the drawings above. None was implemented. Eight describe mechanisms
+the engine already carries; the others name parts, pages or datasheets that
+do not exist or rest on invented constants. Where a magnitude is quoted below
+it is for the scenario that exposes the mechanism, and it is a report, not a
+threshold: a small term with a sourced value is welcome (the rail droop and
+the Johnson floors ship computed), while an unsourced one cannot be made
+audible without inventing its number. The September 15 limit applies
+unchanged.
+
+| Proposal | Assessment |
+| --- | --- |
+| IR3109 stage input offsets (1.5 mV) giving even harmonics | Already shipped: `enableVcfStageOffsets` draws ±1.5 mV per stage under Unit Character. In the [harmonic record](Docs/benchmarks/harmonics-2026-09-05.json) the shipping render's self-oscillation H2 is −57.4 dBc against the identified unit's −61.1 dBc, and −125.7 dBc at Character 0. No second offset term is added. |
+| Resonance-loop soft limiting, exponent 1.7 | Already shipped: the implicitly solved loop uses the generalized algebraic clip with that fixed exponent, which the serviced-card fit holds constant (`YouKnowReferenceVcf.h`). |
+| D6 dynamic junction resistance modulated by the WAVE node | Already shipped as the half-cycle sub current and the calibrated `SubLevelDiodeLaw`; the fully coupled `CoupledSubMixer` exists and stays off until node impedance and bias are measured (OQ-15). |
+| Large-signal transconductance droop lowering cutoff | Inherent in the tanh stages solved as their continuous equations — the [filter section](#what-is-modelled) records that the cascade retains its own amplitude-dependent frequency droop. A separate `tanh(A)/A` factor would count it twice. |
+| Bass-boost IC4b saturation | Already shipped: IC4b's ×11 band stops at the shared ±13.5 V swing policy inside the switched-HPF solve. |
+| BBD charge-transfer smear and MOS input square law | Already shipped: zero-order hold plus residual transfer loss at the datasheet anchor, and a write nonlinearity fitted to the MN3009's 0.3 %/0.78 Vrms table point. The proposed `0.999^256` product is not the part's transfer law. |
+| Six-voice rail sag compressing cutoff and headroom | Computed and inert, 0.1 cents from one to six voices ([bus and output](#what-is-modelled)). The voice circuits are class A and the DCOs run behind closed VCAs, so a chord changes the rail load by little more than six BA662 control currents, about 1.8 mA. |
+| 120 Hz rail ripple into cutoff (68 dB rejection) | The [known gap](#known-gaps) already gives that conditional figure: about 0.30 mVpp at the card rail and ~0.011 cents. A DCO's pitch is a divided 8 MHz resonator and does not follow a rail. |
+| Reset flyback ringing (10 Ω, 15 nH, 8 MHz, 50 ns) | The discharge transistor is inside the MC5534A; Roland prints no switch resistance, trace inductance or glitch waveform, and "Tr23/Tr25" are not on the drawing. A 50 ns, 1 V event carries about 50 nV·s per period, −119 dB against the 12 Vpp ramp. The finite-linear and configurable exponential resets remain. |
+| Miller-integrator curvature adding +0.35 dB of H2 | Computed in the [oscillator section](#what-is-modelled) for an assumed gain of 2000: 7.65 × 10⁻⁶ dB. Finite gain is a 0.2 Hz high-pass on the ideal saw and cannot reach the claimed magnitude. |
+| Comparator slew from an "MC5534A comparator datasheet" (10 V/µs) | No such datasheet exists: the MC5534A is Roland's custom DCO IC. A 1 µs edge is a ~350 kHz corner, −0.014 dB at 20 kHz, and BLEP already renders the edge. |
+| 4013 pull-up/pull-down asymmetry adding H2 to the sub | A level difference between the two states of a 50 % square adds only DC, which C56/C50 remove; it has no even harmonics. Timing skew would, but the TC4013B's tens of ns against a half-period no shorter than 0.24 ms sits below −70 dBc, and the sub's leg is Tr19/D6, already modelled. About 5.8 µs of Tr19 storage-time skew would reproduce the identified unit's −58.5 dBc sub H2, but that take passes through replacement cards and no storage time is published for the installed drive, so nothing is fitted. |
+| Inter-voice trace crosstalk (5 pF) and ground-bus coupling (15 mΩ, −70 dBc) | The Juno-106 has one module board, not voice cards in sockets, and the cited pp. 22–24 are not in the service notes. 5 pF × 12 V into the 3.969 kΩ WAVE load is 0.24 µV·s per reset, −106 dB against the ramp. Both coupling values are invented. |
+| WAVE-node stray-capacitance pole at 300 kHz | R101/R102 are 27 kΩ/33 kΩ, not 100 kΩ/200 kΩ, and the modelled load is 3.969 kΩ, so 20 pF gives a 2 MHz pole: −0.0004 dB at 20 kHz. Even the proposed 300 kHz is −0.019 dB. |
+| Avalanche 1/f knee at 1.5 kHz | The row above stands: the C42/BA662/C41 shaping is anchored and no low-frequency spectrum follows from the parts. The knee is an invented number; an original-card TP8 PSD (OQ-16) would settle it. |
+| Inter-stage buffer slew (+18/−11 V/µs) | The stage capacitors charge from the transconductor's limited output current, which the tanh stages already bound — `4π·V_T·f_c` over the 560/68 560 divider is about 2 V/µs at the 50 kHz cap and 0.2 V/µs at 5 kHz — so a buffer five to ninety times faster never limits. |
+| Audio-rate thermal self-FM in the 80017A; VCA thermal "glue" (0.8 dB) | Class-A dissipation is signal-independent to first order and die time constants are milliseconds; 0.8 dB of gm change needs a 29 K signal-dependent junction excursion. The shared chassis warm-up and the BA662 T_ref/T term already exist. |
+| VCA x² rectification "thump"; Tr20 C_bc control feedthrough (5 pF) | Tr20's collector feeds the BA662 control pin, not the audio output. The real mechanism is the input-offset feedthrough that VR30/R112 null, whose calibrated residual is unmeasured; a thump heuristic was already [removed on review](#known-gaps). The C58/Tr20 control solve and C59 coupling remain. |
+| TC4052 Ron(V) in the HPF | 110 Ω against the legs' 47 kΩ series parts: a 30 % on-resistance swing is about −63 dB, and Toshiba's curves are drawn at ±5/±7.5 V, not the installed +5 V/Tr3 rail. Deliberately uncalibrated (OQ-21). |
+| TA75558 class-AB deadband (4 mV) | 4 mV is −71 dB before the loop gain the modelled 527 kHz closed-loop pole implies; Toshiba publishes no crossover figure. The summer's swing, slew, pole and Johnson noise are modelled. |
+| Chorus LFO 48/52 duty from "Tr19/Tr22 charging C53" | Those parts are the BBD *clock* oscillator (OQ-01). The LFO is a µPC062 integrator plus Schmitt comparator whose triangle is symmetric by construction; its ± saturation asymmetry is unmeasured and the duty figure is invented. |
+
+#### Sibling-checked proposals, 17 September 2026
+
+A second list of eighteen followed the same day, with two directions from the
+owner: quote each mechanism's magnitude for the scenario that exposes it
+rather than against one threshold, and look for the number in a sibling
+Roland drawing or a comparable part before calling it unsourced. This pass
+therefore read the JUNO-6 CPU-board drawing (p. 9), the 106's own module-board
+legend (p. 12) and module drawing (p. 13), and the Hitachi HD14051B, TI TL08x,
+Rohm BA6110 and Panasonic MN3009 sheets. One proposal is implemented — the
+resonance BA662's input offset, see the release notes — and one is recorded as
+the capture that would decide it. The rest are reported with their numbers.
+
+| Proposal | Sibling or part evidence | Assessment |
+| --- | --- | --- |
+| Resonance BA662 untrimmed input offset, gm·V_os feedthrough | Rohm BA6110FS sheet, same family: "Low offset voltage (VIO = 3 mV max)"; nothing on the 106 nulls it — VR30/R112 null the voice VCA only | **Implemented** under Unit Character, ±1.5 mV per card inside the sibling maximum: a RES change moves the loop's DC operating point and C59 turns it into audio; exactly inert with the loop open. In a level-matched A/B the difference sits about −29 dB under a low note whose RES alternates every 0.4 s and −50 to −55 dB while RES rests. |
+| MC5534A reset as a 40–75 Ω NMOS RC flyback | JUNO-6 p. 9: the discrete DCO resets C7 0.001G through TR5 and R35 2.2 Ω, driven by C6 270 pF against R34 10 kΩ, on a ½ TL082 integrator | With 2.2 Ω the RC is 2 ns; the flyback is the amplifier's 12 V slew — about 0.9 µs, straight, at the TL082's 13 V/µs. That is the shipping linear form; its 2.2 µs and the sibling's 0.9 µs differ by under 0.004 dB at 20 kHz. Recorded beside `rampResetSeconds`; no exponential is added. |
+| PWM comparator noise flutter; 238 Hz hold ripple on the threshold | TL08x-class input noise, 18 nV/√Hz; HD14051B 10 pA off-leakage and TL08xC 65 pA bias, already in the converter comment as 31.5 µV per 4.2 ms on 10 nF | 20 µV of comparator noise over 1 MHz against a 12 V-per-period ramp is 46 ns of edge jitter at C1, −100 dB re the fundamental. The hold droop is 2.6 ppm of duty per pass, sidebands near −112 dBc. Not added; the `hold` audition takes explicit coordinates. |
+| Tr19 storage-time skew of the sub edge | Module-board legend: Tr19 is a 2SC1815-Y/GR, its base driven straight from MC5534A pin 13; Toshiba's 2SC1815 sheet and the 2SC945 sheets list no switching times; comparable era NPN switches specify about 0.2 µs | H2 = π·t_s·f_sub: −87 dBc at the 16′ bottom, −58 dBc only at the 4′ top key. The identified unit's −58.5 dBc at 65 Hz would need 5.8 µs, so it is not this mechanism at part-class values. Not added. |
+| C54 polystyrene dielectric absorption | The p. 12 legend has ceramic, Mylar, electrolytic and NP classes and no polystyrene; Dow's polystyrene model (Pease) puts 0.09 % in branches of 40 ms to 490 s | The fastest branch exchanges tens of picoamps with the ramp against at least 0.3 µA of charging current: below −84 dB of slope, inside the range resistors' 1 % class. Not added. |
+| µPD7810 port-driver R-2R DNL | The ladder's real carry errors are already measured on the identified unit: −4.64/+23.31/−4.48 cents at codes 1024/2048/3072 (`vcfConverterCarryCounts`) | The measured profile ships; the proposed cause is not identified by it. Nothing to add. |
+| HD14051B charge-injection bow | Hitachi sheet: 0.18 pF feedthrough, 10 pA leakage, 80/280 Ω on-resistance, no charge-injection row | A gate-overlap charge of the 10 pC class into 10 nF is about 1 mV, mostly a constant the FREQ/WIDTH trims absorb; the residual bow is unmeasured. The `hold` audition accepts an explicit charge. Not added. |
+| Voice-sequential 238 Hz droop phases | Same leakage figures; the six VCF holds are already written at their chart positions | Any droop model would inherit the stagger for free; at 31.5 µV per pass it is 0.054 cents peak-to-peak on cutoff, sidebands near −90 dBc on a bare self-oscillation. Not added. |
+| µPD7810 ADC deadband and hysteresis | ROM-resolved (OQ-13) | The MIDI bend path already carries the assigner's reduction and B-2's dead zone; panel bytes are the stored bytes by product policy, and the plug-in has no lever ADC. |
+| 80017A resin inter-pin leakage | A failure mode of aged modules, reported by technicians without pin-to-pin readings | A fault, not a fresh-service behaviour; the Aging control follows one documented recalibration. Left to a product decision with measured modules. |
+| R111 positor thermally decoupled from the hybrid | No sheet gives the hybrid's thermal resistance; the JUNO-6 mounts its positor beside a DIP IR3109 | The one proposal whose predicted size is not small: with 20–30 mW of control-dependent dissipation (about 0.6 mA more IR3109 control at a 20 kHz cutoff than at 5 kHz, plus a 0.3 mA VCA tail, at 30 V) and a comparable SIP hybrid's 50–100 K/W, the die could move 1–3 °C uncompensated, about 20 cents per °C at a cutoff five octaves up. Experience with the instrument suggests less, which would mean a lower thermal resistance or internal compensation; only a self-oscillation pitch log after a large cutoff or level change on a warmed unit decides it. Recorded as that capture request, not modelled. |
+| IR3109 lateral-PNP mirror pole | No IR3109 or AS3109 figure; a 3 MHz class pole | Self-oscillation would fall 1.3 % at a 20 kHz cutoff and 0.3 % at 5 kHz, inside the per-card ceiling the serviced-card fit absorbs; the audio-band magnitude is unchanged. Not added. |
+| Tr20 dynamic emitter impedance on C58 | This README's own text | Already shipped as `enableCoupledVoiceVcaControl`. |
+| IC1a summing-node crosstalk | Module drawing p. 13: IC1a is an M5218L, not a TA75558; six 33 kΩ legs into 3.3 kΩ | The voices drive the node from low-impedance module outputs, so its error voltage is a finite-gain term on the sum, not a path into the other voices; at a 3 MHz class gain-bandwidth the closed-loop pole is above 1.8 MHz, −0.0005 dB at 20 kHz. Not added. |
+| C14 electrolytic soakage and C(V) | The C(V) candidate exists and was withdrawn from the default on Chemi-Con's bias guidance (2026-08-29) | C14 carries 1.2 % of the signal at 40 Hz (398 Ω against 33 kΩ), so even a 0.3 %/V² coefficient gives distortion near −126 dB, and aluminium soakage acts on sub-hertz memory. Not added. |
+| Sallen-Key op-amp slewing on BBD steps | Jack-board tap: 3.3 kΩ legs from ≈3.7 kΩ followers, 47 kΩ and 2.2 nF | The tap's 7 µs time constant limits a 0.5 V clock step to about 0.07 V/µs at the first op-amp; a 1 V/µs part never slews. Not added. |
+| OUT1/OUT2 mismatch leaving a clock carrier | MN3009 sheet: "clock component cancellation capability", no residual figure; the jack board has no balance pot, only the two 3.3 kΩ legs | With an assumed 50 mV follower DC mismatch the carrier at the 20 kHz clock end would sit near −49 dB re a 1 V wet signal after the tap RC and the ×4 reconstruction; the only capture, KR-106's chorus-on idle floor, does not isolate it (OQ-03). The signal's physical clock images are already rendered. Not added. |
+| BBD bias trimmer drift and asymmetric clipping | Jack-board VR1/VR2 set the MN3009 input bias; fresh service nulls the asymmetry, and the 0.3 %/0.78 Vrms sheet point is already fitted | The drifted state is a measurement on an aged unit; the identified unit's chorus is original but no wet-only capture isolates H2. A candidate for the Aging control once measured. |
+
 #### Other methods assessed
 
 The following decisions distinguish a useful research method from evidence
@@ -1350,7 +1452,8 @@ metal-oxide 1 % parts reserved for the DCO ranges), VCF trim
 residuals derived from the service manual's ±10-cent acceptance at its two
 check points (the nominal reference endpoints remain within 6 cents at the
 declared ten-minute service state; the product adds these residuals to the
-measured card base), per-stage input offsets and capacitor staggering, slow cutoff
+measured card base), per-stage input offsets, the resonance BA662's own input
+offset inside the BA6110 sibling sheet's 3 mV maximum, capacitor staggering, slow cutoff
 wander, the two chorus lines' relative insertion
 offset inside the MN3009's ±4 dB row, and the chassis warm-up law
 `25 + 15(1 − e^{−t/3})` °C with its spatial gradient across the cards.
@@ -1998,6 +2101,21 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### Changes in 1.1.0
 
+- The resonance BA662's input offset is now part of the loop. Rohm's BA6110
+  sibling sheet lists "Low offset voltage (VIO = 3 mV max)", the BA662 itself
+  publishes no typical, and no service step nulls it (VR30/R112 null the voice
+  VCA only), so each card draws a signed offset up to ±1.5 mV at the pair —
+  half that maximum, the IR3109 stage span — which its 100 kΩ/1.5 kΩ divider
+  refers to the node and its control current carries into stage one. A RES
+  change therefore moves the loop's DC operating point, which C59 turns into
+  a small thump, and self-oscillation settles differently per card; with the
+  loop open the term is exactly zero. It scales with Unit Character and is
+  absent at zero, like the stage offsets. In a level-matched render the
+  difference sits about −29 dB under a low note whose RES alternates every
+  0.4 s and −50 to −55 dB while RES rests; the free-running self-oscillation
+  segments diverge in phase, which is not an audibility figure. The complete-
+  voice service-calibration check moves its worst card from 7.64 to 7.74 cents
+  at Unit Character 1, inside Roland's ±10-cent window.
 - RANGE now changes the DCO charging current at the control write while
   preserving C54 charge and the independent PIT clock reload. The first
   partial saw cycle and its PWM crossing follow the newly selected resistor.

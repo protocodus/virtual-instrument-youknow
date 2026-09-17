@@ -178,8 +178,9 @@ struct EngineParameters
     // Exposed to the host as Unit Character: one master over every modelled
     // component tolerance, trimmer residual, thermal wander and optional
     // circuit non-linearity -- the IR3109 stage offsets and integrating-
-    // capacitor spread, the chorus clock law, the spatial thermal gradient,
-    // the optional C14 voltage-dependence candidate and the VCF Early effect.
+    // capacitor spread, the resonance BA662's input offset, the chorus clock
+    // law, the spatial thermal gradient, the optional C14 voltage-dependence
+    // candidate and the VCF Early effect.
     // Every optional physical-circuit mechanism answers to this one control.
     //
     // Mechanisms the *nominal* circuit has are deliberately not on it: the
@@ -225,6 +226,12 @@ struct EngineParameters
     // be unreachable, mis-attributed or contradicted by an anchored claim have
     // been removed rather than left switchable; see the modelling notes.
     bool enableVcfStageOffsets { true };
+    // On by default: the resonance BA662's own input offset rides its control
+    // current into stage one, so a RES change moves the loop's DC operating
+    // point (see VoiceCard::resonanceOtaOffset). Scaled by Unit Character
+    // like the stage offsets; false retains the offset-free loop solely for
+    // controlled A/B renders.
+    bool enableResonanceOtaOffset { true };
     bool enableOpAmpSlewLimiting { true };
     bool enableVcfEarlyEffect { true };
     bool enableSpatialThermalGradient { true };
@@ -1748,6 +1755,21 @@ private:
     // integrator's virtual ground, so capacitor current is constant and the
     // rising ramp is straight. The discharge transistor gives only the reset
     // its finite slope.
+    //
+    // Sibling corroboration of the linear form (JUNO-6 Service Notes, CPU
+    // board p. 9, May 10 1982, read 2026-09-17): the discrete DCO integrates
+    // C7 0.001G on a 1/2 TL082 (IC16) and resets it through TR5 with R35
+    // 2.2 ohm in series, driven by the 8253 edge through C6 270 pF against
+    // R34 10 kohm. With 2.2 ohm the RC is 2 ns; what bounds the flyback is
+    // the amplifier, whose output has to traverse the 12 Vpp ramp while the
+    // transistor holds the capacitor: at the TL082's typical 13 V/us that is
+    // about 0.9 us of straight, slew-limited fall (1 nF * 13 V/us = 13 mA,
+    // inside its output drive). So the reset of the sibling circuit is
+    // linear, not exponential, and lasts under a microsecond. The MC5534A's
+    // internal amplifier slew is unpublished, so the 2.2 us here stays a
+    // compatibility value of the same form; the two differ by under
+    // 0.004 dB at 20 kHz (sinc nulls at 455 kHz against 1.1 MHz).
+    // https://www.synfo.nl/servicemanuals/Roland/JUNO-6_SERVICE_NOTES.pdf#page=9
     static constexpr double rampResetSeconds = 2.2e-6;
     static constexpr float rampAmplitudeVolts = 12.0f;
     // The sub's mixer coordinate, here rather than beside its two siblings in
@@ -2221,6 +2243,13 @@ private:
         // it gains over the former float path-average solve.
         std::array<double, 4> state {};
         std::array<float, 4> offsetVoltage {};
+        // The resonance BA662's input offset in module-node volts. Its pair
+        // sees stage four through the 100k/1.5k divider, so a pair offset
+        // stands `loopDividerRatio` times taller at the node. It is added to
+        // the pair's differential input inside the loop return, so the
+        // gm*V_os feedthrough scales with the control current and is exactly
+        // zero with the loop open.
+        float resonanceOffsetVolts {};
         // Independent equivalent input voltages of each stage's resistor
         // network. They use the audio input's same causal cubic reconstruction
         // at the solver nodes; none enters the resonance compensation input.
@@ -2619,6 +2648,21 @@ private:
         // earlier revision handed these to the node unconverted, which shrank
         // the documented mechanism 122x into inaudibility.
         std::array<float, 4> vcfStageOffsets { 0.0015f, -0.0012f, 0.0018f, -0.0010f };
+        // The resonance BA662's input offset, in volts at its pair. No service
+        // step nulls it -- VR30/R112 null only the voice VCA -- so the card's
+        // resonance control current carries gm*V_os into stage one and a RES
+        // change moves the loop's DC operating point. Rohm's BA6110 sibling
+        // sheet lists "Low offset voltage (VIO = 3 mV max)" among its
+        // features; its distortion-reduction diodes do not change the input
+        // pair's offset class, and the BA662 itself publishes no typical.
+        // Hobbyist readings of BA662A samples are tens to hundreds of
+        // microvolts (forum posts, not pinned). The span is voiced at the
+        // IR3109 stage draw's 1.5 mV, half that sibling maximum; the
+        // population mean is zero, so the whole term belongs to Unit
+        // Character. BA6110FS datasheet, SHA-256
+        // a8e11b2ef9a2bc8879e85242ba64a8d487e0f1c1e794c8680bd2ab227ec2c6e8:
+        // https://www.datasheetarchive.com/pdf/download/distributors/Datasheets-308/4668.pdf
+        float resonanceOtaOffset { 0.0f };
         // Signed, unbiased draw for each stage's integrating capacitor.
         std::array<float, 4> vcfStageGErrors {};
     };

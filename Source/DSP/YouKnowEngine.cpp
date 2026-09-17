@@ -3485,6 +3485,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
     const double resonanceCompensation =
         static_cast<double>(inputCompensationCoefficient);
+    const double resonanceOffset =
+        static_cast<double>(resonanceOffsetVolts);
     const double currentOmega = clampOmegaStep(
         static_cast<double>(omegaStep));
     const double currentFeedback = std::clamp(
@@ -3841,7 +3843,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             // inputs. `resonanceCompensation` is zero when the legacy split
             // is selected, which makes this the former argument exactly.
             const double differentialInput =
-                value[3] - resonanceCompensation * drive;
+                value[3] - resonanceCompensation * drive + resonanceOffset;
             const double feedbackArgument = [&] {
                 if constexpr (useReciprocal)
                     return differentialInput * (1.0 / feedbackHeadroom);
@@ -3910,7 +3912,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 ? drive
                 : drive - feedbackAt[point] * feedbackHeadroom
                     * polyZonedTanhImpl(
-                        (value[3] - resonanceCompensation * drive)
+                        (value[3] - resonanceCompensation * drive
+                         + resonanceOffset)
                         * (1.0 / feedbackHeadroom));
 
             const std::array<double, 4> stageArg {
@@ -4246,10 +4249,14 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     const Pair resonanceCompensation = pack(
         static_cast<double>(first.inputCompensationCoefficient),
         static_cast<double>(second.inputCompensationCoefficient));
+    const Pair resonanceOffset = pack(
+        static_cast<double>(first.resonanceOffsetVolts),
+        static_cast<double>(second.resonanceOffsetVolts));
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
         const Pair feedbackArgument = pairMultiplyScalar(
-            pairSubtract(value[3],
-                         pairMultiply(resonanceCompensation, drive)),
+            pairAdd(pairSubtract(value[3],
+                                 pairMultiply(resonanceCompensation, drive)),
+                    resonanceOffset),
             1.0 / feedbackHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
@@ -4620,10 +4627,14 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     const Pair resonanceCompensation = pack(
         static_cast<double>(first.inputCompensationCoefficient),
         static_cast<double>(second.inputCompensationCoefficient));
+    const Pair resonanceOffset = pack(
+        static_cast<double>(first.resonanceOffsetVolts),
+        static_cast<double>(second.resonanceOffsetVolts));
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
         const Pair feedbackArgument = pairMultiplyScalar(
-            pairSubtract(value[3],
-                         pairMultiply(resonanceCompensation, drive)),
+            pairAdd(pairSubtract(value[3],
+                                 pairMultiply(resonanceCompensation, drive)),
+                    resonanceOffset),
             1.0 / feedbackHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
@@ -5050,6 +5061,11 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         cascades[1]->inputCompensationCoefficient,
         cascades[2]->inputCompensationCoefficient,
         cascades[3]->inputCompensationCoefficient });
+    const Quad resonanceOffset = quadLoad({
+        cascades[0]->resonanceOffsetVolts,
+        cascades[1]->resonanceOffsetVolts,
+        cascades[2]->resonanceOffsetVolts,
+        cascades[3]->resonanceOffsetVolts });
     std::array<Quad, 7> drives;
     for (std::size_t point = 0; point < drives.size(); ++point)
         drives[point] = packField(
@@ -5060,8 +5076,9 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
     // A value parameter lets the ARM ABI pass the four vectors in registers.
     const auto derivative = [&](QuadState value, Quad drive, std::size_t point) {
         const Quad feedbackArgument = quadMultiplyScalar(
-            quadSubtract(value[3],
-                         quadMultiply(resonanceCompensation, drive)),
+            quadAdd(quadSubtract(value[3],
+                                 quadMultiply(resonanceCompensation, drive)),
+                    resonanceOffset),
             1.0f / feedbackHeadroom);
         const Quad loopReturn = quadSubtract(
             drive, quadMultiply(feedbackGain,
@@ -5527,6 +5544,7 @@ void YouKnowEngine::buildVoiceCards() noexcept
             card.vcfStageGErrors[stage] =
                 hashBipolar(seed + 20u + static_cast<std::uint32_t>(stage));
         }
+        card.resonanceOtaOffset = 0.0015f * hashBipolar(seed + 14u);
         card.driftValue = 0.0f;
         card.driftState = seed | 1u;
     }
@@ -5562,9 +5580,16 @@ void YouKnowEngine::refreshVoiceCardStageTrims() noexcept
     // other card field does.
     const float amount = activeParameters_.enableVcfStageOffsets
                        ? activeParameters_.calibration : 0.0f;
+    const float resonanceAmount = activeParameters_.enableResonanceOtaOffset
+                                ? activeParameters_.calibration : 0.0f;
     for (auto& voice : voices_)
     {
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+        // The same pair-to-node conversion, through the resonance OTA's own
+        // 100k/1.5k divider rather than the stages' 560/68560 one.
+        voice.filter.resonanceOffsetVolts = card.resonanceOtaOffset
+            * VoicedResonanceCompatibilityProfile::loopDividerRatio
+            * resonanceAmount;
         for (std::size_t stage = 0; stage < 4; ++stage)
         {
             // The draw is volts at the pair; the cascade sums it with
@@ -6518,7 +6543,9 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     const bool stageTrimsChanged =
         next.calibration != activeParameters_.calibration
         || next.enableVcfStageOffsets
-               != activeParameters_.enableVcfStageOffsets;
+               != activeParameters_.enableVcfStageOffsets
+        || next.enableResonanceOtaOffset
+               != activeParameters_.enableResonanceOtaOffset;
     const bool thermalScalesChanged = startupSnapshot
         || next.calibration != activeParameters_.calibration
         || next.enableSpatialThermalGradient

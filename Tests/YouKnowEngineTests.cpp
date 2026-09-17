@@ -94,6 +94,18 @@ struct YouKnowTestAccess
             .vcfStageOffsets[static_cast<std::size_t>(stage)];
     }
 
+    static float resonanceOffset(const YouKnowEngine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .filter.resonanceOffsetVolts;
+    }
+
+    static float cardResonanceOffset(const YouKnowEngine& engine,
+                                     int slot) noexcept
+    {
+        return engine.cards_[static_cast<std::size_t>(slot)].resonanceOtaOffset;
+    }
+
     static float pwmTarget(const YouKnowEngine& engine) noexcept
     {
         return engine.pwmVoltsTarget_;
@@ -1824,6 +1836,7 @@ struct YouKnowTestAccess
                                sizeof(firstValue)) == 0;
         };
         return sameBits(first.offsetVoltage, second.offsetVoltage)
+            && sameBits(first.resonanceOffsetVolts, second.resonanceOffsetVolts)
             && sameBits(first.inputHistory, second.inputHistory)
             && first.inputHistoryCount == second.inputHistoryCount
             && sameBits(first.gScale, second.gScale)
@@ -14979,6 +14992,114 @@ void testVcfStageOffsetsAreLiveBeforeTheFirstSample()
     expectSeeded("after reset");
 }
 
+void testResonanceOtaOffsetBelongsToUnitCharacter()
+{
+    // The mechanism is gm*V_os control feedthrough, so the material that
+    // exposes it is a resonance change under a held chord: the loop's DC
+    // operating point moves with RES and C59 turns that step into audio.
+    // The stage offsets are held off so the loop's only DC term is the one
+    // under test; the other toggles are held off as the stage-offset test
+    // does, for the same monotonicity reason.
+    const auto run = [](float calibration, bool enabled, float resonance,
+                        float steppedResonance) {
+        YouKnowEngine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = calibration;
+        parameters.enableResonanceOtaOffset = enabled;
+        parameters.enableVcfStageOffsets = false;
+        parameters.enableVcfEarlyEffect = false;
+        parameters.enableSpatialThermalGradient = false;
+        parameters.resonance = resonance;
+        parameters.cutoff = 0.45f;
+        parameters.envDepth = 0.0f;
+        engine.setParameters(parameters);
+        for (const int note : { 40, 47, 52, 55, 59, 64 })
+            engine.noteOn(note, 1.0f);
+        Render result = render(engine, 12000);
+        // A RES step while the chord sustains, then more of the sustain.
+        parameters.resonance = steppedResonance;
+        engine.setParameters(parameters);
+        const Render tail = render(engine, 12000);
+        result.left.insert(result.left.end(), tail.left.begin(), tail.left.end());
+        result.right.insert(result.right.end(), tail.right.begin(), tail.right.end());
+        return result;
+    };
+
+    const auto largestDifference = [](const Render& a, const Render& b) {
+        double worst = 0.0;
+        for (std::size_t n = 0; n < a.left.size(); ++n)
+            worst = std::max(worst, std::abs(static_cast<double>(a.left[n])
+                                             - static_cast<double>(b.left[n])));
+        return worst;
+    };
+
+    // Unit Character zero is the calibrated nominal model: the offset must be
+    // absent there, not merely small -- an equality, not a bound.
+    const auto nominalOn = run(0.0f, true, 0.85f, 0.25f);
+    const auto nominalOff = run(0.0f, false, 0.85f, 0.25f);
+    expect(nominalOn.left == nominalOff.left && nominalOn.right == nominalOff.right,
+           "resonance BA662 offset still colours the calibrated nominal model "
+           "at Unit Character zero");
+
+    // With the loop open there is no control current to carry the offset,
+    // so the term is exactly inert whatever Unit Character says. RES stays
+    // at zero for the whole render here; the step would close the loop.
+    const auto openOn = run(1.0f, true, 0.0f, 0.0f);
+    const auto openOff = run(1.0f, false, 0.0f, 0.0f);
+    expect(openOn.left == openOff.left && openOn.right == openOff.right,
+           "resonance BA662 offset leaks through an open resonance loop");
+
+    // And it must be a live mechanism once the loop closes.
+    const auto fullOn = run(1.0f, true, 0.85f, 0.25f);
+    const auto fullOff = run(1.0f, false, 0.85f, 0.25f);
+    expect(!(fullOn.left == fullOff.left),
+           "resonance BA662 offset does nothing at full Unit Character");
+
+    // Half the character, somewhere between none and all of it; the loop is
+    // nonlinear, so the bounds are deliberately loose, as for the stages.
+    const auto full = largestDifference(fullOn, fullOff);
+    const auto half = largestDifference(run(0.5f, true, 0.85f, 0.25f),
+                                        run(0.5f, false, 0.85f, 0.25f));
+    expect(full > 0.0 && half > 0.2 * full && half < 0.8 * full,
+           "resonance BA662 offset does not scale with Unit Character");
+}
+
+void testResonanceOtaOffsetIsLiveBeforeTheFirstSample()
+{
+    YouKnowEngine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.calibration = 0.8f;
+    engine.setParameters(parameters);
+
+    // The card carries the draw in volts at the resonance pair; the loop
+    // consumes node-coordinate volts through the OTA's own 100k/1.5k divider
+    // (loopDividerRatio), not the stages' 560/68560 one.
+    const auto expectSeeded = [&](const char* when) {
+        for (int slot = 0; slot < YouKnowEngine::maxVoices; ++slot)
+            expectNear(YouKnowTestAccess::resonanceOffset(engine, slot),
+                       YouKnowTestAccess::cardResonanceOffset(engine, slot)
+                           * (100000.0 / 1500.0) * 0.8,
+                       1.0e-6,
+                       std::string("resonance offset for slot ")
+                           + std::to_string(slot) + " is not seeded " + when);
+    };
+
+    expectSeeded("after setParameters");
+    engine.reset();
+    engine.setParameters(parameters);
+    expectSeeded("after reset");
+
+    // Draws are signed and card-specific: six real cards must not share one.
+    bool differs = false;
+    for (int slot = 1; slot < 6; ++slot)
+        differs = differs
+            || YouKnowTestAccess::cardResonanceOffset(engine, slot)
+                   != YouKnowTestAccess::cardResonanceOffset(engine, 0);
+    expect(differs, "every card drew the same resonance BA662 offset");
+}
+
 void testVcfEarlyEffectBelongsToUnitCharacter()
 {
     // A resonant sweep with envelope depth is where a stage's own transconductance
@@ -16666,6 +16787,8 @@ int main()
     testVoiceVcaSaturationFollowsTheBa662Pair();
     testVcfStageOffsetsBelongToUnitCharacter();
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();
+    testResonanceOtaOffsetBelongsToUnitCharacter();
+    testResonanceOtaOffsetIsLiveBeforeTheFirstSample();
     testVcfEarlyEffectBelongsToUnitCharacter();
     testSpatialThermalGradientBelongsToUnitCharacter();
     testSpatialThermalScaleCacheTracksLiveDependencies();
