@@ -2290,6 +2290,95 @@ void testTransportOfControllers()
     processor.releaseResources();
 }
 
+// Reset All Controllers (CC 121) is not on the owner's chart, but a host or
+// controller that sends it expects the hold lifted and both wheels neutral.
+// The reference is the state the explicit messages reach, so the two paths
+// have to render the same audio and settle on the same voices. The third
+// instance receives nothing, which is what proves the reset was audible.
+void testResetAllControllersLiftsHoldAndCentresTheWheels()
+{
+    YouKnowAudioProcessor reset;
+    YouKnowAudioProcessor explicitReturn;
+    YouKnowAudioProcessor untouched;
+    for (auto* processor : { &reset, &explicitReturn, &untouched })
+    {
+        setParameterValue (*processor, parameters::calibration, 0.0f);
+        setParameterValue (*processor, parameters::chorusNoise, 0.0f);
+        setParameterValue (*processor, parameters::chorusI, 0.0f);
+        setParameterValue (*processor, parameters::chorusII, 0.0f);
+        setParameterValue (*processor, parameters::benderDco, 0.8f);
+        setParameterValue (*processor, parameters::benderVcf, 0.65f);
+        setParameterValue (*processor, parameters::benderLfo, 1.0f);
+        setParameterValue (*processor, parameters::release, 0.0f);
+        processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor->prepareToPlay (sampleRate, blockSize);
+    }
+
+    juce::AudioBuffer<float> resetBuffer (2, blockSize);
+    juce::AudioBuffer<float> explicitBuffer (2, blockSize);
+    juce::AudioBuffer<float> untouchedBuffer (2, blockSize);
+    const auto process = [&] (juce::MidiBuffer resetMidi,
+                              juce::MidiBuffer explicitMidi,
+                              juce::MidiBuffer untouchedMidi)
+    {
+        resetBuffer.clear();
+        explicitBuffer.clear();
+        untouchedBuffer.clear();
+        reset.processBlock (resetBuffer, resetMidi);
+        explicitReturn.processBlock (explicitBuffer, explicitMidi);
+        untouched.processBlock (untouchedBuffer, untouchedMidi);
+    };
+
+    // Pedal down, both wheels hard over, one key held and one released
+    // under the pedal.
+    juce::MidiBuffer setup;
+    setup.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 0);
+    setup.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+    setup.addEvent (juce::MidiMessage::controllerEvent (1, 1, 127), 0);
+    setup.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 1);
+    setup.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 1);
+    process (setup, setup, setup);
+    juce::MidiBuffer releaseUnderPedal;
+    releaseUnderPedal.addEvent (juce::MidiMessage::noteOff (1, 67), 0);
+    process (releaseUnderPedal, releaseUnderPedal, releaseUnderPedal);
+    for (int block = 0; block < 8; ++block)
+        process ({}, {}, {});
+    for (auto* processor : { &reset, &explicitReturn, &untouched })
+        expect (processor->getActiveVoiceCount() == 2,
+                "the hold pedal did not keep the released key sounding");
+
+    juce::MidiBuffer resetMidi;
+    resetMidi.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 0);
+    juce::MidiBuffer explicitMidi;
+    explicitMidi.addEvent (juce::MidiMessage::controllerEvent (1, 64, 0), 0);
+    explicitMidi.addEvent (juce::MidiMessage::pitchWheel (1, 8192), 0);
+    explicitMidi.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0);
+    process (resetMidi, explicitMidi, {});
+    float resetToExplicit = maximumBufferDifference (resetBuffer, explicitBuffer);
+    float resetToUntouched = maximumBufferDifference (resetBuffer, untouchedBuffer);
+    for (int block = 0; block < 200; ++block)
+    {
+        process ({}, {}, {});
+        resetToExplicit = std::max (
+            resetToExplicit, maximumBufferDifference (resetBuffer, explicitBuffer));
+        resetToUntouched = std::max (
+            resetToUntouched, maximumBufferDifference (resetBuffer, untouchedBuffer));
+    }
+    expect (resetToExplicit < 1.0e-6f,
+            "Reset All Controllers does not match an explicit hold lift and wheel return");
+    expect (resetToUntouched > 1.0e-3f,
+            "Reset All Controllers had no audible effect");
+    expect (reset.getActiveVoiceCount() == 1,
+            "Reset All Controllers did not lift the hold pedal");
+    expect (explicitReturn.getActiveVoiceCount() == 1,
+            "the explicit hold lift did not release the pedalled key");
+    expect (untouched.getActiveVoiceCount() == 2,
+            "the untouched reference lost its pedalled key");
+
+    for (auto* processor : { &reset, &explicitReturn, &untouched })
+        processor->releaseResources();
+}
+
 void testUiPerformanceLeverMatchesMidiAndCoalesces()
 {
     YouKnowAudioProcessor uiDriven;
@@ -7731,6 +7820,59 @@ void testChorusButtonTransitionsAreAtomicForReentrantStateSaves()
     }
 }
 
+// The assign pair is two automation parameters, but one panel press is one
+// firmware transition. A host saving state from the first notification must
+// receive the complete previous mode: the transient pair between the writes
+// would otherwise canonicalise to Poly 1 or already read as the new mode.
+void testPolyButtonTransitionsAreAtomicForReentrantStateSaves()
+{
+    YouKnowAudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr,
+            "cannot test atomic poly transitions without an editor");
+    if (editor == nullptr)
+        return;
+
+    const auto pressExpecting = [&] (const char* buttonName,
+                                     bool previousPoly1, bool previousPoly2,
+                                     bool nextPoly1, bool nextPoly2)
+    {
+        auto* button = dynamic_cast<juce::Button*> (
+            findDescendantNamed (*editor, buttonName));
+        expect (button != nullptr && static_cast<bool> (button->onClick),
+                std::string (buttonName) + " has no click action");
+        if (button == nullptr || ! button->onClick)
+            return;
+
+        FirstParameterStateSaver saver;
+        processor.addListener (&saver);
+        button->onClick();
+        processor.removeListener (&saver);
+        expect (saver.saved && ! saver.state.isEmpty(),
+                std::string (buttonName) + " produced no re-entrant state snapshot");
+        expect ((parameterValue (processor, parameters::poly1) > 0.5f) == nextPoly1
+                    && (parameterValue (processor, parameters::poly2) > 0.5f) == nextPoly2,
+                std::string (buttonName) + " did not commit the new pair");
+        if (saver.state.isEmpty())
+            return;
+
+        YouKnowAudioProcessor restored;
+        restored.setStateInformation (saver.state.getData(),
+                                      static_cast<int> (saver.state.getSize()));
+        expect ((parameterValue (restored, parameters::poly1) > 0.5f) == previousPoly1
+                    && (parameterValue (restored, parameters::poly2) > 0.5f) == previousPoly2,
+                std::string ("a re-entrant save while pressing ") + buttonName
+                    + " did not capture the complete previous mode");
+    };
+
+    // Poly 1 is the cold-start mode; each press then leaves the mode the next
+    // one must find intact in its snapshot.
+    pressExpecting ("POLY 2", true, false, false, true);
+    pressExpecting ("POLY 1", false, true, true, false);
+    pressExpecting ("UNISON", true, false, true, true);
+    pressExpecting ("POLY 2", true, true, false, true);
+}
+
 // The programmer row is one row of equal hardware cells. The shared renderer
 // derives label, lamp and key geometry from those bounds, so matching cells
 // guarantee one aligned key-face row.
@@ -8876,6 +9018,7 @@ int main()
     testChannelModeMessagesReleaseLikeAllNotesOff();
     testHoldLatchesOnAnyNonZeroValue();
     testTransportOfControllers();
+    testResetAllControllersLiftsHoldAndCentresTheWheels();
     testUiPerformanceLeverMatchesMidiAndCoalesces();
     testPerformanceAutomationPersistsOnlyInSessionState();
     testPerformanceLeverSpringsAndEditorCloseNeutralisesIt();
@@ -8944,6 +9087,7 @@ int main()
     testClickingTheSelectedRadioKeepsItsLampLit();
     testChorusSelectionOnlyRunsForARealPress();
     testChorusButtonTransitionsAreAtomicForReentrantStateSaves();
+    testPolyButtonTransitionsAreAtomicForReentrantStateSaves();
     testProgrammerRowKeysShareOneKeyFace();
     testPerformanceLeverKeepsTheAxisStillHeld();
     testPolyButtonsKeepAValidFirmwareLatch();

@@ -201,6 +201,9 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   on-screen presses no longer stick, non-finite state is rejected, CLAP hosts
   refresh restored controls, and SysEx saves include the latest MIDI edits.
   Saving an extensionless patch name also protects existing `.syx` files.
+  The POLY 1, POLY 2 and UNISON keys write their pair as one transaction, so
+  a host saving state from the first notification no longer captures the
+  contact between the two writes.
 - RANGE changes now preserve ramp charge while changing its charging current;
   envelope and portamento updates follow the recovered firmware order.
   Chorus mute retains both capacitor charges, and each filter stage receives
@@ -1855,12 +1858,14 @@ modelled keybed is not velocity sensitive, so incoming velocity reaches the
 engine only through the VELOCITY extension. There are no MIDI CC
 assignments for the synthesis panel; use the plug-in's host automation
 parameters instead.
-YouKnow does not transmit performance data or Program Changes. Two
+YouKnow does not transmit performance data or Program Changes. Three
 extensions beyond the owner's chart are product policy: All Sound Off
 (CC 120) performs a hard stop, which the instrument's own chart does not
-list, and overlapping presses of one pitch are counted so that the first
-matching Note Off does not release a later press — the A-5 keeps one bit per
-note and would release on the first Note Off.
+list; Reset All Controllers (CC 121) lifts the hold pedal and returns the
+pitch bend and modulation to rest without touching the panel; and
+overlapping presses of one pitch are counted so that the first matching
+Note Off does not release a later press — the A-5 keeps one bit per note
+and would release on the first Note Off.
 
 The on-screen keyboard tracks one held key per MIDI channel, matching its
 mouse/computer-key input, separately from counted host MIDI presses. Duplicate
@@ -2812,6 +2817,16 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
   controls widened for cleaner alignment at every supported editor size.
 - Hardened host operation across transport reset, standard bypass, variable
   block sizes, concurrent state saves and synchronous state-save callbacks.
+- Fixed the POLY 1, POLY 2 and UNISON keys so one press writes both assign
+  parameters as one transaction, as the chorus keys already did. A host that
+  saves state from the first parameter notification captured the contact
+  between the two writes: pressing POLY 1 from Poly 2 saved a both-off pair
+  that restores as Poly 1, and pressing one key from Unison saved the single
+  mode, so the session lost the mode it was in when the save was requested.
+- A non-finite control value now exports as tone byte zero on every platform.
+  `std::clamp` passes NaN through and rounding it is unspecified, so the
+  byte a patch file or SysEx dump carried for such a control depended on the
+  machine that wrote it.
 - Finalized the Protocodus bundle and package identifiers for v1 and
   documented migration from the earlier public Pluto Audio nightly builds.
 - A mono host output bus is accepted and carries what the L/MONO jack does:

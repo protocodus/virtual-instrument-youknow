@@ -18,6 +18,13 @@ float travelFromByte(std::uint8_t value) noexcept
 
 std::uint8_t byteFromTravel(float travel) noexcept
 {
+    // std::clamp passes NaN straight through and lround(NaN) is unspecified,
+    // so a control a host left non-finite is pinned here rather than encoded
+    // as whatever byte this platform's rounding happens to produce.
+    // Infinities clamp to the nearer end of the travel like any other
+    // out-of-range value.
+    if (std::isnan(travel))
+        return 0;
     const float clamped = std::clamp(travel, 0.0f, 1.0f);
     // Round rather than truncate, so a value written and read back lands on the
     // same step instead of drifting a step down every trip.

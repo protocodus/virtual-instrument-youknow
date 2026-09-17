@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -421,6 +422,34 @@ void testParameterMessages()
     expect(parameter == 5 && value == 100 && channel == 3,
            "a parameter message did not survive the round trip");
 
+    // Everything that is not this message must be refused and must leave the
+    // caller's outputs alone, exactly as the full-tone framing demands.
+    const auto refuses = [&](std::vector<std::uint8_t> raw, const char* what) {
+        int untouchedParameter = -1, untouchedValue = -1, untouchedChannel = -1;
+        expect(!readParameterMessage(raw.data(), raw.size(), untouchedParameter,
+                                     untouchedValue, untouchedChannel),
+               std::string("accepted ") + what);
+        expect(untouchedParameter == -1 && untouchedValue == -1
+                   && untouchedChannel == -1,
+               std::string("modified the outputs while refusing ") + what);
+    };
+    const std::vector<std::uint8_t> good(message.begin(), message.end());
+    auto other = good; other[1] = 0x43;
+    refuses(other, "a parameter message from another manufacturer");
+    auto opcode = good; opcode[2] = 0x31;
+    refuses(opcode, "a full-tone opcode as a parameter message");
+    auto highNibble = good; highNibble[3] = 0x13;
+    refuses(highNibble, "a parameter message with a dirty channel nibble");
+    auto statusParameter = good; statusParameter[4] = 0x85;
+    refuses(statusParameter,
+            "a parameter message with a status bit in its parameter");
+    auto statusValue = good; statusValue[5] = 0xe4;
+    refuses(statusValue, "a parameter message with a status bit in its value");
+    auto unterminated = good; unterminated[6] = 0x00;
+    refuses(unterminated, "a parameter message with no terminator");
+    auto overlong = good; overlong.push_back(0xf7);
+    refuses(overlong, "an overlong parameter message");
+
     // Applying it must move that control and nothing else.
     Patch patch {};
     const auto before = patch;
@@ -573,6 +602,88 @@ void testASwitchByteLeavesEverythingElseAlone()
                "applying the first switch byte quantised a continuous control");
 }
 
+// A host can leave a parameter non-finite. std::clamp passes NaN through and
+// lround(NaN) is unspecified, so without a guard the exported byte would be
+// whatever this platform's rounding produced. The trip has to be the same
+// everywhere: NaN pins to zero, infinities clamp like any out-of-range value.
+void testNonFiniteTravelEncodesDeterministically()
+{
+    Patch patch {};
+    patch.cutoff = std::numeric_limits<float>::quiet_NaN();
+    patch.resonance = std::numeric_limits<float>::infinity();
+    patch.vcfEnv = -std::numeric_limits<float>::infinity();
+    const auto bytes = bytesOf(patch);
+    expect(bytes[5] == 0, "a NaN control did not encode as zero");
+    expect(bytes[6] == 127, "an infinite control did not clamp to full scale");
+    expect(bytes[7] == 0, "a negative infinite control did not clamp to zero");
+    expect(parameterValue(patch, 5) == 0,
+           "a NaN control read back as something other than zero");
+    const auto decoded = patchFromToneBytes(bytes.data());
+    expect(decoded.cutoff == 0.0f && decoded.resonance == 1.0f
+               && decoded.vcfEnv == 0.0f,
+           "non-finite controls did not come back finite");
+}
+
+// Host program indexing: zero is INIT with no bank entry, 1..128 the hardware
+// memory, 129..144 the product sounds, and nothing else resolves. The product
+// bank has to be as well formed as the archival one without being counted in
+// its corpus hash.
+void testProductBankAndProgramIndexing()
+{
+    const auto& factory = presets::factoryBank();
+    const auto& product = presets::productBank();
+    static_assert(presets::productPresetCount == 16);
+    expect(product.size() == static_cast<std::size_t>(presets::productPresetCount),
+           "the product bank is not the size it declares");
+
+    constexpr int lastProgram = presets::presetCount + presets::productPresetCount;
+    for (const int index : { -1, 0, lastProgram + 1, 1000 })
+        expect(presets::programPreset(index) == nullptr,
+               "host program " + std::to_string(index) + " resolved to a bank entry");
+    for (int index = 1; index <= presets::presetCount; ++index)
+        expect(presets::programPreset(index)
+                   == &factory[static_cast<std::size_t>(index - 1)],
+               "host program " + std::to_string(index) + " is not its hardware slot");
+    for (int index = presets::presetCount + 1; index <= lastProgram; ++index)
+        expect(presets::programPreset(index)
+                   == &product[static_cast<std::size_t>(index - presets::presetCount - 1)],
+               "host program " + std::to_string(index) + " is not its product slot");
+
+    for (std::size_t a = 0; a < product.size(); ++a)
+    {
+        const auto& preset = product[a];
+        expect(preset.number != nullptr && preset.name != nullptr,
+               "a product preset has no number or name");
+        const std::string where = std::string(preset.number) + " " + preset.name;
+        const std::array<char, 4> expectedNumber {
+            'Y', a < 8 ? 'B' : 'P', static_cast<char>('1' + a % 8), '\0'
+        };
+        expect(std::strcmp(preset.number, expectedNumber.data()) == 0,
+               where + " is not in YB1..YB8/YP1..YP8 order");
+        expect(presets::findByNumber(preset.number) == &preset,
+               "cannot look up product preset " + where);
+        expect(preset.exportsLosslessly(),
+               where + " does not survive the hardware patch memory");
+
+        const auto& patch = preset.patch;
+        const float* travel[] = {
+            &patch.lfoRate, &patch.lfoDelay, &patch.dcoLfo, &patch.pwm,
+            &patch.noise, &patch.cutoff, &patch.resonance, &patch.vcfEnv,
+            &patch.vcfLfo, &patch.keyFollow, &patch.vcaLevel, &patch.attack,
+            &patch.decay, &patch.sustain, &patch.release, &patch.sub
+        };
+        for (const auto* value : travel)
+            expect(*value >= 0.0f && *value <= 1.0f,
+                   where + " has a control outside its travel");
+        // VR1 positions are attenuation-only trims below the nominal 0.80.
+        expect(preset.controls.volume > 0.0f && preset.controls.volume <= 0.8f,
+               where + " has a VR1 position outside the attenuation-only range");
+        for (std::size_t b = a + 1; b < product.size(); ++b)
+            expect(std::string(preset.number) != product[b].number,
+                   std::string("duplicate product preset number ") + preset.number);
+    }
+}
+
 // The shipped bank is a byte-for-byte hardware-memory fixture, not a set of
 // rebalanced product sounds. Every entry has to occupy the canonical slot,
 // survive the real message format, and retain the independently verified
@@ -612,6 +723,10 @@ void testFactoryBankIsWellFormed()
         for (const auto* value : travel)
             expect(*value >= 0.0f && *value <= 1.0f,
                    where + " has a control outside its travel");
+        // The VR1 table is a fixed-size array a dropped entry silently
+        // zero-fills; a factory program with no output would be the symptom.
+        expect(preset.controls.volume > 0.0f && preset.controls.volume <= 0.8f,
+               where + " has a VR1 position outside the attenuation-only range");
 
         // Every entry must survive a trip through a real patch message, which
         // is what makes the bank sendable to hardware. Continuous decimals are
@@ -718,6 +833,8 @@ int main()
     testParameterMessages();
     testDefensiveNullAndCapacityGuards();
     testASwitchByteLeavesEverythingElseAlone();
+    testNonFiniteTravelEncodesDeterministically();
+    testProductBankAndProgramIndexing();
     testFactoryBankIsWellFormed();
 
     if (failures > 0)
