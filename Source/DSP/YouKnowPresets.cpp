@@ -363,8 +363,11 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 // Fourteen hot programs receive further VR1 attenuation, targeting 0.05 dB
 // below the same ceiling, with their hardware tone bytes unchanged. The final
 // full-score rerenders retain at least 0.04 dB of margin.
+// The 2026-09-17 chorus Mode I blend (Docs/decisions.md) put A11 0.08 dB
+// over the gated ceiling; its VR1 position goes from 0.800 to 0.788, the
+// same 0.05 dB target below the ceiling, tone bytes unchanged.
 constexpr std::array<float, presetCount> factoryVolume {{
-    0.800f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
+    0.788f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
     0.446f, 0.547f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.744f, 0.800f, 0.394f, 0.596f, 0.617f, 0.800f, 0.775f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.237f,

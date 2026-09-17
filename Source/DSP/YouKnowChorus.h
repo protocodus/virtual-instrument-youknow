@@ -36,11 +36,13 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 
 // Which Mode I timing coordinates the chorus runs on.
 //
-// Comparison-only. Shipping is the default and the only one a product build
-// selects; the rest exist so the four candidates OQ-01 names can be rendered
-// against each other. Their evidence differs: one is an effective recording
-// fit, one a clock-click estimate, and one a conditional circuit calculation.
-// None establishes original-unit population calibration.
+// Shipping is the engine default, the reference configuration every frozen
+// fingerprint tests; the product selects OwnerBlend (ProductFidelityProfile),
+// the owner's by-ear decision of 2026-09-17 between the three candidates
+// OQ-01 names (Docs/decisions.md). The candidates' evidence differs: one is
+// an effective recording fit, one a clock-click estimate, and one a
+// conditional circuit calculation. None establishes original-unit
+// population calibration, and the blend is not a measurement of any unit.
 //
 //   Shipping        The third-party scope measurement of a designator-faithful
 //                   clone board: 3.9 ms centre, +/-2.5 ms, at the schematic's
@@ -54,12 +56,18 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 //   DerivedNominal  Conditional p. 15 oscillator estimate with nominal C53
 //                   and assumed current, junction drops, output saturation
 //                   and reset dead time. Not an installed tolerance bound.
+//   OwnerBlend      The 1:2:1 mean of Shipping, A11Spectral and
+//                   A11ClickTiming -- the identified unit's spectral fit
+//                   counted twice -- chosen by ear as a compromise weighted
+//                   towards that fit: 3.49 ms centre, +/-2.04 ms, 0.5248 Hz.
+//                   Mode II is untouched, as with the others.
 enum class ChorusTimingProfile
 {
     Shipping,
     A11Spectral,
     A11ClickTiming,
-    DerivedNominal
+    DerivedNominal,
+    OwnerBlend
 };
 
 // The four parameter states map one-to-one to the four button combinations.

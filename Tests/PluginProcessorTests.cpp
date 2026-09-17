@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "PublicParameterOrder.h"
+#include "DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -575,7 +576,9 @@ EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& proce
         juce::roundToInt (value (parameters::vcfFastEarlyMode)));
     result.vcfSolverMode = static_cast<VcfSolverMode> (
         juce::roundToInt (value (parameters::vcfSolverMode)));
-    result.useServiced439522VcfCalibration = true;
+    // The product's own circuit selections, so a new one reaches the
+    // reference the moment the processor takes it up.
+    youknow::ProductFidelityProfile::applyTo (result);
     return result;
 }
 

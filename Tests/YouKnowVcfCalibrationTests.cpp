@@ -105,7 +105,9 @@ int main()
                 parameters.sawEnabled = parameters.pulseEnabled = false;
                 parameters.subLevel = parameters.noiseLevel = 0;
                 // Isolate the control branch from the separate audio-load
-                // supply-droop model while preserving every card trim.
+                // supply-droop model, and from the rail ripple that moves the
+                // reference every sample, while preserving every card trim.
+                parameters.enableRailRipple = false;
                 parameters.enableVcfStageOffsets = false;
                 parameters.enablePulseOffWaveNodeCoupling = false;
                 parameters.chorus = youknow::ChorusMode::Off;
