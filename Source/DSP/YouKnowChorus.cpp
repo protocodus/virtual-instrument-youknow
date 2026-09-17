@@ -663,6 +663,13 @@ Chorus::ModeSettings Chorus::settingsFor(
     constexpr float sweep = 0.5f * (0.0064f - 0.0014f);
     constexpr float rateOne = static_cast<float>(derivedRateHz(true));
     constexpr float rateTwo = static_cast<float>(derivedRateHz(false));
+    // The identified unit's two Mode I readings (ChorusTimingProfile).
+    constexpr float spectralRate = 0.5159334275f;
+    constexpr float spectralCentre = 0.00338027575f;
+    constexpr float spectralSweep = 0.00176176683f;
+    constexpr float clickRate = 0.514f;
+    constexpr float clickCentre = 0.00330f;
+    constexpr float clickSweep = 0.00213f;
     switch (mode)
     {
         case ChorusMode::One:
@@ -683,9 +690,20 @@ Chorus::ModeSettings Chorus::settingsFor(
             switch (timingProfile)
             {
                 case ChorusTimingProfile::A11Spectral:
-                    return { 0.5159334275f, 0.00338027575f, 0.00176176683f, lineGain };
+                    return { spectralRate, spectralCentre, spectralSweep, lineGain };
                 case ChorusTimingProfile::A11ClickTiming:
-                    return { 0.514f, 0.00330f, 0.00213f, lineGain };
+                    return { clickRate, clickCentre, clickSweep, lineGain };
+                case ChorusTimingProfile::OwnerBlend:
+                    // The owner's by-ear decision of 2026-09-17
+                    // (Docs/decisions.md): the mean of the shipping clone
+                    // endpoints, the identified unit's spectral fit counted
+                    // twice and its click-timing coordinates -- a compromise
+                    // weighted towards the fit, not a measurement of any
+                    // unit: 3.49 ms centre, +/-2.04 ms, 0.5248 Hz.
+                    return { 0.25f * (rateOne + 2.0f * spectralRate + clickRate),
+                             0.25f * (centre + 2.0f * spectralCentre + clickCentre),
+                             0.25f * (sweep + 2.0f * spectralSweep + clickSweep),
+                             lineGain };
                 case ChorusTimingProfile::DerivedNominal:
                     // Conditional estimate, not a measured hardware bound:
                     // Roland p. 15 puts R123=1.8k and R125=10k in the base

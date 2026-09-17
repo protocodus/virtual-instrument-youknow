@@ -1231,26 +1231,42 @@ with its `key.md` unread by design.
 new defaults stand. Chosen by ear, not settled by a measurement.
 `VCF Tanh = Exact` remains the one-menu revert.
 
+## 2026-09-17 — Chorus Mode I timing (OQ-01)
+
+The sweep *law* is derived rather than borrowed: the p. 15 oscillator
+charges C53 at Tr19's fixed current against a threshold the TP4 triangle
+sets, so the delay is linear in the LFO and the trajectory is the circuit's
+own. What the derivation does not fix is where the sweep sits: a conditional
+calculation gives half-depth 1.72–1.94 ms and centre 2.79–3.43 ms from
+assumed current, saturation, junction drops and reset dead time, not
+installed-part tolerance bounds. Three candidates were each defensible on
+their own evidence, so the direction was a listening decision, not a fit.
+They were rendered as a level-matched A/B/C set — one chord of saw plus
+pulse through chorus I at Unit Character 1, whole-file RMS matched to A
+(B +0.419 dB, C +0.284 dB), the key unread until after the choice:
+
+- **A** the shipping engine: the designator-faithful clone's scope reading,
+  3.9 ms centre, ±2.5 ms, at the schematic's derived 0.5533 Hz; outside
+  the conditional interval on both counts.
+- **B** `ChorusTimingProfile::A11Spectral`: identified unit #439522's
+  spectral fit, 3.3803 ms, ±1.7618 ms, 0.51593 Hz; inside the interval.
+- **C** `ChorusTimingProfile::A11ClickTiming`: the same unit read from its
+  clock-click series, 3.30 ms, ±2.13 ms, 0.514 Hz; depth about 10 % above
+  the interval.
+
+**Verdict, by ear:** the owner chose a point between the three, weighted
+towards B, recorded as the 1:2:1 mean of A, B and C with B counted twice:
+3.49 ms centre, ±2.04 ms, 0.5248 Hz. It ships as
+`ChorusTimingProfile::OwnerBlend`, selected by the product profile; the
+engine default stays on A as the reference configuration the frozen
+fingerprints test. This is a compromise chosen by ear between two
+estimators of one unit and a clone's reading. It is not a measurement of
+any unit, and it does not make B's or C's coordinates measured facts of
+the installed delay. Mode II is unchanged; an identified original-unit
+capture of Mode II remains open.
+
 ## Pending
 
-- **Chorus Mode I timing (OQ-01), an A–Z question.** The sweep *law* is now
-  derived rather than borrowed: the p. 15 oscillator charges C53 at Tr19's
-  fixed current against a threshold the TP4 triangle sets, so the delay is
-  linear in the LFO and the shipped trajectory is the circuit's own. What the
-  derivation does not fix is where the sweep sits. A conditional calculation
-  gives half-depth 1.72–1.94 ms and centre 2.79–3.43 ms using assumed current,
-  saturation, junction drops and reset dead time. These are not installed-part
-  tolerance bounds. TP4's 9.1–9.8 V is peak amplitude, twice that peak-to-peak.
-  The identified
-  unit reads 3.38 ms / 1.76 ms spectrally and 3.30 ms / 2.13 ms by click
-  timing; the shipping values are a designator-faithful clone's 3.9 ms /
-  2.5 ms, outside that conditional interval on both counts. This does not prove
-  those endpoints physically impossible; the click depth also exceeds the
-  assumed interval. Three candidates are
-  each defensible, so the direction is a listening decision, not a fit:
-  A the shipping clone endpoints, B the identified unit's spectral fit
-  (selectable as `ChorusTimingProfile::A11Spectral`), C its
-  click-timing coordinates. Nothing moves until the owner has heard them.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.

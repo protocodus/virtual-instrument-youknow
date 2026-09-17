@@ -68,7 +68,9 @@ ChorusTimingProfile chorusProfile(const std::string& name)
         return ChorusTimingProfile::A11ClickTiming;
     if (name == "derived")
         return ChorusTimingProfile::DerivedNominal;
-    throw std::runtime_error("chorus profile must be nominal, a11-effective, a11-click or derived");
+    if (name == "owner-blend")
+        return ChorusTimingProfile::OwnerBlend;
+    throw std::runtime_error("chorus profile must be nominal, a11-effective, a11-click, derived or owner-blend");
 }
 
 const char* chorusProfileName(ChorusTimingProfile profile)
@@ -78,6 +80,7 @@ const char* chorusProfileName(ChorusTimingProfile profile)
         case ChorusTimingProfile::A11Spectral: return "a11-effective";
         case ChorusTimingProfile::A11ClickTiming: return "a11-click";
         case ChorusTimingProfile::DerivedNominal: return "derived";
+        case ChorusTimingProfile::OwnerBlend: return "owner-blend";
         case ChorusTimingProfile::Shipping: return "nominal";
     }
     throw std::runtime_error("invalid chorus profile");

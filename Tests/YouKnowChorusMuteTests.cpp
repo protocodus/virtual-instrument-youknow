@@ -5,6 +5,7 @@
 // parameters or the separate 5 ms plug-in wet-return fade.
 #include "../Source/DSP/YouKnowChorus.h"
 #include "../Source/DSP/YouKnowEngine.h"
+#include "../Source/DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -242,7 +243,8 @@ void checkEffectiveProfileIsolation()
     // second chorus.
     for (const auto profile : { ChorusTimingProfile::A11Spectral,
                                 ChorusTimingProfile::A11ClickTiming,
-                                ChorusTimingProfile::DerivedNominal })
+                                ChorusTimingProfile::DerivedNominal,
+                                ChorusTimingProfile::OwnerBlend })
     {
         for (const auto mode : { ChorusMode::Off, ChorusMode::One,
                                  ChorusMode::Two, ChorusMode::OneTwo })
@@ -259,6 +261,30 @@ void checkEffectiveProfileIsolation()
                         ? "a timing candidate left Mode I where shipping has it"
                         : "a timing candidate reached a mode other than Mode I");
         }
+    }
+
+    // The owner's blend is exactly the 1:2:1 mean of A, B and C in Mode I,
+    // and it is what the product selects (Docs/decisions.md, 2026-09-17).
+    {
+        const auto a = Chorus::settingsFor(ChorusMode::One);
+        const auto b = Chorus::settingsFor(ChorusMode::One, ChorusTimingProfile::A11Spectral);
+        const auto c = Chorus::settingsFor(ChorusMode::One, ChorusTimingProfile::A11ClickTiming);
+        const auto blend = Chorus::settingsFor(ChorusMode::One, ChorusTimingProfile::OwnerBlend);
+        const auto mean = [](double x, double y, double z) { return 0.25 * (x + 2.0 * y + z); };
+        require(std::abs(blend.centreDelaySeconds
+                         - mean(a.centreDelaySeconds, b.centreDelaySeconds, c.centreDelaySeconds)) < 1.0e-9
+                    && std::abs(blend.sweepSeconds
+                                - mean(a.sweepSeconds, b.sweepSeconds, c.sweepSeconds)) < 1.0e-9
+                    && std::abs(blend.rateHz - mean(a.rateHz, b.rateHz, c.rateHz)) < 1.0e-7,
+                "the owner's blend is not the 1:2:1 mean of A, B and C");
+        require(std::abs(blend.centreDelaySeconds - 0.00349) < 1.0e-5
+                    && std::abs(blend.sweepSeconds - 0.00204) < 1.0e-5
+                    && std::abs(blend.rateHz - 0.5248) < 1.0e-4,
+                "the owner's blend left its recorded 3.49 ms / 2.04 ms / 0.5248 Hz");
+        youknow::EngineParameters product;
+        youknow::ProductFidelityProfile::applyTo(product);
+        require(product.chorusTimingProfile == ChorusTimingProfile::OwnerBlend,
+                "the product does not select the owner's blend");
     }
 
     for (const auto mode : { ChorusMode::Off, ChorusMode::One, ChorusMode::Two, ChorusMode::OneTwo })

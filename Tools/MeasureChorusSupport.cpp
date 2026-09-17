@@ -32,6 +32,8 @@ int main(int argc, char** argv)
             profile = youknow::ChorusTimingProfile::A11ClickTiming;
         else if (selected == "derived")
             profile = youknow::ChorusTimingProfile::DerivedNominal;
+        else if (selected == "owner-blend")
+            profile = youknow::ChorusTimingProfile::OwnerBlend;
         else if (selected != "shipping")
         {
             std::cerr << "unknown timing profile: " << selected << '\n';
