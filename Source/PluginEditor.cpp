@@ -1710,9 +1710,9 @@ YouKnowAudioProcessorEditor::YouKnowAudioProcessorEditor (YouKnowAudioProcessor&
     // things -- the scope's own vertical gain, and the oversampling factor the
     // engine actually applied. Naming both is the point of listing all six.
     display.setTooltip (
-        "Shows the six physical voice cards and the active voice limit, LFO "
-        "and envelope motion, the modelled chassis temperature and supply "
-        "rail, and the output waveform. The scope prints its own vertical "
+        "Shows one lamp per voice up to the POLYPHONY limit with the active "
+        "count, LFO and envelope motion, the modelled chassis temperature and "
+        "supply rail, and the output waveform. The scope prints its own vertical "
         "gain; the corner below it prints the oversampling the engine applied "
         "and the internal rate that produces, which can be lower than QUALITY "
         "asked for.");
@@ -2866,17 +2866,8 @@ void YouKnowAudioProcessorEditor::attachPolyButton (
         };
         const bool ownWasOn = isOn (parameterId);
         const bool otherWasOn = isOn (otherParameterId);
-
-        const auto set = [this] (const char* id, bool on)
-        {
-            if (auto* target = audioProcessor.parameters.getParameter (id))
-            {
-                const float wanted = on ? 1.0f : 0.0f;
-                target->beginChangeGesture();
-                target->setValueNotifyingHost (target->convertTo0to1 (wanted));
-                target->endChangeGesture();
-            }
-        };
+        const auto ownMode = std::strcmp (parameterId, parameters::poly1) == 0
+                           ? KeyMode::Poly1 : KeyMode::Poly2;
 
         // A mouse cannot hold both panel contacts at once. Shift-click is the
         // explicit virtual equivalent of the hardware's simultaneous press;
@@ -2891,8 +2882,7 @@ void YouKnowAudioProcessorEditor::attachPolyButton (
                 audioProcessor.requestKeyModeReassert();
                 return;
             }
-            set (parameterId, true);
-            set (otherParameterId, true);
+            audioProcessor.setKeyModeFromUi (KeyMode::Unison);
             return;
         }
 
@@ -2904,19 +2894,11 @@ void YouKnowAudioProcessorEditor::attachPolyButton (
             return;
         }
 
-        if (ownWasOn && otherWasOn)
-        {
-            // From Solo Unison, pressing one contact alone selects that mode.
-            set (otherParameterId, false);
-            return;
-        }
-
-        // A normal press selects this single mode. Clear the other parameter
-        // first: the transient both-off pair canonicalises to the previous/
-        // target Poly 1 behavior, whereas setting this one first would render
-        // an unintended block of Unison during a Poly 1 -> Poly 2 change.
-        set (otherParameterId, false);
-        set (parameterId, true);
+        // A normal press selects this single mode, whether from the other
+        // solo mode or from Solo Unison. The processor writes the pair as one
+        // transaction, so neither the audio thread nor a host saving state
+        // from the first notification sees the contact in between.
+        audioProcessor.setKeyModeFromUi (ownMode);
     };
     auto* pointer = attachment.get();
     auto* companionPointer = companion.get();
@@ -2971,15 +2953,7 @@ void YouKnowAudioProcessorEditor::attachUnisonButton (juce::Button& button)
             return;
         }
 
-        for (const char* id : { parameters::poly1, parameters::poly2 })
-        {
-            if (auto* target = audioProcessor.parameters.getParameter (id))
-            {
-                target->beginChangeGesture();
-                target->setValueNotifyingHost (target->convertTo0to1 (1.0f));
-                target->endChangeGesture();
-            }
-        }
+        audioProcessor.setKeyModeFromUi (KeyMode::Unison);
     };
 
     auto* firstPointer = firstAttachment.get();

@@ -133,6 +133,9 @@ public:
     // Keep a physical button press atomic for audio snapshots and re-entrant
     // host state saves while still notifying both existing automation lanes.
     void setChorusModeFromUi (youknow::ChorusMode mode);
+    // Likewise for the assign pair: POLY 1, POLY 2 and their simultaneous
+    // press are one firmware transition spread over two parameters.
+    void setKeyModeFromUi (youknow::KeyMode mode);
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
     // Re-pressing the currently selected POLY mode is an event on the hardware
     // even though its latched parameter value does not change.
@@ -529,6 +532,9 @@ private:
     // Applies one tone parameter to the parameters it actually names, and to
     // no others.
     void applyToneParameterValues (int parameter, int value);
+    // One panel contact written as a host gesture; a contact already in the
+    // requested position is left alone so the host is not notified for it.
+    void writePanelSwitch (const char* id, bool on);
 
     enum class PendingMidiEventKind
     {

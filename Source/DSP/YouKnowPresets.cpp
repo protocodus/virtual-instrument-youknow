@@ -469,11 +469,10 @@ struct BankStorage
     }
 };
 
-const BankStorage bankStorage;
-
 // Original product sounds, not archival hardware programs. Each is a normal
 // panel patch with its visible performance setup; no private DSP or gain path.
-const std::array<Preset, productPresetCount> productPresets = [] {
+std::array<Preset, productPresetCount> buildProductPresets()
+{
     Preset::Controls bass;
     bass.volume = 0.50f;
     bass.keyMode = KeyMode::Unison;
@@ -606,17 +605,22 @@ const std::array<Preset, productPresetCount> productPresets = [] {
     result[12].controls.volume = 0.427f;  // Hollow Choir
     result[14].controls.volume = 0.442f;  // Resonant Mist
     return result;
-}();
+}
 } // namespace
 
+// Both banks are built on first use rather than at namespace scope, so a
+// caller running inside another translation unit's static initialisation
+// gets a built bank instead of a zeroed one with null names.
 const std::array<Preset, presetCount>& factoryBank() noexcept
 {
-    return bankStorage.presets;
+    static const BankStorage storage;
+    return storage.presets;
 }
 
 const std::array<Preset, productPresetCount>& productBank() noexcept
 {
-    return productPresets;
+    static const auto presets = buildProductPresets();
+    return presets;
 }
 
 const Preset* programPreset(int hostProgramIndex) noexcept
@@ -633,10 +637,10 @@ const Preset* findByNumber(const char* number) noexcept
 {
     if (number == nullptr)
         return nullptr;
-    for (const auto& preset : bankStorage.presets)
+    for (const auto& preset : factoryBank())
         if (std::strcmp(preset.number, number) == 0)
             return &preset;
-    for (const auto& preset : productPresets)
+    for (const auto& preset : productBank())
         if (std::strcmp(preset.number, number) == 0)
             return &preset;
     return nullptr;

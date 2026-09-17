@@ -1997,25 +1997,46 @@ void YouKnowAudioProcessor::randomizeParameters (float amount)
 
 }
 
+void YouKnowAudioProcessor::writePanelSwitch (const char* id, bool on)
+{
+    auto* target = parameters.getParameter (id);
+    if (target == nullptr || (target->getValue() > 0.5f) == on)
+        return;
+
+    target->beginChangeGesture();
+    target->setValueNotifyingHost (target->convertTo0to1 (on ? 1.0f : 0.0f));
+    target->endChangeGesture();
+}
+
 void YouKnowAudioProcessor::setChorusModeFromUi (
     youknow::ChorusMode mode)
 {
     using namespace youknow::parameters;
 
     ScopedParameterWrite write { *this };
-    const auto set = [this] (const char* id, bool on)
-    {
-        auto* target = parameters.getParameter (id);
-        if (target == nullptr || (target->getValue() > 0.5f) == on)
-            return;
+    writePanelSwitch (chorusI, youknow::chorusOneEngaged (mode));
+    writePanelSwitch (chorusII, youknow::chorusTwoEngaged (mode));
+}
 
-        target->beginChangeGesture();
-        target->setValueNotifyingHost (target->convertTo0to1 (on ? 1.0f : 0.0f));
-        target->endChangeGesture();
-    };
+void YouKnowAudioProcessor::setKeyModeFromUi (youknow::KeyMode mode)
+{
+    using namespace youknow::parameters;
 
-    set (chorusI, youknow::chorusOneEngaged (mode));
-    set (chorusII, youknow::chorusTwoEngaged (mode));
+    // The audio thread and a re-entrant host save both see the finished
+    // pair, never the contact between the two writes. Contacts open before
+    // contacts close so the host's own notification order never passes
+    // through a Unison the player did not press either.
+    ScopedParameterWrite write { *this };
+    const bool one = youknow::poly1Engaged (mode);
+    const bool two = youknow::poly2Engaged (mode);
+    if (! one)
+        writePanelSwitch (poly1, false);
+    if (! two)
+        writePanelSwitch (poly2, false);
+    if (one)
+        writePanelSwitch (poly1, true);
+    if (two)
+        writePanelSwitch (poly2, true);
 }
 
 juce::ValueTree YouKnowAudioProcessor::copyStateForSave (int& program)
