@@ -1440,6 +1440,35 @@ the measurement or decision it waits on.
 | Chorus and DCO clock items | OQ-15, OQ-03, OQ-04 | Wait on those captures. |
 | 80017A die self-heating | A borrowed thermal resistance predicts 47–140 cents at the top of the range, which experience with the instrument contradicts | The capture request above stands; not modelled. |
 
+#### Provenance list checked, 17 September 2026
+
+A third-party summary of "every hardware recording, measurement, service
+document and schematic referenced by the engine" was checked against the
+repository's own records and, where it disagreed with them, against the
+drawings. Its recordings, hashes, issue references, the six
+`serviced439522Vcf` rows, the A11 chorus fit and the data-sheet figures are
+this repository's own, restated; nothing in it is new evidence and nothing
+in it changes a decision. Its wrong readings are recorded here so they are
+not proposed again:
+
+| Claim | The record | Verdict |
+| --- | --- | --- |
+| Boost HPF on "p. 14 (main board)": IC4 a TA75558, C8 0.068 µF, C9 0.01 µF | The switched HPF is on the p. 15 jack board: C9 .047, C8 .01, C10 .015, C11 .0047 and C6 .022 at 400 dpi, and IC4 is an M5218L. The TA75558S on that board is IC6, the output summer. | Wrong page, wrong values, wrong part; the same values were rejected in the ten-proposal audit above. |
+| Chorus mute "Tr4/Tr5 delay: C13 10 µF, C16 4.7 µF, R48 47 kΩ" | p. 15 at 300 dpi: R50 10 kΩ, C16 2.2/50, R48 150 kΩ, R49 560 kΩ, C13 1/50, R42 39 kΩ, R43 100 kΩ, R46 330 Ω, R47 330 kΩ, D3, and D4/D5 into the Tr11/Tr12 2SK30A gates — the values `YouKnowChorus.h` carries. | Wrong by five to ten times; the engine's 80.2 ms and 120.6 ms mute timings stand. |
+| DCO ramp parts on "p. 9 (DCO & VCF)": C54 0.001 µF, R85 399 kΩ, R86 200 kΩ, R87 100 kΩ | The values are right; the 106's module board is p. 12. Page 9 is the JUNO-6/60 CPU board the engine cites for the 240PJ stage capacitors and the R42 47 kΩ load. | Wrong page, right values. |
+| JUNO-6/60 p. 9 "differential resonance input network R5/R2 and R3/R1" | The engine reads the resonance input-side compensation from the 106 module drawing and the Open80017a netlist; the JUNO-6/60 page supplies the 240 pF capacitors and the 47 kΩ load. | Unverified designators; not a source the engine uses for that network. |
+| OKI MSM82C53-2 databook "p. 186, count edge on the TP5 falling edge driving C54 discharge"; NEC µPD7810 "172-state ADC service vector, 43 µs at 4 MHz" | The engine discharges C54 on the M82C53 OUT low-to-high transition; TP5 is the count clock. No databook page is cited for either part, and the firmware trace takes its timing from the B-2 ROM itself. | Unverified, and the edge description does not match the drawing-derived model; nothing adopted. |
+
+Everything else in the list — unit #439522 with Borish replacement cards
+installed and calibrated in 2022, the M-Track 2x2 interface, the 192 kHz
+six-card sweep (`27ab9ed0…`), the 96 kHz calibration capture (`a9282c4a…`)
+and its MIDI archive (`c9727669…`), the six card rows, the A11 spectral fit
+and click series, p. 19's trim targets, p. 13's D6, R101/R102, C56 10 µF and
+C58 0.1 µF, the Open80017a 3.969 kΩ input impedance, the owner's manual's
+`0x31` message, the ROM line ranges, the MN3009 ±4 dB row and the µPC1252H2
+−94 dBV floor — restates `Docs/hardware-validation.md`,
+`Source/DSP/YouKnowReferenceVcf.h` and the comments beside the constants.
+
 #### Other methods assessed
 
 The following decisions distinguish a useful research method from evidence
