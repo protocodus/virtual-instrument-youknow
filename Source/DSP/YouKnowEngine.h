@@ -463,6 +463,42 @@ struct EngineParameters
     // stays on top as the spread that survives the adjustment. False leaves
     // every card's full travel at maximumFeedback for controlled A/B renders.
     bool enableResonanceServiceTrim { true };
+    // On in the product, off in the engine's reference configuration (see
+    // the end of this note): between the scan's refreshes each 10 nF hold ramps at
+    // the sum of its mux channel's off-leakage and its follower's input
+    // bias -- Hitachi's 10 pA typical for the HD14051B, and TI's 25 C
+    // typicals for the followers p. 13 names: 65 pA (TL08xC: IC16/19/20
+    // '072 or 082' and IC17b '082') behind IC24's DCO and SUB holds, 30 pA
+    // (TL064C: IC15/18 and IC21/22 '064') behind IC23's VCF, PWM and VCA
+    // LEVEL holds and IC26's ENV, RES and NOISE holds. So a held control
+    // sags 7.5 mV/s (DCO, SUB) or 4 mV/s (the rest) until its next write
+    // 4.2 ms later, 0.013 or 0.007 of the 2.45 mV LSB, and the followers'
+    // junction leakage doubles every 10 C of board temperature as TI
+    // states, so a warm unit droops more. The direction is a stated
+    // convention: the sheets give magnitudes only, and this engine takes
+    // the current as leaving the hold (the envelope-hold circuit's sign),
+    // so a held voltage falls. Applied on the drift cadence, in each hold's
+    // own units (converterHoldDroopVoltsPerSecond). Off in the engine's
+    // reference configuration, whose hold-exactness fingerprints pin ideal
+    // holds (a written value stays put until the next write);
+    // ProductFidelityProfile switches it on for the product, like the
+    // serviced VCF calibration, and controlled A/B renders leave it off.
+    bool enableConverterHoldDroop { false };
+    // On by default: the regulated +/-15 V card rail carries what the
+    // rectifier ripple leaves after IC2, the M5230L dual tracking regulator
+    // whose sheet gives 68 dB typical ripple rejection at 120 Hz. p. 16's
+    // 3300 uF reservoirs behind the 19 Vrms, 0.25 A secondary put a 0.63 Vpp
+    // sawtooth on them at 60 Hz mains if the secondary is drawn at its
+    // rating; the sawtooth's 120 Hz fundamental (peak 2/pi of its
+    // half-swing, 0.20 V) arrives at the rail 68 dB down, 80 uV peak, and
+    // moves the cutoff through the same voiced 35 counts/V the load droop
+    // uses: 0.003 cents peak under Unit Character and exactly nothing at
+    // zero. Sixty hertz because the identified reference unit's background
+    // capture carries 120 Hz rail hum (mainsFrequencyHz). The rated
+    // secondary current stands in for the unmeasured draw, the rejection is
+    // a typical, and the sawtooth's harmonics get no published rejection
+    // and are left out. False removes the ripple.
+    bool enableRailRipple { true };
 
     // Hosts commonly present the same complete parameter snapshot on every
     // block. Value equality is the right test for that public control image:
@@ -2047,13 +2083,16 @@ private:
     // Direct assignment remains an ideal-acquisition approximation, not a
     // demonstrated two-sample settling bound. The retired 522 us DCO/NOISE
     // slews have no post-hold capacitor/resistor network to justify them.
-    // Droop and charge injection remain unmeasured and unmodelled. At the
-    // table's typical 10 pA off-channel leakage, plus TI's 25 C typical
-    // follower bias (65 pA TL08xC for DCO; 30 pA TL064C for IC22d NOISE),
-    // same-sign constant-current examples give 31.5/16.8 uV over 4.2 ms on
-    // 10 nF, against a 2.44 mV LSB. These are scale estimates, not installed
-    // limits or a measured drift direction; 1 uA maximum leakage is not a
-    // nominal noise or droop source. References and supply-node derivation:
+    // Charge injection remains unmeasured and unmodelled. Droop ships at
+    // the sheets' typicals (EngineParameters::enableConverterHoldDroop):
+    // the table's 10 pA off-channel leakage plus TI's 25 C typical follower
+    // bias -- 65 pA TL08xC behind IC24's DCO and SUB holds, 30 pA TL064C
+    // behind IC23's and IC26's (IC15/18 and IC21/22 are '064x2') -- gives
+    // 31.5/16.8 uV over 4.2 ms on 10 nF, against a 2.45 mV LSB, with the
+    // follower's share doubling every 10 C. Those are typicals and a
+    // convention for the sign, not installed limits or a measured drift
+    // direction; 1 uA maximum leakage is not a nominal noise or droop
+    // source. References and supply-node derivation:
     // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13
     // https://akizukidenshi.com/goodsaffix/hd14051b_e.pdf#page=2
     // https://www.ti.com/lit/ds/symlink/tl082.pdf (TL08xC bias table)
@@ -2078,6 +2117,29 @@ private:
                       < 1.0f / 192000.0f,
                   "the conditional 15 V reference RC time constant exceeds "
                   "one sample at the 192 kHz reference");
+    // What ramps a hold between its writes (see
+    // EngineParameters::enableConverterHoldDroop): Hitachi's 25 C typical
+    // off-channel leakage for the HD14051B, and TI's 25 C typical input bias
+    // for the two follower families p. 13 names. TI states an FET input's
+    // bias current "approximately doubles for every 10 C" of temperature.
+    // https://akizukidenshi.com/goodsaffix/hd14051b_e.pdf#page=2
+    // https://www.ti.com/lit/ds/symlink/tl082.pdf (TL08xC, 65 pA typ)
+    // https://www.ti.com/lit/ds/symlink/tl064.pdf (TL064C, 30 pA typ)
+    static constexpr float hd14051OffLeakageAmps = 10.0e-12f;
+    static constexpr float tl08xInputBiasAmps = 65.0e-12f; // IC24's followers: DCO, SUB
+    static constexpr float tl064InputBiasAmps = 30.0e-12f; // IC23's and IC26's followers
+    static constexpr float fetBiasDoublingCelsius = 10.0f;
+    // One R-2R DAC serves every hold. IC28a (R131 10k over R130 4.99k, the
+    // network commonVcaBufferGain derives) buffers it for IC24 and IC23, so
+    // their holds see 5 V * 10k/4.99k across 4096 codes; IC27b buffers it
+    // for IC26 at ControlDac::positiveBranchSpanVolts. Both are about
+    // 2.45 mV per code.
+    static constexpr float invertingBranchLsbVolts =
+        5.0f / 4096.0f * (10000.0f / 4990.0f);
+    // The rate a hold's voltage falls at the modelled board temperature:
+    // (mux leakage + follower bias * 2^((T - 25 C) / 10 C)) / 10 nF.
+    [[nodiscard]] static float converterHoldDroopVoltsPerSecond(
+        float followerBiasAmps, float boardCelsius) noexcept;
     // The RESO CV destination has no post-hold network at all, so it is not on
     // the list above. IC26's C86 ('.01x8') feeds IC22c, whose output runs as
     // bare wire into the card, through VR26 20KB and R107 27k to the
@@ -2106,6 +2168,24 @@ private:
     // the droop has one transfer rather than an unlabelled number at the
     // summing point. Voiced, like the droop coefficient it multiplies.
     static constexpr float railToCutoffCountsPerVolt = 35.0f;
+    // Rectifier ripple on the card rail (see EngineParameters::enableRailRipple).
+    // Power supply board p. 16: the +/-15 V reservoirs are 3300 uF/35 V
+    // behind the RED-BLK secondary rated 19 Vrms at 0.25 A, and IC2 is an
+    // M5230L dual tracking regulator; its sheet (Mitsubishi General Purpose
+    // ICs databook, 1987, p. 4-8) specifies ripple rejection 68 dB typical
+    // at 120 Hz. The identified reference unit's background capture carries
+    // 120 Hz rail hum, so it runs on 60 Hz mains; the transformer's primary
+    // takes 100, 117, 220 or 240 V at either mains frequency.
+    static constexpr float railReservoirFarads = 3300.0e-6f;
+    static constexpr float railSecondaryRatedAmps = 0.25f;
+    static constexpr float railRegulatorRippleRejectionDb = 68.0f;
+    static constexpr float mainsFrequencyHz = 60.0f;
+    // A full-wave reservoir drawn at a constant current I sags I / (2 f C)
+    // between charging peaks, a sawtooth whose fundamental at 2 f has
+    // amplitude (that swing) / pi; the regulator passes that fundamental
+    // 68 dB down. The sawtooth's harmonics have no published rejection and
+    // are not carried.
+    [[nodiscard]] static float railRipplePeakVolts() noexcept;
     enum class EnvelopeStage { Idle, Attack, Decay, Sustain, Release };
 
     // Hash-matched B-2 firmware mechanics: a 14-bit integer advanced once per
@@ -2979,6 +3059,13 @@ private:
     // exponential the voices read. The render loop's only way to advance it,
     // so a fixture that drives it directly drives exactly what audio does.
     void advanceThermalWarmup() noexcept;
+    // One internal sample of the rail's ripple phasor, beside the warm-up
+    // clock: the volts the cutoff reads off the rail this interval.
+    void advanceRailRipple(const EngineParameters& parameters) noexcept;
+    // One drift-cadence step of every converter hold's leakage ramp, in
+    // each hold's own units, over the seconds the step spans.
+    void applyConverterHoldDroop(const EngineParameters& parameters,
+                                 float seconds) noexcept;
     // The OTA headroom the cascade is solved with on one card, in module-node
     // volts: 2 Vt(T) / stageAttenuation at the chassis temperature the warm-up
     // clock has reached, plus this card's place in the spatial gradient.
@@ -3609,6 +3696,12 @@ private:
     // same number six times.
     float thermalWarmupFraction_ { 0.0f };
     float powerSupplyDroop_ { 0.0f };
+    // The rail ripple's phase and the volts it puts on the card rail this
+    // internal sample (see advanceRailRipple). Double for the phase, so an
+    // accumulated 2 pi never rounds the increment away.
+    double railRipplePhase_ { 0.0 };
+    float railRippleVolts_ { 0.0f };
+    float railRipplePeakVolts_ { railRipplePeakVolts() };
     // Settled once per block beside the converter hold coefficients, because
     // it depends on the internal rate the pending quality switch may just have
     // changed.

@@ -1744,6 +1744,72 @@ struct YouKnowTestAccess
         return engine.jackBoardJohnsonScale_;
     }
 
+    static float railRippleVolts(const YouKnowEngine& engine) noexcept
+    {
+        return engine.railRippleVolts_;
+    }
+
+    static float railRipplePeakVolts() noexcept
+    {
+        return YouKnowEngine::railRipplePeakVolts();
+    }
+
+    static float holdDroopVoltsPerSecond(float followerBiasAmps,
+                                         float boardCelsius) noexcept
+    {
+        return YouKnowEngine::converterHoldDroopVoltsPerSecond(
+            followerBiasAmps, boardCelsius);
+    }
+
+    static double railRipplePhase(const YouKnowEngine& engine) noexcept
+    {
+        return engine.railRipplePhase_;
+    }
+
+    // The cutoff counts one rail deviation moves on card 1 at full Unit
+    // Character, through the engine's own transfer.
+    static float cutoffShiftForRailVolts(const YouKnowEngine& engine,
+                                         float counts,
+                                         float railVolts) noexcept
+    {
+        const auto& card = engine.cards_[0];
+        return YouKnowEngine::cutoffAnalogCounts(counts, card, 1.0f, railVolts)
+             - YouKnowEngine::cutoffAnalogCounts(counts, card, 1.0f, 0.0f);
+    }
+
+    static void applyConverterHoldDroop(YouKnowEngine& engine,
+                                        const EngineParameters& parameters,
+                                        float seconds) noexcept
+    {
+        engine.applyConverterHoldDroop(parameters, seconds);
+    }
+
+    // Every converter hold's current written value -- one slot's per-card
+    // holds and the shared ones -- in the engine's own units.
+    struct HoldTargets
+    {
+        float dcoCv, cutoffCounts, vcaControl, resonance, resonanceState,
+              commonVca, sub, noise, pwmVolts;
+    };
+    static HoldTargets holdTargets(const YouKnowEngine& engine,
+                                   int slot) noexcept
+    {
+        const auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        return { voice.dcoCvTarget, voice.cutoffCountsTarget,
+                 voice.vcaControlTarget, engine.resonanceCvTarget_,
+                 engine.resonanceCv_, engine.sharedVcaTarget_,
+                 engine.subCvTarget_, engine.noiseCvTarget_,
+                 engine.pwmVoltsTarget_ };
+    }
+
+    // What the scan's next VCF write would set this slot's hold to.
+    static float writtenVcfTarget(const YouKnowEngine& engine, int slot,
+                                  const EngineParameters& parameters) noexcept
+    {
+        return engine.voiceVcfTarget(
+            engine.voices_[static_cast<std::size_t>(slot)], parameters);
+    }
+
     // The gradient's cutoff factor applied to one omega step at a point on
     // the warm-up law, through the engine's own bounded law.
     static float thermalOmegaStepAt(const EngineParameters& parameters,
@@ -15427,6 +15493,181 @@ void testOutputFloorFollowsTheJackBoard()
            "the jack board's Johnson scale is not exactly one at power-on");
 }
 
+void testConverterHoldDroopFollowsTheSheetTypicals()
+{
+    // Between writes each 10 nF hold ramps at its mux channel's 10 pA
+    // off-leakage plus its follower's bias: 65 pA TL08x behind the DCO and
+    // SUB holds, 30 pA TL064 behind the rest, the follower's share doubling
+    // every 10 C. One second of ramp, applied directly, moves every hold by
+    // exactly that in its own units.
+    expectNear(YouKnowTestAccess::holdDroopVoltsPerSecond(65.0e-12f, 25.0f),
+               7.5e-3, 1e-9, "the DCO hold's 25 C ramp is not 7.5 mV/s");
+    expectNear(YouKnowTestAccess::holdDroopVoltsPerSecond(30.0e-12f, 25.0f),
+               4.0e-3, 1e-9, "the TL064 holds' 25 C ramp is not 4 mV/s");
+    expectNear(YouKnowTestAccess::holdDroopVoltsPerSecond(30.0e-12f, 35.0f),
+               7.0e-3, 1e-9, "the follower bias does not double per 10 C");
+
+    constexpr double sampleRate = 48000.0;
+    YouKnowEngine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.enableConverterHoldDroop = true;
+    parameters.cutoff = 0.5f;
+    parameters.resonance = 0.5f;
+    parameters.subLevel = 0.5f;
+    parameters.noiseLevel = 0.5f;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+    render(engine, 4800);
+
+    const double lsb = 5.0 / 4096.0 * (10000.0 / 4990.0);
+    const double dcoCodes = 7.5e-3 / lsb;
+    const double restCodes = 4.0e-3 / lsb;
+    const double ic26Fraction = 4.0e-3
+        / ControlDac::positiveSpanVolts(ControlDac::storedMaximumCode);
+    const double envelopeFraction = 4.0e-3
+        / ControlDac::positiveSpanVolts(ControlDac::maximumCode);
+    const auto before = YouKnowTestAccess::holdTargets(engine, 0);
+    YouKnowTestAccess::applyConverterHoldDroop(engine, parameters, 1.0f);
+    const auto after = YouKnowTestAccess::holdTargets(engine, 0);
+    expectNear(before.dcoCv - after.dcoCv, dcoCodes, 1e-3,
+               "the DCO hold does not ramp at 75 pA into 10 nF");
+    expectNear(before.cutoffCounts - after.cutoffCounts, 4.0 * restCodes, 5e-3,
+               "the VCF hold does not ramp at 40 pA in quarter-code counts");
+    expectNear(before.vcaControl - after.vcaControl, envelopeFraction, 1e-6,
+               "the ENV hold does not ramp on the envelope's code-4095 span");
+    expectNear(before.resonance - after.resonance, ic26Fraction, 1e-6,
+               "the RES hold's written value does not ramp on IC27b's span");
+    expectNear(before.resonanceState - after.resonanceState, ic26Fraction, 1e-6,
+               "the RES hold's state does not ramp with its written value");
+    expectNear(before.commonVca - after.commonVca, restCodes / 4064.0, 1e-6,
+               "the VCA LEVEL hold does not ramp at 40 pA");
+    expectNear(before.sub - after.sub, dcoCodes / 4064.0, 1e-6,
+               "the SUB hold does not ramp at 75 pA");
+    expectNear(before.noise - after.noise, ic26Fraction, 1e-6,
+               "the NOISE hold does not ramp on IC27b's span");
+    expectNear(before.pwmVolts - after.pwmVolts, 4.0e-3, 1e-5,
+               "the PWM hold does not ramp at 4 mV/s");
+
+    parameters.enableConverterHoldDroop = false;
+    YouKnowTestAccess::applyConverterHoldDroop(engine, parameters, 1.0f);
+    const auto held = YouKnowTestAccess::holdTargets(engine, 0);
+    expect(held.dcoCv == after.dcoCv && held.cutoffCounts == after.cutoffCounts
+               && held.vcaControl == after.vcaControl
+               && held.resonance == after.resonance
+               && held.commonVca == after.commonVca && held.sub == after.sub
+               && held.noise == after.noise && held.pwmVolts == after.pwmVolts,
+           "a hold ramps with the droop switched off");
+
+    // A warm unit droops more: settled at Unit Character 1 the board is
+    // 40 C and the followers' share is 2^1.5 of its 25 C typical.
+    parameters.enableConverterHoldDroop = true;
+    parameters.calibration = 1.0f;
+    engine.setParameters(parameters);
+    YouKnowTestAccess::setThermalWarmupSeconds(engine, 1.0e6);
+    const auto warmBefore = YouKnowTestAccess::holdTargets(engine, 0);
+    YouKnowTestAccess::applyConverterHoldDroop(engine, parameters, 1.0f);
+    const auto warmAfter = YouKnowTestAccess::holdTargets(engine, 0);
+    const double warmDcoCodes =
+        (10.0e-12 + 65.0e-12 * std::exp2(1.5)) / 10.0e-9 / lsb;
+    expectNear(warmBefore.dcoCv - warmAfter.dcoCv, warmDcoCodes, 1e-3,
+               "the warm DCO hold does not ramp at the doubled follower bias");
+
+    // Rendered, the ramp lives between the scan's writes: after any render
+    // every card's VCF hold sits at or below what its last write set, by no
+    // more than the two drift ticks a 4.2 ms pass can span; with the droop
+    // off it sits exactly there.
+    const auto renderHolds = [&](bool droop) {
+        YouKnowEngine live;
+        live.prepare(sampleRate, blockSize, true);
+        auto liveParameters = plainPatch();
+        liveParameters.cutoff = 0.5f;
+        liveParameters.enableConverterHoldDroop = droop;
+        live.setParameters(liveParameters);
+        live.noteOn(60, 1.0f);
+        render(live, 4800);
+        std::array<std::pair<float, float>, YouKnowEngine::hardwareVoices> holds {};
+        for (int slot = 0; slot < YouKnowEngine::hardwareVoices; ++slot)
+            holds[static_cast<std::size_t>(slot)] = {
+                YouKnowTestAccess::writtenVcfTarget(live, slot, liveParameters),
+                YouKnowTestAccess::holdTargets(live, slot).cutoffCounts };
+        return holds;
+    };
+    const float tickCounts = static_cast<float>(4.0 * restCodes / 375.0);
+    for (const auto& [written, hold] : renderHolds(true))
+        expect(hold <= written && hold >= written - 2.0f * tickCounts - 1e-3f,
+               "a rendered VCF hold is not within two ticks of ramp below its "
+               "write (written " + std::to_string(written) + ", held "
+                   + std::to_string(hold) + ")");
+    for (const auto& [written, hold] : renderHolds(false))
+        expect(hold == written,
+               "a rendered VCF hold leaves its written value with the droop off");
+}
+
+void testRailRippleRidesTheCutoffUnderUnitCharacter()
+{
+    // The 3300 uF reservoirs behind the 0.25 A secondary sag 0.63 Vpp at
+    // 60 Hz mains; the M5230L passes that sawtooth's 120 Hz fundamental
+    // (0.20 V peak) 68 dB down: 80 uV peak on the card rail, through the
+    // same voiced 35 counts/V the load droop uses. Unit Character scales
+    // that transfer, so Character zero is bit-exact with the ripple off.
+    constexpr double sampleRate = 48000.0;
+    const double sawtooth = 0.25 / (2.0 * 60.0 * 3300.0e-6);
+    const double peak = sawtooth / 3.14159265358979323846
+                      * std::pow(10.0, -68.0 / 20.0);
+    expectNear(YouKnowTestAccess::railRipplePeakVolts(), peak, 1e-9,
+               "the rail ripple's peak is not the sheet's 68 dB of the "
+               "sawtooth's fundamental");
+    expect(peak > 7.9e-5 && peak < 8.1e-5, "the ripple peak is not 80 uV");
+
+    YouKnowEngine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.cutoff = 0.5f;
+    engine.setParameters(parameters);
+    // One volt above nominal lifts the cutoff by the voiced transfer's 35
+    // counts (the ripple's 80 uV is three float ULPs of an 8000-count hold,
+    // so the transfer is checked at a volt and the peak by the law above).
+    expectNear(YouKnowTestAccess::cutoffShiftForRailVolts(engine, 8000.0f, -1.0f),
+               35.0, 1e-2,
+               "a rail lifted one volt does not lift the cutoff 35 counts");
+
+    const auto run = [&](float calibration, bool ripple) {
+        YouKnowEngine take;
+        take.prepare(sampleRate, blockSize, true);
+        auto takeParameters = plainPatch();
+        takeParameters.calibration = calibration;
+        takeParameters.enableRailRipple = ripple;
+        takeParameters.cutoff = 0.5f;
+        takeParameters.resonance = 0.6f;
+        take.setParameters(takeParameters);
+        take.noteOn(48, 1.0f);
+        return render(take, 9600);
+    };
+    const auto nominalOn = run(0.0f, true);
+    const auto nominalOff = run(0.0f, false);
+    expect(nominalOn.left == nominalOff.left && nominalOn.right == nominalOff.right,
+           "Unit Character zero hears the rail ripple");
+    const auto fullOn = run(1.0f, true);
+    const auto fullOff = run(1.0f, false);
+    expect(fullOn.left != fullOff.left,
+           "the rail ripple does not reach the cutoff under Unit Character");
+
+    // The phasor runs on the wall clock at twice the mains frequency,
+    // whatever internal grid the render used.
+    engine.noteOn(48, 1.0f);
+    const auto take = render(engine, 480);
+    const double turns =
+        2.0 * 60.0 * static_cast<double>(take.left.size()) / sampleRate;
+    const double expectedPhase =
+        (turns - std::floor(turns)) * 2.0 * 3.14159265358979323846;
+    expectNear(YouKnowTestAccess::railRipplePhase(engine), expectedPhase, 1e-6,
+               "the ripple phasor does not run at 120 Hz of wall clock");
+    expectNear(YouKnowTestAccess::railRippleVolts(engine),
+               peak * std::sin(expectedPhase), 1e-9,
+               "the rail's ripple volts are not the phasor's sine");
+}
+
 void testSpatialThermalGradientBelongsToUnitCharacter()
 {
     // A held polyphonic chord spread across every card is where a systematic,
@@ -16801,6 +17042,8 @@ int main()
         testResonanceAdjustmentPinsTheWarmLimitCycle();
         testSpatialGradientDevelopsWithTheChassis();
         testOutputFloorFollowsTheJackBoard();
+        testConverterHoldDroopFollowsTheSheetTypicals();
+        testRailRippleRidesTheCutoffUnderUnitCharacter();
         testSpatialThermalScaleCacheTracksLiveDependencies();
         testCompleteVoiceHonoursServiceFrequencyWindows();
         testSelfOscillationMatchesTheServiceTrim();
@@ -17117,6 +17360,8 @@ int main()
     testResonanceAdjustmentPinsTheWarmLimitCycle();
     testSpatialGradientDevelopsWithTheChassis();
     testOutputFloorFollowsTheJackBoard();
+    testConverterHoldDroopFollowsTheSheetTypicals();
+    testRailRippleRidesTheCutoffUnderUnitCharacter();
     testDeterminismAndSilence();
     testRepeatedSanitisedParameterSnapshotsAreInert();
     testResetLeavesNoHistoryInTheOutputPath();

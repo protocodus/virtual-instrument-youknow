@@ -6280,6 +6280,8 @@ void YouKnowEngine::reset()
     refreshJackBoardTemperature(activeParameters_);
     refreshDcoMasterClock();
     powerSupplyDroop_ = 0.0f;
+    railRipplePhase_ = 0.0;
+    railRippleVolts_ = 0.0f;
     lfoAccumulator_ = 0u;
     lfoRising_ = true;
     lfoPolarity_ = 1.0f;
@@ -8675,7 +8677,9 @@ float YouKnowEngine::cutoffAnalogCounts(
     // the voiced residual wander, all riding below the converter's own
     // resolution on the slewed digital value. The final residual draws sit
     // within the service windows; their distribution remains voiced.
-    // A sagging rail pulls the cutoff reference down with it. `calibration`
+    // A sagging rail pulls the cutoff reference down with it, and the
+    // rectifier ripple riding on the rail (advanceRailRipple) lifts and
+    // lowers it 120 times a second through this same transfer. `calibration`
     // is applied here and only here: the droop state itself is a pure load
     // measure, so this mechanism scales linearly with Unit Character like its
     // eighteen siblings rather than quadratically.
@@ -8786,8 +8790,12 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     voice.filter.resonanceHeadroomFollowsStage =
         parameters.enableResonanceHeadroomTemperature;
 
+    // The rail the cutoff reference reads: the load's sag less whatever the
+    // rectifier ripple adds this sample (a rail above nominal is a negative
+    // droop).
     const float analogCounts = cutoffAnalogCounts(
-        voice.cutoffCounts, card, tolerance, powerSupplyDroop_);
+        voice.cutoffCounts, card, tolerance,
+        powerSupplyDroop_ - railRippleVolts_);
     const float calibrationFeedback = parameters.useFixedVcfServiceFrequencyTrim
         ? resonanceFeedbackFor(1.0f, card, tolerance,
             parameters.useCircuitDerivedResonanceShape)
@@ -9224,6 +9232,89 @@ void YouKnowEngine::advanceThermalWarmup() noexcept
         thermalStartsSettled_ ? 1.0f
             : 1.0f - std::exp(-static_cast<float>(thermalWarmupSeconds_)
                 / static_cast<float>(thermalWarmupTimeConstantSeconds));
+}
+
+float YouKnowEngine::railRipplePeakVolts() noexcept
+{
+    const float sawtoothPeakToPeak = railSecondaryRatedAmps
+        / (2.0f * mainsFrequencyHz * railReservoirFarads);
+    const float fundamentalPeak = sawtoothPeakToPeak / (0.5f * twoPi);
+    return fundamentalPeak
+        * std::pow(10.0f, -railRegulatorRippleRejectionDb / 20.0f);
+}
+
+void YouKnowEngine::advanceRailRipple(
+    const EngineParameters& parameters) noexcept
+{
+    if (!parameters.enableRailRipple)
+    {
+        railRippleVolts_ = 0.0f;
+        return;
+    }
+    // Wall-clock phase, like the warm-up timer: the same 120 Hz whatever
+    // grid the model is solved on.
+    railRipplePhase_ += static_cast<double>(twoPi) * 2.0
+        * static_cast<double>(mainsFrequencyHz)
+        * static_cast<double>(inverseOversampledRate_);
+    if (railRipplePhase_ >= static_cast<double>(twoPi))
+        railRipplePhase_ -= static_cast<double>(twoPi);
+    railRippleVolts_ = railRipplePeakVolts_
+        * static_cast<float>(std::sin(railRipplePhase_));
+}
+
+float YouKnowEngine::converterHoldDroopVoltsPerSecond(
+    float followerBiasAmps, float boardCelsius) noexcept
+{
+    const float bias = followerBiasAmps
+        * std::exp2((boardCelsius - 25.0f) / fetBiasDoublingCelsius);
+    return (hd14051OffLeakageAmps + bias) / converterHoldFarads;
+}
+
+void YouKnowEngine::applyConverterHoldDroop(
+    const EngineParameters& parameters, float seconds) noexcept
+{
+    if (!parameters.enableConverterHoldDroop)
+        return;
+    // The muxes and their followers share the module board with the cards,
+    // so the chassis rise the thermometer reports stands for their
+    // temperature; the few degrees of gradient between cards are a few
+    // percent of a ramp that is itself a hundredth of an LSB.
+    const float boardCelsius =
+        25.0f + 15.0f * parameters.calibration * thermalWarmupFraction_;
+    // IC24 (DCO CV, SUB) sits behind TL08x followers; IC23 (VCF CV, PWM,
+    // VCA LEVEL) and IC26 (ENV, RES, NOISE) behind TL064s.
+    const float dcoBranchVolts = seconds
+        * converterHoldDroopVoltsPerSecond(tl08xInputBiasAmps, boardCelsius);
+    const float restVolts = seconds
+        * converterHoldDroopVoltsPerSecond(tl064InputBiasAmps, boardCelsius);
+    // IC28a's branch feeds IC24 and IC23 in DAC codes (a VCF count is a
+    // quarter of one); IC27b's feeds IC26, whose RES and NOISE holds are
+    // read as a fraction of the stored maximum code and whose ENV holds as
+    // a fraction of the envelope's code-4095 span.
+    const float dcoBranchCodes = dcoBranchVolts / invertingBranchLsbVolts;
+    const float restCodes = restVolts / invertingBranchLsbVolts;
+    const float ic26Fraction = restVolts
+        / CircuitDerivedResonanceProfile::controlFullScaleVolts;
+    const float envelopeFraction = restVolts
+        / VoiceVcaControlLaw::controlFullScaleVolts;
+    for (int slot = 0; slot < hardwareVoices; ++slot)
+    {
+        auto& voice = voices_[static_cast<std::size_t>(slot)];
+        voice.dcoCvTarget -= dcoBranchCodes;
+        voice.cutoffCountsTarget -= 4.0f * restCodes;
+        // The explicit envelope-hold circuit carries its own configured
+        // bias and leakage when a harness configures it.
+        if (!envelopeHoldsConfigured_)
+            voice.vcaControlTarget -= envelopeFraction;
+    }
+    subCvTarget_ -= dcoBranchCodes / 4064.0f;
+    sharedVcaTarget_ -= restCodes / 4064.0f;
+    pwmVoltsTarget_ -= restVolts;
+    noiseCvTarget_ -= ic26Fraction;
+    // The RES hold has no post-hold network: its state is the hold itself
+    // and only a write moves it, so the ramp moves both.
+    resonanceCvTarget_ -= ic26Fraction;
+    resonanceCv_ -= ic26Fraction;
 }
 
 float YouKnowEngine::voiceCardCelsius(
@@ -10019,7 +10110,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
                 parameters.useCircuitDerivedResonanceShape);
             const float mappedAnalogCounts = cutoffAnalogCounts(
                 static_cast<float>(cutoffCounts), card, parameters.calibration,
-                powerSupplyDroop_);
+                powerSupplyDroop_ - railRippleVolts_);
             const float calibrationFeedback = parameters.useFixedVcfServiceFrequencyTrim
                 ? resonanceFeedbackFor(1.0f, card, parameters.calibration,
                     parameters.useCircuitDerivedResonanceShape)
@@ -10760,6 +10851,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // installed settling bound (see converterHoldFarads).
             noiseCv_ = noiseCvTarget_;
             advanceThermalWarmup();
+            advanceRailRipple(parameters);
 
             if (--driftControlCountdown_ <= 0)
             {
@@ -10774,6 +10866,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 refreshVoiceCardThermalScales();
                 for (auto& card : cards_)
                     updateVoiceCardDrift(card);
+                // The holds' leakage ramps ride the same wall clock, one
+                // step per tick, for the same reason.
+                applyConverterHoldDroop(
+                    parameters,
+                    static_cast<float>(driftControlCountdown_)
+                        * static_cast<float>(inverseOversampledRate_));
             }
 
             // One noise generator feeds every voice, so noise grows as more
@@ -10804,22 +10902,24 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
             // This audio-energy proxy produces a voiced shared cutoff shift;
             // it does not identify actual card current or regulator impedance.
-            // The rectifier's 100/120 Hz ripple is not modelled. A conditional
-            // scale estimate, not an installed ripple or audibility bound:
-            // Service Notes p. 16 gives a 3300 uF reservoir per rail behind a
-            // 0.25 A secondary, so the unregulated ripple is about 0.76 Vpp at
-            // 50 Hz under that assumed load. The cards run on IC4, an M5230L dual
+            // The rectifier's ripple is carried by advanceRailRipple at the
+            // sheet's one figure: Service Notes p. 16 gives a 3300 uF
+            // reservoir per rail behind a 0.25 A secondary, so drawn at that
+            // rating the unregulated sawtooth is 0.63 Vpp at 60 Hz mains
+            // (0.76 Vpp at 50 Hz). The cards run on IC2, an M5230L dual
             // tracking regulator (p. 16), and its data sheet -- reproduced in
             // the 1987 Mitsubishi General Purpose ICs databook, p. 4-8 --
             // specifies ripple rejection RR = 68 dB at f = 120 Hz, measured
             // with its own circuit (b) at ei = 0 dBm, alongside output noise
             // VNO = 12 uVrms over 20 Hz-100 kHz, input regulation 0.02 %/V typ
             // and 0.1 %/V max, and load regulation 0.02 % typ and 0.1 % max.
-            // Ripple rejection is typical with no published minimum. Applying
-            // that 120 Hz figure to the assumed ripple gives about 0.30 mVpp,
-            // some 20 ppm of 15 V, or 0.011 cents through the voiced cutoff
-            // transfer below. Neither the frequency mismatch nor this transfer
-            // establishes installed sidebands or a general audibility limit.
+            // Ripple rejection is typical with no published minimum. The
+            // sawtooth's 120 Hz fundamental through that figure is 80 uV
+            // peak at the rail, 0.003 cents peak through the voiced cutoff
+            // transfer below; its harmonics have no published rejection and
+            // are left out. Neither the rated-load assumption nor this
+            // transfer establishes installed sidebands or a general
+            // audibility limit.
             //
             // A second conditional estimate concerns the converter reference,
             // the output-high level of the 4050 buffers IC30-32
