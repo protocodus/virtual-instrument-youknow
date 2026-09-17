@@ -146,6 +146,7 @@ struct YouKnowTestAccess
         EngineParameters parameters;
         parameters.calibration = character;
         parameters.enableVcfStageOffsets = true;
+        parameters.enableResonanceOtaOffset = true;
         parameters.enableVcfEarlyEffect = true;
         parameters.enableSpatialThermalGradient = true;
         engine.setParameters(parameters);
@@ -519,6 +520,7 @@ struct YouKnowTestAccess
             parameters.subLevel = 0.0f;
             parameters.noiseLevel = 0.0f;
             parameters.enableVcfStageOffsets = false;
+            parameters.enableResonanceOtaOffset = false;
             parameters.enableSpatialThermalGradient = false;
             parameters.useCircuitDerivedResonanceShape = circuitDerivedShape;
             engine.setParameters(parameters);
