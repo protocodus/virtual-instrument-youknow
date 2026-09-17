@@ -664,6 +664,9 @@ EngineParameters voiceVcaFeedthroughPatch()
     parameters.calibration = 1.0f;
     parameters.enableVcfStageOffsets = false;
     parameters.enableResonanceOtaOffset = false;
+    parameters.enableSubStorageSkew = false;
+    parameters.enableResonanceHeadroomTemperature = false;
+    parameters.enableResonanceServiceTrim = false;
     parameters.enableOpAmpSlewLimiting = false;
     parameters.enableVcfEarlyEffect = false;
     parameters.enableSpatialThermalGradient = false;
@@ -742,6 +745,9 @@ EngineParameters bbdHostGridAliasPatch(ChorusMode mode)
     parameters.calibration = 1.0f;
     parameters.enableVcfStageOffsets = false;
     parameters.enableResonanceOtaOffset = false;
+    parameters.enableSubStorageSkew = false;
+    parameters.enableResonanceHeadroomTemperature = false;
+    parameters.enableResonanceServiceTrim = false;
     parameters.enableOpAmpSlewLimiting = false;
     parameters.enableVcfEarlyEffect = false;
     parameters.enableSpatialThermalGradient = false;

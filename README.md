@@ -110,6 +110,20 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### 1.1.0 — unreleased
 
+- The resonance return's headroom now warms with the stages' — both OTAs are
+  2 Vt through a resistor ratio inside one potted module — and each card's
+  RES adjustment sets its settled full-RES self-oscillation on the service
+  procedure's 4.8 Vp-p, pole spread and gradient included. A cold card
+  oscillates about 5 % lower and grows into the figure as it warms; without
+  the adjustment the warm return would carry it 5–6 % over. Unit Character
+  zero is unchanged.
+- The chassis gradient across the cards now develops on the warm-up clock
+  instead of standing at full strength at power-on, and the output stage's
+  resistor floors follow the jack board's temperature as the cards' floors
+  already did.
+- The sub's switch transistor leaves saturation later than it enters it, so
+  the sub carries a small second harmonic that rises with pitch (−64 dBc at
+  the 4′ top key); a part-class storage time, not a fitted one.
 - The resonance BA662's own input offset now rides its control current into
   the filter under Unit Character, inside the BA6110 sibling sheet's 3 mV
   maximum: fast RES moves under a held note thump slightly and self-oscillation
@@ -411,7 +425,14 @@ forty-year-old unit will null against the plug-in.
   [1SS133 diode](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=12)
   as a half-cycle current (its half-wave mean
   rides on the WAVE node and is what C56/C50 remove when the SUB level
-  changes). The held SUB rail now crosses a soft silicon-diode threshold:
+  changes). Tr19, the sub's switch, leaves saturation later than it enters
+  it, so the half-cycle D6 conducts begins late by its storage time and the
+  sub carries H2 = π·t_s·f_sub on an otherwise even-free square: −88 dBc at
+  the 16′ bottom key, −64 dBc at the 4′ top. The 0.2 µs is the era's
+  small-signal switching class (2N3904 200 ns maximum, 2N2222A 225 ns
+  typical); Toshiba's 2SC1815 sheet lists no switching times, so the value is
+  a borrowed class figure, not the installed part's (`enableSubStorageSkew`).
+  The held SUB rail now crosses a soft silicon-diode threshold:
   one aggregate resistor/current scale, 8.896 V, fitted on alternating levels
   of an identified original-DCO recording reduces the worst error on the
   held-out levels from 18.50 to 0.282 dB. SUB 0 and full level are unchanged.
@@ -500,6 +521,28 @@ forty-year-old unit will null against the plug-in.
   point, which C59 turns into a small thump, and self-oscillation settles per
   card. Scaled by Unit Character and absent at zero (sibling-bounded span;
   the point inside it is voiced).
+- Both of the loop's headrooms are the same 2 Vt seen through a resistor
+  ratio — the stages' through 560/68560, the resonance return's through its
+  100 kΩ/1.5 kΩ divider — and both OTAs sit in one potted 80017A at one
+  temperature, so the return's headroom now warms with the stages' instead
+  of staying at its 25 °C value while they moved. Scaling the two together
+  leaves the limit cycle's loop gain and droop invariant (the derived
+  frequency-trim table is exact at any temperature) and lets its amplitude
+  grow with the card: at Unit Character 1 the settled full-RES
+  self-oscillation would sit 5–6 % above the 4.8 Vp-p figure. Roland's
+  ADJUSTMENT (p. 19) sets each card's RES trimmer for that figure after ten
+  minutes, before FREQ, so the model now solves each card's full-travel loop
+  gain from the same harmonic balance the FREQ trim already uses — the gain
+  that sustains 2.4 V peak with the card's pole spread and settled headrooms,
+  as a ratio to the nominal card's solve so Unit Character 0 keeps its
+  endpoint bit for bit. With the voiced post-trim residual cleared, every
+  card settles between 4.796 and 4.804 Vp-p at code 6272; a cold card starts
+  near 4.15 Vp-p and grows into the figure on the warm-up law; the
+  complete-voice ±10-cent FREQ/WIDTH windows hold at a worst of 8.7 cents.
+  The FREQ solve carries the adjustment's shift of the loop gain the
+  frequency-trim table is read at; the voiced residual stays out of it as
+  before (anchored physics and procedure; `enableResonanceHeadroomTemperature`
+  and `enableResonanceServiceTrim` keep the former arithmetic for A/B renders).
 - The product enables `useServiced439522VcfCalibration`, assigning fitted
   FREQ/WIDTH and effective current-ceiling coordinates to six fixed card
   slots. Native 192 kHz renders reduce per-card held-out tuning error from
@@ -602,6 +645,12 @@ forty-year-old unit will null against the plug-in.
   powers are summed at the correct pre- or post-coupling node and generated
   once per host frame, so quality does not multiply either level or cost
   (anchored topology and component values; fundamental thermal-noise law).
+  The densities are stated at 25 °C and scale by √(T / 298.15 K) with the
+  jack board's temperature on the chassis warm-up law, exactly as the cards'
+  floors do — +0.21 dB at the settled 40 °C of Unit Character 1; the volume
+  wiper sits on the panel board, whose own temperature is not measured, so
+  it reads the one chassis warm-up the model has. IC5's data-sheet floor is a
+  25 °C band figure with no temperature coefficient and is left at it.
   Like the other optional physical-detail layers, this floor scales from the
   exact-silence calibrated nominal at Unit Character 0% to its physical value
   at 100%.
@@ -1280,7 +1329,7 @@ unchanged.
 | Reset flyback ringing (10 Ω, 15 nH, 8 MHz, 50 ns) | The discharge transistor is inside the MC5534A; Roland prints no switch resistance, trace inductance or glitch waveform, and "Tr23/Tr25" are not on the drawing. A 50 ns, 1 V event carries about 50 nV·s per period, −119 dB against the 12 Vpp ramp. The finite-linear and configurable exponential resets remain. |
 | Miller-integrator curvature adding +0.35 dB of H2 | Computed in the [oscillator section](#what-is-modelled) for an assumed gain of 2000: 7.65 × 10⁻⁶ dB. Finite gain is a 0.2 Hz high-pass on the ideal saw and cannot reach the claimed magnitude. |
 | Comparator slew from an "MC5534A comparator datasheet" (10 V/µs) | No such datasheet exists: the MC5534A is Roland's custom DCO IC. A 1 µs edge is a ~350 kHz corner, −0.014 dB at 20 kHz, and BLEP already renders the edge. |
-| 4013 pull-up/pull-down asymmetry adding H2 to the sub | A level difference between the two states of a 50 % square adds only DC, which C56/C50 remove; it has no even harmonics. Timing skew would, but the TC4013B's tens of ns against a half-period no shorter than 0.24 ms sits below −70 dBc, and the sub's leg is Tr19/D6, already modelled. About 5.8 µs of Tr19 storage-time skew would reproduce the identified unit's −58.5 dBc sub H2, but that take passes through replacement cards and no storage time is published for the installed drive, so nothing is fitted. |
+| 4013 pull-up/pull-down asymmetry adding H2 to the sub | A level difference between the two states of a 50 % square adds only DC, which C56/C50 remove; it has no even harmonics. Timing skew would, but the TC4013B's tens of ns against a half-period no shorter than 0.24 ms sits below −70 dBc, and the sub's leg is Tr19/D6, already modelled. About 5.8 µs of Tr19 storage-time skew would reproduce the identified unit's −58.5 dBc sub H2, but that take passes through replacement cards and no storage time is published for the installed drive, so nothing is fitted to it; the part-class 0.2 µs now ships as `enableSubStorageSkew`, −64 dBc at the 4′ top key and no more. |
 | Inter-voice trace crosstalk (5 pF) and ground-bus coupling (15 mΩ, −70 dBc) | The Juno-106 has one module board, not voice cards in sockets, and the cited pp. 22–24 are not in the service notes. 5 pF × 12 V into the 3.969 kΩ WAVE load is 0.24 µV·s per reset, −106 dB against the ramp. Both coupling values are invented. |
 | WAVE-node stray-capacitance pole at 300 kHz | R101/R102 are 27 kΩ/33 kΩ, not 100 kΩ/200 kΩ, and the modelled load is 3.969 kΩ, so 20 pF gives a 2 MHz pole: −0.0004 dB at 20 kHz. Even the proposed 300 kHz is −0.019 dB. |
 | Avalanche 1/f knee at 1.5 kHz | The row above stands: the C42/BA662/C41 shaping is anchored and no low-frequency spectrum follows from the parts. The knee is an invented number; an original-card TP8 PSD (OQ-16) would settle it. |
@@ -1308,7 +1357,7 @@ the capture that would decide it. The rest are reported with their numbers.
 | Resonance BA662 untrimmed input offset, gm·V_os feedthrough | Rohm BA6110FS sheet, same family: "Low offset voltage (VIO = 3 mV max)"; nothing on the 106 nulls it — VR30/R112 null the voice VCA only | **Implemented** under Unit Character, ±1.5 mV per card inside the sibling maximum: a RES change moves the loop's DC operating point and C59 turns it into audio; exactly inert with the loop open. In a level-matched A/B the difference sits about −29 dB under a low note whose RES alternates every 0.4 s and −50 to −55 dB while RES rests. |
 | MC5534A reset as a 40–75 Ω NMOS RC flyback | JUNO-6 p. 9: the discrete DCO resets C7 0.001G through TR5 and R35 2.2 Ω, driven by C6 270 pF against R34 10 kΩ, on a ½ TL082 integrator | With 2.2 Ω the RC is 2 ns; the flyback is the amplifier's 12 V slew — about 0.9 µs, straight, at the TL082's 13 V/µs. That is the shipping linear form; its 2.2 µs and the sibling's 0.9 µs differ by under 0.004 dB at 20 kHz. Recorded beside `rampResetSeconds`; no exponential is added. |
 | PWM comparator noise flutter; 238 Hz hold ripple on the threshold | TL08x-class input noise, 18 nV/√Hz; HD14051B 10 pA off-leakage and TL08xC 65 pA bias, already in the converter comment as 31.5 µV per 4.2 ms on 10 nF | 20 µV of comparator noise over 1 MHz against a 12 V-per-period ramp is 46 ns of edge jitter at C1, −100 dB re the fundamental. The hold droop is 2.6 ppm of duty per pass, sidebands near −112 dBc. Not added; the `hold` audition takes explicit coordinates. |
-| Tr19 storage-time skew of the sub edge | Module-board legend: Tr19 is a 2SC1815-Y/GR, its base driven straight from MC5534A pin 13; Toshiba's 2SC1815 sheet and the 2SC945 sheets list no switching times; comparable era NPN switches specify about 0.2 µs | H2 = π·t_s·f_sub: −87 dBc at the 16′ bottom, −58 dBc only at the 4′ top key. The identified unit's −58.5 dBc at 65 Hz would need 5.8 µs, so it is not this mechanism at part-class values. Not added. |
+| Tr19 storage-time skew of the sub edge | Module-board legend: Tr19 is a 2SC1815-Y/GR, its base driven straight from MC5534A pin 13; Toshiba's 2SC1815 sheet and the 2SC945 sheets list no switching times; comparable era NPN switches specify about 0.2 µs | H2 = π·t_s·f_sub: −88 dBc at the 16′ bottom, −64 dBc at the 4′ top key. The identified unit's −58.5 dBc at 65 Hz would need 5.8 µs, so it is not this mechanism at part-class values. Added at the class value as `enableSubStorageSkew` (a render at the 4′ top key measures −63.9 dBc against the −63.6 dBc the law predicts); nothing is fitted to the take. |
 | C54 polystyrene dielectric absorption | The p. 12 legend has ceramic, Mylar, electrolytic and NP classes and no polystyrene; Dow's polystyrene model (Pease) puts 0.09 % in branches of 40 ms to 490 s | The fastest branch exchanges tens of picoamps with the ramp against at least 0.3 µA of charging current: below −84 dB of slope, inside the range resistors' 1 % class. Not added. |
 | µPD7810 port-driver R-2R DNL | The ladder's real carry errors are already measured on the identified unit: −4.64/+23.31/−4.48 cents at codes 1024/2048/3072 (`vcfConverterCarryCounts`) | The measured profile ships; the proposed cause is not identified by it. Nothing to add. |
 | HD14051B charge-injection bow | Hitachi sheet: 0.18 pF feedthrough, 10 pA leakage, 80/280 Ω on-resistance, no charge-injection row | A gate-overlap charge of the 10 pC class into 10 nF is about 1 mV, mostly a constant the FREQ/WIDTH trims absorb; the residual bow is unmeasured. The `hold` audition accepts an explicit charge. Not added. |
@@ -1362,6 +1411,34 @@ installed 10 µF non-polar part, since the manufacturer guidance says bias does
 not change its capacitance; and the hyperbolic chorus sweep on nothing, because
 it describes an oscillator this board does not have. The softplus VCA law is
 the superseded stand-in, kept only for A/B renders.
+
+#### Static behaviours swept for physical dynamics, 17 September 2026
+
+A sweep of the engine source for quantities held constant that a real circuit
+moves — by temperature, by signal, by time — assessed each against the
+instrument's own physics and the evidence rules above. What could be made to
+move without inventing a number was implemented; the rest is recorded with
+the measurement or decision it waits on.
+
+| Static quantity | Grounds | Verdict |
+| --- | --- | --- |
+| Resonance return headroom frozen at 25 °C while the stage headroom warmed | Both are 2 Vt through a resistor ratio, one module, one die temperature | Implemented (`enableResonanceHeadroomTemperature`), with the RES adjustment (`enableResonanceServiceTrim`) it makes necessary; see the filter section. |
+| Card gradient present at full strength at power-on | The gradient is the supply's heat; everything is at ambient when the instrument is switched on | Implemented: the gradient rides the warm-up clock, the trims stay at the service reference. |
+| Output-stage resistor floors pinned at 298.15 K while the cards' floors and IC5's control constant read the jack board | Johnson's law; the same chassis law the jack board already reads | Implemented: √(T/298.15 K) on the summer and wiper floors; IC5's floor stays a 25 °C sheet figure. |
+| Sub edge instantaneous | Tr19 storage time | Implemented at the part class (`enableSubStorageSkew`). |
+| RES trimmer modelled as one loop-gain endpoint for every card | p. 19 sets an amplitude, per card, warm | Implemented as above. |
+| The voiced ±2 % RES-travel post-trim residual | It realises up to ±10 % of self-oscillation amplitude on some cards, larger than a scope reading of 4.8 Vp-p, and the FREQ solve does not see it | Left as it is: re-pinning it as an amplitude reading error needs the procedure's tolerance, which the notes do not state; a full account needs the amplitude it realises, an inverse solve the automatable Character setter must not run. Recorded, not changed. |
+| IR3109 Early effect gated by Unit Character | Character's documented semantics: zero is the calibrated nominal with no device nonlinearity beyond the stage tanh | Kept; the switch and the coefficient are documented. |
+| Uniform rather than Gaussian Johnson draws | Same RMS; the crest factor of a −90 dBFS floor is inaudible | Kept. |
+| Hard resonance onset at the grounded-base junction | The onset's shape belongs to OQ-09's measured family | Waits on OQ-09. |
+| Serial control-wire timing as a nominal | Sourced nominal; a spread is a listening candidate, not a measurement | Offered as an A–Z listening decision; nothing shipped. |
+| Tr20's control law with Vt only | The full V_be(T) law needs the junction's own calibration | Waits on the voice-VCA calibration capture (OQ-19). |
+| C59's corner as one nominal per unit | VR27's position and the 1 µF part's tolerance | Negligible below a 1.94 Hz corner; not added. |
+| Voice-sequential 238 Hz scan droop | Assessed above: 0.054 cents peak to peak | Not added. |
+| Panel ADC laws | Product policy, not circuit | Kept. |
+| Chorus line insertion-gain spread as a 1.6 dB convention | The MN3009 sheet gives limits, not a distribution | Spans of 1.6, 4 and 8 dB offered as letters A, B and C for a listening decision; the convention ships. |
+| Chorus and DCO clock items | OQ-15, OQ-03, OQ-04 | Wait on those captures. |
+| 80017A die self-heating | A borrowed thermal resistance predicts 47–140 cents at the top of the range, which experience with the instrument contradicts | The capture request above stands; not modelled. |
 
 #### Other methods assessed
 
@@ -1495,7 +1572,10 @@ measured card base), per-stage input offsets, the resonance BA662's own input
 offset inside the BA6110 sibling sheet's 3 mV maximum, capacitor staggering, slow cutoff
 wander, the two chorus lines' relative insertion
 offset inside the MN3009's ±4 dB row, and the chassis warm-up law
-`25 + 15(1 − e^{−t/3})` °C with its spatial gradient across the cards.
+`25 + 15(1 − e^{−t/3})` °C with its spatial gradient across the cards, which
+develops on the same clock: the gradient is the supply's heat reaching the
+cards unequally, absent at power-on, so a serviced card starts mis-trimmed by
+the gradient it has not yet acquired and settles into its trims.
 These additional variations scale with the knob; the measured filter base
 and its DAC carry steps stay active at zero. Seeds are fixed, and the same
 patch renders identically every launch. Where a drawing or a procedure
@@ -2140,6 +2220,53 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ### Changes in 1.1.0
 
+- The resonance return's headroom now follows the card's temperature with
+  the stages'. Both headrooms are 2 Vt referred through a resistor ratio —
+  the stages' through 560/68560, the return's through the 100 kΩ/1.5 kΩ
+  divider — and both OTAs are potted in the one 80017A, so a return frozen
+  at its 25 °C value while the stages warmed compressed 5 % earlier than
+  they did on a warm card, a state the physics does not have. Under joint
+  scaling the limit cycle's loop gain and droop are invariant to nine digits
+  in the harmonic balance, so the derived frequency-trim table stays exact
+  and only the amplitude moves: the settled full-RES self-oscillation at Unit
+  Character 1 would read 5.06–5.09 Vp-p instead of 4.8. Roland's ADJUSTMENT
+  sets each card's RES trimmer for 4.8 Vp-p at code 6272 after ten minutes,
+  before FREQ, so each card's full-travel loop gain is now the harmonic
+  balance's solution for 2.4 V peak with that card's pole spread and
+  settled headrooms, as a ratio to the nominal card's solve (Unit Character
+  0 keeps the endpoint constant bit for bit; the voiced ±2 % travel residual
+  stays on top as the spread that survives the adjustment). With that
+  residual cleared every card settles between 4.796 and 4.804 Vp-p; a cold
+  card starts near 4.15 Vp-p and grows into the figure on the warm-up law.
+  The FREQ solve carries the adjustment's shift of the loop gain the
+  frequency-trim table is read at, and the complete-voice ±10-cent windows
+  hold at a worst of 8.7 cents at Unit Character 1 (the residual draws, not
+  the solve, set that figure: the render's droop sits 2–2.5 cents from the
+  harmonic balance on every card). `enableResonanceHeadroomTemperature` and
+  `enableResonanceServiceTrim` keep the former arithmetic for A/B renders.
+- The chassis gradient across the cards now develops on the warm-up clock.
+  It is the supply's heat reaching the cards unequally, absent at power-on,
+  so every card now starts at 25 °C with no cutoff spread and settles into
+  the same temperatures and trims as before; the gradient's cutoff factor is
+  refreshed with the Johnson scales on the 375 Hz control cadence, and the
+  service trims read the settled reference rather than the running clock, so
+  a serviced card is mis-trimmed by the gradient it has not yet acquired
+  until it has. Settled renders are unchanged.
+- The output stage's resistor floors — IC6's summer network and the loaded
+  volume network — now follow the jack board's temperature through Johnson's
+  law, as the cards' floors already did: +0.21 dB at the settled 40 °C of
+  Unit Character 1, exactly one at 25 °C and exact silence at Unit Character
+  0. IC5's −94 dBV floor is a 25 °C data-sheet band figure with no
+  temperature coefficient and stays at it.
+- The sub's switch transistor Tr19 leaves saturation later than it enters
+  it, so the half-cycle D6 conducts begins late by the storage time and the
+  sub carries H2 = π·t_s·f_sub: −88 dBc at the 16′ bottom key, −64 dBc at the
+  4′ top (a render there measures −63.9 dBc). The 0.2 µs is the era's
+  small-signal switching class — 2N3904 200 ns maximum, 2N2222A 225 ns
+  typical — because Toshiba's 2SC1815 sheet lists no switching times; a
+  borrowed class value, identified as such beside the constant, not a fit to
+  the identified unit's −58.5 dBc (which would need 5.8 µs and passes through
+  replacement cards). `enableSubStorageSkew` keeps the instantaneous edge.
 - The resonance BA662's input offset is now part of the loop. Rohm's BA6110
   sibling sheet lists "Low offset voltage (VIO = 3 mV max)", the BA662 itself
   publishes no typical, and no service step nulls it (VR30/R112 null the voice

@@ -60,6 +60,11 @@ struct YouKnowTestAccess
             loopHeadroomVolts;
     }
 
+    static constexpr double feedbackHeadroomFor(double headroom) noexcept
+    {
+        return YouKnowEngine::resonanceHeadroomFor(headroom);
+    }
+
     static float inputCompensation(float feedback) noexcept
     {
         return YouKnowEngine::VoicedResonanceCompatibilityProfile::
@@ -472,7 +477,7 @@ private:
     {
         const double headroom = YouKnowTestAccess::otaHeadroom();
         const double feedbackHeadroom =
-            YouKnowTestAccess::feedbackHeadroom();
+            YouKnowTestAccess::feedbackHeadroomFor(headroom);
         std::array<double, 4> slope {};
         double previous = input - feedback_ * feedbackHeadroom
             * std::tanh(state[3] / feedbackHeadroom);

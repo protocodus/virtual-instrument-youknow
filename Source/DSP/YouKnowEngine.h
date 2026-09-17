@@ -430,6 +430,39 @@ struct EngineParameters
     // the former linear law for controlled baseline renders. The optional
     // fully coupled mixer handles its own diode and does not apply this twice.
     bool enableSubDiodeControl { true };
+    // On by default: Tr19, the sub's switch transistor (a 2SC1815-Y/GR on
+    // the p. 12 legend, base driven from MC5534A pin 13), leaves saturation
+    // later than it enters it, so the half-cycle its collector spends high --
+    // the one D6 conducts, the sub track's +1 state -- begins late by the
+    // storage time (subSwitchStorageSeconds) and nothing delays its end. The
+    // skew puts H2 = pi * t_s * f_sub on an otherwise even-free square:
+    // -88 dBc at the 16' bottom key, -64 dBc at the 4' top key. False keeps
+    // the former instantaneous edge for controlled A/B renders.
+    bool enableSubStorageSkew { true };
+    // On by default: the resonance BA662's linear span at the node is the
+    // same 2 Vt as the stages', through its own 100k/1.5k divider instead of
+    // their 560/68560 one, and both OTAs are potted in the one 80017A at one
+    // temperature. So the return's headroom (loopHeadroomVolts is its 25 C
+    // value) warms with the stage headroom the card is solved with
+    // (resonanceHeadroomFor). The stages already followed the warm-up clock;
+    // a return frozen at 25 C compressed 5 % earlier than the stages on a
+    // warm card, a state the physics does not have. Scaling both together
+    // leaves the limit cycle's loop gain and droop invariant -- the
+    // frequency-trim table stays exact -- and lets its amplitude grow with
+    // the card's temperature, which the RES adjustment below is set
+    // against. False keeps the 25 C return for controlled A/B renders.
+    bool enableResonanceHeadroomTemperature { true };
+    // On by default: Roland's ADJUSTMENT (Service Notes p. 19) sets each
+    // card's RES trimmer for a 4.8 Vp-p self-oscillation at code 6272 after
+    // at least ten minutes' warm-up, before FREQ and WIDTH. Each card's full
+    // travel is therefore the loop gain that sustains 2.4 V peak with that
+    // card's pole spread and headrooms at its settled temperature -- the
+    // harmonic-balance evaluation the FREQ trim already runs -- as a ratio
+    // to the nominal card's, so Unit Character 0 keeps maximumFeedback
+    // exactly. The voiced post-trim residual (VoiceCard::resonanceError)
+    // stays on top as the spread that survives the adjustment. False leaves
+    // every card's full travel at maximumFeedback for controlled A/B renders.
+    bool enableResonanceServiceTrim { true };
 
     // Hosts commonly present the same complete parameter snapshot on every
     // block. Value equality is the right test for that public control image:
@@ -537,6 +570,17 @@ public:
     // User-selected software startup time, not the original chassis's measured
     // heating rate. 63.2% at 3 s; 95% at 9 s. Retains the existing 15 C rise.
     static constexpr double thermalWarmupTimeConstantSeconds = 3.0;
+    // Tr19's storage time, the delay between its base drive falling and its
+    // collector rising (see EngineParameters::enableSubStorageSkew). Toshiba's
+    // 2SC1815 sheet lists no switching times; comparable-era small-signal
+    // NPN switches specify the class -- 2N3904 t_s 200 ns max, 2N2222A
+    // 225 ns typical, both at Ic 10 mA with 1 mA of base drive -- and that
+    // class value is carried here at an unmatched installed drive, a
+    // borrowed estimate rather than a measured Tr19 figure. Not scaled by
+    // Unit Character: it is a nominal property of the part, not a tolerance.
+    // https://www.onsemi.com/pdf/datasheet/2n3903-d.pdf
+    // https://www.onsemi.com/pdf/datasheet/p2n2222a-d.pdf
+    static constexpr double subSwitchStorageSeconds = 0.2e-6;
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     // Audio-thread query for host event ordering. Counts include overlapping
@@ -1845,6 +1889,19 @@ private:
     // input coordinate; the upstream WAVE-to-input level remains OQ-15.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
+    // The resonance return's linear span at the node for a card solved with
+    // `stageHeadroom`: the same 2 Vt through the return's 100k/1.5k divider
+    // rather than the stages' 560/68560 one. One module, one temperature, so
+    // it is the stage headroom times a ratio of resistors; written as a
+    // ratio to the nominal so a 25 C card reproduces loopHeadroomVolts bit
+    // for bit. See EngineParameters::enableResonanceHeadroomTemperature.
+    [[nodiscard]] static constexpr double resonanceHeadroomFor(
+        double stageHeadroom) noexcept
+    {
+        return static_cast<double>(
+                   VoicedResonanceCompatibilityProfile::loopHeadroomVolts)
+             * (stageHeadroom / static_cast<double>(otaHeadroomVolts));
+    }
     // Half-span of the integrating capacitors' tolerance. The four parts are
     // discrete, so nothing trims them into agreement.
     //
@@ -1915,9 +1972,17 @@ private:
     // the raw thermal model; each card's fixed service trim subsequently
     // absorbs its own temperature offset at the declared reference time.
     [[nodiscard]] static float chassisGradientMeanCelsius() noexcept;
+    // The gradient's per-card cutoff factor at a point on the warm-up law.
+    // The gradient is the supply's heat reaching the cards unequally: absent
+    // at power-on, when everything is at ambient, and growing on the same
+    // clock as the chassis rise, since no separate time constant for the
+    // conduction across the cage is measured.
+    [[nodiscard]] static double thermalFilterOmegaScaleFor(
+        const EngineParameters& parameters, int cardIndex,
+        float warmupFraction) noexcept;
     [[nodiscard]] static float boundedThermalFilterOmegaStep(
         float baseOmegaStep, const EngineParameters& parameters,
-        int cardIndex) noexcept;
+        int cardIndex, float warmupFraction) noexcept;
     // Roland publishes an approximate 5 Hz--50 kHz range, but no qualifying
     // capture fixes the high-code saturation shape. Keep the established
     // exponential law and apply an explicit product safety cap at that stated
@@ -2422,6 +2487,11 @@ private:
         // across voices in practice, but held per cascade so two plug-in
         // instances on different shapes cannot interfere.
         float inputCompensationCoefficient { 0.0f };
+        // Whether the resonance return's headroom is the stage headroom
+        // through the return's own divider (resonanceHeadroomFor) or the
+        // 25 C constant. Set per voice from
+        // EngineParameters::enableResonanceHeadroomTemperature.
+        bool resonanceHeadroomFollowsStage { true };
         template <bool useCubicEarly = false>
         float process(float input, float omegaStep, float feedback,
                       float headroom = otaHeadroomVolts,
@@ -2613,10 +2683,12 @@ private:
         float vcaGainError { 0.0f };
         float subLevelError { 0.0f };
         float noiseLevelError { 0.0f };
-        // Fixed per-card cutoff-temperature factor. It is refreshed only when
-        // Unit Character or the spatial-gradient switch moves; renderVoice
-        // then applies it without rebuilding the same exponent-derived card
-        // coordinate every internal sample.
+        // Per-card cutoff factor of the spatial gradient at the running
+        // warm-up fraction (thermalFilterOmegaScaleFor). Refreshed with the
+        // Johnson scales on the wall-clock control cadence and on every
+        // Unit Character or gradient-switch edit; renderVoice then applies
+        // it without rebuilding the exponent-derived card coordinate every
+        // internal sample.
         double thermalFilterOmegaScale { 1.0 };
         // sqrt(T_card / 298.15 K) for the four independent resistor sources.
         // Refreshed on the existing wall-clock control cadence, including
@@ -2628,6 +2700,11 @@ private:
         float vcfServiceTrimCounts { 0.0f };
         float vcfServiceCvScale { 1.0f };
         float vcfServiceCvOffset { 0.0f };
+        // The RES adjustment: the factor on this card's whole return that
+        // puts its settled full-travel limit cycle on the procedure's
+        // 4.8 Vp-p (EngineParameters::enableResonanceServiceTrim). 1 at Unit
+        // Character 0 and with the adjustment switched off.
+        float vcfServiceResonanceScale { 1.0f };
         // How much of the aged-unit cutoff flattening this card takes: a
         // seeded uniform [0, 1] draw, so some cards drift little -- the
         // documented recalibration's qualitative pattern (most voices about a
@@ -2920,6 +2997,13 @@ private:
     // partition. 25 C until the first pass boundary, which is the data
     // book's own condition.
     float jackBoardCelsius_ { 25.0f };
+    // sqrt(T_jack / 298.15 K) on the output stage's resistor floors, exactly
+    // as johnsonTemperatureScale is on the cards': Johnson noise power is
+    // proportional to absolute temperature, and the data book's 25 C is
+    // where the densities are stated. Resampled with jackBoardCelsius_.
+    float jackBoardJohnsonScale_ { 1.0f };
+    void refreshJackBoardTemperature(
+        const EngineParameters& parameters) noexcept;
     [[nodiscard]] float jackBoardCelsius(
         const EngineParameters& parameters) const noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;

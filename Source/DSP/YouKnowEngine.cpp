@@ -767,7 +767,11 @@ namespace
 // headrooms, and both are needed. The four stage pairs compress on
 // `otaHeadroomVolts` = 2 Vt / stageAttenuation and set the *frequency*; the
 // resonance return compresses on `loopHeadroomVolts` = 2 Vt * 67.7 and sets
-// the *amplitude*. Referring one node to the other's headroom is what makes
+// the *amplitude*. Both are 2 Vt through a resistor ratio, so one card
+// temperature moves both (resonanceHeadroomFor), and scaling the two
+// together with the amplitude leaves every ratio below unchanged: the table
+// this builds at 25 C is exact at any temperature. Referring one node to
+// the other's headroom is what makes
 // a single-node account of this miss: at the service anchor the fourth
 // stage's drive is a = 0.35 and supplies 64 cents on its own, while the
 // first stage's is a = 1.17, because a four-pole loop oscillating at its own
@@ -1099,18 +1103,26 @@ float YouKnowEngine::chassisGradientMeanCelsius() noexcept
     return mean;
 }
 
+double YouKnowEngine::thermalFilterOmegaScaleFor(
+    const EngineParameters& parameters, int cardIndex,
+    float warmupFraction) noexcept
+{
+    if (!parameters.enableSpatialThermalGradient)
+        return 1.0;
+    return 1.0 + static_cast<double>(vcfCutoffTempcoPerCelsius)
+        * static_cast<double>(parameters.calibration)
+        * (static_cast<double>(chassisGradientCelsius(cardIndex))
+           - static_cast<double>(chassisGradientMeanCelsius()))
+        * static_cast<double>(warmupFraction);
+}
+
 float YouKnowEngine::boundedThermalFilterOmegaStep(
     float baseOmegaStep, const EngineParameters& parameters,
-    int cardIndex) noexcept
+    int cardIndex, float warmupFraction) noexcept
 {
-    const double spread = parameters.enableSpatialThermalGradient
-        ? 1.0 + static_cast<double>(vcfCutoffTempcoPerCelsius)
-            * static_cast<double>(parameters.calibration)
-            * (static_cast<double>(chassisGradientCelsius(cardIndex))
-               - static_cast<double>(chassisGradientMeanCelsius()))
-        : 1.0;
     return static_cast<float>(OtaCascade::clampOmegaStep(
-        static_cast<double>(baseOmegaStep) * spread));
+        static_cast<double>(baseOmegaStep)
+        * thermalFilterOmegaScaleFor(parameters, cardIndex, warmupFraction)));
 }
 
 namespace
@@ -2651,7 +2663,18 @@ void YouKnowEngine::beginDcoDischarge(
 
     const float nextSub = -dco.subState;
     if (addCorrections && dco.sub.primed)
-        addStep(dco.sub, nextSub - dco.subState, samplesAgo);
+    {
+        // Tr19's storage time delays the edge that ends its saturation -- the
+        // start of the D6-conducting +1 half-cycle -- and nothing delays the
+        // other. Later inside the sample just rendered is fewer samples ago;
+        // addStep clamps at zero, so an edge closer than t_s to the sample
+        // boundary (0.04 of a 192 kHz sample) keeps only part of its skew.
+        const double stepSamplesAgo =
+            nextSub > 0.0f && activeParameters_.enableSubStorageSkew
+                ? samplesAgo - subSwitchStorageSeconds * oversampledRate_
+                : samplesAgo;
+        addStep(dco.sub, nextSub - dco.subState, static_cast<float>(stepSamplesAgo));
+    }
     dco.subState = nextSub;
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(dcoSubTransitions, 1);
@@ -3481,8 +3504,6 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                                      controlNodePositions.size());
     }
 #endif
-    constexpr double feedbackHeadroom =
-        VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
     const double resonanceCompensation =
         static_cast<double>(inputCompensationCoefficient);
     const double resonanceOffset =
@@ -3672,6 +3693,23 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 1.0e-5);
         }
     }
+    // The resonance return's own headroom at each node: the stage headroom
+    // through the return's divider when the card's temperature moves both,
+    // the 25 C constant otherwise (EngineParameters::
+    // enableResonanceHeadroomTemperature). Its reciprocal is taken here,
+    // once per node, so the fast-reciprocal kernels keep their multiply.
+    std::array<double, pointCount> loopHeadroomAt {};
+    std::array<double, pointCount> inverseLoopHeadroomAt {};
+    for (std::size_t point = 0; point < pointCount; ++point)
+    {
+        if ((nodeMask >> point & 1u) == 0u)
+            continue;
+        loopHeadroomAt[point] = resonanceHeadroomFollowsStage
+            ? resonanceHeadroomFor(headroomAt[point])
+            : static_cast<double>(
+                  VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+        inverseLoopHeadroomAt[point] = 1.0 / loopHeadroomAt[point];
+    }
 
     const auto advanceOne = [](const std::array<double, 4>& origin,
                                const std::array<double, 4>& slope,
@@ -3846,10 +3884,10 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 value[3] - resonanceCompensation * drive + resonanceOffset;
             const double feedbackArgument = [&] {
                 if constexpr (useReciprocal)
-                    return differentialInput * (1.0 / feedbackHeadroom);
-                return differentialInput / feedbackHeadroom;
+                    return differentialInput * inverseLoopHeadroomAt[point];
+                return differentialInput / loopHeadroomAt[point];
             }();
-            double previous = drive - feedbackAt[point] * feedbackHeadroom
+            double previous = drive - feedbackAt[point] * loopHeadroomAt[point]
                 * nonlinear(feedbackArgument);
             for (std::size_t stage = 0; stage < result.size(); ++stage)
             {
@@ -3910,11 +3948,11 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             // multiply it away. Identical arithmetic either way.
             const double loopReturn = feedbackAt[point] == 0.0
                 ? drive
-                : drive - feedbackAt[point] * feedbackHeadroom
+                : drive - feedbackAt[point] * loopHeadroomAt[point]
                     * polyZonedTanhImpl(
                         (value[3] - resonanceCompensation * drive
                          + resonanceOffset)
-                        * (1.0 / feedbackHeadroom));
+                        * inverseLoopHeadroomAt[point]);
 
             const std::array<double, 4> stageArg {
                 (loopReturn - value[0] + stageOffset[point][0]) * inverseHeadroom,
@@ -4047,8 +4085,6 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     bool enableEarlyEffect, float calibration,
     float& firstOutput, float& secondOutput) noexcept
 {
-    constexpr double feedbackHeadroom =
-        VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
     const double currentCalibration = std::clamp(
         std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
@@ -4066,6 +4102,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         double feedback {};
         double headroom {};
         double inverseHeadroom {};
+        double loopHeadroom {};
+        double inverseLoopHeadroom {};
         Tableau tableau { Tableau::MersonHalf };
         std::array<double, 5> drive {};
         std::array<double, 4> stageOmega {};
@@ -4110,6 +4148,11 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
         lane.inverseHeadroom = 1.0 / currentHeadroom;
+        lane.loopHeadroom = cascade.resonanceHeadroomFollowsStage
+            ? resonanceHeadroomFor(currentHeadroom)
+            : static_cast<double>(
+                  VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+        lane.inverseLoopHeadroom = 1.0 / lane.loopHeadroom;
         lane.tableau = tableau;
 
         const auto reconstruct = [&](double currentWeight,
@@ -4252,22 +4295,24 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     const Pair resonanceOffset = pack(
         static_cast<double>(first.resonanceOffsetVolts),
         static_cast<double>(second.resonanceOffsetVolts));
+    const Pair inverseLoopHeadroom = pack(
+        lanes[0].inverseLoopHeadroom, lanes[1].inverseLoopHeadroom);
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
-        const Pair feedbackArgument = pairMultiplyScalar(
+        const Pair feedbackArgument = pairMultiply(
             pairAdd(pairSubtract(value[3],
                                  pairMultiply(resonanceCompensation, drive)),
                     resonanceOffset),
-            1.0 / feedbackHeadroom);
+            inverseLoopHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
             ? pairLow(drive)
             : pairLow(drive)
-                - lanes[0].feedback * feedbackHeadroom
+                - lanes[0].feedback * lanes[0].loopHeadroom
                     * pairLow(feedbackTanh);
         const double secondLoopReturn = lanes[1].feedback == 0.0
             ? pairHigh(drive)
             : pairHigh(drive)
-                - lanes[1].feedback * feedbackHeadroom
+                - lanes[1].feedback * lanes[1].loopHeadroom
                     * pairHigh(feedbackTanh);
         const Pair loopReturn = pack(firstLoopReturn, secondLoopReturn);
 
@@ -4429,8 +4474,6 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     bool enableEarlyEffect, float calibration,
     float& firstOutput, float& secondOutput) noexcept
 {
-    constexpr double feedbackHeadroom =
-        VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
     const double currentCalibration = std::clamp(
         std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
@@ -4448,6 +4491,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         double feedback {};
         double headroom {};
         double inverseHeadroom {};
+        double loopHeadroom {};
+        double inverseLoopHeadroom {};
         std::array<double, 7> drive {};
         std::array<double, 4> stageOmega {};
         std::array<std::array<double, 4>, 7> stageOffset {};
@@ -4491,6 +4536,11 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
         lane.inverseHeadroom = 1.0 / currentHeadroom;
+        lane.loopHeadroom = cascade.resonanceHeadroomFollowsStage
+            ? resonanceHeadroomFor(currentHeadroom)
+            : static_cast<double>(
+                  VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+        lane.inverseLoopHeadroom = 1.0 / lane.loopHeadroom;
 
         const auto reconstruct = [&](double currentWeight,
                                      double firstWeight,
@@ -4630,22 +4680,24 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     const Pair resonanceOffset = pack(
         static_cast<double>(first.resonanceOffsetVolts),
         static_cast<double>(second.resonanceOffsetVolts));
+    const Pair inverseLoopHeadroom = pack(
+        lanes[0].inverseLoopHeadroom, lanes[1].inverseLoopHeadroom);
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
-        const Pair feedbackArgument = pairMultiplyScalar(
+        const Pair feedbackArgument = pairMultiply(
             pairAdd(pairSubtract(value[3],
                                  pairMultiply(resonanceCompensation, drive)),
                     resonanceOffset),
-            1.0 / feedbackHeadroom);
+            inverseLoopHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
         const double firstLoopReturn = lanes[0].feedback == 0.0
             ? pairLow(drive)
             : pairLow(drive)
-                - lanes[0].feedback * feedbackHeadroom
+                - lanes[0].feedback * lanes[0].loopHeadroom
                     * pairLow(feedbackTanh);
         const double secondLoopReturn = lanes[1].feedback == 0.0
             ? pairHigh(drive)
             : pairHigh(drive)
-                - lanes[1].feedback * feedbackHeadroom
+                - lanes[1].feedback * lanes[1].loopHeadroom
                     * pairHigh(feedbackTanh);
         const Pair loopReturn = pack(firstLoopReturn, secondLoopReturn);
 
@@ -4819,8 +4871,6 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
     bool enableEarlyEffect, float calibration,
     std::array<float, 4>& outputs) noexcept
 {
-    constexpr float feedbackHeadroom = static_cast<float>(
-        VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
     const double currentCalibration = std::clamp(
         std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
@@ -4841,6 +4891,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         double feedback {};
         double headroom {};
         float inverseHeadroom {};
+        float loopHeadroom {};
+        float inverseLoopHeadroom {};
         std::array<float, 7> drive {};
         std::array<float, 4> stageOmega {};
         std::array<std::array<float, 4>, 7> stageOffset {};
@@ -4888,6 +4940,12 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
         lane.inverseHeadroom = static_cast<float>(1.0 / currentHeadroom);
+        lane.loopHeadroom = static_cast<float>(
+            cascade.resonanceHeadroomFollowsStage
+                ? resonanceHeadroomFor(currentHeadroom)
+                : static_cast<double>(
+                      VoicedResonanceCompatibilityProfile::loopHeadroomVolts));
+        lane.inverseLoopHeadroom = 1.0f / lane.loopHeadroom;
         const auto reconstruct = [&](double currentWeight,
                                      double firstWeight,
                                      double secondWeight,
@@ -5051,8 +5109,12 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
             return static_cast<float>(lane.headroom);
         }, 0u);
     const Quad feedbackGain = packField(
-        [&](const Lane& lane, std::size_t) {
-            return static_cast<float>(lane.feedback) * feedbackHeadroom;
+        [](const Lane& lane, std::size_t) {
+            return static_cast<float>(lane.feedback) * lane.loopHeadroom;
+        }, 0u);
+    const Quad inverseLoopHeadroom = packField(
+        [](const Lane& lane, std::size_t) {
+            return lane.inverseLoopHeadroom;
         }, 0u);
     // Read per cascade rather than broadcast: the coefficient is uniform
     // across voices in practice, but two plug-in instances can differ.
@@ -5075,11 +5137,11 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
 
     // A value parameter lets the ARM ABI pass the four vectors in registers.
     const auto derivative = [&](QuadState value, Quad drive, std::size_t point) {
-        const Quad feedbackArgument = quadMultiplyScalar(
+        const Quad feedbackArgument = quadMultiply(
             quadAdd(quadSubtract(value[3],
                                  quadMultiply(resonanceCompensation, drive)),
                     resonanceOffset),
-            1.0f / feedbackHeadroom);
+            inverseLoopHeadroom);
         const Quad loopReturn = quadSubtract(
             drive, quadMultiply(feedbackGain,
                                 polyTanhQuad(feedbackArgument)));
@@ -5617,16 +5679,9 @@ void YouKnowEngine::refreshVoiceCardStageTrims() noexcept
 void YouKnowEngine::refreshVoiceCardThermalScales() noexcept
 {
     for (int index = 0; index < maxVoices; ++index)
-    {
-        auto& card = cards_[static_cast<std::size_t>(index)];
-        card.thermalFilterOmegaScale =
-            activeParameters_.enableSpatialThermalGradient
-                ? 1.0 + static_cast<double>(vcfCutoffTempcoPerCelsius)
-                    * static_cast<double>(activeParameters_.calibration)
-                    * (static_cast<double>(chassisGradientCelsius(index))
-                       - static_cast<double>(chassisGradientMeanCelsius()))
-                : 1.0;
-    }
+        cards_[static_cast<std::size_t>(index)].thermalFilterOmegaScale =
+            thermalFilterOmegaScaleFor(activeParameters_, index,
+                                       thermalWarmupFraction_);
     refreshCardJohnsonTemperatureScales();
 }
 
@@ -5659,10 +5714,10 @@ void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
     const auto& parameters = activeParameters_;
     const double serviceWarmupFraction = 1.0
         - std::exp(-600.0 / thermalWarmupTimeConstantSeconds);
-    static const double nominalDroop = [] {
+    static const LimitCycle nominalCycle = [] {
         std::array<double, 4> gains { 1.0, 1.0, 1.0, 1.0 };
         return limitCycleFor(2.4, otaHeadroomVolts,
-            VoicedResonanceCompatibilityProfile::loopHeadroomVolts, gains).droop;
+            VoicedResonanceCompatibilityProfile::loopHeadroomVolts, gains);
     }();
     for (int index = 0; index < maxVoices; ++index)
     {
@@ -5670,6 +5725,7 @@ void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
         card.vcfServiceTrimCounts = 0.0f;
         card.vcfServiceCvScale = 1.0f;
         card.vcfServiceCvOffset = 0.0f;
+        card.vcfServiceResonanceScale = 1.0f;
         if (parameters.calibration == 0.0f)
             continue;
         // WIDTH sees the converter's physical voltage, including carry
@@ -5690,23 +5746,58 @@ void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
         for (std::size_t stage = 0; stage < poles.size(); ++stage)
             poles[stage] = voices_[static_cast<std::size_t>(index)]
                                .filter.gScale[stage];
+        const auto serviceFraction = static_cast<float>(serviceWarmupFraction);
         const double gradient = parameters.enableSpatialThermalGradient
             ? chassisGradientCelsius(index) * parameters.calibration : 0.0;
-        const double temperatureRise = gradient
-            + 15.0 * parameters.calibration * serviceWarmupFraction;
+        // Both rises ride the warm-up clock (voiceCardCelsius), read here at
+        // the service reference, where the fraction is one to double
+        // precision.
+        const double temperatureRise =
+            (gradient + 15.0 * parameters.calibration) * serviceWarmupFraction;
         const double headroom = otaHeadroomVolts
             * (1.0 + temperatureRise / 298.15);
+        // The return's headroom at the same temperature, by the law the
+        // kernels run (resonanceHeadroomFor), or its 25 C value when the
+        // comparison switch holds the kernels there.
+        const double returnHeadroom =
+            parameters.enableResonanceHeadroomTemperature
+                ? resonanceHeadroomFor(headroom)
+                : static_cast<double>(
+                      VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
         // The service procedure fixes 4.8 Vpp before adjusting frequency.
         // One harmonic-balance evaluation at that amplitude is sufficient;
         // there is no root search in the automatable Character setter.
         auto gains = poles;
         const auto cycle = limitCycleFor(
-            2.4, headroom,
-            VoicedResonanceCompatibilityProfile::loopHeadroomVolts,
-            gains, poles);
+            2.4, headroom, returnHeadroom, gains, poles);
+        // The RES adjustment first: the loop gain that sustains the
+        // procedure's 2.4 V peak on this card, as a ratio to the nominal
+        // card's own solve so the endpoint constant, which was set against
+        // the rendered nominal limit cycle, is what a nominal card keeps.
+        if (parameters.enableResonanceServiceTrim)
+            card.vcfServiceResonanceScale = static_cast<float>(
+                cycle.loopGain / nominalCycle.loopGain);
+        // Then FREQ. The RES adjustment moves the loop gain the render reads
+        // the frequency-trim table at, so the ratio of that reading to the
+        // nominal one is carried; the gradient's cutoff factor is taken at
+        // the service temperature, not the running one. The voiced post-trim
+        // residual (resonanceError) stays out of this solve as before: its
+        // effect on the amplitude and on the table reading partly cancel,
+        // and accounting for both needs the amplitude it realises, an
+        // inverse solve the automatable Character setter does not run.
+        const double correctionRatio = static_cast<double>(
+            VoicedResonanceCompatibilityProfile::frequencyTrim(
+                VoicedResonanceCompatibilityProfile::maximumFeedback
+                * card.vcfServiceResonanceScale))
+            / static_cast<double>(
+                VoicedResonanceCompatibilityProfile::frequencyTrim(
+                    VoicedResonanceCompatibilityProfile::maximumFeedback));
+        const double settledThermalScale = thermalFilterOmegaScaleFor(
+            parameters, index, serviceFraction);
         card.vcfServiceTrimCounts = static_cast<float>(
             -vcfCountsPerOctave * std::log2(
-                cycle.droop * card.thermalFilterOmegaScale / nominalDroop));
+                cycle.droop * settledThermalScale * correctionRatio
+                / nominalCycle.droop));
     }
 }
 
@@ -6067,7 +6158,8 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
         const float previousFilterOmegaStep = voice.filterOmegaStep;
         const float previousEffectiveFilterOmegaStep =
             boundedThermalFilterOmegaStep(
-                previousFilterOmegaStep, activeParameters_, voice.cardIndex);
+                previousFilterOmegaStep, activeParameters_, voice.cardIndex,
+                thermalWarmupFraction_);
         // Residual kernels are measured in internal samples. The safety fade
         // has reached zero, so discard their old-rate tails and prime the new
         // timeline at the continuing capacitor voltage. PIT countdown is held
@@ -6089,7 +6181,8 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
             updateVoiceAudio(voice, activeParameters_);
             const float nextEffectiveFilterOmegaStep =
                 boundedThermalFilterOmegaStep(
-                    voice.filterOmegaStep, activeParameters_, voice.cardIndex);
+                    voice.filterOmegaStep, activeParameters_, voice.cardIndex,
+                    thermalWarmupFraction_);
             voice.filter.retime(previousEffectiveFilterOmegaStep,
                                 nextEffectiveFilterOmegaStep);
         }
@@ -6183,8 +6276,8 @@ void YouKnowEngine::reset()
 
     thermalWarmupSeconds_ = 0.0;
     thermalWarmupFraction_ = thermalStartsSettled_ ? 1.0f : 0.0f;
-    refreshCardJohnsonTemperatureScales();
-    jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
+    refreshVoiceCardThermalScales();
+    refreshJackBoardTemperature(activeParameters_);
     refreshDcoMasterClock();
     powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
@@ -6284,8 +6377,8 @@ void YouKnowEngine::resetForHostStop()
     reset();
     thermalWarmupSeconds_ = warmupSeconds;
     thermalWarmupFraction_ = warmupFraction;
-    refreshCardJohnsonTemperatureScales();
-    jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
+    refreshVoiceCardThermalScales();
+    refreshJackBoardTemperature(activeParameters_);
     refreshDcoMasterClock();
     // reset() primes the cleared voice nodes; prime again at the retained
     // temperature so a host stop cannot leave cold-clock capacitor means.
@@ -6482,8 +6575,8 @@ bool YouKnowEngine::configureThermalStart(bool settled) noexcept
     thermalStartsSettled_ = settled;
     thermalWarmupSeconds_ = 0.0;
     thermalWarmupFraction_ = settled ? 1.0f : 0.0f;
-    refreshCardJohnsonTemperatureScales();
-    jackBoardCelsius_ = jackBoardCelsius(activeParameters_);
+    refreshVoiceCardThermalScales();
+    refreshJackBoardTemperature(activeParameters_);
     refreshDcoMasterClock();
     return true;
 }
@@ -8519,9 +8612,10 @@ float YouKnowEngine::CircuitDerivedResonanceProfile::loopGain(
     float panelPosition) noexcept
 {
     // Linear above the grounded-base stage's junction onset, zero below it,
-    // sharing the voiced profile's amplitude-anchored endpoint. The per-card
-    // slope trim cancels here by construction: the calibrated card's full
-    // travel lands on the same maximumFeedback the service trim realises.
+    // sharing the voiced profile's amplitude-anchored endpoint. A nominal
+    // card's full travel lands on maximumFeedback here; the caller applies
+    // the per-card RES adjustment (VoiceCard::vcfServiceResonanceScale) that
+    // puts a real card's full travel on the same 4.8 Vp-p.
     const float position = clamp01(panelPosition);
     const float active = std::max(0.0f, position - onsetTravel)
                        / (1.0f - onsetTravel);
@@ -8559,9 +8653,13 @@ float YouKnowEngine::resonanceFeedbackFor(
     // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv
         + card.resonanceError * 0.02f * calibration);
-    return circuitDerivedShape
+    const float loopGain = circuitDerivedShape
              ? CircuitDerivedResonanceProfile::loopGain(resonancePanel)
              : VoicedResonanceCompatibilityProfile::loopGain(resonancePanel);
+    // The RES adjustment: the trimmer scales this card's whole return, so
+    // its settled full-travel limit cycle is the procedure's 4.8 Vp-p
+    // (refreshVoiceCardServiceTrims). Exactly 1 at Unit Character 0.
+    return loopGain * card.vcfServiceResonanceScale;
 }
 
 float YouKnowEngine::cutoffAnalogCounts(
@@ -8685,6 +8783,8 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
             ? VoicedResonanceCompatibilityProfile::compensationCoefficient(
                   parameters.resonanceCompensationShape)
             : 0.0f;
+    voice.filter.resonanceHeadroomFollowsStage =
+        parameters.enableResonanceHeadroomTemperature;
 
     const float analogCounts = cutoffAnalogCounts(
         voice.cutoffCounts, card, tolerance, powerSupplyDroop_);
@@ -9134,7 +9234,12 @@ float YouKnowEngine::voiceCardCelsius(
         ? chassisGradientCelsius(cardIndex) * parameters.calibration
         : 0.0f;
     const float tempRise = 15.0f * parameters.calibration;
-    return 25.0f + psuThermalOffset + tempRise * warmupFraction;
+    // Both rises are the supply's heat: at power-on every card is at ambient
+    // and the gradient, like the common rise, develops on the warm-up clock.
+    // The service trims read this at the settled fraction, so a cold card
+    // is mis-trimmed by the gradient it has not yet acquired, as a serviced
+    // instrument is.
+    return 25.0f + (psuThermalOffset + tempRise) * warmupFraction;
 }
 
 float YouKnowEngine::dynamicOtaHeadroomVolts(
@@ -9169,6 +9274,20 @@ float YouKnowEngine::jackBoardCelsius(
     // Character 0 holds the part at NEC's 25 C condition for the whole
     // session; no gradient term, because the jack board is not a card.
     return 25.0f + 15.0f * parameters.calibration * thermalWarmupFraction_;
+}
+
+void YouKnowEngine::refreshJackBoardTemperature(
+    const EngineParameters& parameters) noexcept
+{
+    jackBoardCelsius_ = jackBoardCelsius(parameters);
+    // Johnson's law on the output stage's resistor floors, the same
+    // sqrt(T / 298.15 K) the cards' floors take; exactly 1 at 25 C. The
+    // volume wiper sits on the panel board, whose own temperature is not
+    // measured, so it reads the one chassis warm-up the model has, like
+    // every part off the cards. IC5's data-sheet floor is a stated 25 C
+    // band figure with no temperature coefficient, and is left at it.
+    jackBoardJohnsonScale_ = std::sqrt(
+        (jackBoardCelsius_ + 273.15f) / outputNoiseTemperatureKelvin);
 }
 
 void YouKnowEngine::advanceDcoPitAndRamp(
@@ -10453,7 +10572,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 // how the host partitions its blocks, and reading it every
                 // internal sample would spend a power for a number that
                 // moves by microdecibels across a pass.
-                jackBoardCelsius_ = jackBoardCelsius(parameters);
+                refreshJackBoardTemperature(parameters);
                 if (assignmentRescanPending_)
                     assignmentRescanPassArmed_ = true;
                 if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
@@ -10650,7 +10769,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 // differently depending on a quality setting.
                 driftControlCountdown_ = std::max(
                     1, static_cast<int>(oversampledRate_ / driftUpdateHz));
-                refreshCardJohnsonTemperatureScales();
+                // The gradient's cutoff factor rides the same clock as the
+                // Johnson scales now that it develops with the warm-up.
+                refreshVoiceCardThermalScales();
                 for (auto& card : cards_)
                     updateVoiceCardDrift(card);
             }
@@ -10964,7 +11085,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 nextConverterWrite_ = 0;
                 converterPassEnvelopeUpdated_.fill(false);
                 converterPassPortamentoUpdated_ = converterNextPassPortamentoUpdated_ = false;
-                jackBoardCelsius_ = jackBoardCelsius(parameters);
+                refreshJackBoardTemperature(parameters);
                 // Complete the logical assigner rescan only when the entire
                 // 02EC→07B5 pass has returned, after every off-gate VCA hold.
                 if (assignmentRescanPending_ && assignmentRescanPassArmed_)
@@ -11266,18 +11387,22 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                     * parameters.calibration;
         const float outputNoiseRight = bipolarFromState(outputNoiseStateRight_)
                                      * parameters.calibration;
-        outputLeft += outputNoiseLeft * coefficients.outputSummerNoiseScale;
-        outputRight += outputNoiseRight * coefficients.outputSummerNoiseScale;
+        const float summerNoiseScale =
+            coefficients.outputSummerNoiseScale * jackBoardJohnsonScale_;
+        outputLeft += outputNoiseLeft * summerNoiseScale;
+        outputRight += outputNoiseRight * summerNoiseScale;
         outputLeft = outputCouplingLeft_.process(
             outputLeft, outputCouplingG_, 0.0f, outputCouplingGain);
         outputRight = outputCouplingRight_.process(
             outputRight, outputCouplingG_, 0.0f, outputCouplingGain);
         outputWiperNoiseStateLeft_ = xorshift32(outputWiperNoiseStateLeft_);
         outputWiperNoiseStateRight_ = xorshift32(outputWiperNoiseStateRight_);
+        const float wiperNoiseScale =
+            outputWiperNoiseScale * jackBoardJohnsonScale_;
         outputLeft += bipolarFromState(outputWiperNoiseStateLeft_)
-                    * parameters.calibration * outputWiperNoiseScale;
+                    * parameters.calibration * wiperNoiseScale;
         outputRight += bipolarFromState(outputWiperNoiseStateRight_)
-                     * parameters.calibration * outputWiperNoiseScale;
+                     * parameters.calibration * wiperNoiseScale;
         // C22/C21 with R64/R65: the jack node the plug sees. The coupling and
         // the wiper's noise both sit behind the 2.2 kOhm, so the pole follows
         // them. It is the nominal circuit's, so Unit Character does not scale
