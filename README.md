@@ -8,6 +8,24 @@ plug-in for your music host or a standalone instrument.
 
 ## Download
 
+### Where the binaries are
+
+- **Continuous builds.** Every passing push or manually dispatched
+  [CI run](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=is%3Asuccess+-event%3Apull_request)
+  attaches three artifacts under its **Artifacts** section: `ci-macos`
+  (universal `.pkg` installer plus a manual-install `.zip`), `ci-windows`
+  (`.zip`) and `ci-linux` (`.tar.gz`). Pull-request runs do not package macOS.
+  macOS and Windows artifacts expire after 30 days, Linux after seven.
+- **Signed releases.** Tagged `youknow-v*` releases publish the signed,
+  notarized macOS `.pkg`, its `.manifest.txt` and `-SHA256SUMS.txt` on the
+  [GitHub Releases page](https://github.com/protocodus/virtual-instrument-youknow/releases);
+  Windows and Linux packages come from CI. No tagged release has been
+  published for 1.1.0 yet.
+- **Local builds.** The packaging scripts write the same customer files under
+  `build-macos/dist/`, `build-win/dist/` and `build-dsp/dist/` in the
+  checkout; plug-in bundles themselves sit in each build directory's
+  `YouKnow_artefacts/` tree.
+
 **For the e-shop, the two main customer downloads are the macOS `.pkg`
 installer and the Windows `.zip` below.** Each contains all formats for its
 platform, so customers do not need a separate download for each plug-in format.
