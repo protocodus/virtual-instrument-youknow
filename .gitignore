@@ -19,6 +19,9 @@ DerivedData/
 *.pkg
 *.dmg
 *.zip
+# dist/ is the one place a built package is tracked: CI publishes each main
+# build's packages there, and the rules above must not hide them from git add.
+!/dist/**
 
 # macOS metadata
 .DS_Store

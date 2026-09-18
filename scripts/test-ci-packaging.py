@@ -565,6 +565,9 @@ class PreviewPublicationTests(unittest.TestCase):
         self.git(self.seed, "config", "user.name", "Fixture")
         self.git(self.seed, "config", "user.email", "fixture@example.invalid")
         self.original = {
+            # The repository's own ignore rules: they decide what `git add`
+            # takes from dist/, and they ignore built packages by extension.
+            ".gitignore": (SCRIPTS.parent / ".gitignore").read_bytes(),
             "README.md": b"Original README and peak table\n",
             "Source/engine.cpp": b"original source\n",
             "Docs/audio/demo.wav": b"original demo",
