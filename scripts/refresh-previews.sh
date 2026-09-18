@@ -13,6 +13,13 @@ if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
     echo "error: preview refresh is only allowed on main" >&2
     exit 1
 fi
+# The package gate walks `git log -- dist` for the commit that published the
+# committed set. In a shallow checkout that walk ends at this very commit and
+# every source reads as unchanged, so the workflow checks out full history.
+if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+    echo "error: preview refresh needs full history (checkout with fetch-depth: 0)" >&2
+    exit 1
+fi
 test -s "${PREVIEW_DIR}/audio-previews.tar.gz"
 test -s "${PREVIEW_DIR}/editor-preview.tar.gz"
 # Each platform directory is one package artifact: the customer files and the
