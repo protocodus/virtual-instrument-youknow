@@ -316,6 +316,13 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderShowcase PRIVATE YouKnowDSP Threads::Threads)
     target_compile_features(YouKnowRenderShowcase PRIVATE cxx_std_20)
 
+    add_executable(YouKnowRenderPresetDemos
+        Tools/RenderPresetDemos.cpp
+        Tools/PresetScores.h)
+    target_link_libraries(YouKnowRenderPresetDemos PRIVATE YouKnowDSP Threads::Threads)
+    target_include_directories(YouKnowRenderPresetDemos PRIVATE Tools)
+    target_compile_features(YouKnowRenderPresetDemos PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderSota Tools/RenderSotaComparisons.cpp)
     target_link_libraries(YouKnowRenderSota PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderSota PRIVATE cxx_std_20)
@@ -807,6 +814,11 @@ if(BUILD_TESTING)
 
         add_test(NAME YouKnow.ShowcaseScores COMMAND YouKnowRenderShowcase --check)
         set_tests_properties(YouKnow.ShowcaseScores PROPERTIES TIMEOUT 30)
+
+        add_test(NAME YouKnow.RenderPresetDemos
+                 COMMAND YouKnowRenderPresetDemos --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/preset-demos-smoke")
+        set_tests_properties(YouKnow.RenderPresetDemos PROPERTIES TIMEOUT 60)
 
         # Proves the hardware-benchmark measures can see the differences they
         # exist to report: a render must compare equal to itself, and a known
