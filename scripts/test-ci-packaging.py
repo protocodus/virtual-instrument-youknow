@@ -761,6 +761,18 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertIn("Docs/audio/renamed-demo.wav", tracked)
         self.assertEqual(self.remote_contents("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
 
+    def test_shallow_checkout_is_refused(self):
+        # actions/checkout's default depth leaves only GITHUB_SHA in the
+        # history, so `git log -- dist` names that very commit and the package
+        # gate calls every source unchanged: main's run for 53bbd54 kept the
+        # previous build's packages that way. The script must refuse to start.
+        shutil.rmtree(self.checkout)
+        self.git(self.directory, "clone", "--depth", "1", self.remote.as_uri(), str(self.checkout))
+        self.git(self.checkout, "config", f"url.{self.remote.as_uri()}.insteadOf",
+                 "https://x-access-token:test-token@github.com/test/repo.git")
+        self.assertIn("full history", self.refresh_fails())
+        self.assertEqual(self.remote_head(), self.source_commit)
+
     def test_newer_source_prevents_stale_preview_publication(self):
         upstream = self.push_change("Source/engine.cpp", b"newer source\n")
         self.assertIn("Main changed since this render", self.refresh())
