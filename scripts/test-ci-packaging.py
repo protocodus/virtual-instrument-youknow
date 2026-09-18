@@ -556,6 +556,8 @@ class PreviewPublicationTests(unittest.TestCase):
         self.checkout = self.directory / "checkout"
         self.previews = self.directory / "previews"
         self.previews.mkdir()
+        self.dist = self.directory / "dist"
+        self.dist.mkdir()
         self.environment = os.environ.copy()
         self.environment.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
         self.git(self.directory, "init", "--bare", "--initial-branch=main", str(self.remote))
@@ -570,6 +572,11 @@ class PreviewPublicationTests(unittest.TestCase):
             "Docs/audio/frozen-review/take.wav": b"frozen evidence",
             "Docs/screenshots/youknow-standalone.png": b"original screenshot",
         }
+        # The packages of an earlier main build, committed by an earlier refresh.
+        self.original_packages = self.package_set("1.1", b"old ")
+        self.original.update(self.original_packages)
+        self.original["dist/youknow-standalone.png"] = b"old screenshot"
+        self.original["dist/BUILD.txt"] = b"source=earlier\nversion=1.2.3-build.1.1\n"
         for relative, contents in self.original.items():
             write(self.seed / relative, contents)
         self.git(self.seed, "add", ".")
@@ -584,7 +591,7 @@ class PreviewPublicationTests(unittest.TestCase):
         self.environment.update({
             "GH_TOKEN": "test-token", "GITHUB_REPOSITORY": "test/repo",
             "GITHUB_SHA": self.source_commit, "GITHUB_REF": "refs/heads/main",
-            "PREVIEW_DIR": str(self.previews),
+            "PREVIEW_DIR": str(self.previews), "DIST_DIR": str(self.dist),
         })
         self.rendered = {
             "README.md": b"Original README with refreshed peak table\n",
@@ -593,6 +600,31 @@ class PreviewPublicationTests(unittest.TestCase):
             "Docs/screenshots/youknow-standalone.png": b"rendered screenshot",
         }
         self.archives(self.rendered)
+        # This run's packages, downloaded one platform per directory with the
+        # checksum file each packaging step wrote.
+        self.packages = self.package_set("2.1", b"new ", write=True)
+
+    def package_set(self, build, tag, write=False):
+        names = {
+            "macos": [f"YouKnow-1.2.3-build.{build}-macOS-universal.pkg",
+                      f"YouKnow-1.2.3-build.{build}-macOS-universal.zip"],
+            "windows": [f"YouKnow-1.2.3-build.{build}-Windows-x64.zip"],
+            "linux": [f"YouKnow-1.2.3-build.{build}-Linux-x64.tar.gz"],
+        }
+        files = {}
+        for platform, archives in names.items():
+            sums = ""
+            for name in archives:
+                contents = tag + name.encode()
+                files[f"dist/{platform}/{name}"] = contents
+                sums += f"{hashlib.sha256(contents).hexdigest()}  {name}\n"
+            files[f"dist/{platform}/SHA256SUMS.txt"] = sums.encode()
+        if write:
+            for relative, contents in files.items():
+                write_path = self.dist / relative.removeprefix("dist/")
+                write_path.parent.mkdir(parents=True, exist_ok=True)
+                write_path.write_bytes(contents)
+        return files
 
     def git(self, cwd, *arguments):
         return subprocess.run(
@@ -618,8 +650,24 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout
 
+    def refresh_fails(self):
+        result = subprocess.run(
+            ["bash", str(SCRIPTS / "refresh-previews.sh")], cwd=self.checkout,
+            env=self.environment, capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout + result.stderr
+
     def remote_head(self):
         return self.git(self.remote, "rev-parse", "main").stdout.strip()
+
+    def remote_tracked(self):
+        return self.git(self.remote, "ls-tree", "-r", "--name-only", "main").stdout.splitlines()
+
+    def push_source_change(self):
+        head = self.push_change("Source/engine.cpp", b"newer source\n")
+        self.environment["GITHUB_SHA"] = head
+        return head
 
     def remote_contents(self, relative):
         return self.git(self.remote, "show", f"main:{relative}").stdout.encode()
@@ -640,6 +688,40 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertEqual(self.remote_contents("Source/engine.cpp"), b"original source\n")
         changed = self.git(self.remote, "diff-tree", "--no-commit-id", "--name-only", "-r", "main").stdout
         self.assertEqual(set(changed.splitlines()), set(self.rendered))
+        # The source did not change since the committed packages, so a rebuild
+        # of the same main (the nightly run) keeps that set rather than
+        # stacking another build number's files into the history.
+        for relative, contents in self.original_packages.items():
+            self.assertEqual(self.remote_contents(relative), contents)
+        self.assertEqual(self.remote_contents("dist/BUILD.txt"), self.original["dist/BUILD.txt"])
+
+    def test_packages_follow_a_source_change(self):
+        head = self.push_source_change()
+        self.refresh()
+        for relative, contents in {**self.rendered, **self.packages}.items():
+            self.assertEqual(self.remote_contents(relative), contents)
+        self.assertEqual(self.remote_contents("dist/youknow-standalone.png"),
+                         self.rendered["Docs/screenshots/youknow-standalone.png"])
+        self.assertEqual(self.remote_contents("dist/BUILD.txt"),
+                         f"source={head}\nversion=1.2.3-build.2.1\n".encode())
+        tracked = self.remote_tracked()
+        for relative in self.original_packages:
+            if not relative.endswith("SHA256SUMS.txt"):
+                self.assertNotIn(relative, tracked)
+        self.assertEqual(self.remote_contents("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
+        changed = self.git(self.remote, "diff-tree", "--no-commit-id", "--name-only", "-r", "main").stdout
+        expected = set(self.rendered) | set(self.packages) | {"dist/youknow-standalone.png", "dist/BUILD.txt"}
+        expected |= {relative for relative in self.original_packages if not relative.endswith("SHA256SUMS.txt")}
+        self.assertEqual(set(changed.splitlines()), expected)
+
+    def test_corrupt_package_never_reaches_main(self):
+        head = self.push_source_change()
+        archive = next(self.dist.glob("linux/*.tar.gz"))
+        archive.write_bytes(b"truncated download")
+        self.assertIn("FAILED", self.refresh_fails())
+        self.assertEqual(self.remote_head(), head)
+        for relative, contents in self.original_packages.items():
+            self.assertEqual(self.remote_contents(relative), contents)
 
     def test_unchanged_previews_do_not_create_a_commit(self):
         self.archives({relative: self.original[relative] for relative in self.rendered})

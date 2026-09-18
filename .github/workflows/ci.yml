@@ -308,7 +308,7 @@ jobs:
           retention-days: 30
 
   refresh-previews:
-    name: Refresh the committed screenshot and audio demos
+    name: Refresh the committed screenshot, audio demos and packages
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [dsp-tests, plugin-macos, dsp-tests-windows]
     runs-on: ubuntu-24.04
@@ -331,10 +331,31 @@ jobs:
           name: ci-editor-preview
           path: ${{ runner.temp }}/youknow-previews
 
-      - name: Commit the refreshed previews if they changed
+      # The three customer packages of this run, one directory per platform,
+      # each with the SHA256SUMS.txt its packaging step wrote.
+      - name: Download the macOS packages
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-macos
+          path: ${{ runner.temp }}/youknow-dist/macos
+
+      - name: Download the Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-windows
+          path: ${{ runner.temp }}/youknow-dist/windows
+
+      - name: Download the Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-linux
+          path: ${{ runner.temp }}/youknow-dist/linux
+
+      - name: Commit the refreshed previews and packages if they changed
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_DIR: ${{ runner.temp }}/youknow-previews
+          DIST_DIR: ${{ runner.temp }}/youknow-dist
         run: bash scripts/refresh-previews.sh
 
   dsp-tests-windows:

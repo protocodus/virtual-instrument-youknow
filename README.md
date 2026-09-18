@@ -16,6 +16,15 @@ plug-in for your music host or a standalone instrument.
   (universal `.pkg` installer plus a manual-install `.zip`), `ci-windows`
   (`.zip`) and `ci-linux` (`.tar.gz`). Pull-request runs do not package macOS.
   macOS and Windows artifacts expire after 30 days, Linux after seven.
+- **Committed builds.** Every push to `main` that changes the source also
+  commits that run's three packages, with the refreshed editor screenshot,
+  under [`dist/`](dist/): `dist/macos/` (`.pkg` and manual-install `.zip`),
+  `dist/windows/` (`.zip`) and `dist/linux/` (`.tar.gz`), each beside its
+  `SHA256SUMS.txt`, plus `dist/BUILD.txt` naming the source commit and build.
+  Only the latest set is kept, so
+  `https://github.com/protocodus/virtual-instrument-youknow/raw/main/dist/`
+  paths are persistent shop links, and each set lands in the history for good
+  (about 95 MB per republished build).
 - **Signed releases.** Tagged `youknow-v*` releases publish the signed,
   notarized macOS `.pkg`, its `.manifest.txt` and `-SHA256SUMS.txt` on the
   [GitHub Releases page](https://github.com/protocodus/virtual-instrument-youknow/releases);
