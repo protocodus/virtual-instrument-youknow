@@ -307,7 +307,7 @@ int main (int argc, char** argv)
     try
     {
         bool check = false;
-        std::filesystem::path directory = "Docs/audio/showcase";
+        std::filesystem::path directory = "Docs/audio";
         for (int i = 1; i < argc; ++i)
             if (std::string (argv[i]) == "--check") check = true;
             else directory = argv[i];

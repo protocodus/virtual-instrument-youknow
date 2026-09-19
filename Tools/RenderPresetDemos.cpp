@@ -73,12 +73,11 @@ std::filesystem::path instrumentReadme (const std::filesystem::path& directory)
     if (normalised.filename().empty())
         normalised = normalised.parent_path();
 
-    if (normalised.filename() != "presets"
-        || normalised.parent_path().filename() != "audio"
-        || normalised.parent_path().parent_path().filename() != "Docs")
+    if (normalised.filename() != "audio"
+        || normalised.parent_path().filename() != "Docs")
         return {};
 
-    return normalised.parent_path().parent_path().parent_path() / "README.md";
+    return normalised.parent_path().parent_path() / "README.md";
 }
 
 std::string formatSignedDb (double value)
@@ -315,7 +314,7 @@ bool updateReadmeTable (const std::filesystem::path& directory,
     {
         char row[512];
         std::snprintf (row, sizeof row,
-                       "| [`%s`](Docs/audio/presets/%s) | %s | %s | %.1f s | %s dBFS | %s dB | %s |\n",
+                       "| [`%s`](Docs/audio/%s) | %s | %s | %.1f s | %s dBFS | %s dB | %s |\n",
                        r.demo.slot, r.demo.filename, r.demo.title, r.demo.category,
                        r.seconds, formatSignedDb (r.peakDbfs).c_str(),
                        formatSignedDb (r.normalisationDb).c_str(),
@@ -359,7 +358,7 @@ int main (int argc, char** argv)
     try
     {
         bool smoke = false;
-        std::filesystem::path directory = "Docs/audio/presets";
+        std::filesystem::path directory = "Docs/audio";
 
         for (int i = 1; i < argc; ++i)
         {

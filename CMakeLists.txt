@@ -323,6 +323,15 @@ if(YOUKNOW_BUILD_TOOLS)
     target_include_directories(YouKnowRenderPresetDemos PRIVATE Tools)
     target_compile_features(YouKnowRenderPresetDemos PRIVATE cxx_std_20)
 
+    add_custom_target(YouKnowRebuildDemos ALL
+        COMMAND YouKnowRenderDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
+        COMMAND YouKnowRenderComposition "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
+        COMMAND YouKnowRenderShowcase "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
+        COMMAND YouKnowRenderPresetDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
+        DEPENDS YouKnowRenderDemos YouKnowRenderComposition YouKnowRenderShowcase YouKnowRenderPresetDemos
+        COMMENT "Rebuilding all audio demos and updating README.md tables"
+        USES_TERMINAL)
+
     add_executable(YouKnowRenderSota Tools/RenderSotaComparisons.cpp)
     target_link_libraries(YouKnowRenderSota PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderSota PRIVATE cxx_std_20)

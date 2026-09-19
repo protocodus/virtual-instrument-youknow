@@ -7,7 +7,7 @@ namespace youknow::showcase
 inline Demo bassDemo()
 {
     Demo d;
-    d.filename = "01-bass-midnight-drive.wav";
+    d.filename = "showcase-01-bass-midnight-drive.wav";
     d.title = "Midnight Drive";
     d.category = "Bass";
     d.key = "E natural minor";
@@ -137,7 +137,7 @@ inline Demo bassDemo()
 inline Demo leadDemo()
 {
     Demo d;
-    d.filename = "02-lead-signal-fire.wav";
+    d.filename = "showcase-02-lead-signal-fire.wav";
     d.title = "Signal Fire";
     d.category = "Lead";
     d.key = "D natural minor";

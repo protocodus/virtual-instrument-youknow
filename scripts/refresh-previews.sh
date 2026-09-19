@@ -78,13 +78,13 @@ for attempt in 1 2 3; do
     tar -xzf "${PREVIEW_DIR}/audio-previews.tar.gz"
     tar -xzf "${PREVIEW_DIR}/editor-preview.tar.gz"
     publish_packages
-    # Frozen review/listening evidence in subdirectories is never staged. The
-    # composition is the one exception: it lives in a subdirectory only so the
-    # demo renderer's stale-file sweep cannot reach it, and it is maintained,
-    # not frozen, so it is named explicitly rather than by a directory glob.
+    # Frozen review/listening evidence in subdirectories is never staged. All
+    # maintained demo audio lives directly under Docs/audio.
     git add -A -- README.md ':(glob)Docs/audio/*.wav' \
-        Docs/audio/composition/youknow-composition.wav \
         Docs/screenshots/youknow-standalone.png
+    if [[ -f Docs/audio/showcase-manifest.json ]]; then
+        git add -A -- Docs/audio/showcase-manifest.json
+    fi
     if [[ -d dist ]]; then
         git add -A -- dist
     fi

@@ -44,7 +44,7 @@ inline void heldVoicings (Demo& d, std::initializer_list<Voicing> input)
 inline Demo stringsDemo()
 {
     Demo d;
-    d.filename = "03-strings-silver-canopy.wav";
+    d.filename = "showcase-03-strings-silver-canopy.wav";
     d.title = "Silver Canopy";
     d.category = "Strings";
     d.key = "D major";
@@ -103,7 +103,7 @@ inline Demo stringsDemo()
 inline Demo brassDemo()
 {
     Demo d;
-    d.filename = "04-brass-city-lights.wav";
+    d.filename = "showcase-04-brass-city-lights.wav";
     d.title = "City Lights";
     d.category = "Brass";
     d.key = "B-flat major";
@@ -186,7 +186,7 @@ inline Demo brassDemo()
 inline Demo padDemo()
 {
     Demo d;
-    d.filename = "05-pad-slow-horizon.wav";
+    d.filename = "showcase-05-pad-slow-horizon.wav";
     d.title = "Slow Horizon";
     d.category = "Pad";
     d.key = "C major";

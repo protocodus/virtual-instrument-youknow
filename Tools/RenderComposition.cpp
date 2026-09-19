@@ -1,4 +1,4 @@
-// Renders the committed composition under Docs/audio/composition from the same
+// Renders the committed composition under Docs/audio from the same
 // JUCE-free engine the plug-in runs.
 //
 // Where the numbered demos under Docs/audio each isolate one mechanism, this is
@@ -1846,21 +1846,20 @@ constexpr const char* partsTableEnd = "<!-- composition-table-end -->";
 
 constexpr const char* compositionFileName = "youknow-composition.wav";
 
-// Only the instrument's own Docs/audio/composition directory has a README two
-// levels up carrying the markers; an ad-hoc output directory has none, and
-// resolving one is how this tool tells the difference.
+// Only the instrument's own Docs/audio directory has a README one level
+// up carrying the markers; an ad-hoc output directory has none, and resolving
+// one is how this tool tells the difference.
 std::filesystem::path instrumentReadme (const std::filesystem::path& directory)
 {
     auto normalised = directory.lexically_normal();
     if (normalised.filename().empty())
         normalised = normalised.parent_path();
 
-    if (normalised.filename() != "composition"
-        || normalised.parent_path().filename() != "audio"
-        || normalised.parent_path().parent_path().filename() != "Docs")
+    if (normalised.filename() != "audio"
+        || normalised.parent_path().filename() != "Docs")
         return {};
 
-    return normalised.parent_path().parent_path().parent_path() / "README.md";
+    return normalised.parent_path().parent_path() / "README.md";
 }
 
 std::string formatSignedDb (double value)
@@ -2081,7 +2080,7 @@ int main (int argc, char** argv)
 {
     std::vector<std::string> arguments (argv + 1, argv + argc);
     bool smoke = false;
-    std::filesystem::path directory = "Docs/audio/composition";
+    std::filesystem::path directory = "Docs/audio";
 
     for (const auto& argument : arguments)
     {

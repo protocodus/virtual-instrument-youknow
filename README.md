@@ -224,20 +224,20 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 ## Audio demos
 
 **Five musical showcases, at maximum quality, 24-bit/96 kHz stereo:**
-[bass](Docs/audio/showcase/01-bass-midnight-drive.wav) ·
-[lead](Docs/audio/showcase/02-lead-signal-fire.wav) ·
-[strings](Docs/audio/showcase/03-strings-silver-canopy.wav) ·
-[brass](Docs/audio/showcase/04-brass-city-lights.wav) ·
-[pad](Docs/audio/showcase/05-pad-slow-horizon.wav).
+[bass](Docs/audio/showcase-01-bass-midnight-drive.wav) ·
+[lead](Docs/audio/showcase-02-lead-signal-fire.wav) ·
+[strings](Docs/audio/showcase-03-strings-silver-canopy.wav) ·
+[brass](Docs/audio/showcase-04-brass-city-lights.wav) ·
+[pad](Docs/audio/showcase-05-pad-slow-horizon.wav).
 Each is an original solo performance, with a chord progression and voice count
 suited to its sound; [the showcase notes](#musical-showcases) describe what to hear.
 
-**[The composition](Docs/audio/composition/youknow-composition.wav)** — ten
+**[The composition](Docs/audio/youknow-composition.wav)** — ten
 factory presets, ten overdubs, one piece of music, rendered at 24-bit/44.1 kHz
 on the deepest oversampling rung. Hear the sounds together in one arrangement;
 [the part list](#the-composition) says which preset plays what.
 
-**[Factory preset demos](Docs/audio/presets)** — short musical performances for
+**[Factory preset demos](#factory-preset-demos)** — short musical performances for
 fifteen well-known factory presets, exploring the distinct character of each
 sound; [the preset list](#factory-preset-demos) details each take.
 
@@ -245,7 +245,7 @@ Or hear one mechanism at a time:
 [chorus pad](Docs/audio/01-chorus-pad.wav) ·
 [16′ bass](Docs/audio/03-sixteen-foot-bass.wav) ·
 [chorus modes](Docs/audio/06-chorus-modes.wav) ·
-[all ten demos](Docs/audio).
+[all audio demos](Docs/audio).
 
 ## Licensing and privacy
 
@@ -2072,11 +2072,11 @@ chord changes, leaving the available voices for moving parts.
 
 | WAV | Key / tempo | Length | What to hear |
 | --- | --- | ---: | --- |
-| [Bass — Midnight Drive](Docs/audio/showcase/01-bass-midnight-drive.wav) | E minor / 100 BPM | 32.2 s | Six voices in unison: syncopated plucks, octave answers and an opening resonant filter. |
-| [Lead — Signal Fire](Docs/audio/showcase/02-lead-signal-fire.wav) | D minor / 72 BPM | 30.8 s | One voice: two answering melodic phrases, short glides and gentle vibrato on longer notes. |
-| [Strings — Silver Canopy](Docs/audio/showcase/03-strings-silver-canopy.wav) | D major / 76 BPM | 29.4 s | Five inner parts support a sixth melodic voice; PWM and Chorus II animate a suspended dominant resolving to D6/9. |
-| [Brass — City Lights](Docs/audio/showcase/04-brass-city-lights.wav) | B-flat major / 80 BPM | 28.2 s | Four-note syncopated hits and short melodic answers build to a six-voice B-flat sixth chord. |
-| [Pad — Slow Horizon](Docs/audio/showcase/05-pad-slow-horizon.wav) | C major / 68 BPM | 37.5 s | Six spread voices move through major and minor ninths, with slow PWM, Chorus I and a long natural release. |
+| [Bass — Midnight Drive](Docs/audio/showcase-01-bass-midnight-drive.wav) | E minor / 100 BPM | 32.2 s | Six voices in unison: syncopated plucks, octave answers and an opening resonant filter. |
+| [Lead — Signal Fire](Docs/audio/showcase-02-lead-signal-fire.wav) | D minor / 72 BPM | 30.8 s | One voice: two answering melodic phrases, short glides and gentle vibrato on longer notes. |
+| [Strings — Silver Canopy](Docs/audio/showcase-03-strings-silver-canopy.wav) | D major / 76 BPM | 29.4 s | Five inner parts support a sixth melodic voice; PWM and Chorus II animate a suspended dominant resolving to D6/9. |
+| [Brass — City Lights](Docs/audio/showcase-04-brass-city-lights.wav) | B-flat major / 80 BPM | 28.2 s | Four-note syncopated hits and short melodic answers build to a six-voice B-flat sixth chord. |
+| [Pad — Slow Horizon](Docs/audio/showcase-05-pad-slow-horizon.wav) | C major / 68 BPM | 37.5 s | Six spread voices move through major and minor ninths, with slow PWM, Chorus I and a long natural release. |
 
 These use `YB4 Rubber Bass`, `A53 Lead III`, `B11 Strings`, `A11 Brass Set 1`
 and `YP2 Slow Horizon`. The strings retain their factory settings. The bass uses
@@ -2094,14 +2094,14 @@ Merson filter solver. Aging is zero. Each take receives one fixed gain to reach
 −3 dBFS peak, 24-bit TPDF dither and short recording-boundary fades after the
 envelopes have finished. There is no added EQ, compression, delay or reverb;
 the stereo modulation comes from the synth's own chorus. The
-[render manifest](Docs/audio/showcase/showcase-manifest.json) records the chords,
+[render manifest](Docs/audio/showcase-manifest.json) records the chords,
 actual voice counts, durations, gain and tail measurements.
 
 `YouKnowRenderShowcase --check` checks harmony across held notes, voice limits,
 centered tuning and quality settings without rendering. A full render also
 checks actual active voices, finite audio, headroom, DC and completed releases.
 Regenerate these five takes on demand with
-`YouKnowRenderShowcase Docs/audio/showcase`.
+`YouKnowRenderShowcase Docs/audio`.
 
 ### The composition
 
@@ -2148,21 +2148,21 @@ Short musical performances of fifteen well-known factory presets, each composed 
 <!-- preset-demos-table-begin: regenerated by YouKnowRenderPresetDemos; edits between the markers are overwritten -->
 | Preset | Name | Category | Length | Rendered peak | Normalisation | What to hear |
 | --- | --- | --- | ---: | ---: | ---: | --- |
-| [`A11`](Docs/audio/presets/demo-A11-brass-set-1.wav) | Brass Set 1 | Poly Brass | 9.5 s | −12.8 dBFS | +9.8 dB | Syncopated 80s brass stabs and punchy fanfare cadence in B-flat |
-| [`A17`](Docs/audio/presets/demo-A17-choir.wav) | Choir | Pad / Vocal | 22.1 s | −12.6 dBFS | +9.6 dB | Ethereal vocal wash with slow-blooming voice leading in D minor |
-| [`A28`](Docs/audio/presets/demo-A28-elect-piano-2.wav) | Elect. Piano II | Keyboards | 18.1 s | −10.3 dBFS | +7.3 dB | Warm chorused neo-soul progression with singing upper harmonics |
-| [`A32`](Docs/audio/presets/demo-A32-steel-drums.wav) | Steel Drums | Percussive | 10.4 s | −8.6 dBFS | +5.6 dB | Syncopated tropical calypso bounce and bright envelope strike |
-| [`A48`](Docs/audio/presets/demo-A48-synth-bass-unison.wav) | Synth Bass I (unison) | Bass | 10.3 s | −13.7 dBFS | +10.7 dB | Punchy 16th-note analog funk bassline driving with 6-voice unison bite |
-| [`A53`](Docs/audio/presets/demo-A53-lead-3.wav) | Lead III | Lead | 15.8 s | −24.6 dBFS | +21.6 dB | Singing solo synth lead with expressive portamento glides |
-| [`A54`](Docs/audio/presets/demo-A54-funky-2.wav) | Funky II | Pluck / Stab | 7.8 s | −9.8 dBFS | +6.8 dB | Resonant funk stab groove with dynamic envelope bounce in E Dorian |
-| [`A62`](Docs/audio/presets/demo-A62-clav.wav) | Clav | Pluck | 8.1 s | −14.4 dBFS | +11.4 dB | Crisp percussive 70s funk clavinet pattern in D Dorian |
-| [`A68`](Docs/audio/presets/demo-A68-synth-pad.wav) | Synth Pad | Pad | 24.0 s | −10.9 dBFS | +7.9 dB | Deep warm analog pad with slow filter bloom and moving inner voices |
-| [`A86`](Docs/audio/presets/demo-A86-hand-claps.wav) | Hand Claps | Percussive / FX | 7.5 s | −36.1 dBFS | +33.1 dB | Rhythmic analog noise burst claps in an 80s drum groove |
-| [`B11`](Docs/audio/presets/demo-B11-strings.wav) | Strings | Strings | 20.9 s | −11.8 dBFS | +8.8 dB | The iconic Juno PWM chorused strings with lush voice-led counterpoint |
-| [`B13`](Docs/audio/presets/demo-B13-chorus-vibes.wav) | Chorus Vibes | Mallet / Keys | 21.6 s | −12.1 dBFS | +9.1 dB | Shimmering vibraphone jazz chords and sparkling upward arpeggio |
-| [`B31`](Docs/audio/presets/demo-B31-brass.wav) | Brass | Brass | 21.1 s | −13.7 dBFS | +10.7 dB | Warm, mellow brass chorale with gentle filter swells in F major |
-| [`B33`](Docs/audio/presets/demo-B33-lute.wav) | Lute | Pluck | 17.2 s | −30.6 dBFS | +27.6 dB | Baroque plucked string arpeggiation with natural acoustic damping in D minor |
-| [`B44`](Docs/audio/presets/demo-B44-contact-wah.wav) | Contact Wah | Filter / Mod | 8.1 s | −15.6 dBFS | +12.6 dB | Funky envelope-wah comping with dynamic rhythmic filter sweeps |
+| [`A11`](Docs/audio/demo-A11-brass-set-1.wav) | Brass Set 1 | Poly Brass | 9.5 s | −12.8 dBFS | +9.8 dB | Syncopated 80s brass stabs and punchy fanfare cadence in B-flat |
+| [`A17`](Docs/audio/demo-A17-choir.wav) | Choir | Pad / Vocal | 22.1 s | −12.6 dBFS | +9.6 dB | Ethereal vocal wash with slow-blooming voice leading in D minor |
+| [`A28`](Docs/audio/demo-A28-elect-piano-2.wav) | Elect. Piano II | Keyboards | 18.1 s | −10.3 dBFS | +7.3 dB | Warm chorused neo-soul progression with singing upper harmonics |
+| [`A32`](Docs/audio/demo-A32-steel-drums.wav) | Steel Drums | Percussive | 10.4 s | −8.6 dBFS | +5.6 dB | Syncopated tropical calypso bounce and bright envelope strike |
+| [`A48`](Docs/audio/demo-A48-synth-bass-unison.wav) | Synth Bass I (unison) | Bass | 10.3 s | −13.7 dBFS | +10.7 dB | Punchy 16th-note analog funk bassline driving with 6-voice unison bite |
+| [`A53`](Docs/audio/demo-A53-lead-3.wav) | Lead III | Lead | 15.8 s | −24.6 dBFS | +21.6 dB | Singing solo synth lead with expressive portamento glides |
+| [`A54`](Docs/audio/demo-A54-funky-2.wav) | Funky II | Pluck / Stab | 7.8 s | −9.8 dBFS | +6.8 dB | Resonant funk stab groove with dynamic envelope bounce in E Dorian |
+| [`A62`](Docs/audio/demo-A62-clav.wav) | Clav | Pluck | 8.1 s | −14.4 dBFS | +11.4 dB | Crisp percussive 70s funk clavinet pattern in D Dorian |
+| [`A68`](Docs/audio/demo-A68-synth-pad.wav) | Synth Pad | Pad | 24.0 s | −10.9 dBFS | +7.9 dB | Deep warm analog pad with slow filter bloom and moving inner voices |
+| [`A86`](Docs/audio/demo-A86-hand-claps.wav) | Hand Claps | Percussive / FX | 7.5 s | −36.1 dBFS | +33.1 dB | Rhythmic analog noise burst claps in an 80s drum groove |
+| [`B11`](Docs/audio/demo-B11-strings.wav) | Strings | Strings | 20.9 s | −11.8 dBFS | +8.8 dB | The iconic Juno PWM chorused strings with lush voice-led counterpoint |
+| [`B13`](Docs/audio/demo-B13-chorus-vibes.wav) | Chorus Vibes | Mallet / Keys | 21.6 s | −12.1 dBFS | +9.1 dB | Shimmering vibraphone jazz chords and sparkling upward arpeggio |
+| [`B31`](Docs/audio/demo-B31-brass.wav) | Brass | Brass | 21.1 s | −13.7 dBFS | +10.7 dB | Warm, mellow brass chorale with gentle filter swells in F major |
+| [`B33`](Docs/audio/demo-B33-lute.wav) | Lute | Pluck | 17.2 s | −30.6 dBFS | +27.6 dB | Baroque plucked string arpeggiation with natural acoustic damping in D minor |
+| [`B44`](Docs/audio/demo-B44-contact-wah.wav) | Contact Wah | Filter / Mod | 8.1 s | −15.6 dBFS | +12.6 dB | Funky envelope-wah comping with dynamic rhythmic filter sweeps |
 <!-- preset-demos-table-end -->
 
 ## Known gaps
@@ -2896,9 +2896,9 @@ cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
 cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/YouKnowRenderDemos Docs/audio
-./build-dsp/YouKnowRenderComposition Docs/audio/composition
-./build-dsp/YouKnowRenderShowcase Docs/audio/showcase
-./build-dsp/YouKnowRenderPresetDemos Docs/audio/presets
+./build-dsp/YouKnowRenderComposition Docs/audio
+./build-dsp/YouKnowRenderShowcase Docs/audio
+./build-dsp/YouKnowRenderPresetDemos Docs/audio
 ```
 
 The same build produces the audit tools whose numbers this README quotes —

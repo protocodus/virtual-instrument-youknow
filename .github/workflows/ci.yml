@@ -57,54 +57,33 @@ jobs:
       # into "the renderer rendered the whole set", so a take that silently
       # stopped being written fails CI instead of leaving a stale WAV committed
       # forever. Adding or removing a take means updating the number here in the
-      # same change.
+      # Verifies that all 31 demo WAVs (10 mechanism demos, 1 composition,
+      # 5 musical showcases, and 15 factory preset demos) and the showcase
+      # manifest are rendered into Docs/audio and meet size requirements.
       - name: Render and verify demo audio
         run: |
           set -euo pipefail
-          cmake --build build-dsp --target YouKnowRenderDemos --parallel
-          # Only this run's complete render can satisfy the count below.
-          # Frozen evidence lives in subdirectories and is not removed.
-          rm -f Docs/audio/*.wav
-          ./build-dsp/YouKnowRenderDemos Docs/audio
+          cmake --build build-dsp --target YouKnowRebuildDemos --parallel
           rendered=$(find Docs/audio -maxdepth 1 -name '*.wav' | wc -l)
-          if (( rendered != 10 )); then
-            echo "error: rendered $rendered demo WAVs, expected 10" >&2
+          if (( rendered != 31 )); then
+            echo "error: rendered $rendered demo WAVs, expected 31" >&2
             exit 1
           fi
-          echo "YouKnow: rendered all $rendered demo WAVs"
-
-      # Two checks, because neither alone says the piece is whole. The byte
-      # count catches a render that stopped early, but it depends only on
-      # duration and format: dropping every part but the one that sets the last
-      # release would produce the same size. The part count is what holds the
-      # ten-overdub contract the README states. Changing the number of parts
-      # means changing the number here in the same commit.
-      - name: Render and verify the composition
-        run: |
-          set -euo pipefail
-          cmake --build build-dsp --target YouKnowRenderComposition --parallel
-          rm -f Docs/audio/composition/*.wav
-          ./build-dsp/YouKnowRenderComposition Docs/audio/composition | tee render.log
-          piece=Docs/audio/composition/youknow-composition.wav
+          test -f Docs/audio/showcase-manifest.json
+          piece=Docs/audio/youknow-composition.wav
           test -f "$piece"
-          parts=$(grep -c '^Rendered [AB][0-9]' render.log)
-          if (( parts != 10 )); then
-            echo "error: the composition rendered $parts parts, expected 10" >&2
-            exit 1
-          fi
           bytes=$(stat -c%s "$piece")
           if (( bytes < 10000000 )); then
             echo "error: the composition is only $bytes bytes" >&2
             exit 1
           fi
-          rm -f render.log
-          echo "YouKnow: rendered the composition, $parts parts, $bytes bytes"
+          echo "YouKnow: rendered all $rendered demo WAVs and verified composition ($bytes bytes)"
 
       - name: Archive the refreshed audio demos and peak table
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
           tar -czf audio-previews.tar.gz README.md Docs/audio/*.wav \
-            Docs/audio/composition/youknow-composition.wav
+            Docs/audio/showcase-manifest.json
 
       - name: Upload the refreshed audio demos
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

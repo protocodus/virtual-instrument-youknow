@@ -571,7 +571,7 @@ class PreviewPublicationTests(unittest.TestCase):
             "README.md": b"Original README and peak table\n",
             "Source/engine.cpp": b"original source\n",
             "Docs/audio/demo.wav": b"original demo",
-            "Docs/audio/composition/youknow-composition.wav": b"original composition",
+            "Docs/audio/youknow-composition.wav": b"original composition",
             "Docs/audio/frozen-review/take.wav": b"frozen evidence",
             "Docs/screenshots/youknow-standalone.png": b"original screenshot",
         }
@@ -599,7 +599,7 @@ class PreviewPublicationTests(unittest.TestCase):
         self.rendered = {
             "README.md": b"Original README with refreshed peak table\n",
             "Docs/audio/demo.wav": b"rendered demo",
-            "Docs/audio/composition/youknow-composition.wav": b"rendered composition",
+            "Docs/audio/youknow-composition.wav": b"rendered composition",
             "Docs/screenshots/youknow-standalone.png": b"rendered screenshot",
         }
         self.archives(self.rendered)
@@ -732,12 +732,10 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertEqual(self.remote_head(), self.source_commit)
 
     def test_composition_refreshes_while_its_frozen_neighbours_do_not(self):
-        # The composition is the one maintained file below Docs/audio, and it
-        # sits in a subdirectory only so the demo renderer's stale-file sweep
-        # cannot reach it. That puts it beside the frozen review evidence, so
-        # the two have to be shown moving independently: refreshing only the
-        # composition must publish it and leave the frozen take alone.
-        composition = "Docs/audio/composition/youknow-composition.wav"
+        # All maintained demo audio lives directly under Docs/audio, while frozen
+        # review evidence lives in subdirectories (like Docs/audio/frozen-review).
+        # Refreshing the composition must publish it and leave the frozen take alone.
+        composition = "Docs/audio/youknow-composition.wav"
         self.archives({
             "README.md": self.original["README.md"],
             "Docs/audio/demo.wav": self.original["Docs/audio/demo.wav"],
