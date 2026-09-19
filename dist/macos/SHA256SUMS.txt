@@ -1,2 +1,2 @@
-ec48fe5986e28e90e1568025d6fb37de5a3a74f61324e78e547799dfa3e1322e  YouKnow-1.1.0-build.35344196756.1-macOS-universal.zip
-4572e51ab44131ef83cb7a6cc389791e0e23466e7e6107f328f861bde7777c85  YouKnow-1.1.0-build.35344196756.1-macOS-universal.pkg
+b1794caca61ecadc4e37f9085b22b9bbaedd00e24bf41bb39467836d693c1319  YouKnow-1.1.0-build.35434677531.1-macOS-universal.zip
+80f78f0fbd07e1cae58654d1edc3e6070e872779cd2d155ba5f9c1d269dea8dd  YouKnow-1.1.0-build.35434677531.1-macOS-universal.pkg
