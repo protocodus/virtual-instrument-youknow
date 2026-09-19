@@ -15294,7 +15294,7 @@ void testResonanceAdjustmentPinsTheWarmLimitCycle()
     const auto oscillate = [&](int card, float calibration, bool adjust,
                                bool warmReturn) {
         YouKnowEngine engine;
-        engine.configureThermalStart(true);
+        expect(engine.configureThermalStart(true), "thermal start rejected");
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
         parameters.calibration = calibration;
@@ -15459,7 +15459,7 @@ void testOutputFloorFollowsTheJackBoard()
     constexpr double sampleRate = 48000.0;
     const auto idleFloorRms = [&](float calibration) {
         YouKnowEngine engine;
-        engine.configureThermalStart(true);
+        expect(engine.configureThermalStart(true), "thermal start rejected");
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
         parameters.calibration = calibration;

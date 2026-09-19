@@ -551,6 +551,7 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowBenchmarkReference PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderShowcase PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowRenderPresetDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderTanhAuditions
             PRIVATE /W4 /permissive-)

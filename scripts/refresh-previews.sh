@@ -82,7 +82,7 @@ for attempt in 1 2 3; do
     # maintained demo audio lives directly under Docs/audio.
     git add -A -- README.md ':(glob)Docs/audio/*.wav' \
         Docs/screenshots/youknow-standalone.png
-    if [[ -f Docs/audio/showcase-manifest.json ]]; then
+    if [[ -f Docs/audio/showcase-manifest.json ]] || git ls-files --error-unmatch Docs/audio/showcase-manifest.json >/dev/null 2>&1; then
         git add -A -- Docs/audio/showcase-manifest.json
     fi
     if [[ -d dist ]]; then
