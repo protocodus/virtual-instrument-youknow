@@ -1265,6 +1265,19 @@ any unit, and it does not make B's or C's coordinates measured facts of
 the installed delay. Mode II is unchanged; an identified original-unit
 capture of Mode II remains open.
 
+**Correction to candidate C's provenance (2026-09-22):** only C's 0.514 Hz
+rate is #439522's. Its 3.30 ms centre and ±2.13 ms swing entered KR-106 on
+2026-04-10
+([3b4a006](https://github.com/kayrockscreenprinting/ultramaster_kr106/commit/3b4a0063693a8aef1ba59c1210a772c6f5884c27))
+as "measured directly from hardware click timing" with no unit named, in the
+same commit that set Chorus I's rate to 0.393 Hz, "verified J6". When the rate
+became "lfrancis J106" on 04-24
+([fc5051e](https://github.com/kayrockscreenprinting/ultramaster_kr106/commit/fc5051e23d40f1ae1bf0f6f9ceb6b625f222afdd)),
+the click coordinates were left as they were. They are therefore
+unattributed, probably Juno-6 sibling data, and not a second reading of this
+unit. The verdict stands as chosen by ear; C was simply a sibling-class
+candidate rather than an estimator of #439522.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

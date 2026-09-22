@@ -1517,9 +1517,13 @@ public:
         // through R126/R127 into distribution amplifier IC27b, whose output
         // is TP7 and feeds the VCA-group demux IC26 -- so the per-voice VCA
         // control rail already stands at about +0.26 V at envelope zero. The
-        // reconstruction's ~150 mV no-current region was measured from the CV
-        // input on a calibrated unit, i.e. on top of that trimmed standoff,
-        // which is the coordinate this constant is expressed in. The standoff
+        // reconstruction's ~150 mV no-current region is the result of
+        // "following the tuning instructions in the Juno 106" on atosynth's
+        // reconstructed circuit -- the post mentions both simulating and
+        // bench testing and names no unit, simulator or instrument
+        // (http://atosynth.blogspot.com/2019/01/juno-filter-vca-and-resonance-cv.html)
+        // -- so it sits on top of that trimmed standoff, which is the
+        // coordinate this constant is expressed in. The standoff
         // is anchored; the 150 mV itself remains the surviving voiced free
         // parameter and OQ-19's sweep owns it. Do not add the +0.26 V again
         // as a separate offset -- it is already the adjusted state. The RES
@@ -2812,11 +2816,17 @@ private:
         // sheet lists "Low offset voltage (VIO = 3 mV max)" among its
         // features; its distortion-reduction diodes do not change the input
         // pair's offset class, and the BA662 itself publishes no typical.
-        // Hobbyist readings of BA662A samples are tens to hundreds of
-        // microvolts (forum posts, not pinned). The span is voiced at the
-        // IR3109 stage draw's 1.5 mV, half that sibling maximum; the
-        // population mean is zero, so the whole term belongs to Unit
-        // Character. BA6110FS datasheet, SHA-256
+        // The span is voiced at the IR3109 stage draw's 1.5 mV, half that
+        // sibling maximum; the population mean is zero, so the whole term
+        // belongs to Unit Character. Same-part evidence puts it high but
+        // inside bounds: Open Music Labs measured two original BA662As at 250
+        // and 30 uV (https://synthcube.com/open-music-labs-ba662-ota-clone/),
+        // and Alfa's pin-compatible AS662D sheet (2022 v2, p. 2, SHA-256
+        // a3a0119297390952b0ea2ae526738f215af14d07c6c754fe327d4a604b543fba,
+        // https://www.alfatriode.lv/eng/sc/AS662D.pdf) gives 250 uV maximum,
+        // 700 uV for its unselected grade, at 5 uA, plus up to 1 mV of change
+        // over 5-500 uA. No Rohm BA662 sheet has been located. BA6110FS
+        // datasheet, SHA-256
         // a8e11b2ef9a2bc8879e85242ba64a8d487e0f1c1e794c8680bd2ab227ec2c6e8:
         // https://www.datasheetarchive.com/pdf/download/distributors/Datasheets-308/4668.pdf
         float resonanceOtaOffset { 0.0f };
