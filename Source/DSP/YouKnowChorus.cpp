@@ -658,12 +658,24 @@ Chorus::ModeSettings Chorus::settingsFor(
     // line changes a timing resistance, while the triangle's amplitude is set
     // by the comparator's unchanged threshold ratio. This derives equal
     // nominal excursion; it does not measure Mode II's installed endpoints
-    // or transfer the effective Mode-I fit below to that mode.
+    // or transfer the effective Mode-I fit below to that mode. No JUNO-106,
+    // HS-60 or MKS-7 Mode II measurement is public (2026-09-22 search);
+    // KR-106's 0.842 Hz / +/-1.71 ms Mode II is labelled Juno-6. Anwander's
+    // survey gives I and II "100% amount" on the JUNO-6 and JUNO-60 and calls
+    // the 106's LFO "1LFO with two speed settings", and a clone of this board
+    // (Alpes Machines One-O-Six) marks presets I and II on its rate control
+    // but one "Juno 106 chorus depth level": the rate-only law again.
+    // OwnerBlend below therefore leaves Mode II on excursions the circuit
+    // would share with Mode I; a Mode II on the blend at the derived rate
+    // ratio awaits a listening decision (2026-09-22).
+    // https://www.florian-anwander.de/roland_string_choruses/
+    // https://www.alpesmachines.net/index.php/analogue-chorus/one-o-six-chorus/one-o-six-how-to-use
     constexpr float centre = 0.5f * (0.0014f + 0.0064f);
     constexpr float sweep = 0.5f * (0.0064f - 0.0014f);
     constexpr float rateOne = static_cast<float>(derivedRateHz(true));
     constexpr float rateTwo = static_cast<float>(derivedRateHz(false));
-    // The identified unit's two Mode I readings (ChorusTimingProfile).
+    // The identified unit's spectral fit, and KR-106's click series at that
+    // unit's rate (ChorusTimingProfile records the click data's provenance).
     constexpr float spectralRate = 0.5159334275f;
     constexpr float spectralCentre = 0.00338027575f;
     constexpr float spectralSweep = 0.00176176683f;

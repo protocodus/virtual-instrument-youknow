@@ -50,9 +50,14 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 //                   which is why the question is open at all.
 //   A11Spectral     Effective coordinates fitted to the verified A11 recording
 //                   of identified unit #439522, holding out C2/C4.
-//   A11ClickTiming  The same unit read by a different estimator entirely, the
-//                   clock-click series, whose 16 us straight-line residual is
-//                   independent of the spectral fit's assumptions.
+//   A11ClickTiming  KR-106's clock-click series, a different estimator
+//                   whose 16 us straight-line residual is independent of the
+//                   spectral fit's assumptions, at #439522's 0.514 Hz rate.
+//                   Its 3.30 ms / +/-2.13 ms entered KR-106 on 2026-04-10
+//                   (3b4a006) with no unit named, beside Chorus I values
+//                   labelled Juno-6, and were not re-attributed when the rate
+//                   became "lfrancis J106" on 04-24 (fc5051e): unattributed,
+//                   probably Juno-6 sibling data, not a reading of #439522.
 //   DerivedNominal  Conditional p. 15 oscillator estimate with nominal C53
 //                   and assumed current, junction drops, output saturation
 //                   and reset dead time. Not an installed tolerance bound.
@@ -201,8 +206,20 @@ public:
     // guaranteed *input* swing with an 88 dB typical *maximum-output* S/N row;
     // those are different measurands and cannot derive a 59.7 uVrms typical
     // noise voltage. Retain the established control position, but do not call
-    // it a Panasonic typical endpoint. OQ-03 still needs an installed-unit
-    // capture to replace it.
+    // it a Panasonic typical endpoint.
+    //
+    // Installed-unit captures now bound it from below. In four hash-pinned
+    // April 2026 factory-bank takes of #439522, whose chorus board is
+    // original (Tools/AnalyzeChorusIdleFloors.py), the Mode I idle floor
+    // against the same patch's C4 note sits 14.0 dB lower in the product than
+    // on the hardware (seven tail-free patches, both channels, 20 Hz-20 kHz),
+    // and the hardware's chorus-on floor stands 19-20 dB over its chorus-off
+    // floor where the product stands 10-12 dB. The hardware hiss is brighter
+    // too: on average 4-6 dB short below 2 kHz, where the recording's dry
+    // floor also contributes, and 11-13 dB across 4-14 kHz. Matching the
+    // level alone takes 1.50 on this scale, past the panel's 100 %; that
+    // level-only candidate awaits a listening decision (2026-09-22), and no
+    // mechanism for the tilt is modelled (OQ-03).
     static constexpr float defaultNoiseScale = 0.29858038f;
 
     // The established HISS-100 product normalization chooses a recovered wet

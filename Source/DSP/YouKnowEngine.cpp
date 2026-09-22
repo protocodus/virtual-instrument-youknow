@@ -63,6 +63,21 @@ constexpr float voltsToSample = 1.0f / YouKnowEngine::internalVoltsPerUnit;
 // anchor near 12 Vpp; intervening loading is still open, and the sub value has
 // no equivalent end-to-end anchor, so none of these may be presented as
 // measured mixer voltages.
+//
+// A sibling does print the end-to-end figure. Roland's MKS-7 Service Notes
+// (Jul 1985) test the same MC5534A/80017A voice, with the same 27k/33k/diode
+// sub leg and 10 uF coupling, at its VCA output against its own 6.0 Vpp
+// VCA-gain sine: saw 4.8 Vpp +/-0.5 V at every range and key (p. 10 items
+// 10-11), sub 1.5/3.5/5.5 Vpp over its four steps, and pulse/saw 0.79-0.83 at
+// the mix output (p. 11 items 13, 15, 16). Read the same way -- 20 kHz-band
+// peak-to-peak, self-oscillation scaled to 6 Vpp -- these coordinates put the
+// nominal saw at 6.50 Vpp, and the identified unit's May isolator take reads
+// 4.88: the filter and VCA pair are driven about 2.6 dB harder than that
+// factory window. Sub/saw agrees with both within 0.3 dB (RMS); pulse/saw
+// sits 1-2.5 dB above them. A x0.738 candidate on all three awaits a
+// listening decision (2026-09-22), so the coordinates stand as voiced (OQ-15).
+// https://www.polynominal.com/roland-mks7/Roland-MKS-7-Service-Notes.pdf#page=10
+// (SHA-256 179234b24c20b5a3a010827e5606cf6d9744bb9585664e219d6b643e2c7eb8ae)
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
 // subMixVolts lives on the class (YouKnowEngine::subMixVolts) so the
@@ -97,6 +112,26 @@ constexpr float pulseMixVolts = 6.0f;
 // topology below: the anchors fix the product of this constant and
 // filterInputAttenuation, and only the coincidence between the deficit and the
 // shaping loss says the noise leg alone was light. OQ-15/OQ-16.
+//
+// The crest convention is documented after all, and it is not the one this
+// value lands on. p. 18's test program runs bank 6 (NOISE LEVEL) at FREQ 10,
+// RES 0, KYBD 10, VCA ENV, S 10 -- the per-voice VCA state of bank 3's 6 Vpp
+// trim -- so the two TP8 figures pair directly. p. 19's own figure draws the
+// 4 Vpp bracket on the trace's dense core with faint excursions reaching 1.91x
+// it (600 dpi: bracket 90 px, drawn extent 172 px; the ink-density FWHM puts
+// the bracket at 2.9 sigma, and one 10 ms sweep of this 7.6 kHz-bandwidth noise
+// spans about 5.3 sigma, 5.3 / 1.91 = 2.8). This value reads 4 Vpp as the whole
+// trace, 6.6 sigma: sigma 0.60 V against the 248 Hz self-oscillation in the
+// product profile. The identified unit reads 2.88 sigma (noise/self-oscillation
+// -3.63 dB, 20 Hz-20 kHz, hash-verified May isolator take). The same take's
+// noise band shape follows the C41/R79 pole within 1.5 dB to 20 kHz, and the
+// separately printed HS-60/JUNO-106S notes, whose p. 3 lists this module board
+// (76139170) as common to both, repeat C41 100p, R79 330k, C42 1u and R81 4.7k
+// on p. 15, so the gap is level, not spectrum. A core-band reading raises this
+// constant 5.6-7.2 dB (3.45 or 2.9 sigma); which is an open listening decision
+// (2026-09-22), and the value stays until it is made.
+// https://seriescircuits.com/wp-content/uploads/2024/07/Roland-Juno-106S-HS-60-Service-Manual.pdf#page=15
+// (SHA-256 55118ea03a995eead22977e2ba5185b6971a5d7fcb1074e1e202ec706f3585eb)
 constexpr float noiseMixVolts = 7.4161f;
 
 // The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
