@@ -2531,7 +2531,8 @@ int failures = 0;
 
 // R5 1 kOhm feeds the PWM pot while R6 4.7 kOhm shunts its 50 kOhm track.
 // Through A-5's panel conversion that loaded travel nominally tops out at raw
-// byte 101; the remaining seven-bit values are preserved SysEx overrange.
+// byte 101, the printed 95%; Roland's factory bank shows its own unit's pot
+// stopping at 105. Higher seven-bit values are preserved SysEx overrange.
 constexpr float nominalPwmPanelMaximum = 101.0f / 127.0f;
 
 // The build system defines this whenever it adds -fsanitize, because no macro
@@ -5859,6 +5860,25 @@ void testVcfEnvelopeAndKeyFollowKeepFirmwarePrecision()
            "production ENV/KEY sum discarded firmware carries before the VCF DAC");
 }
 
+void testPwmSliderCopiesTheLoadedPot()
+{
+    // The plug-in's slider ends where the loaded pot does, byte 105, the
+    // factory bank's highest PWM byte (Docs/decisions.md, 2026-09-22): no
+    // position on it reaches the overrange that pins the comparator.
+    const auto manualDuty = [](float position) {
+        return YouKnowEngine::pwmDutyCycle(YouKnowEngine::pwmDacVolts(
+            YouKnowEngine::pwmDacCode(position, PwmSource::Manual, 0u, true)));
+    };
+    constexpr float top = YouKnowEngine::pwmPanelTopPosition;
+    expect(YouKnowEngine::pwmDacCode(top, PwmSource::Manual, 0u, true) == 0x02e0u,
+           "the PWM slider's top is not the pot's byte 105");
+    expectNear(manualDuty(top), 0.9648189, 1.0e-6,
+               "the PWM slider's top left byte 105's 96.5%");
+    for (int step = 0; step <= 1000; ++step)
+        expect(manualDuty(top * static_cast<float>(step) / 1000.0f) < 0.97f,
+               "the PWM slider reaches past Roland's 93-97% top");
+}
+
 void testPwmUsesRecoveredIntegerDacWord()
 {
     const auto panel = [](int raw) {
@@ -5891,8 +5911,8 @@ void testPwmUsesRecoveredIntegerDacWord()
 
     // Page 9 anchors the complete affine analogue path, not merely the
     // resistor-limited panel segment: code 0x0fff is +6 V / 50%, while the
-    // square-off code zero is -0.8 V and pins the comparator high. The loaded
-    // physical knob lands at byte 101 inside the printed 93-97% service band.
+    // square-off code zero is -0.8 V and pins the comparator high. The printed
+    // 95% of the loaded knob lands at byte 101, inside the 93-97% service band.
     expectNear(YouKnowEngine::pwmDacVolts(0x0fffu), 6.0, 1.0e-7,
                "PWM full DAC code missed the 50% calibration anchor");
     expectNear(YouKnowEngine::pwmDacVolts(0u), -0.8, 1.0e-7,
@@ -12774,6 +12794,91 @@ void testModuleInputCouplingComparisonConfiguration()
     verifyProductCoupling();
 }
 
+void testOscillatorLevelScaleConfiguration()
+{
+    // OQ-15 drive B (Docs/decisions.md, 2026-09-22): one scale on the WAVE
+    // node's saw, pulse and sub legs, returned at the final digital boundary.
+    auto engine = std::make_unique<YouKnowEngine>();
+    for (const float invalid : { 0.0f, -0.738f, 0.249f, 2.001f,
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity() })
+        expect(!engine->configureOscillatorLevelScale(invalid),
+               "an invalid oscillator level scale was accepted");
+    const CoupledSubMixer::Calibration circuit { 10000, 47000, 0.5, 0, 0.6, 0.1 };
+    auto coupled = std::make_unique<YouKnowEngine>();
+    expect(coupled->configureCoupledMixer(circuit)
+               && !coupled->configureOscillatorLevelScale(0.738f),
+           "an oscillator level was accepted behind the coupled mixer's own source scale");
+    expect(engine->configureOscillatorLevelScale(0.738f)
+               && !engine->configureCoupledMixer(circuit),
+           "the coupled mixer replaced a configured oscillator level");
+    engine->prepare(48000.0, blockSize, 1);
+    expect(!engine->configureOscillatorLevelScale(1.0f),
+           "a prepared engine accepted a live oscillator level change");
+    // The auditioned candidate: MKS-7's 4.8 Vpp saw over this model's 6.50.
+    auto product = std::make_unique<YouKnowEngine>();
+    expect(product->oscillatorLevelScale() == 1.0f,
+           "the raw engine left its unity oscillator reference");
+    ProductFidelityProfile::configureBeforePrepare(*product);
+    expect(product->oscillatorLevelScale() == 0.738f,
+           "the product did not select the chosen oscillator level");
+    product->prepare(48000.0, blockSize, 1);
+    product->reset();
+    expect(product->oscillatorLevelScale() == 0.738f,
+           "the product's lifecycle lost the oscillator level");
+    auto coupledProduct = std::make_unique<YouKnowEngine>();
+    ProductFidelityProfile::configureBeforePrepare(*coupledProduct, &circuit);
+    expect(coupledProduct->oscillatorLevelScale() == 1.0f,
+           "a coupled-mixer product comparison also scaled the oscillators");
+
+    const auto renderWith = [](float scale, const EngineParameters& parameters) {
+        auto candidate = std::make_unique<YouKnowEngine>();
+        expect(candidate->configureOscillatorLevelScale(scale),
+               "a valid oscillator level scale was rejected");
+        candidate->prepare(48000.0, blockSize, 1);
+        candidate->setParameters(parameters);
+        candidate->noteOn(48, 1.0f);
+        return render(*candidate, 9600);
+    };
+
+    // Noise never enters the scaled legs, so only the reciprocal boundary
+    // differs: halving the scale doubles a noise-only voice. The pulse-off
+    // level still sits on the node behind C56, so allow its rounding.
+    auto noiseOnly = plainPatch();
+    noiseOnly.sawEnabled = false;
+    noiseOnly.noiseLevel = 1.0f;
+    const auto unity = renderWith(1.0f, noiseOnly);
+    const auto halved = renderWith(0.5f, noiseOnly);
+    double peak = 0.0, error = 0.0;
+    for (std::size_t index = 0; index < unity.left.size(); ++index)
+    {
+        peak = std::max(peak, 2.0 * std::abs(unity.left[index]));
+        error = std::max(error, static_cast<double>(
+            std::abs(halved.left[index] - 2.0f * unity.left[index])));
+    }
+    expect(peak > 1.0e-4 && error < 1.0e-5 * peak,
+           "the oscillator level scale reached the noise leg or missed the boundary");
+
+    // Oscillators: the scale moves their drive into the filter and VCA, and
+    // the boundary returns their level.
+    auto full = plainPatch();
+    full.pulseEnabled = true;
+    full.subLevel = 0.7f;
+    full.calibration = 1.0f;
+    const auto reference = renderWith(1.0f, full);
+    const auto driven = renderWith(0.738f, full);
+    double referenceEnergy = 0.0, drivenEnergy = 0.0;
+    for (std::size_t index = 0; index < reference.left.size(); ++index)
+    {
+        referenceEnergy += static_cast<double>(reference.left[index]) * reference.left[index];
+        drivenEnergy += static_cast<double>(driven.left[index]) * driven.left[index];
+    }
+    expectNear(10.0 * std::log10(drivenEnergy / referenceEnergy), 0.0, 0.5,
+               "the oscillator level scale changed loudness, not just drive");
+    expect(maximumDifference(reference.left, driven.left) > 1.0e-4,
+           "the oscillator level scale did not reach the voice");
+}
+
 void testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca()
 {
     // Module board p. 13: the summed WAVE node reaches pin 1 VCF IN only
@@ -16761,10 +16866,10 @@ void testPanelHelpMatchesTheModulationRouting()
                && pwmHelp.find("LFO DELAY does not apply")
                       != std::string::npos,
            "PWM LFO help does not describe the raw accumulator path");
-    expect(pwmDepthHelp.find("50-95%") != std::string::npos
-               && pwmDepthHelp.find("seven-bit range") != std::string::npos
-               && pwmDepthHelp.find("pin the pulse high") != std::string::npos,
-           "PWM depth help hides the loaded panel range or digital overrange");
+    expect(pwmDepthHelp.find("50-96%") != std::string::npos
+               && pwmDepthHelp.find("loaded hardware pot") != std::string::npos
+               && pwmDepthHelp.find("pin the pulse high") == std::string::npos,
+           "PWM depth help does not describe the loaded pot's reach");
     expect(delayHelp.find("DCO, PWM and VCF") == std::string::npos
                && pwmHelp.find("delay-gated LFO") == std::string::npos,
            "the panel still claims that LFO DELAY reaches PWM");
@@ -17230,6 +17335,7 @@ int main()
     testVcfBendUsesRecoveredIntegerWord();
     testVcfEnvelopeAndKeyFollowKeepFirmwarePrecision();
     testPwmUsesRecoveredIntegerDacWord();
+    testPwmSliderCopiesTheLoadedPot();
     testLfoDelayStartsFadeOnHoldoffCrossingPass();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();
@@ -17316,6 +17422,7 @@ int main()
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();
     testModuleInputCouplingComparisonConfiguration();
+    testOscillatorLevelScaleConfiguration();
     testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca();
     testFilterToVcaCouplingRemovesTheDutyDependentThump();
     testFinalOutputCouplingRemovesManualPwmDc();

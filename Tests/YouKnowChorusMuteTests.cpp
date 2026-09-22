@@ -240,7 +240,8 @@ void checkEffectiveProfileIsolation()
             "effective A11 timing was enabled in shipping defaults");
     // Every comparison candidate must differ from shipping in Mode I and in
     // nothing else: these exist to let OQ-01 be decided by ear, not to invent a
-    // second chorus.
+    // second chorus. The blend alone also moves Mode II, by the owner's
+    // 2026-09-22 choice checked below.
     for (const auto profile : { ChorusTimingProfile::A11Spectral,
                                 ChorusTimingProfile::A11ClickTiming,
                                 ChorusTimingProfile::DerivedNominal,
@@ -256,10 +257,11 @@ void checkEffectiveProfileIsolation()
             const auto same = shipping.centreDelaySeconds == candidate.centreDelaySeconds
                            && shipping.sweepSeconds == candidate.sweepSeconds
                            && shipping.rateHz == candidate.rateHz;
-            require(mode == ChorusMode::One ? !same : same,
-                    mode == ChorusMode::One
-                        ? "a timing candidate left Mode I where shipping has it"
-                        : "a timing candidate reached a mode other than Mode I");
+            const auto owned = mode == ChorusMode::One
+                || (mode == ChorusMode::Two && profile == ChorusTimingProfile::OwnerBlend);
+            require(owned ? !same : same,
+                    owned ? "a timing candidate left its mode where shipping has it"
+                          : "a timing candidate reached a mode it was not chosen for");
         }
     }
 
@@ -281,6 +283,15 @@ void checkEffectiveProfileIsolation()
                     && std::abs(blend.sweepSeconds - 0.00204) < 1.0e-5
                     && std::abs(blend.rateHz - 0.5248) < 1.0e-4,
                 "the owner's blend left its recorded 3.49 ms / 2.04 ms / 0.5248 Hz");
+        // Mode II keeps the blend's excursion and follows the rate-only mode
+        // line at shipping's II/I ratio: 0.852 Hz (Docs/decisions.md, 2026-09-22).
+        const auto two = Chorus::settingsFor(ChorusMode::Two, ChorusTimingProfile::OwnerBlend);
+        const auto shippingTwo = Chorus::settingsFor(ChorusMode::Two);
+        require(two.centreDelaySeconds == blend.centreDelaySeconds
+                    && two.sweepSeconds == blend.sweepSeconds
+                    && std::abs(two.rateHz - blend.rateHz * shippingTwo.rateHz / a.rateHz) < 1.0e-6
+                    && std::abs(two.rateHz - 0.852) < 1.0e-3,
+                "the blend's Mode II left its rate-only 0.852 Hz");
         youknow::EngineParameters product;
         youknow::ProductFidelityProfile::applyTo(product);
         require(product.chorusTimingProfile == ChorusTimingProfile::OwnerBlend,

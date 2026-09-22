@@ -34,7 +34,7 @@ namespace youknow
 // https://www.roland.com/au/promos/roland_boutique/interview_1/
 enum class ChorusMode { Off, One, Two, OneTwo };
 
-// Which Mode I timing coordinates the chorus runs on.
+// Which Mode I timing coordinates the chorus runs on (OwnerBlend: Mode II's too).
 //
 // Shipping is the engine default, the reference configuration every frozen
 // fingerprint tests; the product selects OwnerBlend (ProductFidelityProfile),
@@ -65,7 +65,9 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 //                   A11ClickTiming -- the identified unit's spectral fit
 //                   counted twice -- chosen by ear as a compromise weighted
 //                   towards that fit: 3.49 ms centre, +/-2.04 ms, 0.5248 Hz.
-//                   Mode II is untouched, as with the others.
+//                   The only profile that also moves Mode II: onto the same
+//                   excursion at the derived II/I rate ratio, 0.852 Hz,
+//                   chosen by ear on 2026-09-22 (settingsFor).
 enum class ChorusTimingProfile
 {
     Shipping,
@@ -216,10 +218,11 @@ public:
     // and the hardware's chorus-on floor stands 19-20 dB over its chorus-off
     // floor where the product stands 10-12 dB. The hardware hiss is brighter
     // too: on average 4-6 dB short below 2 kHz, where the recording's dry
-    // floor also contributes, and 11-13 dB across 4-14 kHz. Matching the
-    // level alone takes 1.50 on this scale, past the panel's 100 %; that
-    // level-only candidate awaits a listening decision (2026-09-22), and no
-    // mechanism for the tilt is modelled (OQ-03).
+    // floor also contributes, and 11-13 dB across 4-14 kHz. The owner chose
+    // the level-only match by ear (2026-09-22). The product applies it as
+    // ChorusNoiseCalibrationProfile, re-derived with the other 09-22
+    // choices in place, so this control position and its sessions keep
+    // their meaning. No mechanism for the tilt is modelled (OQ-03).
     static constexpr float defaultNoiseScale = 0.29858038f;
 
     // The established HISS-100 product normalization chooses a recovered wet

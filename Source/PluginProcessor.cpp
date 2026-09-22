@@ -121,6 +121,18 @@ juce::AudioParameterFloatAttributes percentAttributes()
         .withValueFromStringFunction (percentValue);
 }
 
+// PWM keeps the stored byte's image like every other slider, but its range
+// ends at the loaded pot's reach, so it reads as percent of that travel.
+juce::AudioParameterFloatAttributes pwmTravelAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withLabel ("%")
+        .withStringFromValueFunction ([] (float value, int length)
+            { return percentText (value / YouKnowEngine::pwmPanelTopPosition, length); })
+        .withValueFromStringFunction ([] (const juce::String& text)
+            { return percentValue (text) * YouKnowEngine::pwmPanelTopPosition; });
+}
+
 juce::String centsText (float value, int)
 {
     const auto sign = value > 0.0f ? "+" : "";
@@ -408,7 +420,8 @@ void overlayPendingMidiTone (
         vcfLfo, keyFollow, vcaLevel, attack, decay, sustain, release, sub
     };
     const float continuous[] = {
-        patch.lfoRate, patch.lfoDelay, patch.dcoLfo, patch.pwm,
+        patch.lfoRate, patch.lfoDelay, patch.dcoLfo,
+        std::min (patch.pwm, YouKnowEngine::pwmPanelTopPosition),
         patch.noise, patch.cutoff, patch.resonance, patch.vcfEnv,
         patch.vcfLfo, patch.keyFollow, patch.vcaLevel, patch.attack,
         patch.decay, patch.sustain, patch.release, patch.sub
@@ -662,7 +675,13 @@ YouKnowAudioProcessor::createParameterLayout()
     layout.add (travel (lfoDelay, "LFO Delay", 0.0f, lfoDelayAttributes()));
 
     layout.add (travel (dcoLfo, "DCO LFO", 0.0f, percentAttributes()));
-    layout.add (travel (pwm, "PWM", 0.30f, percentAttributes()));
+    // The loaded pot stops at byte 105 (YouKnowEngine::pwmPanelTopByte), and
+    // so does this slider; a byte above it is held at the top.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { pwm, 1 }, "PWM",
+        juce::NormalisableRange<float> {
+            0.0f, YouKnowEngine::pwmPanelTopPosition, 0.0f },
+        0.30f, pwmTravelAttributes()));
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { pwmMode, 1 }, "PWM Mode",
         juce::StringArray { "LFO", "Manual" }, 1));
@@ -2502,7 +2521,9 @@ void YouKnowAudioProcessor::applyPatchToEngineParameters (
     destination.lfoRate = patch.lfoRate;
     destination.lfoDelay = patch.lfoDelay;
     destination.dcoLfoDepth = patch.dcoLfo;
-    destination.pwmDepth = patch.pwm;
+    // The PWM parameter's reach, which the reflected parameter will hold too.
+    destination.pwmDepth = std::min (
+        patch.pwm, youknow::YouKnowEngine::pwmPanelTopPosition);
     destination.noiseLevel = patch.noise;
     destination.cutoff = patch.cutoff;
     destination.resonance = patch.resonance;

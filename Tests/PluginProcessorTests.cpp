@@ -603,6 +603,10 @@ void testProductFidelitySurvivesHostLifecycle()
         expect (references[index]->configureModuleInputCouplingResistanceOhms (
                     1.0 / (1.0 / 4700.0 + 1.0 / 25500.0)),
                 "cannot configure the explicit product C56 reference");
+        // The chosen oscillator level (Docs/decisions.md, 2026-09-22) is
+        // common to all three for the same reason.
+        expect (references[index]->configureOscillatorLevelScale (0.738f),
+                "cannot configure the explicit product oscillator level");
         references[index]->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }
@@ -3409,6 +3413,33 @@ void testLegacySplitModeMigration()
     expect (restorePartialChorus (false, 0.0f, 0)
                 == std::pair { false, false },
             "a legal chorus-off state was changed while Chorus I was missing");
+}
+
+// The PWM slider copies the loaded hardware pot, which stores byte 105 at full
+// travel (Docs/decisions.md, 2026-09-22). A patch byte above that reach is
+// held at the slider's top instead of pinning the pulse.
+void testPwmSliderStopsWhereTheLoadedPotStops()
+{
+    YouKnowAudioProcessor processor;
+    const auto* pwm = processor.parameters.getParameter (parameters::pwm);
+    expect (pwm != nullptr, "the PWM parameter is missing");
+    if (pwm == nullptr)
+        return;
+    const float top = YouKnowEngine::pwmPanelTopPosition;
+    expect (pwm->getNormalisableRange().end == top,
+            "the PWM slider does not end at the loaded pot's reach");
+    expect (pwm->getText (1.0f, 16) == "100%",
+            "the PWM slider's full travel does not read 100%");
+
+    auto patch = processor.currentPatch();
+    patch.pwm = 1.0f;
+    processor.applyPatch (patch);
+    expect (std::abs (parameterValue (processor, parameters::pwm) - top) < 1.0e-6f,
+            "an overrange PWM byte passed the loaded pot's reach");
+    std::array<std::uint8_t, sysex::toneByteCount> tone {};
+    sysex::toneBytesFromPatch (processor.currentPatch(), tone.data());
+    expect (tone[static_cast<std::size_t> (sysex::ToneParameter::DcoPwm)] == 105,
+            "the PWM slider's top is not stored as byte 105");
 }
 
 void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
@@ -9028,6 +9059,7 @@ int main()
     testMalformedStateCannotReplaceAWorkingPreset();
     testLegacySplitModeMigration();
     testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls();
+    testPwmSliderStopsWhereTheLoadedPotStops();
     testRandomizerPreservesQualityAndLevel();
     testBusLayoutsAndTail();
     testMonoBusCarriesTheLMonoJackFold();

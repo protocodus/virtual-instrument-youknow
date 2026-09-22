@@ -2239,8 +2239,9 @@ void testPulseWidthAndHighPassLaws()
 {
     // The whole calibrated converter path is affine: B-2's full twelve-bit
     // code is Roland's +6 V / 50% state and its square-off code zero is the
-    // -0.8 V comparator-pinning state. The loaded physical PWM pot normally
-    // stops around byte 101; bytes above that are valid SysEx overrange.
+    // -0.8 V comparator-pinning state. The loaded physical PWM pot reaches the
+    // printed 95% around byte 101 and stopped at 105 on Roland's factory-bank
+    // unit; bytes above the physical travel are valid SysEx overrange.
     const auto manualCode = [](int raw) {
         return YouKnowEngine::pwmDacCode(
             static_cast<float>(raw) / 127.0f,

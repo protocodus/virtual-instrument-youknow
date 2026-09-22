@@ -366,23 +366,28 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 // The 2026-09-17 chorus Mode I blend (Docs/decisions.md) put A11 0.08 dB
 // over the gated ceiling; its VR1 position goes from 0.800 to 0.788, the
 // same 0.05 dB target below the ceiling, tone bytes unchanged.
+// The 2026-09-22 noise, drive and hiss choices (Docs/decisions.md) raise
+// noise, resonance and chorus hiss against the oscillators, which put fifteen
+// programs 0.13-1.50 dB over the gated ceiling: A35, A56, A76, A81, B13, B14,
+// B25, B35, B43, B48, B52, B56, B68, B78 and B87. Their VR1 positions drop to
+// the same 0.05 dB target below it, tone bytes unchanged.
 constexpr std::array<float, presetCount> factoryVolume {{
     0.788f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
     0.446f, 0.547f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.800f, 0.744f, 0.800f, 0.394f, 0.596f, 0.617f, 0.800f, 0.775f,
+    0.800f, 0.744f, 0.800f, 0.394f, 0.580f, 0.617f, 0.800f, 0.775f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.237f,
-    0.645f, 0.800f, 0.800f, 0.800f, 0.790f, 0.337f, 0.322f, 0.800f,
+    0.645f, 0.800f, 0.800f, 0.800f, 0.790f, 0.329f, 0.322f, 0.800f,
     0.800f, 0.760f, 0.295f, 0.800f, 0.576f, 0.449f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.478f, 0.800f, 0.650f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.640f, 0.800f, 0.573f, 0.619f, 0.800f, 0.800f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.426f, 0.800f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.754f, 0.800f, 0.800f, 0.766f, 0.800f,
-    0.800f, 0.800f, 0.480f, 0.356f, 0.800f, 0.800f, 0.534f, 0.800f,
-    0.800f, 0.653f, 0.800f, 0.800f, 0.800f, 0.744f, 0.800f, 0.800f,
-    0.800f, 0.800f, 0.800f, 0.663f, 0.800f, 0.800f, 0.800f, 0.603f,
-    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.643f, 0.800f, 0.736f,
-    0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.800f, 0.611f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.467f, 0.800f, 0.650f,
+    0.721f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.640f, 0.800f, 0.560f, 0.600f, 0.800f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.416f, 0.800f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.754f, 0.722f, 0.800f, 0.766f, 0.800f,
+    0.800f, 0.800f, 0.467f, 0.356f, 0.800f, 0.800f, 0.534f, 0.748f,
+    0.800f, 0.573f, 0.800f, 0.800f, 0.800f, 0.719f, 0.800f, 0.800f,
+    0.800f, 0.800f, 0.800f, 0.663f, 0.800f, 0.800f, 0.800f, 0.575f,
+    0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.643f, 0.800f, 0.710f,
+    0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.676f, 0.611f,
 }};
 
 struct BankStorage
