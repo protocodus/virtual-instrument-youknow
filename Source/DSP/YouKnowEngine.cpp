@@ -77,6 +77,12 @@ constexpr float voltsToSample = 1.0f / YouKnowEngine::internalVoltsPerUnit;
 // sits 1-2.5 dB above them. The owner chose x0.738 on all three by ear
 // (2026-09-22); the product applies it as configureOscillatorLevelScale, so
 // these raw coordinates stay the reference the fingerprints freeze (OQ-15).
+// Through that product, #439522's take reads the 50% pulse 1.34 dB hot
+// against the saw and the sub 0.24 dB light (AnalyzeHardwareIsolators.py).
+// The MKS-7's 0.81 nominal would read the pulse 0.46 dB light, but its
+// printed tolerances span 0.64-1.05, so it cannot overrule the shared
+// coordinate on its own. A x0.857 pulse leg (the #439522 match) and a x0.81
+// one await a listening choice (2026-09-22).
 // https://www.polynominal.com/roland-mks7/Roland-MKS-7-Service-Notes.pdf#page=10
 // (SHA-256 179234b24c20b5a3a010827e5606cf6d9744bb9585664e219d6b643e2c7eb8ae)
 constexpr float sawMixVolts = 6.0f;

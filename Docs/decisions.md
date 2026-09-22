@@ -5,6 +5,38 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-09-22 — Correction: the hiss match was measured through a leaking window
+
+Hiss B's factor, 3.98, does not match the captures it was derived from.
+`Tools/AnalyzeChorusIdleFloors.py` measured each idle floor through a boxcar
+periodogram. The hardware's idle floors carry a large sub-20 Hz drift while
+the chorus runs, and the boxcar leaked it into the 20 Hz–20 kHz band: +1.1 dB
+on the hardware, 0.08 dB on the model. The band also counts the hardware's
+chorus-on energy below 200 Hz, which is not hiss; the chorus-off floor sits
+18 dB under it there. The analyzer now tapers its window, and its self-test
+fails the boxcar.
+
+Measured again through the complete product, 3.98 reads +1.33 dB over the
+full band and +4.48 dB A-weighted: the Mode I mean over the same seven
+tail-free patches, both channels.
+
+The choice stands: B chose to match the captured level. What reopens is which
+measure of that level to match, and the physics does not settle it:
+
+- **×3.41 (−1.34 dB)**, the corrected full-band match. It is the protocol
+  that was accepted, but it still counts the non-hiss energy below 200 Hz.
+- **×2.37 (−4.50 dB)**, the A-weighted match. That is the measure of
+  Panasonic's MN3009 noise row and of the engine's own HISS-100
+  normalization. Above 200 Hz it sits 0.39 dB under the hardware.
+
+Neither fixes the colour. The captured line hiss is roughly flat over
+0.2–2 kHz and about 5 dB higher over 2–8 kHz; the model's is white. Both were
+rendered against the shipping 3.98 as a lettered set the same day, and the
+product keeps 3.98 until the verdict. The Mode II numbers below were read
+the same way. Corrected and A-weighted, the two usable patches read
+L +4.7/+7.8 dB and R +10.2/+16.3 dB at 3.98, still too few to calibrate that
+mode.
+
 ## 2026-09-22 — The PWM slider copies the loaded pot
 
 The PWM range was checked against the hardware. The owner then asked the
@@ -91,7 +123,8 @@ engine. The owner chose B in all four.
   with the other three choices in place.
   `ChorusNoiseCalibrationProfile::IdleFloor439522` multiplies the Chorus
   Noise control by 3.98, which brings the Mode I mean over seven tail-free
-  patches to 0.00 dB (L −0.43, R +0.43). The panel keeps its range, and sessions keep their stored
+  patches to 0.00 dB (L −0.43, R +0.43). That reading leaked; see the
+  correction above. The panel keeps its range, and sessions keep their stored
   positions. B matches level only. The captured hiss is brighter: matched,
   the product's runs 9 dB hot across 0.5–2 kHz and within 1 dB above 8 kHz,
   and no mechanism for that tilt is modelled. The two Mode II patches, at
@@ -1391,6 +1424,13 @@ candidate rather than an estimator of #439522.
 
 ## Pending
 
+- **Pulse level (OQ-15).** Through the product, #439522's isolator take
+  reads the 50 % pulse 1.34 dB hot against the saw, and the sub within
+  0.24 dB. A ×0.857 pulse leg (that unit's match) and ×0.81 (the MKS-7
+  Service Notes' nominal) were rendered against the shipping engine on
+  2026-09-22.
+- **Chorus hiss factor (OQ-03).** ×3.41 and ×2.37 against the shipping 3.98;
+  see the 2026-09-22 correction.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.

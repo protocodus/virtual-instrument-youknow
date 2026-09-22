@@ -53,6 +53,9 @@ enum class MainNoiseCalibrationProfile : std::uint8_t
             // +7.16 dB on the shared source only; the C41/R79 spectrum and
             // the NOISE control law are unchanged. The crest reading is the
             // choice; #439522's 2.88 sigma corroborates it and is not fitted.
+            // With drive B as well, the product reads that unit's May take
+            // noise/saw -1.21 dB and noise/true-selfosc -0.25 dB (-1.19 and
+            // -0.28 held out), against -10.92 and -7.36 dB before either.
             return 2.281f;
         case MainNoiseCalibrationProfile::Nominal:
         default:
@@ -75,16 +78,24 @@ enum class ChorusNoiseCalibrationProfile : std::uint8_t
     // matched to #439522's four hash-pinned April 2026 bank captures, whose
     // chorus board is original. The choice was the target; the number is
     // measured. Tools/AnalyzeChorusIdleFloors.py compares each patch's idle
-    // floor with its own C4 note, which cancels the recording gain. Rendered
-    // through the complete product -- drive B, noise B, Character 1,
-    // 96 kHz/2x, shipping kernels -- 3.98 brings the Mode I mean over seven
-    // tail-free patches to 0.00 dB (L -0.43, R +0.43; patches scatter by
-    // about 3 dB with the clock sweep). The audition's +14.0 dB predates
-    // drive B, which already lowers the notes into the chorus by 2.6 dB.
-    // Level only, and the captured hiss is brighter: matched, this one runs
-    // 9 dB hot across 0.5-2 kHz, 5.5 dB at 2-4 kHz, 2.5 dB at 4-8 kHz and
-    // within 1 dB above 8 kHz. No mechanism for that tilt is modelled
-    // (OQ-03). The two Mode II patches read +7.1/-2.1 dB, too few to
+    // floor with its own C4 note, which cancels the recording gain.
+    //
+    // 3.98 was measured wrongly. It read 0.00 dB through a boxcar window,
+    // which leaked the hardware idle floors' sub-20 Hz drift into the
+    // 20 Hz-20 kHz band (+1.1 dB there, 0.08 dB on the model), and that band
+    // also counts chorus-on energy below 200 Hz that is not hiss. Through the
+    // fixed analyzer and the complete product -- drive B, noise B,
+    // Character 1, 96 kHz/2x, shipping kernels -- 3.98 reads +1.33 dB over
+    // the full band and +4.48 dB A-weighted (seven tail-free Mode I patches,
+    // both channels; single patches spread over 9-13 dB with the clock
+    // sweep). The corrected matches, 3.41 full-band and 2.37 A-weighted,
+    // await a listening choice (2026-09-22).
+    //
+    // Level only, and the captured hiss is shaped differently: roughly flat
+    // over 0.2-2 kHz, about 5 dB higher over 2-8 kHz and falling above,
+    // where this one is white to the reconstruction roll-off. No mechanism
+    // for that shape is modelled (OQ-03). The two tail-free Mode II patches
+    // read L +4.7/+7.8 dB and R +10.2/+16.3 dB A-weighted, too few to
     // calibrate that mode.
     return profile == ChorusNoiseCalibrationProfile::IdleFloor439522
         ? 3.98f : 1.0f;

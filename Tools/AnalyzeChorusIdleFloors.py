@@ -7,12 +7,17 @@ sequence at one recording gain: per patch a chord, five one-second notes C1-C5
 one second apart, then two seconds before the next patch. For every patch this
 measures its idle floor from 1.2 s after its last note-off to 0.1 s before the
 next patch, and its C4 note from 0.2 to 0.9 s after onset, as 20 Hz-20 kHz
-periodogram-band RMS per channel. Idle minus note cancels the recording gain;
-a model render of the same MIDI gives the same difference, and model minus
-hardware is the hiss error. Patches with RELEASE above 40 or any NOISE are
-reported but excluded from the summary: their windows hold release tails or the
-main noise source rather than the idle floor. Chorus-off patches give the dry
-floor the chorus lifts.
+Hann-periodogram band RMS per channel, unweighted and A-weighted. Idle minus
+note cancels the recording gain; a model render of the same MIDI gives the same
+difference, and model minus hardware is the hiss error. A-weighting is the
+hiss level, as in Panasonic's MN3009 noise row and the engine's HISS-100
+normalization. The unweighted band also counts the hardware's chorus-on
+energy below 200 Hz, which is not hiss. The window must taper: the hardware's
+idle floors carry a large sub-20 Hz drift while the chorus runs, and a boxcar
+leaks it into the band (+1.1 dB there, 0.08 dB on the model). Patches with
+RELEASE above 40 or any NOISE are reported but excluded from the summary: their
+windows hold release tails or the main noise source rather than the idle
+floor. Chorus-off patches give the dry floor the chorus lifts.
 
 Limits. One serviced unit, not an original-unit population. The hiss level
 follows the clock sweep -- about 8 dB inside one 0.7 s window -- so single
@@ -175,18 +180,27 @@ def checked_capture(path, bank):
     return rate, audio
 
 
-def band_db(samples, rate):
-    frequencies, power = periodogram(samples, rate, window="boxcar", detrend="constant")
+def a_weighting(frequencies):
+    """IEC 61672 A-weighting as a power gain, 0 dB at 1 kHz."""
+    f2 = np.asarray(frequencies, dtype=float) ** 2
+    ra = 12194.0 ** 2 * f2 ** 2 / ((f2 + 20.6 ** 2) * np.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2))
+                                  * (f2 + 12194.0 ** 2))
+    return (ra / 0.79434639) ** 2
+
+
+def band_db(samples, rate, weighted=False):
+    frequencies, power = periodogram(samples, rate, window="hann", detrend="constant")
     band = (frequencies >= BAND_HZ[0]) & (frequencies <= BAND_HZ[1])
-    return float(10 * np.log10(np.sum(power[band]) * (frequencies[1] - frequencies[0]) + 1e-30))
+    gain = a_weighting(frequencies[band]) if weighted else 1.0
+    return float(10 * np.log10(np.sum(power[band] * gain) * (frequencies[1] - frequencies[0]) + 1e-30))
 
 
-def levels(recording, window):
+def levels(recording, window, weighted=False):
     rate, audio = recording
     begin, end = (round(t * rate) for t in window)
     if begin < 0 or end > len(audio) or end - begin < round(0.3 * rate):
         raise ValueError("measurement window outside the recording")
-    return [band_db(audio[begin:end, c], rate) for c in range(audio.shape[1])]
+    return [band_db(audio[begin:end, c], rate, weighted) for c in range(audio.shape[1])]
 
 
 def measure(rows, capture, model):
@@ -199,11 +213,14 @@ def measure(rows, capture, model):
             if recording is None:
                 continue
             idle, note = levels(recording, row["idle_seconds"]), levels(recording, row["note_seconds"])
-            entry[name] = {"idle_dbfs": idle, "note_dbfs": note,
-                           "idle_minus_note_db": [i - n for i, n in zip(idle, note)]}
+            idle_a = levels(recording, row["idle_seconds"], weighted=True)
+            entry[name] = {"idle_dbfs": idle, "idle_a_weighted_dbfs": idle_a, "note_dbfs": note,
+                           "idle_minus_note_db": [i - n for i, n in zip(idle, note)],
+                           "idle_a_weighted_minus_note_db": [i - n for i, n in zip(idle_a, note)]}
         if "hardware" in entry and "model" in entry:
-            entry["model_minus_hardware_db"] = [m - h for m, h in zip(
-                entry["model"]["idle_minus_note_db"], entry["hardware"]["idle_minus_note_db"])]
+            for key, source in (("model_minus_hardware_db", "idle_minus_note_db"),
+                                ("model_minus_hardware_a_weighted_db", "idle_a_weighted_minus_note_db")):
+                entry[key] = [m - h for m, h in zip(entry["model"][source], entry["hardware"][source])]
         result.append(entry)
     return result
 
@@ -211,13 +228,16 @@ def measure(rows, capture, model):
 def summarize(entries):
     summary = {}
     for chorus in ("I", "II"):
-        errors = [e["model_minus_hardware_db"] for e in entries
-                  if e["used"] and e["chorus"] == chorus and "model_minus_hardware_db" in e]
-        if errors:
-            errors = np.asarray(errors)
+        used = [e for e in entries
+                if e["used"] and e["chorus"] == chorus and "model_minus_hardware_db" in e]
+        if used:
+            errors = np.asarray([e["model_minus_hardware_db"] for e in used])
+            weighted = np.asarray([e["model_minus_hardware_a_weighted_db"] for e in used])
             summary[f"chorus_{chorus}"] = {"patches": len(errors),
                                            "mean_model_minus_hardware_db": errors.mean(0).tolist(),
-                                           "range_db": [errors.min(0).tolist(), errors.max(0).tolist()]}
+                                           "range_db": [errors.min(0).tolist(), errors.max(0).tolist()],
+                                           "mean_model_minus_hardware_a_weighted_db":
+                                               weighted.mean(0).tolist()}
     for name in ("hardware", "model"):
         floors = {c: [e[name]["idle_dbfs"] for e in entries if e["used"] and e["chorus"] == c and name in e]
                   for c in ("off", "I")}
@@ -285,6 +305,14 @@ def self_test():
     expected = 10 * np.log10(1e-6 * (BAND_HZ[1] - BAND_HZ[0]) / (rate / 2) / (0.1 ** 2 / 2))
     assert abs(measured["hardware"]["idle_minus_note_db"][0] - expected) < 0.2
     assert max(abs(e) for e in measured["model_minus_hardware_db"]) < 1e-9
+    # A 1 kHz tone is unchanged by A-weighting.
+    tone = 1e-3 * np.sin(2 * np.pi * 1000.0 * time[:rate])
+    assert abs(band_db(tone, rate, weighted=True) - band_db(tone, rate)) < 0.05
+    # A large sub-audio drift under the idle floor must not leak into the band.
+    drifting = audio.copy()
+    drifting[idle] += 0.02 * (time[idle] - 3.0)[:, None]
+    leaked = measure(rows, (rate, drifting), None)[0]["hardware"]["idle_minus_note_db"][0]
+    assert abs(leaked - measured["hardware"]["idle_minus_note_db"][0]) < 0.1
     tail = measure([dict(rows[0], release=90)], (rate, audio), None)[0]
     assert not tail["used"]
     events = [(0.0, "sysex", bytes([0x41, 0x31, 0, 3] + [0] * 14 + [5, 0] + [0x51, 0x11, 0xF7])),
