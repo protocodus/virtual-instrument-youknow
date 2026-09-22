@@ -5860,6 +5860,25 @@ void testVcfEnvelopeAndKeyFollowKeepFirmwarePrecision()
            "production ENV/KEY sum discarded firmware carries before the VCF DAC");
 }
 
+void testPwmSliderCopiesTheLoadedPot()
+{
+    // The plug-in's slider ends where the loaded pot does, byte 105, the
+    // factory bank's highest PWM byte (Docs/decisions.md, 2026-09-22): no
+    // position on it reaches the overrange that pins the comparator.
+    const auto manualDuty = [](float position) {
+        return YouKnowEngine::pwmDutyCycle(YouKnowEngine::pwmDacVolts(
+            YouKnowEngine::pwmDacCode(position, PwmSource::Manual, 0u, true)));
+    };
+    constexpr float top = YouKnowEngine::pwmPanelTopPosition;
+    expect(YouKnowEngine::pwmDacCode(top, PwmSource::Manual, 0u, true) == 0x02e0u,
+           "the PWM slider's top is not the pot's byte 105");
+    expectNear(manualDuty(top), 0.9648189, 1.0e-6,
+               "the PWM slider's top left byte 105's 96.5%");
+    for (int step = 0; step <= 1000; ++step)
+        expect(manualDuty(top * static_cast<float>(step) / 1000.0f) < 0.97f,
+               "the PWM slider reaches past Roland's 93-97% top");
+}
+
 void testPwmUsesRecoveredIntegerDacWord()
 {
     const auto panel = [](int raw) {
@@ -16847,10 +16866,10 @@ void testPanelHelpMatchesTheModulationRouting()
                && pwmHelp.find("LFO DELAY does not apply")
                       != std::string::npos,
            "PWM LFO help does not describe the raw accumulator path");
-    expect(pwmDepthHelp.find("50-95%") != std::string::npos
-               && pwmDepthHelp.find("seven-bit range") != std::string::npos
-               && pwmDepthHelp.find("pin the pulse high") != std::string::npos,
-           "PWM depth help hides the loaded panel range or digital overrange");
+    expect(pwmDepthHelp.find("50-96%") != std::string::npos
+               && pwmDepthHelp.find("loaded hardware pot") != std::string::npos
+               && pwmDepthHelp.find("pin the pulse high") == std::string::npos,
+           "PWM depth help does not describe the loaded pot's reach");
     expect(delayHelp.find("DCO, PWM and VCF") == std::string::npos
                && pwmHelp.find("delay-gated LFO") == std::string::npos,
            "the panel still claims that LFO DELAY reaches PWM");
@@ -17316,6 +17335,7 @@ int main()
     testVcfBendUsesRecoveredIntegerWord();
     testVcfEnvelopeAndKeyFollowKeepFirmwarePrecision();
     testPwmUsesRecoveredIntegerDacWord();
+    testPwmSliderCopiesTheLoadedPot();
     testLfoDelayStartsFadeOnHoldoffCrossingPass();
     testRangeDividerCompletesItsCurrentSynchronousCount();
     testControlWordConverterWritePreservesCardState();

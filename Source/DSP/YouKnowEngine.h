@@ -1466,6 +1466,13 @@ public:
         float panelPosition, PwmSource source, std::uint16_t lfoAccumulator,
         bool positivePolarity) noexcept;
     [[nodiscard]] static float pwmDacVolts(std::uint16_t code) noexcept;
+    // The loaded PWM pot's full travel stores pwmPanelTopByte, the factory
+    // bank's highest PWM byte (pwmDacVolts), and the plug-in's PWM slider
+    // ends there too. Patches, SysEx and this engine keep the whole seven-bit
+    // byte; the plug-in holds a byte above the pot's reach at its top.
+    static constexpr int pwmPanelTopByte = 105;
+    static constexpr float pwmPanelTopPosition =
+        static_cast<float>(pwmPanelTopByte) / 127.0f;
     [[nodiscard]] static float pwmDutyCycle(float controlVolts) noexcept;
     // The optional second argument exposes pitch-slew and card-current changes
     // of the physical ramp used by that same comparator. A scale of one is the

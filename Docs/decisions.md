@@ -5,6 +5,37 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-09-22 — The PWM slider copies the loaded pot
+
+The PWM range was checked against the hardware. The owner then asked the
+plug-in's slider to "copy hardware". This is a product decision on
+evidence, not a listening verdict.
+
+- **Where the pot stops.** Roland's factory bank stores no PWM byte above
+  105. Ten tones sit exactly on 105, while every other control reaches 127,
+  so the programming unit's pot stopped at byte 105. The docs' earlier
+  "near byte 101" was only where the byte-to-duty law crosses the printed
+  95 %.
+- **What that byte plays.** The identified unit's manual sweep of bytes
+  0–105 follows the engine's law within 1.0 % duty at every byte. On the
+  engine, byte 105 is 96.5 % (97.2 % on #439522), inside p. 19's 93–97 %.
+
+Before this change, the plug-in's slider spanned all 128 bytes: full travel
+sat at 8.3 on its 0–10 scale, and from 8.9 upward the comparator pinned and
+the pulse fell silent.
+
+The PWM parameter now ends at byte 105 (`YouKnowEngine::pwmPanelTopByte`).
+- Its value is still the stored byte's image, so sessions and presets
+  restore unchanged.
+- A byte above the pot's reach, from an older session, a file or SysEx, is
+  held at the top.
+- Host automation lanes keep their normalized values and so now span the
+  pot's range.
+- LFO mode shares the slider, so the LFO sweep depth also tops out at 105.
+
+The engine keeps B-2's whole seven-bit law for raw patches and the
+hardware comparisons.
+
 ## 2026-09-22 — Noise, drive, hiss and Mode II chosen by ear
 
 Four questions the new evidence narrowed but could not close. Each was
