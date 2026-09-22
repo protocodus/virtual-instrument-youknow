@@ -210,19 +210,15 @@ public:
     // noise voltage. Retain the established control position, but do not call
     // it a Panasonic typical endpoint.
     //
-    // Installed-unit captures now bound it from below. In four hash-pinned
+    // Installed-unit captures now bound it from below: four hash-pinned
     // April 2026 factory-bank takes of #439522, whose chorus board is
-    // original (Tools/AnalyzeChorusIdleFloors.py), the Mode I idle floor
-    // against the same patch's C4 note sits 14.0 dB lower in the product than
-    // on the hardware (seven tail-free patches, both channels, 20 Hz-20 kHz),
-    // and the hardware's chorus-on floor stands 19-20 dB over its chorus-off
-    // floor where the product stands 10-12 dB. The hardware hiss is brighter
-    // too: on average 4-6 dB short below 2 kHz, where the recording's dry
-    // floor also contributes, and 11-13 dB across 4-14 kHz. The owner chose
-    // the level-only match by ear (2026-09-22). The product applies it as
-    // ChorusNoiseCalibrationProfile, re-derived with the other 09-22
-    // choices in place, so this control position and its sessions keep
-    // their meaning. No mechanism for the tilt is modelled (OQ-03).
+    // original, hold a Mode I idle floor well above this position's against
+    // the same patch's notes (Tools/AnalyzeChorusIdleFloors.py). The owner
+    // chose a level-only match by ear (2026-09-22). The product applies it
+    // as ChorusNoiseCalibrationProfile, which carries the measurement, so
+    // this control position and its sessions keep their meaning. The
+    // captured hiss is also brighter; no mechanism for that is modelled
+    // (OQ-03).
     static constexpr float defaultNoiseScale = 0.29858038f;
 
     // The established HISS-100 product normalization chooses a recovered wet
