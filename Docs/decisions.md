@@ -5,6 +5,84 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-09-22 — Noise, drive, hiss and Mode II chosen by ear
+
+Four questions the new evidence narrowed but could not close. Each was
+rendered as its own lettered set through the shipping product (48 kHz/4×,
+block 256, Unit Character 1, Aging 0.5), with whole-file stereo RMS matched
+to A and the keys unread until after the choice. A was always the shipping
+engine. The owner chose B in all four.
+
+- **Main noise level (OQ-16).**
+  - A read Roland's "4Vp-p" TP8 noise trim as the whole trace, 6.6σ (σ 0.60 V
+    against the 6 Vp-p self-oscillation).
+  - **B read the bracket as the trace's dense core, 2.9σ, as the p. 19 figure
+    draws it: ×2.281 (+7.16 dB) on the shared source.** #439522 measures
+    2.88σ.
+  - C was the conservative reading of the same figure, 3.45σ: ×1.917
+    (+5.65 dB).
+  - Trims: B −0.968 dB, C −0.647 dB. Material: a breathy pad, a bass line
+    with a noise attack, and a resonant noise sweep.
+
+  Licensed `MainNoiseCalibrationProfile::CoreBandTp8`, which the product
+  selects. The σ convention is what was chosen; #439522 corroborates it,
+  and nothing was fitted to that unit. The spectrum and the NOISE control
+  law are unchanged.
+- **Filter drive (OQ-15).**
+  - A put the nominal saw at 6.50 Vp-p at TP8 against the 6 Vp-p VCA trim.
+  - **B scaled saw, pulse and sub by 0.738 (−2.64 dB), putting the saw at
+    4.83 Vp-p.** That is inside the MKS-7 Service Notes' 4.8 ± 0.5 Vp-p
+    factory window for the same MC5534A/80017A voice; #439522 reads 4.88.
+  - Trim: B +2.362 dB. Material: a full voice through an open filter, then
+    a resonant envelope phrase.
+
+  Licensed `ProductFidelityProfile::oscillatorLevelScale`, applied through
+  `configureOscillatorLevelScale` with its reciprocal at the final digital
+  boundary, as the VCA service gain's is. The change is therefore one of
+  drive, not loudness, which is also what the level-matched set asked the
+  ear to judge. Noise, self-oscillation and chorus hiss do not pass the
+  scaled legs, so they now stand 2.64 dB higher against the oscillators:
+  the ratio their own TP8 trims and the factory window imply together. The
+  value is a sibling's factory window, not a JUNO-106 measurement. Pulse/saw
+  still sits 1–2.5 dB above both references; that ratio was not under test.
+- **Chorus hiss (OQ-03).**
+  - A left Chorus Noise at its 29.86 % default.
+  - **B matched the hiss level to four hash-pinned April 2026 bank captures
+    of #439522, whose chorus board is original: +14.0 dB against the
+    shipping engine.** Each patch's idle floor was measured against its own
+    C4 note.
+  - Trim: B −0.000 dB. Material: short plucks with gaps, through Mode I and
+    then Mode II.
+
+  What the choice licensed is matching the captured level; the number is
+  measured, not chosen. The audition's +14.0 dB predates drive B, which
+  lowers the notes into the chorus by 2.6 dB, so the factor was re-derived
+  with the other three choices in place.
+  `ChorusNoiseCalibrationProfile::IdleFloor439522` multiplies the Chorus
+  Noise control by 3.98, which brings the Mode I mean over seven tail-free
+  patches to 0.00 dB (L −0.43, R +0.43). The panel keeps its range, and sessions keep their stored
+  positions. B matches level only. The captured hiss is brighter: matched,
+  the product's runs 9 dB hot across 0.5–2 kHz and within 1 dB above 8 kHz,
+  and no mechanism for that tilt is modelled. The two Mode II patches, at
+  +7.1/−2.1 dB, are too few to calibrate that mode.
+- **Chorus Mode II (OQ-01).**
+  - A left Mode II on the clone endpoints (3.9 ms ±2.5 ms, 0.898 Hz) while
+    Mode I ran the 2026-09-17 blend.
+  - **B put Mode II on the blend at the derived II/I rate ratio: 3.49 ms
+    ±2.04 ms at 0.852 Hz.** The mode line changes only a timing resistance
+    (p. 15). Anwander's JUNO-6/60 survey and the One-O-Six clone of this
+    board agree that the switch changes rate only.
+  - Trim: B +0.131 dB. Material: a held chord, then a melody, through
+    chorus II.
+
+  Licensed `OwnerBlend` to move Mode II as well. The rate ratio is derived;
+  no Mode II was measured. I+II is a product extension that was not
+  auditioned, and it keeps its summed-rate compatibility coordinates.
+
+All four are product selections. The raw engine keeps its reference
+configuration for the frozen fingerprints. The listening sets are not
+committed.
+
 ## 2026-09-15 — Adopt coupling B on circuit evidence
 
 After the richer coupling audition, the owner delegated the choice:

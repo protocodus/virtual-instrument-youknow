@@ -74,8 +74,9 @@ constexpr float voltsToSample = 1.0f / YouKnowEngine::internalVoltsPerUnit;
 // nominal saw at 6.50 Vpp, and the identified unit's May isolator take reads
 // 4.88: the filter and VCA pair are driven about 2.6 dB harder than that
 // factory window. Sub/saw agrees with both within 0.3 dB (RMS); pulse/saw
-// sits 1-2.5 dB above them. A x0.738 candidate on all three awaits a
-// listening decision (2026-09-22), so the coordinates stand as voiced (OQ-15).
+// sits 1-2.5 dB above them. The owner chose x0.738 on all three by ear
+// (2026-09-22); the product applies it as configureOscillatorLevelScale, so
+// these raw coordinates stay the reference the fingerprints freeze (OQ-15).
 // https://www.polynominal.com/roland-mks7/Roland-MKS-7-Service-Notes.pdf#page=10
 // (SHA-256 179234b24c20b5a3a010827e5606cf6d9744bb9585664e219d6b643e2c7eb8ae)
 constexpr float sawMixVolts = 6.0f;
@@ -128,8 +129,9 @@ constexpr float pulseMixVolts = 6.0f;
 // separately printed HS-60/JUNO-106S notes, whose p. 3 lists this module board
 // (76139170) as common to both, repeat C41 100p, R79 330k, C42 1u and R81 4.7k
 // on p. 15, so the gap is level, not spectrum. A core-band reading raises this
-// constant 5.6-7.2 dB (3.45 or 2.9 sigma); which is an open listening decision
-// (2026-09-22), and the value stays until it is made.
+// constant 5.6-7.2 dB (3.45 or 2.9 sigma). The owner chose 2.9 sigma by ear
+// (2026-09-22); the product applies it as the CoreBandTp8 noise profile, and
+// this raw value stays the reference the fingerprints freeze.
 // https://seriescircuits.com/wp-content/uploads/2024/07/Roland-Juno-106S-HS-60-Service-Manual.pdf#page=15
 // (SHA-256 55118ea03a995eead22977e2ba5185b6971a5d7fcb1074e1e202ec706f3585eb)
 constexpr float noiseMixVolts = 7.4161f;
@@ -1760,6 +1762,16 @@ float YouKnowEngine::pwmDacVolts(std::uint16_t code) noexcept
     // physical slider's nominal top, not the seven-bit data format's endpoint.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19
+    //
+    // Checked on 2026-09-22 against #439522's original DCOs, whose manual
+    // sweep steps the stored byte through 0..105 (Tools/AnalyzeHardwarePwm.py,
+    // hash-pinned): 49.4 % at byte 0 and 0.455 %/byte there, against 50.0 %
+    // and 0.443 %/byte here. The two agree within 1.0 % duty at every byte
+    // (RMS 0.54 %); 95 % falls at byte 100.0 on the unit and 101.6 here. Where
+    // the pot stops is a separate question. Roland's factory bank stores no
+    // PWM byte above 105 and holds ten tones exactly on it, while every other
+    // control reaches 127, so Roland's own programming unit stopped at 105:
+    // 96.5 % on this law, 97.2 % on #439522, at the top of p. 19's 93-97 %.
     const double fraction = static_cast<double>(std::min<std::uint16_t>(
         code, 0x0fffu)) / 4095.0;
     return static_cast<float>(-0.8 + 6.8 * fraction);
@@ -6535,7 +6547,7 @@ bool YouKnowEngine::configureCoupledMixer(
     const CoupledSubMixer::Calibration& calibration) noexcept
 {
     if (prepared_ || moduleInputCouplingResistanceOverrideOhms_ > 0.0
-        || !calibration.valid())
+        || oscillatorLevelScale_ != 1.0f || !calibration.valid())
         return false;
     coupledMixerCalibration_ = calibration;
     coupledMixerEnabled_ = true;
@@ -6557,6 +6569,15 @@ double YouKnowEngine::moduleInputCouplingResistanceOhms() const noexcept
     return moduleInputCouplingResistanceOverrideOhms_ > 0.0
         ? moduleInputCouplingResistanceOverrideOhms_
         : static_cast<double>(moduleCouplingResistanceOhms);
+}
+
+bool YouKnowEngine::configureOscillatorLevelScale(float scale) noexcept
+{
+    if (prepared_ || coupledMixerEnabled_ || !std::isfinite(scale)
+        || scale < 0.25f || scale > 2.0f)
+        return false;
+    oscillatorLevelScale_ = scale;
+    return true;
 }
 
 bool YouKnowEngine::configureEnvelopeHolds(
@@ -9232,10 +9253,10 @@ void YouKnowEngine::primeVoiceWaveNode(
     voice.previousPulseThresholdVolts = voice.pulseThresholdVolts;
     voice.previousPulsePinnedHigh = voice.pulsePinnedHigh;
     voice.pulseThresholdPrimed = true;
-    voice.moduleCoupling.state = static_cast<double>(
-        pulseWaveNodeMean(voice, parameters)
-        + subWaveNodeMean(voice, parameters)
-        + (parameters.sawEnabled ? steadyDcoSawMean(voice) : 0.0f));
+    voice.moduleCoupling.state = static_cast<double>(oscillatorLevelScale_
+        * (pulseWaveNodeMean(voice, parameters)
+           + subWaveNodeMean(voice, parameters)
+           + (parameters.sawEnabled ? steadyDcoSawMean(voice) : 0.0f)));
     if (coupledMixerEnabled_)
     {
         const auto& c = coupledMixerCalibration_;
@@ -9898,7 +9919,8 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
                     * (rampVolts / (0.5 * rampAmplitudeVolts) - 1.0))
                 : steadyDcoSawMean(voice);
         static_cast<void>(voice.moduleCoupling.process(
-            pulseNode + subWaveNodeMean(voice, activeParameters_) + sawNode,
+            oscillatorLevelScale_
+                * (pulseNode + subWaveNodeMean(voice, activeParameters_) + sawNode),
             moduleCouplingG_, 0.0f, 1.0f));
         if (trackPulseNode)
         {
@@ -10039,6 +10061,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         mixed += pulseOut;
     if (!coupledMixerEnabled_)
         mixed += subOut;
+    // The priming and idle-tracking paths above scale the same three legs.
+    mixed *= oscillatorLevelScale_;
     mixed += noiseSample
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration)
            * agedNoiseGain_;
@@ -10558,6 +10582,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     // source level only and leaves the measured control/spectral laws intact.
     const float mainNoiseSourceScale = parameters.mainNoiseLevelScale
         * mainNoiseCalibrationScale(parameters.mainNoiseCalibrationProfile);
+    // Beyond the panel's clamp by design; see chorusNoiseCalibrationScale.
+    const float chorusNoiseScale = parameters.chorusNoise
+        * chorusNoiseCalibrationScale(parameters.chorusNoiseCalibrationProfile);
 
     if (!panelGlidePrimed_)
     {
@@ -10589,9 +10616,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     // the established outputLevelPolicyDb. Large physical transients can
     // still exceed digital full scale, as they could on the previous model.
     // The false branch retains the exact former boundary and arithmetic.
-    const float outputBoundaryScale = parameters.enableVoiceVcaServiceGain
+    // The configured oscillator level is cancelled the same way, so a drive
+    // change does not become a loudness change; it is exactly 1 unconfigured.
+    const float outputBoundaryScale = (parameters.enableVoiceVcaServiceGain
         ? coefficients.outputBoundaryGain / VoiceVcaSignalLaw::serviceGain()
-        : coefficients.outputBoundaryGain;
+        : coefficients.outputBoundaryGain) / oscillatorLevelScale_;
     // Ordinary intervals use finite engine-owned state, sanitized targets and
     // precomputed finite decays. Keep exactOnePoleHoldEndpoint's full guards
     // for the rare physical event and direct hostile-input test paths.
@@ -11364,7 +11393,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
                                                        wetRight))
                 chorus_.process(levelled, parameters.chorus,
-                                parameters.chorusNoise,
+                                chorusNoiseScale,
                                 wetLeft, wetRight,
                                 parameters.enableChorusClockBleed,
                                 parameters.enableChorusHyperbolicSweep,

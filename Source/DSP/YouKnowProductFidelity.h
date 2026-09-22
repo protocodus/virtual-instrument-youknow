@@ -6,8 +6,9 @@
 
 namespace youknow
 {
-// Product selections: the two 2026-09-11 auditions (Docs/decisions.md), plus
-// the approximate thermal clock coupling and 2026-09-15 C56 selection.
+// Product selections: the 2026-09-11, 09-17 and 09-22 auditions
+// (Docs/decisions.md), plus the approximate thermal clock coupling and
+// 2026-09-15 C56 selection.
 // Raw engine fixtures keep their nominal reference defaults. The plug-in
 // and maintained product renderers select these settings centrally.
 struct ProductFidelityProfile
@@ -28,11 +29,20 @@ struct ProductFidelityProfile
     static constexpr double moduleInputCouplingResistanceOhms =
         4700.0 * (24000.0 + 1500.0) / (4700.0 + 24000.0 + 1500.0);
 
+    // Drive B, chosen by ear on 2026-09-22 (OQ-15): the saw, pulse and sub
+    // legs at 0.738 put the nominal saw at 4.83 Vpp at TP8 against the 6 Vpp
+    // VCA trim, inside the MKS-7 Service Notes' 4.8 +/- 0.5 Vpp factory
+    // window for the same MC5534A/80017A voice (sawMixVolts has the
+    // derivation). #439522 reads 4.88. The engine returns the oscillators'
+    // loudness at its digital boundary, so this moves drive, not level.
+    static constexpr float oscillatorLevelScale = 0.738f;
+
     // Configure a newly constructed engine exactly once. Circuit configuration
     // persists across prepare()/reset(), but changing it live is unsupported.
-    // A full coupled-mixer comparison replaces the independent C56 pole.
-    // Configure that alternative here so both mutually exclusive paths still
-    // receive the same remaining product selections.
+    // A full coupled-mixer comparison replaces the independent C56 pole and,
+    // with its own calibrated source scale, the oscillator level. Configure
+    // that alternative here so both mutually exclusive paths still receive
+    // the same remaining product selections.
     static void configureBeforePrepare (YouKnowEngine& engine,
         const CoupledSubMixer::Calibration* coupledMixer = nullptr)
     {
@@ -41,7 +51,9 @@ struct ProductFidelityProfile
             || ! (coupledMixer != nullptr
                     ? engine.configureCoupledMixer (*coupledMixer)
                     : engine.configureModuleInputCouplingResistanceOhms (
-                        moduleInputCouplingResistanceOhms)))
+                          moduleInputCouplingResistanceOhms)
+                      && engine.configureOscillatorLevelScale (
+                          oscillatorLevelScale)))
             throw std::logic_error (
                 "Product fidelity needs valid, compatible circuits before the first prepare");
         // User-authorized approximate thermal coupling (2026-09-14): use the
@@ -63,6 +75,12 @@ struct ProductFidelityProfile
         // candidates (Docs/decisions.md, 2026-09-17); the engine default
         // keeps the clone endpoints as the reference configuration.
         parameters.chorusTimingProfile = ChorusTimingProfile::OwnerBlend;
+        // Noise B and chorus-hiss B, chosen by ear on 2026-09-22 (OQ-16,
+        // OQ-03); YouKnowNoiseCalibration.h carries both derivations.
+        parameters.mainNoiseCalibrationProfile =
+            MainNoiseCalibrationProfile::CoreBandTp8;
+        parameters.chorusNoiseCalibrationProfile =
+            ChorusNoiseCalibrationProfile::IdleFloor439522;
     }
 };
 } // namespace youknow

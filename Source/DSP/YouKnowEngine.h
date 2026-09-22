@@ -203,10 +203,15 @@ struct EngineParameters
     // Bound for the affine blends above; see the note on `calibration`.
     static constexpr float calibrationCeiling = 2.0f;
     float chorusNoise { Chorus::defaultNoiseScale };
+    // Not serialised: multiplies Chorus Noise at the chorus, after its 0..1
+    // clamp, so the panel keeps its range. Nominal preserves the reference.
+    ChorusNoiseCalibrationProfile chorusNoiseCalibrationProfile {
+        ChorusNoiseCalibrationProfile::Nominal };
     // Comparison-only, not serialised: a linear scale on the shared Tr21
     // noise rail for measurement/audition candidates (OQ-16). The 0..4
     // sanitizer is a comparison guard, not a manufacturer tolerance. 1.0
-    // preserves the chosen profile; Nominal preserves the shipped reading.
+    // preserves the chosen profile; Nominal preserves the raw reference
+    // reading, and the product selects CoreBandTp8.
     float mainNoiseLevelScale { 1.0f };
     MainNoiseCalibrationProfile mainNoiseCalibrationProfile {
         MainNoiseCalibrationProfile::Nominal };
@@ -568,6 +573,19 @@ public:
     [[nodiscard]] bool configureModuleInputCouplingResistanceOhms(
         double totalResistanceOhms) noexcept;
     [[nodiscard]] double moduleInputCouplingResistanceOhms() const noexcept;
+    // Before prepare(): one scale on the saw, pulse and sub legs of every
+    // WAVE node, the source-to-filter level OQ-15 leaves voiced; noise has
+    // its own TP8 trim and is untouched. process() divides it back out at
+    // the final digital boundary, as it does the VCA service gain, so the
+    // oscillators keep their loudness and only their drive changes. Retained
+    // across reset/prepare; the raw reference stays 1. The 0.25..2 domain is
+    // numerical, not a tolerance. Mutually exclusive with
+    // configureCoupledMixer, whose calibration sets its own source scale.
+    [[nodiscard]] bool configureOscillatorLevelScale(float scale) noexcept;
+    [[nodiscard]] float oscillatorLevelScale() const noexcept
+    {
+        return oscillatorLevelScale_;
+    }
     // Comparison only, before prepare(): six IC26 ENV/GATE holds with an
     // explicitly supplied effective resistance and ideal bus. No calibrated
     // installed profile or shipping/preset parameter is implied. All six
@@ -1398,8 +1416,9 @@ public:
     // historical sampled peak is not a bound on every patch and note history.
     // This returns the historical boundary including outputLevelPolicyGain.
     // With enableVoiceVcaServiceGain, process() additionally divides it by
-    // VoiceVcaSignalLaw::serviceGain() after all physical output stages.
-    // Recovering a physical noise voltage from rendered PCM must undo both.
+    // VoiceVcaSignalLaw::serviceGain() after all physical output stages, and
+    // always by the configured oscillator level scale. Recovering a physical
+    // noise voltage from rendered PCM must undo all three.
     [[nodiscard]] static float outputBoundaryGain() noexcept;
 
     // In the supplied hash-matched B-2 image, stored continuous controls are
@@ -1439,9 +1458,10 @@ public:
     // that product from 0x3fff and presents the upper twelve bits to the DAC.
     // The two analogue calibration anchors are that DAC code 0x0fff gives the
     // printed +6 V / 50% state, while code zero is the printed -0.8 V pulse-off
-    // state. The panel's loaded pot normally stops near byte 101 and 95%; raw
-    // SysEx bytes above that physical travel deliberately retain the firmware's
-    // overrange and can pin the comparator high.
+    // state. The printed 95% falls near byte 101 and the factory bank's pot
+    // stopped at 105 (pwmDacVolts); raw SysEx bytes above that physical
+    // travel deliberately retain the firmware's overrange and can pin the
+    // comparator high.
     [[nodiscard]] static std::uint16_t pwmDacCode(
         float panelPosition, PwmSource source, std::uint16_t lfoAccumulator,
         bool positivePolarity) noexcept;
@@ -3745,6 +3765,7 @@ private:
     // Zero selects the existing voiced resistance; no preset selects an
     // override. Keeping this separate also detects incompatible calibration.
     double moduleInputCouplingResistanceOverrideOhms_ { 0.0 };
+    float oscillatorLevelScale_ { 1.0f };
 
     float glideLawPortamento_ { -1.0f };
     float glideLawStepPerScan_ { 0.0f };

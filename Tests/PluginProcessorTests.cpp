@@ -603,6 +603,10 @@ void testProductFidelitySurvivesHostLifecycle()
         expect (references[index]->configureModuleInputCouplingResistanceOhms (
                     1.0 / (1.0 / 4700.0 + 1.0 / 25500.0)),
                 "cannot configure the explicit product C56 reference");
+        // The chosen oscillator level (Docs/decisions.md, 2026-09-22) is
+        // common to all three for the same reason.
+        expect (references[index]->configureOscillatorLevelScale (0.738f),
+                "cannot configure the explicit product oscillator level");
         references[index]->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }

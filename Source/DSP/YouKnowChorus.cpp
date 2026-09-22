@@ -665,9 +665,8 @@ Chorus::ModeSettings Chorus::settingsFor(
     // the 106's LFO "1LFO with two speed settings", and a clone of this board
     // (Alpes Machines One-O-Six) marks presets I and II on its rate control
     // but one "Juno 106 chorus depth level": the rate-only law again.
-    // OwnerBlend below therefore leaves Mode II on excursions the circuit
-    // would share with Mode I; a Mode II on the blend at the derived rate
-    // ratio awaits a listening decision (2026-09-22).
+    // OwnerBlend below therefore also moves Mode II onto the blend at the
+    // derived II/I rate ratio, as the owner chose by ear (2026-09-22).
     // https://www.florian-anwander.de/roland_string_choruses/
     // https://www.alpesmachines.net/index.php/analogue-chorus/one-o-six-chorus/one-o-six-how-to-use
     constexpr float centre = 0.5f * (0.0014f + 0.0064f);
@@ -737,7 +736,18 @@ Chorus::ModeSettings Chorus::settingsFor(
                     break;
             }
             return { rateOne, centre, sweep, lineGain };
-        case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
+        case ChorusMode::Two:
+            // Only the blend reaches Mode II (Docs/decisions.md, 2026-09-22):
+            // the other candidates were Mode I readings, and the rate-only
+            // mode line keeps the blend's excursion at 3.49 ms +/-2.04 ms,
+            // 0.852 Hz. The ratio is the derived one; no Mode II was measured.
+            if (timingProfile == ChorusTimingProfile::OwnerBlend)
+            {
+                const auto blend = settingsFor(ChorusMode::One, timingProfile);
+                return { blend.rateHz * (rateTwo / rateOne),
+                         blend.centreDelaySeconds, blend.sweepSeconds, lineGain };
+            }
+            return { rateTwo, centre, sweep, lineGain };
         // Product extension. Roland's original owner manual permits Off/I/II
         // and excludes simultaneous I+II; the board has an enable line plus
         // one binary rate line, not a third timing resistance. Retain the
