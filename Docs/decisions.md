@@ -81,7 +81,9 @@ engine. The owner chose B in all four.
 
 All four are product selections. The raw engine keeps its reference
 configuration for the frozen fingerprints. The listening sets are not
-committed.
+committed. Together they carried fifteen factory programs 0.13–1.50 dB over
+the bank's −28.5 dBFS gated ceiling. Their VR1 shaft trims were lowered to
+the usual 0.05 dB below it, and their tone bytes are unchanged.
 
 ## 2026-09-15 — Adopt coupling B on circuit evidence
 

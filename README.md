@@ -127,7 +127,9 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   higher against them. The chorus hiss matches an identified unit's
   captures against its notes, about 14 dB louder at the unchanged Chorus
   Noise position, and Chorus Mode II sweeps Mode I's blended excursion at
-  its own 0.852 Hz.
+  its own 0.852 Hz. Fifteen factory programs that this carried over the
+  bank's gated loudness ceiling get lower VR1 shaft trims; their tone bytes
+  are untouched.
 - The resonance return's headroom now warms with the stages' — both OTAs are
   2 Vt through a resistor ratio inside one potted module — and each card's
   RES adjustment sets its settled full-RES self-oscillation on the service
@@ -2438,6 +2440,13 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
     rate-only mode switch implies. Its pitch-modulation depth falls from
     about ±15.5 to ±12 cents. I+II keeps its summed-rate compatibility
     coordinates.
+  - Factory loudness: with noise, resonance and hiss higher against the
+    oscillators, the full bank audit put fifteen programs 0.13–1.50 dB over
+    the −28.5 dBFS gated ceiling: A35, A56, A76, A81, B13, B14, B25, B35,
+    B43, B48, B52, B56, B68, B78 and B87. Their VR1 positions drop to the
+    same 0.05 dB target below it (B87 Froggy the most, 0.800 to 0.676), and
+    re-rendered they sit at −28.555 to −28.573 dBFS. No preset peaks above
+    −6.2 dBFS, and the sixteen original presets pass unchanged.
 - The resonance return's headroom now follows the card's temperature with
   the stages'. Both headrooms are 2 Vt referred through a resistor ratio —
   the stages' through 560/68560, the return's through the 100 kΩ/1.5 kΩ
