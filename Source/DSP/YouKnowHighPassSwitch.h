@@ -26,6 +26,11 @@ namespace youknow
 // https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP
 // Charge injection, voltage-dependent Ron, leakage and rail clipping are
 // deliberately uncalibrated. All deselected capacitor stores remain live.
+// The current sheet's p.5 bounds IOFF at +/-100 nA (25C, 18V test), not
+// an installed leakage waveform. It gives typical 10 pF switch-input,
+// 30 pF TC4052 output and 0.2 pF feedthrough capacitance (last two at 10V).
+// Feedthrough capacitance is not a switching charge-injection specification;
+// neither it nor the absolute-maximum voltages defines a rail-clipping law.
 class HighPassSwitchCircuit
 {
 public:

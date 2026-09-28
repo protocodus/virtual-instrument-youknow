@@ -314,8 +314,16 @@ constexpr float outputWiperInternalLoadOhms =
 
 // The jack network after the selector, identically R64/C22 into JA2 and
 // R65/C21 into JA1: 2.2 kOhm in series with each jack and 1 nF (".001x2")
-// from the jack node to ground. With the jack open (OQ-17) the pole's
-// resistance is the series part plus the wiper's own Thevenin resistance.
+// from the jack node to ground. This models High with the jack open (OQ-17):
+// the pole's resistance is the series part plus the wiper's Thevenin resistance.
+// Other selector/load responses are now derived, not implemented here:
+// Q = (1.5k + (1-p)*10k) || (p*10k) || 101k, p = volume position;
+// Rt = B || (A+Q), with (A,B) = (0,41.3k)/(33k,8.3k)/(39.8k,1.5k)
+// for H/M/L. Rs = Rt+2.2k; a resistive load RL gives RL/(RL+Rs) passband gain
+// relative to the open jack and a pole at 1/(2*pi*(Rs||RL)*1nF).
+// At full volume Rs = 3.4488/8.8824/3.6472 kOhm. Assumes separate stereo
+// jacks, nominal parts, ideal IC6 source and C17/C20 short at treble frequencies.
+// https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
 constexpr float outputJackSeriesOhms = 2200.0f;
 constexpr float outputJackCapacitanceF = 1.0e-9f;
 
@@ -475,7 +483,7 @@ OutputCouplingWiperNetwork outputCouplingWiperNetworkFor(
 // the loaded lower track -- the same two paths outputWiperNoiseResistance()
 // sums, read here off the one already-solved network. Full volume: 1.249 kOhm
 // + 2.2 kOhm against 1 nF is 46.15 kHz; half volume, 2.578 kOhm + 2.2 kOhm,
-// is 33.32 kHz.
+// is 33.32 kHz. Both are the High-selector, open-jack case.
 float outputJackCornerHzFor(
     const OutputCouplingWiperNetwork& network) noexcept
 {

@@ -322,9 +322,11 @@ public:
     //     about -14.23 V, un-muting about 121 ms after a settled OFF.
     // Both are derived from the drawn parts with the same 0.6 V junction
     // prior the resonance and NOISE onsets use; the JFET transition itself
-    // keeps the declared 5 ms glide policy, because the 2SK30A's
-    // pinch-off spread is not fixed by any source. Off by default at this
-    // level so the bare-chorus suites keep their immediate switching; the
+    // keeps the declared 5 ms glide policy. Toshiba specifies family pinch-off
+    // -0.4...-5.0 V at VDS=10 V, ID=0.1 uA, 25C; Y/GR are IDSS grades,
+    // not individual cutoff or installed switching-time measurements (OQ-20).
+    // https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf#page=1
+    // Off by default here so bare-chorus suites keep immediate switching; the
     // engine enables it. The passive two-node solve includes R48's loading
     // back into C16 and R46's finite sink in the conducting state. Tr5's
     // saturation voltage is still idealised; Tr4's base-current loading above
@@ -461,7 +463,9 @@ public:
 
     // ------------------------------------------------------------------
     // The modulation oscillator, from Service Notes p. 15 (jack board, IC1
-    // uPC062 and IC2a M5218L).
+    // TL062CP and IC2a M5218L). The p.4 parts list names TL-062CP, Roland
+    // part 15189119; p.15 abbreviates IC1 as "062".
+    // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=4
     //
     // IC1b integrates: C3 sits across pins 6 and 7 and pin 5 is grounded.
     // IC1a compares: R6 47 kOhm returns its own output to pin 3, and R7 33 kOhm

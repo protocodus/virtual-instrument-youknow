@@ -1759,7 +1759,7 @@ public:
     // The jack network after the selector: R64/R65 2.2 kOhm into JA2/JA1 with
     // C22/C21 1 nF from each jack node to ground, driven through the wiper's
     // own Thevenin resistance at a shaft position -- 46.15 kHz at full volume,
-    // 33.32 kHz at half, with the jack open (OQ-17).
+    // 33.32 kHz at half, with High selected and the jack open (OQ-17).
     [[nodiscard]] static float outputJackCornerHz(
         float volumePosition) noexcept;
 
@@ -1845,7 +1845,7 @@ private:
     // running path's 13 states before DI; the reset path enters DI four states
     // before its control store. Once either DI begins, the complete protected
     // PIT transaction finishes before a voice handler restarts the main loop.
-    // Unpublished serial wire and NMOS entry timing stay unmodelled.
+    // Unresolved serial wire and NMOS entry timing stay unmodelled.
     static constexpr double dcoPitchPrestageStates = 389.0;
     static constexpr double pitResetDiToControlStates = 4.0;
     static constexpr double pitControlToLsbStates = 55.0;
@@ -3138,7 +3138,7 @@ private:
     // B-2's serial Voice On/Off handlers discard their interrupt return by
     // replacing SP and jumping to the start of the voice-board loop. Model
     // that loop restart at the logical command boundary while leaving the
-    // still-unpublished serial wire phase and NMOS interrupt-entry delay out.
+    // still-unresolved serial wire phase and NMOS interrupt-entry delay out.
     void finishProtectedPitWritesBeforeSerialVoiceCommand() noexcept;
     void restartVoiceBoardScanAfterSerialVoiceCommand() noexcept;
     void refreshFirmwareDcoTiming() noexcept;
