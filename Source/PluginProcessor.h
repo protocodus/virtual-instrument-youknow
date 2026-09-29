@@ -261,6 +261,14 @@ public:
         return choice;
     }
     int getQualityChoice() const noexcept;
+    static constexpr int outputLoadChoiceCount = 5;
+    static constexpr float outputLoadOhmsForChoice (int choice) noexcept
+    {
+        constexpr std::array<float, outputLoadChoiceCount> ohms {
+            0.0f, 10000.0f, 47000.0f, 100000.0f, 1000000.0f };
+        return ohms[static_cast<std::size_t> (
+            std::clamp (choice, 0, outputLoadChoiceCount - 1))];
+    }
     bool isEngineReady() const noexcept
     {
         return engineReady.load (std::memory_order_acquire);
@@ -403,6 +411,8 @@ private:
         aging,
         pitchBend,
         modulation,
+        outputSelector,
+        outputLoad,
         count
     };
     static constexpr std::size_t parameterPointerCount =

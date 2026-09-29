@@ -182,20 +182,27 @@ constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 // The output's fifth low-pass reactive element is at the BBD tap-summing node:
 // both complementary held outputs reach C45/C48 (2.2 nF) through R118/R119
 // or R111/R112 (3.3 kOhm), while R117/R110 (47 kOhm) returns the node to
-// ground. The former
-// ideal-source, one-leg solve put this at 23.461 kHz. Panasonic's MN3009
-// Gi-RL typical curve instead supports a finite local Thevenin estimate:
-// reading its slope around the installed 50--100 kOhm region gives about
-// 3.7 kOhm per follower. The datasheet application circuit supports reading
-// RL as separate loads on OUT1 and OUT2 before their 10 kOhm balance pot.
-// Both follower outputs remain
-// electrically present, so the two (3.3 + 3.7) kOhm paths are in parallel.
-// In parallel with 47 kOhm, they give the isolated tap node a 22.209 kHz
-// Thevenin corner. R98/R107 then loads that node, so the realised circuit below
-// solves the coupled modes rather than treating 22.209 kHz as a separate pole.
-// The Roland common-mode load is about 97.3 kOhm per pin, almost Panasonic's
-// 100 kOhm fixture, so no separate insertion-gain guess is added. Curve-read
-// uncertainty and a wet-only original-unit sweep remain OQ-04.
+// ground. The followers provide complementary half-wave drive, not two
+// guaranteed continuously conducting sources. Their combined waveform is a
+// full-period hold; this does NOT make their output resistances parallel.
+// Panasonic's circuit and Reticon's Buss/Weckler1976 p.57/Fig.6 establish
+// that distinction; exact inactive conductance/crossover remain unidentified.
+// https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf#page=2
+// https://www.imagesensors.org/Past%20Workshops/Dick%20Bredthauer%20Collection/1976%20CCD%20Conference%20Scotland/1976%2007%20Buss.pdf#page=3
+//
+// Keep the existing 3.5 kOhm EFFECTIVE boundary provisional (OQ-04). Its old
+// explanation as two active (3.3+3.7) kOhm legs in parallel is withdrawn.
+// Gi-RL measures loaded gain, not instantaneous source impedance. The same
+// manufacturer's MN3005 test (book p.19) uses two labelled RL returns and
+// a balance pot P. With one active source resistance r and an unloaded
+// centered wiper, H=L*(L+P/2)/(r*(2L+P)+L*(L+P)). The pot alone adds .195 dB
+// to the 50->100k labelled-load gain change for P=5k (.352 dB for P=10k),
+// comparable to the old resistance estimate's .305 dB. The MN3009 curve's
+// exact fixture and load-dependent operating point are not identified, so
+// neither r nor an open-circuit DC level follows uniquely. Do not substitute
+// 7k by merely deleting the old parallel factor. Numerical circuit audits
+// qualify this declared boundary, not its physical identification. R98/R107
+// loads the tap, so its capacitor and both sections remain one coupled solve.
 //
 // Panasonic BBD book, MN3009 pp. 37-39 (circuit, Gi-RL, application):
 // https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf
@@ -208,12 +215,9 @@ constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 // C52/C56), both 3.3k tap pairs into 47k/2.2n, and 100n/100k branch
 // coupling -- agreeing with the sister board's clone netlist that first
 // corroborated the family. OQ-04 keeps only the loaded transfer.
-constexpr float mn3009TypicalOutputSourceEstimateOhms = 3700.0f;
-constexpr float outputTapSeriesOhms = 3300.0f;
 constexpr float outputTapReturnOhms = 47000.0f;
 constexpr float outputTapShuntFarads = 2.2e-9f;
-constexpr float outputTapParallelDriveOhms =
-    0.5f * (mn3009TypicalOutputSourceEstimateOhms + outputTapSeriesOhms);
+constexpr float outputTapEffectiveDriveOhms = 3500.0f;
 constexpr float reconstructionSeriesOhms = 22000.0f;
 
 // The wet-mute glide is expressed relative to dry. The final IC6 summer's
@@ -375,6 +379,358 @@ FixedMatrix<Size> matrixExponential(FixedMatrix<Size> matrix) noexcept
 using AnalogMatrix = FixedMatrix<6>;
 using AnalogDrive = std::array<double, 6>;
 
+template <std::size_t Size>
+void stampConductance(FixedMatrix<Size>& matrix, int p, int q,
+                      double conductance) noexcept
+{
+    if (p >= 0) matrix[p][p] += conductance;
+    if (q >= 0) matrix[q][q] += conductance;
+    if (p >= 0 && q >= 0)
+    {
+        matrix[p][q] -= conductance;
+        matrix[q][p] -= conductance;
+    }
+}
+
+// Roland p15: Tr13/14 are PNP, driven by IC2b (M5218L) pin2;
+// R90=22k/R91=10k return to +15V. Tr15/16 and Tr17/18 return through
+// 10k to ground. All collectors go to -15V.
+// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
+// Toshiba 2SA1015 p.2 typical curves at 25 C support beta ~200 and
+// |VBE| ~0.61 V here; Y/GR limits at -6 V/-2 mA are not installed
+// operating-point bounds or a measured GR population mean. Cob = 4 pF
+// is typical at VCB = -10 V, not a measured voltage-dependent curve.
+// https://media.digikey.com/PDF/Data%20Sheets/Toshiba%20PDFs/2SA1015.pdf
+constexpr double followerBeta = 200.0;
+constexpr double followerVbe = 0.61;
+constexpr double followerThermalVolts = 1.380649e-23 * 298.15 / 1.602176634e-19;
+constexpr double followerCmuFarads = 4.0e-12;
+// Panasonic p.38 marks optimum input bias ~-8.3 V (large-signal criterion),
+// which its Vo-Vi curve maps to ~-10 V loaded output. The retained -10.37 V
+// coordinate came from -10*(1+3700/100000). As explained at the effective
+// output boundary above, the curve/fixture does not establish that source
+// resistance or DC extrapolation. This is a provisional bias convention,
+// not an identified open-circuit voltage or installed follower current.
+// https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf (printed37-39)
+constexpr double followerBbdTheveninDc = -10.0 * (1.0 + 3700.0 / 100000.0);
+// R116 (15k), VR1 (10k) and R121 (12k) span ground to -15 V; R120
+// (100k) reaches the wiper. Its full nominal trim range gives 8.108..9.25k
+// source resistance. The -8.3 V nominal wiper gives 9144.756 Ohm,
+// in series with the 100k.
+constexpr double followerBiasSourceOhms = (8.3 / 15.0 * 37000.0)
+                                        * (1.0 - 8.3 / 15.0);
+
+std::array<double, 2> followerCollectorCurrents(bool input) noexcept
+{
+    // tap, base1, emitter1, base2, emitter2, emitter-current1/2.
+    FixedMatrix<7> a {}, rhs {}, solution {};
+    stampConductance(a, 0, 1, 1.0 / 44000.0);
+    stampConductance(a, 2, 3, 1.0 / 44000.0);
+    if (input)
+    {
+        // IC2b's nominal DC output is zero, with low source impedance.
+        a[0].fill(0.0);
+        a[0][0] = 1.0;
+    }
+    else
+    {
+        a[0][0] += 1.0 / 3500.0 + 1.0 / 47000.0;
+        rhs[0][0] = followerBbdTheveninDc / 3500.0;
+    }
+    for (int index = 0; index < 2; ++index)
+    {
+        const int b = 1 + 2 * index;
+        const int e = b + 1;
+        const int current = 5 + index;
+        const double emitterR = input && index == 0 ? 22000.0 : 10000.0;
+        a[e][e] += 1.0 / emitterR;
+        rhs[e][0] = input ? 15.0 / emitterR : 0.0;
+        a[e][current] += 1.0;
+        a[b][current] -= 1.0 / (followerBeta + 1.0);
+        a[current][e] = 1.0;
+        a[current][b] = -1.0;
+        rhs[current][0] = followerVbe;
+    }
+    if (!matrixSolve(a, rhs, solution))
+        return {};
+    return {{ solution[5][0] * followerBeta / (followerBeta + 1.0),
+              solution[6][0] * followerBeta / (followerBeta + 1.0) }};
+}
+
+struct FiniteSupportCircuit
+{
+    AnalogMatrix generator {};
+    AnalogDrive drive {};
+    AnalogDrive equilibrium {};
+    AnalogDrive outputByState {};
+    double outputDirect { 0.0 };
+    Chorus::SupportChain::NonlinearFollowerPorts nonlinear {};
+    std::array<AnalogDrive, 2> currentDrive {};
+};
+
+FiniteSupportCircuit finiteSupportCircuit(
+    bool input, bool wetConnected, double inputWarpRate = 0.0) noexcept
+{
+    // Physical capacitor voltages, not integrator carries:
+    // pre:  j1-e1, b1, j2-e2, b2, e2-coupled, BBDinput
+    // post: tap, j1-e1, b1, j2-e2, b2, e2-output.
+    // Cmu is parallel with each grounded base capacitor. Omitting Cpi and
+    // rbb avoids four >100MHz parasitic modes, while retaining the finite
+    // gm/rpi loading that matters at audio frequencies. The independent
+    // typical-curve audit bounds the combined reduction to ~.049dB through
+    // 20k (rbb30Ohm alone ~.004dB) for both chains. Early effect is omitted:
+    // conditional VA25/50/100V screens add up to .274/.162/.090dB; no
+    // original-part low-current slope justifies selecting an installed VA.
+    FixedMatrix<14> system {}, rhs {}, solution {};
+    auto resistor = [&](int p, int q, double ohms)
+    { stampConductance(system, p, q, 1.0 / ohms); };
+    std::array<double, 6> capacitance {};
+    auto capacitor = [&](int index, int p, int q, double farads)
+    {
+        const int current = 8 + index;
+        system[p][current] += 1.0;
+        system[current][p] += 1.0;
+        if (q >= 0)
+        {
+            system[q][current] -= 1.0;
+            system[current][q] -= 1.0;
+        }
+        rhs[current][index] = 1.0;
+        if (input && inputWarpRate > 0.0)
+        {
+            // Numerical prewarp of the physical capacitor coordinates. Each
+            // SK pair uses its isolated component pole; the coupling and
+            // shunt capacitors use their own branch RC anchors. Scaling the
+            // capacitors before the coupled solve preserves finite reciprocal
+            // loading and DC bias. Cmu remains part of the summed base cap;
+            // this does not assert a different physical transistor capacitance.
+            const double corner = index < 2
+                ? 1.0 / (2.0 * pi * 22000.0
+                         * std::sqrt(820e-12 * (680e-12 + followerCmuFarads)))
+                : index < 4
+                    ? 1.0 / (2.0 * pi * 22000.0
+                             * std::sqrt(1.8e-9 * (270e-12 + followerCmuFarads)))
+                    : index == 4
+                        ? 1.0 / (2.0 * pi * (100000.0 + followerBiasSourceOhms)
+                                 * 100e-9)
+                        : 1.0 / (2.0 * pi * 10000.0 * 2.2e-9);
+            // Match the legacy below-Nyquist anchor clamp, including 8 kHz.
+            const double angle = pi * std::min(corner, 0.45 * inputWarpRate)
+                               / inputWarpRate;
+            farads *= angle / std::tan(angle);
+        }
+        capacitance[index] = farads;
+    };
+    const auto ic = followerCollectorCurrents(input);
+    auto transistor = [&](int index, int base, int emitter)
+    {
+        const double gm = ic[index] / followerThermalVolts;
+        stampConductance(system, base, emitter, gm / followerBeta);
+        system[emitter][emitter] += gm;
+        system[emitter][base] -= gm;
+        // A positive residual collector current leaves the emitter and
+        // enters the base through Ic/beta. The already stamped gm/rpi is
+        // its tangent; these two independent columns carry only the excess
+        // Ic0*(exp(deltaVeb/VT)-1-deltaVeb/VT), never the bias or tangent twice.
+        rhs[emitter][7 + index] = -(1.0 + 1.0 / followerBeta);
+        rhs[base][7 + index] = 1.0 / followerBeta;
+    };
+    if (input)
+    {
+        // j1,b1,e1,j2,b2,e2,coupled,BBDinput. Both identical BBD input
+        // branches load Tr14: double capacitances and halve resistances.
+        resistor(0, -1, 22000.0);
+        rhs[0][6] = 1.0 / 22000.0;
+        resistor(0, 1, 22000.0);
+        resistor(2, 3, 22000.0);
+        resistor(3, 4, 22000.0);
+        resistor(2, -1, 22000.0);
+        resistor(5, -1, 10000.0);
+        resistor(6, -1, (100000.0 + followerBiasSourceOhms) * 0.5);
+        resistor(6, 7, 5000.0);
+        capacitor(0, 0, 2, 820e-12);
+        capacitor(1, 1, -1, 680e-12 + followerCmuFarads);
+        capacitor(2, 3, 5, 1.8e-9);
+        capacitor(3, 4, -1, 270e-12 + followerCmuFarads);
+        capacitor(4, 5, 6, 200e-9);
+        capacitor(5, 7, -1, 4.4e-9);
+        transistor(0, 1, 2);
+        transistor(1, 4, 5);
+    }
+    else
+    {
+        // tap,j1,b1,e1,j2,b2,e2,output. The established input coordinate
+        // already includes the nominal100k BBD load; preserve that existing
+        // source factor, but do not compensate finite-buffer attenuation.
+        resistor(0, -1, 3500.0);
+        resistor(0, -1, 47000.0);
+        rhs[0][6] = 1.0 / 3500.0 + 1.0 / 47000.0;
+        resistor(0, 1, 22000.0);
+        resistor(1, 2, 22000.0);
+        resistor(3, 4, 22000.0);
+        resistor(4, 5, 22000.0);
+        resistor(3, -1, 10000.0);
+        resistor(6, -1, 10000.0);
+        resistor(7, -1, 22000.0);
+        if (wetConnected) resistor(7, -1, 39000.0);
+        capacitor(0, 0, -1, 2.2e-9);
+        capacitor(1, 1, 3, 820e-12);
+        capacitor(2, 2, -1, 680e-12 + followerCmuFarads);
+        capacitor(3, 4, 6, 1.8e-9);
+        capacitor(4, 5, -1, 270e-12 + followerCmuFarads);
+        capacitor(5, 6, 7, 1e-6);
+        transistor(0, 2, 3);
+        transistor(1, 5, 6);
+    }
+    // [G B; B' 0] [nodeVoltages; capacitorCurrents] = [drive*u; capVoltages].
+    // Solve every basis at prepare-time, then x'=C^-1*i. This eliminates the
+    // algebraic emitter nodes without dropping reciprocal branch loading.
+    FiniteSupportCircuit circuit;
+    if (!matrixSolve(system, rhs, solution))
+        return circuit;
+    for (std::size_t row = 0; row < 6; ++row)
+    {
+        for (std::size_t column = 0; column < 6; ++column)
+            circuit.generator[row][column] = solution[8 + row][column]
+                                          / capacitance[row];
+        circuit.drive[row] = solution[8 + row][6] / capacitance[row];
+        circuit.outputByState[row] = solution[7][row];
+    }
+    circuit.outputDirect = solution[7][6];
+    circuit.nonlinear.collectorCurrentAmps = ic;
+    circuit.nonlinear.topology = input ? 1 : (wetConnected ? 3 : 2);
+    for (std::size_t port = 0; port < 2; ++port)
+    {
+        const std::size_t base = (input ? 1u : 2u) + 3u * port;
+        const std::size_t emitter = base + 1u;
+        for (std::size_t state = 0; state < 6; ++state)
+        {
+            circuit.nonlinear.junctionByState[port][state] =
+                solution[emitter][state] - solution[base][state];
+            circuit.currentDrive[port][state] =
+                solution[8 + state][7 + port] / capacitance[state];
+        }
+        circuit.nonlinear.junctionByInput[port] =
+            solution[emitter][6] - solution[base][6];
+        circuit.nonlinear.outputByCurrent[port] = solution[7][7 + port];
+        for (std::size_t current = 0; current < 2; ++current)
+            circuit.nonlinear.junctionByCurrent[port][current] =
+                solution[emitter][7 + current] - solution[base][7 + current];
+    }
+    AnalogMatrix dcDrive {}, dcSolution {};
+    for (std::size_t row = 0; row < 6; ++row)
+        dcDrive[row][0] = -circuit.drive[row];
+    if (matrixSolve(circuit.generator, dcDrive, dcSolution))
+        for (std::size_t row = 0; row < 6; ++row)
+            circuit.equilibrium[row] = dcSolution[row][0];
+    return circuit;
+}
+
+Chorus::SupportChain::DenseInputMap denseInputMap(
+    const AnalogMatrix& analog, const AnalogDrive& drive,
+    const std::array<AnalogDrive, 2>& currentDrive, double sampleRate) noexcept
+{
+    Chorus::SupportChain::DenseInputMap result;
+    if (sampleRate < Chorus::minimumExactInputSupportRate)
+        return result;
+    FixedMatrix<18> augmented {};
+    for (std::size_t row = 0; row < 6; ++row)
+    {
+        for (std::size_t column = 0; column < 6; ++column)
+            augmented[row][column] = analog[row][column] / sampleRate;
+        augmented[row][6] = drive[row] / sampleRate;
+        for (std::size_t port = 0; port < 2; ++port)
+            augmented[row][10 + 4 * port] = currentDrive[port][row] / sampleRate;
+    }
+    for (std::size_t channel = 0; channel < 3; ++channel)
+        for (std::size_t derivative = 0; derivative < 3; ++derivative)
+            augmented[6 + 4 * channel + derivative][7 + 4 * channel + derivative] = 1.0;
+    constexpr std::array<std::array<double, 4>, 4> polynomial {{
+        {{ 0.0, 1.0, 0.0, 0.0 }},
+        {{ 1.0 / 3.0, 0.5, -1.0, 1.0 / 6.0 }},
+        {{ 1.0, -2.0, 1.0, 0.0 }},
+        {{ 1.0, -3.0, 3.0, -1.0 }}
+    }};
+    // e5' exp(theta*M), with the full-interval cubic forcing coordinates.
+    // CURRENT finite A has |lambda*h|<=.370 and ||A*h||inf<=1.029 at
+    // 176.4k; the omitted Cpi/rbb modes are not silently Taylor-expanded.
+    // Taylor10 plus theta^11 endpoint correction has error
+    // sum(k>=12) a_k*(theta^k-theta^11). Each factor's maximum on [0,1]
+    // is (11/k)^(11/(k-11))*(1-11/k). Taking absolute rows BEFORE the
+    // history transform gives tail <2.312e-13, with remainder after k=40
+    // <7.6e-44 (states/u bounded by 1; q by existing Ic0/2.6, scaling
+    // linearly). Raw state coefficients scale as h^k and forcing derivative
+    // j as h^(k-j), so the absolute bound at 176.4k covers ALL higher HQ
+    // rates, not just six validation grids. It covers ideal/finite support
+    // and cubic/linear priming; double rounding is separate. This bounds
+    // dense interpolation, not physical nonlinear integration or hardware.
+    std::array<double, 18> row {};
+    row[5] = 1.0;
+    for (std::size_t power = 0; power < result.outputByPower.size(); ++power)
+    {
+        auto& stored = result.outputByPower[power];
+        for (std::size_t state = 0; state < 6; ++state)
+            stored[state] = row[state];
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            for (std::size_t sample = 0; sample < 4; ++sample)
+                for (std::size_t derivative = 0; derivative < 4; ++derivative)
+                    stored[6 + 4 * channel + sample] +=
+                        row[6 + 4 * channel + derivative] * polynomial[derivative][sample];
+        std::array<double, 18> next {};
+        for (std::size_t column = 0; column < 18; ++column)
+            for (std::size_t index = 0; index < 18; ++index)
+                next[column] += row[index] * augmented[index][column];
+        for (auto& value : next)
+            value /= static_cast<double>(power + 1);
+        row = next;
+    }
+    result.available = true;
+    return result;
+}
+
+Chorus::SupportChain::HeldOutputMap heldOutputMap(
+    const AnalogMatrix& analog, const AnalogDrive& drive, double rate,
+    const Chorus::SupportChain::ExactTransition& transition,
+    const AnalogDrive& equilibrium) noexcept
+{
+    Chorus::SupportChain::HeldOutputMap result;
+    if (rate < Chorus::minimumExactInputSupportRate)
+        return result;
+
+    // Integrate each real held-output jump before sampling the physical
+    // network: Holters/Parker2018, section3.2, equations12-25.
+    // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf
+    // G(h)=integral_0^h exp(A*s)*b ds. The degree18 Taylor remainder on
+    // 0<=h<=T is bounded by ||Tb||*exp(||TA||)*||TA||^18/19!:
+    // <5e-12 for either declared network at HQ, before roundoff. Lower
+    // grids retain BLEP; exact physical integration alone does not suppress
+    // above-Nyquist output energy there.
+    for (std::size_t row = 0; row < 6; ++row)
+        result.byPower[0][row] = drive[row] / rate;
+    for (std::size_t power = 1; power < result.byPower.size(); ++power)
+        for (std::size_t row = 0; row < 6; ++row)
+            for (std::size_t column = 0; column < 6; ++column)
+                result.byPower[power][row] += analog[row][column] / rate
+                    * result.byPower[power - 1][column]
+                    / static_cast<double>(power + 1);
+    for (const auto& term : result.byPower)
+        for (std::size_t row = 0; row < 6; ++row)
+            result.fullIntervalDrive[row] += term[row];
+    for (std::size_t row = 0; row < 6; ++row)
+    {
+        double target = equilibrium[row];
+        for (std::size_t column = 0; column < 6; ++column)
+            target -= transition.stateByColumn[column][row] * equilibrium[column];
+        // Preserve the stored DC identity around the slow coupling pole.
+        // A tiny theta^19 correction leaves the first18 Taylor coefficients
+        // unchanged and anchors the full-interval forcing to that identity.
+        result.endpointCorrection[row] = target - result.fullIntervalDrive[row];
+        result.fullIntervalDrive[row] = target;
+    }
+    result.available = true;
+    return result;
+}
+
 Chorus::SupportChain::ExactTransition exactTransition(
     const AnalogMatrix& analog, const AnalogDrive& analogDrive,
     const std::array<double, 6>& constantInputEquilibrium,
@@ -428,6 +784,152 @@ Chorus::SupportChain::ExactTransition exactTransition(
     return result;
 }
 
+void prepareEndpointCurrentMap(
+    Chorus::SupportChain::NonlinearFollowerPorts& ports) noexcept
+{
+    ports.endpointJunctionByCurrent = ports.junctionByCurrent;
+    for (std::size_t junction = 0; junction < 2; ++junction)
+        for (std::size_t current = 0; current < 2; ++current)
+            for (std::size_t state = 0; state < 6; ++state)
+                ports.endpointJunctionByCurrent[junction][current] +=
+                    ports.junctionByState[junction][state]
+                    * ports.stateByCurrent[current][state];
+}
+
+Chorus::SupportChain::ExactTransition bilinearTransition(
+    const FiniteSupportCircuit& circuit, double sampleRate,
+    bool nonlinear = false) noexcept
+{
+    const double halfInterval = 0.5 / sampleRate;
+    const auto identity = matrixIdentity<6>();
+    const auto denominator = matrixLinearCombination(
+        identity, 1.0, circuit.generator, -halfInterval);
+    const auto numerator = matrixLinearCombination(
+        identity, 1.0, circuit.generator, halfInterval);
+    AnalogMatrix transition {};
+    Chorus::SupportChain::ExactTransition result;
+    if (!matrixSolve(denominator, numerator, transition))
+        return result;
+    for (std::size_t row = 0; row < 6; ++row)
+    {
+        double constantDrive = circuit.equilibrium[row];
+        for (std::size_t column = 0; column < 6; ++column)
+        {
+            result.stateByColumn[column][row] = transition[row][column];
+            constantDrive -= transition[row][column] * circuit.equilibrium[column];
+        }
+        // Equal current/previous input weights enforce the physical DC
+        // equilibrium and are algebraically (I-hA/2)^-1*h*b/2.
+        result.driveBySample[0][row] = 0.5 * constantDrive;
+        result.driveBySample[1][row] = 0.5 * constantDrive;
+    }
+    if (nonlinear)
+    {
+        result.nonlinear = circuit.nonlinear;
+        result.nonlinear.enabled = true;
+        AnalogMatrix currentRhs {}, currentSolution {};
+        for (std::size_t row = 0; row < 6; ++row)
+            for (std::size_t port = 0; port < 2; ++port)
+                currentRhs[row][port] = halfInterval * circuit.currentDrive[port][row];
+        if (matrixSolve(denominator, currentRhs, currentSolution))
+            for (std::size_t row = 0; row < 6; ++row)
+                for (std::size_t port = 0; port < 2; ++port)
+                {
+                    result.nonlinear.stateByPreviousCurrent[port][row] =
+                        currentSolution[row][port];
+                    result.nonlinear.stateByCurrent[port][row] =
+                        currentSolution[row][port];
+                }
+        prepareEndpointCurrentMap(result.nonlinear);
+    }
+    return result;
+}
+
+Chorus::SupportChain::ExactTransition finiteExactTransition(
+    const FiniteSupportCircuit& circuit, double sampleRate,
+    bool nonlinear = false) noexcept
+{
+    auto result = exactTransition(circuit.generator, circuit.drive,
+                                  circuit.equilibrium, sampleRate);
+    result.outputByState = circuit.outputByState;
+    if (circuit.nonlinear.topology != 1)
+        result.heldOutputMap = heldOutputMap(circuit.generator, circuit.drive, sampleRate,
+                                            result, circuit.equilibrium);
+    result.outputDirect = circuit.outputDirect;
+    result.finiteReadout = true;
+    if (nonlinear)
+    {
+        result.nonlinear = circuit.nonlinear;
+        result.nonlinear.enabled = true;
+        // Integrate each nonlinear current as a line between its two solved
+        // endpoints. This is a second-order residual approximation, not an
+        // exact nonlinear solve in time. The physical linear transition and
+        // cubic input history above remain bit-for-bit the same coefficients.
+        FixedMatrix<10> augmented {};
+        for (std::size_t row = 0; row < 6; ++row)
+        {
+            for (std::size_t column = 0; column < 6; ++column)
+                augmented[row][column] = circuit.generator[row][column] / sampleRate;
+            for (std::size_t port = 0; port < 2; ++port)
+                augmented[row][6 + 2 * port] = circuit.currentDrive[port][row] / sampleRate;
+        }
+        augmented[6][7] = augmented[8][9] = 1.0;
+        const auto exponential = matrixExponential(augmented);
+        for (std::size_t row = 0; row < 6; ++row)
+            for (std::size_t port = 0; port < 2; ++port)
+            {
+                result.nonlinear.stateByCurrent[port][row] =
+                    exponential[row][7 + 2 * port];
+                result.nonlinear.stateByPreviousCurrent[port][row] =
+                    exponential[row][6 + 2 * port] - exponential[row][7 + 2 * port];
+            }
+        prepareEndpointCurrentMap(result.nonlinear);
+        if (sampleRate >= Chorus::minimumExactInputSupportRate)
+        {
+            // At HQ the endpoint-linear residual's H2 attenuation is
+            // measurable near 8 kHz. Integrate the unique cubic through the
+            // current and three previous solved currents instead. This is a
+            // higher-order numerical interpolation, not a changed current law.
+            // Its current endpoint remains implicit in the same two-port solve.
+            FixedMatrix<14> cubicAugmented {};
+            for (std::size_t row = 0; row < 6; ++row)
+            {
+                for (std::size_t column = 0; column < 6; ++column)
+                    cubicAugmented[row][column] = circuit.generator[row][column] / sampleRate;
+                for (std::size_t port = 0; port < 2; ++port)
+                    cubicAugmented[row][6 + 4 * port] = circuit.currentDrive[port][row] / sampleRate;
+            }
+            for (std::size_t port = 0; port < 2; ++port)
+                for (std::size_t derivative = 0; derivative < 3; ++derivative)
+                    cubicAugmented[6 + 4 * port + derivative][7 + 4 * port + derivative] = 1.0;
+            const auto cubicExponential = matrixExponential(cubicAugmented);
+            constexpr std::array<std::array<double, 4>, 4> polynomial {
+                std::array<double, 4> { 0.0, 1.0, 0.0, 0.0 },
+                std::array<double, 4> { 1.0 / 3.0, 0.5, -1.0, 1.0 / 6.0 },
+                std::array<double, 4> { 1.0, -2.0, 1.0, 0.0 },
+                std::array<double, 4> { 1.0, -3.0, 3.0, -1.0 }
+            };
+            auto& ports = result.nonlinear;
+            for (std::size_t row = 0; row < 6; ++row)
+                for (std::size_t port = 0; port < 2; ++port)
+                    for (std::size_t sample = 0; sample < 4; ++sample)
+                        for (std::size_t derivative = 0; derivative < 4; ++derivative)
+                            ports.cubicStateByCurrentSample[sample][port][row] +=
+                                cubicExponential[row][6 + 4 * port + derivative]
+                                * polynomial[derivative][sample];
+            ports.cubicEndpointJunctionByCurrent = ports.junctionByCurrent;
+            for (std::size_t junction = 0; junction < 2; ++junction)
+                for (std::size_t current = 0; current < 2; ++current)
+                    for (std::size_t state = 0; state < 6; ++state)
+                        ports.cubicEndpointJunctionByCurrent[junction][current] +=
+                            ports.junctionByState[junction][state]
+                            * ports.cubicStateByCurrentSample[0][current][state];
+            ports.cubicResidual = true;
+        }
+    }
+    return result;
+}
+
 AnalogMatrix inputSupportMatrix() noexcept
 {
     const double w1 = 2.0 * pi * antiAliasFirstHz;
@@ -477,7 +979,7 @@ AnalogDrive inputSupportDrive() noexcept
 
 AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
 {
-    const double source = outputTapParallelDriveOhms;
+    const double source = outputTapEffectiveDriveOhms;
     const double tapReturn = outputTapReturnOhms;
     const double tapCap = outputTapShuntFarads;
     const double series = reconstructionSeriesOhms;
@@ -492,9 +994,9 @@ AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
     // R-R junction/follower, then the C28/C25 coupling-capacitor lowpass
     // voltage. C45/C48 is loaded by R98/R107, so the tap and first Sallen-Key
     // section are one coupled network rather than two independent filters.
-    // Tr15/Tr16 (Tr17/Tr18 on the other line) remain ideal unity-gain,
-    // zero-output-impedance followers: the service notes do not provide the
-    // installed hFE, gm or parasitics needed for a defensible refinement.
+    // This raw comparison profile keeps Tr15/Tr16 (Tr17/Tr18 on the other
+    // line) ideal. Product finite/nonlinear followers are stamped separately
+    // in finiteSupportCircuit, with their documented nominal assumptions.
     matrix[0][0] = -(1.0 / source + 1.0 / tapReturn + 1.0 / series)
                  / tapCap;
     matrix[0][1] = 1.0 / (series * tapCap);
@@ -523,23 +1025,22 @@ AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
 AnalogDrive outputSupportDrive() noexcept
 {
     AnalogDrive drive {};
-    // Preserve the established loaded wet-level coordinate. The MN3009 table
-    // already states insertion gain under a 100 kOhm load, while its typical
-    // Gi-RL curve only resolves the local source resistance used for the
-    // frequency-dependent loading above. Absolute installed wet level remains
-    // OQ-04, so do not turn the curve read into a second gain calibration.
-    const double source = outputTapParallelDriveOhms;
+    // Preserve the established loaded wet-level convention. The MN3009
+    // Gi-RL fixture does not identify active source impedance or installed
+    // insertion gain; this normalization is not a new hardware calibration.
+    // The effective source boundary and absolute wet level remain OQ-04.
+    const double source = outputTapEffectiveDriveOhms;
     const double tapReturn = outputTapReturnOhms;
     const double tapCap = outputTapShuntFarads;
     drive[0] = (1.0 / source + 1.0 / tapReturn) / tapCap;
     return drive;
 }
 
-void advanceExactSupport(
+bool advanceExactSupport(
     std::array<double, 6>& state,
     const Chorus::SupportChain::ExactTransition& transition,
     double current, double previous, double previous2,
-    double previous3) noexcept
+    double previous3, const std::array<double, 6>* heldForcing = nullptr) noexcept
 {
     constexpr double maximumState =
         static_cast<double>(std::numeric_limits<float>::max()) / 16.0;
@@ -554,19 +1055,237 @@ void advanceExactSupport(
         for (std::size_t row = 0; row < 6; ++row)
             next[row] += transition.stateByColumn[column][row]
                        * state[column];
-    for (std::size_t sample = 0; sample < 4; ++sample)
+    if (heldForcing != nullptr)
+    {
         for (std::size_t row = 0; row < 6; ++row)
-            next[row] += transition.driveBySample[sample][row]
-                       * samples[sample];
+            next[row] += (*heldForcing)[row];
+    }
+    else
+        for (std::size_t sample = 0; sample < 4; ++sample)
+            for (std::size_t row = 0; row < 6; ++row)
+                next[row] += transition.driveBySample[sample][row]
+                           * samples[sample];
     for (double value : next)
     {
         if (!(std::abs(value) <= maximumState))
         {
             state.fill(0.0);
-            return;
+            return false;
         }
     }
     state = next;
+    return true;
+}
+
+using FollowerPair = std::array<double, 2>;
+using FollowerPairMatrix = std::array<FollowerPair, 2>;
+
+// Forward-active law Ic=Ic0*exp(delta(Ve-Vb)/VT), with Ib=Ic/beta:
+// https://wiki.analog.com/university/courses/electronics/text/chapter-8
+// https://www.analog.com/en/resources/analog-dialogue/studentzone/studentzone-april-2021.html
+// Ic0 is the same solved nominal bias as the finite-linear profile; no new
+// scale current, Early voltage, rail-clipping or gain parameter is introduced.
+// Constant beta/Cmu, omitted Cpi/rbb/ro, and the conditional BBD DC fixture
+// retain that profile's limits; this forward-active law does not add saturation.
+// Subtract the tangent without cancellation near the bias point. q is a
+// collector-current correction in amperes / nodeVoltsPerUnit; the existing
+// gm/rpi network already carries the constant and first-order currents.
+bool followerResidualCurrent(
+    const FollowerPair& thermalJunction, const FollowerPair& collectorCurrent,
+    FollowerPair& current, FollowerPair& derivative) noexcept
+{
+    for (std::size_t port = 0; port < 2; ++port)
+    {
+        const double y = thermalJunction[port];
+        // Evaluation guard, not a physical junction clamp. Rejected Newton
+        // trials are shortened, and failure falls back to the linear interval.
+        if (!std::isfinite(y) || y > 80.0)
+            return false;
+        const double exponentialMinusOne = std::expm1(y);
+        const double remainder = std::abs(y) < 1.0e-3
+            ? y * y * (0.5 + y * (1.0 / 6.0 + y * (1.0 / 24.0
+                + y * (1.0 / 120.0 + y / 720.0))))
+            : exponentialMinusOne - y;
+        const double scale = collectorCurrent[port] / Chorus::nodeVoltsPerUnit;
+        current[port] = scale * remainder;
+        derivative[port] = scale * exponentialMinusOne;
+        if (!std::isfinite(current[port]) || !std::isfinite(derivative[port]))
+            return false;
+    }
+    return true;
+}
+
+// Solve y = (2.6/VT)*(P*x + Q*u + D*q(y)) with bounded damped Newton.
+// D is either the algebraic map or the endpoint map including Gamma1.
+// Residual-based acceptance matters near cutoff: dq/dy can be negative, so
+// an unqualified fixed-point iteration is not generally contractive.
+bool solveFollowerJunctions(
+    const Chorus::SupportChain::NonlinearFollowerPorts& ports,
+    const std::array<double, 6>& state, double input,
+    const FollowerPairMatrix& currentMap, FollowerPair& junction,
+    FollowerPair& current, std::uint32_t& maximumIterations) noexcept
+{
+    constexpr double thermalScale = Chorus::nodeVoltsPerUnit / followerThermalVolts;
+    constexpr unsigned iterationLimit = 20;
+    constexpr unsigned backtrackLimit = 12;
+    constexpr double tolerance = 2.0e-12;
+    FollowerPair base {};
+    FollowerPairMatrix coupling {};
+    for (std::size_t port = 0; port < 2; ++port)
+    {
+        base[port] = ports.junctionByInput[port] * input;
+        for (std::size_t index = 0; index < 6; ++index)
+            base[port] += ports.junctionByState[port][index] * state[index];
+        base[port] *= thermalScale;
+        for (std::size_t other = 0; other < 2; ++other)
+            coupling[port][other] = thermalScale * currentMap[port][other];
+    }
+    auto residual = [&](const FollowerPair& y, FollowerPair& q,
+                        FollowerPair& derivative, FollowerPair& error)
+    {
+        if (!followerResidualCurrent(y, ports.collectorCurrentAmps, q, derivative))
+            return std::numeric_limits<double>::infinity();
+        for (std::size_t port = 0; port < 2; ++port)
+            error[port] = y[port] - base[port]
+                - coupling[port][0] * q[0] - coupling[port][1] * q[1];
+        return std::max(std::abs(error[0]), std::abs(error[1]));
+    };
+    FollowerPair derivative {}, error {};
+    double norm = residual(junction, current, derivative, error);
+    for (unsigned iteration = 0; iteration < iterationLimit; ++iteration)
+    {
+        maximumIterations = std::max(maximumIterations, iteration + 1);
+        if (norm <= tolerance * (1.0 + std::max(std::abs(junction[0]),
+                                                std::abs(junction[1]))))
+            return true;
+        const double a = 1.0 - coupling[0][0] * derivative[0];
+        const double b = -coupling[0][1] * derivative[1];
+        const double c = -coupling[1][0] * derivative[0];
+        const double d = 1.0 - coupling[1][1] * derivative[1];
+        const double determinant = a * d - b * c;
+        if (!std::isfinite(norm) || !std::isfinite(determinant)
+            || std::abs(determinant) < 1.0e-18)
+            return false;
+        FollowerPair step {{ (d * error[0] - b * error[1]) / determinant,
+                             (a * error[1] - c * error[0]) / determinant }};
+        const double largestStep = std::max(std::abs(step[0]), std::abs(step[1]));
+        double damping = largestStep > 8.0 ? 8.0 / largestStep : 1.0;
+        bool accepted = false;
+        for (unsigned backtrack = 0; backtrack < backtrackLimit; ++backtrack)
+        {
+            const FollowerPair trial {{ junction[0] - damping * step[0],
+                                       junction[1] - damping * step[1] }};
+            FollowerPair trialCurrent {}, trialDerivative {}, trialError {};
+            const double trialNorm = residual(trial, trialCurrent, trialDerivative,
+                                              trialError);
+            if (trialNorm < norm)
+            {
+                junction = trial;
+                current = trialCurrent;
+                derivative = trialDerivative;
+                error = trialError;
+                norm = trialNorm;
+                accepted = true;
+                break;
+            }
+            damping *= 0.5;
+        }
+        if (!accepted)
+            return false;
+    }
+    // The final permitted Newton update can itself reach tolerance.
+    return norm <= tolerance * (1.0 + std::max(std::abs(junction[0]),
+                                               std::abs(junction[1])));
+}
+
+bool advanceNonlinearSupport(
+    std::array<double, 6>& state,
+    Chorus::SupportChain::NonlinearState& history,
+    const Chorus::SupportChain::ExactTransition& transition,
+    double current, double previous, double previous2, double previous3,
+    const std::array<double, 6>* heldForcing = nullptr) noexcept
+{
+    const auto& ports = transition.nonlinear;
+    const auto previousState = state;
+    const bool finiteIntervalAccepted = advanceExactSupport(
+        state, transition, current, previous, previous2, previous3, heldForcing);
+    // Keep this safe finite-linear endpoint until every nonlinear solve/state
+    // is accepted. Falling back is a numerical recovery policy, never a model
+    // of transistor saturation or clipping; qualification checks its count.
+    auto fail = [&]()
+    {
+        history.valid = false;
+        history.previousCurrent = {};
+        history.previous2Current = {};
+        history.previous3Current = {};
+        history.currentHistoryDepth = 0;
+        history.junctionThermalVolts = {};
+        if (history.fallbackCount != std::numeric_limits<std::uint32_t>::max())
+            ++history.fallbackCount;
+    };
+    FollowerPair oldCurrent = history.previousCurrent;
+    FollowerPair junction = history.junctionThermalVolts;
+    const bool historyMatches = history.valid && history.topology == ports.topology;
+    if (!historyMatches)
+    {
+        // Changing the output load preserves capacitor charge, but its old
+        // algebraic current must be recomputed in the newly selected topology.
+        if (!solveFollowerJunctions(ports, previousState, previous,
+                ports.junctionByCurrent, junction, oldCurrent,
+                history.maximumIterations))
+        {
+            fail();
+            return finiteIntervalAccepted;
+        }
+    }
+    const bool cubic = ports.cubicResidual && historyMatches
+        && history.currentHistoryDepth >= 3;
+    auto base = state;
+    if (cubic)
+    {
+        const std::array<FollowerPair, 3> currents {{ oldCurrent,
+            history.previous2Current, history.previous3Current }};
+        for (std::size_t sample = 0; sample < 3; ++sample)
+            for (std::size_t port = 0; port < 2; ++port)
+                for (std::size_t index = 0; index < 6; ++index)
+                    base[index] += ports.cubicStateByCurrentSample[sample + 1][port][index]
+                                 * currents[sample][port];
+    }
+    else
+        for (std::size_t port = 0; port < 2; ++port)
+            for (std::size_t index = 0; index < 6; ++index)
+                base[index] += ports.stateByPreviousCurrent[port][index] * oldCurrent[port];
+    FollowerPair newCurrent {};
+    if (!solveFollowerJunctions(ports, base, current,
+            cubic ? ports.cubicEndpointJunctionByCurrent : ports.endpointJunctionByCurrent,
+            junction, newCurrent, history.maximumIterations))
+    {
+        fail();
+        return finiteIntervalAccepted;
+    }
+    auto next = base;
+    for (std::size_t port = 0; port < 2; ++port)
+        for (std::size_t index = 0; index < 6; ++index)
+            next[index] += (cubic ? ports.cubicStateByCurrentSample[0][port][index]
+                                  : ports.stateByCurrent[port][index]) * newCurrent[port];
+    constexpr double maximumState =
+        static_cast<double>(std::numeric_limits<float>::max()) / 16.0;
+    for (double value : next)
+        if (!(std::abs(value) <= maximumState))
+        {
+            fail();
+            return finiteIntervalAccepted;
+        }
+    state = next;
+    history.previous3Current = historyMatches ? history.previous2Current : oldCurrent;
+    history.previous2Current = oldCurrent;
+    history.currentHistoryDepth = static_cast<std::uint8_t>(std::min(
+        3, (historyMatches ? static_cast<int>(history.currentHistoryDepth) : 1) + 1));
+    history.previousCurrent = newCurrent;
+    history.junctionThermalVolts = junction;
+    history.topology = ports.topology;
+    history.valid = true;
+    return finiteIntervalAccepted;
 }
 
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
@@ -590,10 +1309,10 @@ float noiseFromState(std::uint32_t state) noexcept
 // integrates a constant current for the whole of each half cycle -- see the
 // derivation on Chorus::lfoTimingOhms -- so both flanks are straight. An RC
 // relaxation oscillator would bend them, and this one is not that.
-float triangle(double phase) noexcept
+double triangle(double phase) noexcept
 {
     const double folded = phase < 0.5 ? phase : 1.0 - phase;
-    return static_cast<float>(folded * 4.0 - 1.0);
+    return folded * 4.0 - 1.0;
 }
 
 } // namespace
@@ -941,7 +1660,8 @@ float Chorus::biquadStep(BiquadState& state, float input,
     return lowPass;
 }
 
-Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
+Chorus::SupportChain Chorus::supportChainFor(
+    float sampleRate, ChorusSupportProfile profile) noexcept
 {
     SupportChain chain;
     chain.inputCouplingG = onePoleG(inputCouplingHz, sampleRate);
@@ -972,14 +1692,46 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     constexpr std::array<double, 6> outputEquilibrium {
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0
     };
-    chain.exactInput = exactTransition(
-        inputSupportMatrix(), inputSupportDrive(), inputEquilibrium, sampleRate);
-    chain.exactOutputMuted = exactTransition(
-        outputSupportMatrix(false), outputSupportDrive(), outputEquilibrium,
-        sampleRate);
-    chain.exactOutputConnected = exactTransition(
-        outputSupportMatrix(true), outputSupportDrive(), outputEquilibrium,
-        sampleRate);
+    if (profile == ChorusSupportProfile::Nominal2SA1015
+        || profile == ChorusSupportProfile::Nominal2SA1015Nonlinear)
+    {
+        const bool nonlinear = profile == ChorusSupportProfile::Nominal2SA1015Nonlinear;
+        const auto input = finiteSupportCircuit(true, false);
+        chain.exactInput = finiteExactTransition(input, sampleRate, nonlinear);
+        chain.denseInput = denseInputMap(input.generator, input.drive,
+            nonlinear ? input.currentDrive : std::array<AnalogDrive, 2> {}, sampleRate);
+        // Low grids retain the reviewed alias/response tradeoff of TPT,
+        // using component-anchored capacitor prewarps in one coupled solve.
+        // Unwarped bilinear excessively attenuates 8-12 kHz; exact cubic at
+        // 44.1/48 kHz improves analog response but increases stationary SGA.
+        // This mapping retains real finite-buffer attenuation, without EQ or
+        // gain compensation. HQ uses the unmodified physical exact circuit.
+        chain.bilinearInput = bilinearTransition(
+            finiteSupportCircuit(true, false, sampleRate), sampleRate, nonlinear);
+        chain.exactOutputMuted = finiteExactTransition(
+            finiteSupportCircuit(false, false), sampleRate, nonlinear);
+        chain.exactOutputConnected = finiteExactTransition(
+            finiteSupportCircuit(false, true), sampleRate, nonlinear);
+    }
+    else
+    {
+        chain.exactInput = exactTransition(
+            inputSupportMatrix(), inputSupportDrive(), inputEquilibrium, sampleRate);
+        chain.denseInput = denseInputMap(
+            inputSupportMatrix(), inputSupportDrive(), {}, sampleRate);
+        chain.exactOutputMuted = exactTransition(
+            outputSupportMatrix(false), outputSupportDrive(), outputEquilibrium,
+            sampleRate);
+        chain.exactOutputConnected = exactTransition(
+            outputSupportMatrix(true), outputSupportDrive(), outputEquilibrium,
+            sampleRate);
+        chain.exactOutputMuted.heldOutputMap = heldOutputMap(
+            outputSupportMatrix(false), outputSupportDrive(), sampleRate,
+            chain.exactOutputMuted, outputEquilibrium);
+        chain.exactOutputConnected.heldOutputMap = heldOutputMap(
+            outputSupportMatrix(true), outputSupportDrive(), sampleRate,
+            chain.exactOutputConnected, outputEquilibrium);
+    }
     // Tr5 open: C16 and C13 are two physical coordinates joined by R48,
     // not cascaded independent RCs. Prepare exp(A / fs) once; the audio path
     // only advances the two voltages relative to their loaded DC rest.
@@ -1008,26 +1760,39 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
 
     for (std::size_t index = 0; index < chain.clockMuteTransitions.size(); ++index)
     {
-        const bool tr5Conducting = (index & 2u) != 0;
+        const bool tr5Conducting = (index & 8u) != 0;
+        const bool clockBaseClamped = (index & 4u) != 0;
+        const bool wetBaseClamped = (index & 2u) != 0;
         const bool diodeConducting = (index & 1u) != 0;
         auto& circuit = chain.clockMuteTransitions[index];
         auto& a = circuit.generator;
         const double sink = tr5Conducting ? 1.0 / muteDriveSinkOhms : 0.0;
         const double diode = diodeConducting ? 1.0 / clockMuteDiodeSeriesOhms : 0.0;
         const double branch = 1.0 / clockMuteBypassOhms + diode;
-        const double clockDown = 2.0 / (clockMuteBaseOhms + clockMuteEmitterOhms);
+        const double wetDown = wetBaseClamped ? 1.0 / muteDriveBaseOhms : lower;
+        const double wetRail = -muteDriveRailVolts
+            + (wetBaseClamped ? muteDriveJunctionVolts : 0.0);
+        const double clockDown = 2.0 / (clockMuteBaseOhms
+            + (clockBaseClamped ? 0.0 : clockMuteEmitterOhms));
+        const double clockRail = -muteDriveRailVolts
+            + (clockBaseClamped ? muteDriveJunctionVolts : 0.0);
         const double junctionCurrent = diode * muteDriveJunctionVolts;
         // Current C15 -> C16 is (Vc-Vn)/R47 + max(Vc-Vn-Vj,0)/R41.
         // Its sign reverses in the two capacitor equations. Both base-divider
         // paths are present even though only one clock clamp would stop audio.
+        // When a base's unloaded divider reaches +0.6 V above its emitter,
+        // the junction carries the excess current. The capacitor then sees
+        // R49 (or each R130/R146) into -14.4 V, not the series resistor pair.
+        // Both expressions agree at the switching boundary; capacitor charge
+        // and the ODE's first derivative stay continuous there.
         a[0] = {{ -(pullUp + series + sink + branch) / muteDriveNodeFarads,
                     series / muteDriveNodeFarads, branch / muteDriveNodeFarads,
                     (muteDriveRailVolts * (pullUp - sink) - junctionCurrent)
                         / muteDriveNodeFarads }};
-        a[1] = {{ series / muteDriveHoldFarads, -(series + lower) / muteDriveHoldFarads,
-                    0.0, -muteDriveRailVolts * lower / muteDriveHoldFarads }};
+        a[1] = {{ series / muteDriveHoldFarads, -(series + wetDown) / muteDriveHoldFarads,
+                    0.0, wetRail * wetDown / muteDriveHoldFarads }};
         a[2] = {{ branch / clockMuteFarads, 0.0, -(branch + clockDown) / clockMuteFarads,
-                    (junctionCurrent - muteDriveRailVolts * clockDown) / clockMuteFarads }};
+                    (junctionCurrent + clockRail * clockDown) / clockMuteFarads }};
         FixedMatrix<3> dcMatrix {}, dcDrive {}, dcSolution {};
         for (std::size_t row = 0; row < 3; ++row)
         {
@@ -1046,6 +1811,43 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     return chain;
 }
 
+std::array<double, 6> Chorus::SupportChain::HeldOutputMap::valueAt(
+    double age) const noexcept
+{
+    std::array<double, 6> result {};
+    if (!(age > 0.0))
+        return result;
+    if (age >= 1.0)
+        return fullIntervalDrive;
+#if defined(YOUKNOW_WORK_AUDIT)
+    YOUKNOW_COUNT_DOMAIN_WORK(bbdEventOutputHornerMacs, 18 * 6);
+    YOUKNOW_COUNT_DOMAIN_WORK(bbdEventOutputEndpointScales, 6);
+#endif
+    for (std::size_t row = 0; row < 6; ++row)
+        result[row] = endpointCorrection[row] * age;
+    for (std::size_t power = byPower.size(); power > 0; --power)
+        for (std::size_t row = 0; row < 6; ++row)
+            result[row] = (result[row] + byPower[power - 1][row]) * age;
+    return result;
+}
+
+double Chorus::InputCaptureInterval::valueAt(double fraction) const noexcept
+{
+    if (!enabled || !std::isfinite(fraction))
+        return 0.0;
+    if (fraction <= 0.0)
+        return initialOutput;
+    if (fraction >= 1.0)
+        return finalOutput;
+#if defined(YOUKNOW_WORK_AUDIT)
+    YOUKNOW_COUNT_DOMAIN_WORK(bbdDenseInputHornerMacs, degree);
+#endif
+    double result = outputByPower.back();
+    for (int power = degree - 1; power >= 0; --power)
+        result = result * fraction + outputByPower[static_cast<std::size_t>(power)];
+    return std::isfinite(result) ? result : 0.0;
+}
+
 void Chorus::InputSupport::reset() noexcept
 {
     couplingState = 0.0f;
@@ -1053,12 +1855,14 @@ void Chorus::InputSupport::reset() noexcept
     antiAliasFirst.reset();
     antiAliasSecond.reset();
     exactState.fill(0.0);
+    nonlinear = {};
     exactPrevious = 0.0;
     exactPrevious2 = 0.0;
     exactPrevious3 = 0.0;
+    captureInterval = {};
 }
 
-float Chorus::advanceInputSupport(float input) noexcept
+float Chorus::advanceInputSupport(float input, bool prepareCapture) noexcept
 {
     // Band-limit ahead of the lines. Everything above half the clock would
     // fold, exactly as it does in the part. The two Sallen-Key sections
@@ -1072,7 +1876,11 @@ float Chorus::advanceInputSupport(float input) noexcept
     const float supportInput = std::isfinite(input)
             && std::abs(input) <= maximumSupportInput
         ? input : 0.0f;
-    if (sampleRate_ >= Chorus::minimumExactInputSupportRate)
+    auto& capture = inputSupport_.captureInterval;
+    capture.enabled = false;
+    const bool finiteFollowers = supportProfile_ == ChorusSupportProfile::Nominal2SA1015
+        || supportProfile_ == ChorusSupportProfile::Nominal2SA1015Nonlinear;
+    if (finiteFollowers || sampleRate_ >= Chorus::minimumExactInputSupportRate)
     {
 #if defined(YOUKNOW_WORK_AUDIT)
         YOUKNOW_COUNT_DOMAIN_WORK(bbdExactInputSupportAdvances, 1);
@@ -1080,10 +1888,96 @@ float Chorus::advanceInputSupport(float input) noexcept
         YOUKNOW_COUNT_DOMAIN_WORK(bbdExactSupportMacs, 60);
 #endif
         const double exactInput = static_cast<double>(supportInput);
-        advanceExactSupport(
-            inputSupport_.exactState, support_.exactInput,
-            exactInput, inputSupport_.exactPrevious,
-            inputSupport_.exactPrevious2, inputSupport_.exactPrevious3);
+        const auto& transition =
+            finiteFollowers && sampleRate_ < Chorus::minimumExactInputSupportRate
+                ? support_.bilinearInput : support_.exactInput;
+        std::array<double, 18> coordinates;
+        const bool buildCapture = prepareCapture && support_.denseInput.available;
+        const auto& oldHistory = inputSupport_.nonlinear;
+        const bool cubicCurrents = transition.nonlinear.cubicResidual
+            && oldHistory.valid && oldHistory.topology == transition.nonlinear.topology
+            && oldHistory.currentHistoryDepth >= 3;
+        if (buildCapture)
+        {
+            std::copy(inputSupport_.exactState.begin(), inputSupport_.exactState.end(),
+                      coordinates.begin());
+            coordinates[6] = exactInput;
+            coordinates[7] = inputSupport_.exactPrevious;
+            coordinates[8] = inputSupport_.exactPrevious2;
+            coordinates[9] = inputSupport_.exactPrevious3;
+            for (std::size_t port = 0; port < 2; ++port)
+            {
+                coordinates[10 + 4 * port] = 0.0;
+                coordinates[11 + 4 * port] = oldHistory.previousCurrent[port];
+                coordinates[12 + 4 * port] = oldHistory.previous2Current[port];
+                coordinates[13 + 4 * port] = oldHistory.previous3Current[port];
+            }
+        }
+        bool finiteIntervalAccepted;
+        if (transition.nonlinear.enabled)
+            finiteIntervalAccepted = advanceNonlinearSupport(inputSupport_.exactState, inputSupport_.nonlinear,
+                transition, exactInput, inputSupport_.exactPrevious,
+                inputSupport_.exactPrevious2, inputSupport_.exactPrevious3);
+        else
+            finiteIntervalAccepted = advanceExactSupport(inputSupport_.exactState, transition,
+                exactInput, inputSupport_.exactPrevious,
+                inputSupport_.exactPrevious2, inputSupport_.exactPrevious3);
+        if (buildCapture && finiteIntervalAccepted)
+        {
+            const auto& history = inputSupport_.nonlinear;
+            for (std::size_t port = 0; port < 2; ++port)
+            {
+                const std::size_t offset = 10 + 4 * port;
+                if (!transition.nonlinear.enabled || !history.valid)
+                {
+                    // Numerical nonlinear fallback accepts the finite-linear
+                    // endpoint; its consistent dense interval has zero q.
+                    std::fill_n(coordinates.begin() + offset, 4, 0.0);
+                    continue;
+                }
+                const double now = history.previousCurrent[port];
+                // On re-prime this is qold solved from unchanged cap charge.
+                const double old = history.previous2Current[port];
+                coordinates[offset] = now;
+                coordinates[offset + 1] = old;
+                if (!cubicCurrents)
+                {
+                    // Collinear virtual histories reuse the cubic map for
+                    // the accepted startup line qold+theta*(qnew-qold).
+                    coordinates[offset + 2] = 2.0 * old - now;
+                    coordinates[offset + 3] = 3.0 * old - 2.0 * now;
+                }
+            }
+            constexpr double maximum =
+                static_cast<double>(std::numeric_limits<float>::max()) / 16.0;
+            bool finite = true;
+            for (double value : coordinates)
+                finite = finite && std::abs(value) <= maximum;
+            capture.initialOutput = coordinates[5];
+            capture.finalOutput = inputSupport_.exactState[5];
+            double endpoint = 0.0;
+#if defined(YOUKNOW_WORK_AUDIT)
+            YOUKNOW_COUNT_DOMAIN_WORK(bbdDenseInputIntervals, 1);
+            YOUKNOW_COUNT_DOMAIN_WORK(bbdDenseInputMacs, 11 * 18);
+#endif
+            for (std::size_t power = 0; power < support_.denseInput.outputByPower.size(); ++power)
+            {
+                double value = 0.0;
+                for (std::size_t coordinate = 0; coordinate < coordinates.size(); ++coordinate)
+                    value += support_.denseInput.outputByPower[power][coordinate]
+                           * coordinates[coordinate];
+                capture.outputByPower[power] = value;
+                endpoint += value;
+                finite = finite && std::abs(value) <= maximum;
+            }
+            // Pure numerical correction: preserves start derivatives through
+            // 10, cancels the leading omitted term, and reaches the accepted
+            // endpoint exactly (including its constant-input DC identity).
+            capture.outputByPower.back() = capture.finalOutput - endpoint;
+            capture.enabled = finite
+                && std::abs(capture.outputByPower.back()) <= maximum
+                && std::abs(capture.finalOutput) <= maximum;
+        }
         inputSupport_.exactPrevious3 = inputSupport_.exactPrevious2;
         inputSupport_.exactPrevious2 = inputSupport_.exactPrevious;
         inputSupport_.exactPrevious = exactInput;
@@ -1112,6 +2006,8 @@ float Chorus::advanceInputSupport(float input) noexcept
 
 void Chorus::Line::reset(std::uint32_t seed) noexcept
 {
+    outputEventCount = 0;
+    outputEvents.fill({});
     cells.fill(0.0f);
     writeIndex = 0;
     clockPhase = 0.0;
@@ -1120,6 +2016,7 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     previousInput2 = 0.0f;
     previousInput3 = 0.0f;
     exactOutputState.fill(0.0);
+    nonlinearOutput = {};
     exactOutputPrevious = 0.0f;
     exactOutputPrevious2 = 0.0f;
     exactOutputPrevious3 = 0.0f;
@@ -1131,6 +2028,8 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
 
 void Chorus::Line::resetAudioRateSupport() noexcept
 {
+    outputEventCount = 0;
+    outputEvents.fill({});
     // The interpolation histories are indexed on the numerical grid, and the
     // legacy low-rate TPT carries below embed its old interval. The engine
     // calls this only at zero output gain after waiting for musical tails.
@@ -1145,6 +2044,7 @@ void Chorus::Line::resetAudioRateSupport() noexcept
     // while clearing/reseeding the cubic drive is a separate qualification.
     // The shared input side is cleared beside this, by the same callers.
     exactOutputState.fill(0.0);
+    nonlinearOutput = {};
     exactOutputPrevious = 0.0f;
     exactOutputPrevious2 = 0.0f;
     exactOutputPrevious3 = 0.0f;
@@ -1214,11 +2114,18 @@ double Chorus::Line::deterministicBlepCorrection(
     // extra broadband power into the audible band at low processing rates.
     // No physical state (bucket/index/phase/held/transfer/RNG) moves here.
     const double inverseIncrement = 1.0 / clockIncrement;
-    double distance = (1.0 - clockPhase) * inverseIncrement;
+    // The output changes on the complementary half phase. If that edge has
+    // already happened in this period, one input write intervenes before the
+    // next output read; start the prediction cursor one slot farther ahead.
+    const bool outputPendingThisPeriod = clockPhase < 0.5;
+    double distance = ((outputPendingThisPeriod ? 0.5 : 1.5) - clockPhase)
+                    * inverseIncrement;
     float predictedTransferState = transferState;
     float predictedHeld = held;
     std::uint32_t predictedNoiseState = noiseState;
     int futureIndex = writeIndex;
+    if (!outputPendingThisPeriod)
+        futureIndex = futureIndex + 1 < cellPairs ? futureIndex + 1 : 0;
 
     for (int event = 0;
          event < maximumBlepEvents && distance < 2.0;
@@ -1246,53 +2153,73 @@ double Chorus::Line::deterministicBlepCorrection(
     return correction;
 }
 
-float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
+float Chorus::Line::processClockedCore(float limitedInput, double clockHz,
                                        float sampleRate,
-                                       float noiseScale) noexcept
+                                       float noiseScale,
+                                       const InputCaptureInterval* capture,
+                                       bool recoverHeldOutput) noexcept
 {
+    outputEventCount = 0;
     ageBlepEvents();
 
     const double increment =
         static_cast<double>(clockHz) / static_cast<double>(sampleRate);
-    clockPhase += increment;
-    // A clock above the host rate needs more than one shift per sample, which
-    // is exactly what happens at 44.1 or 48 kHz with oversampling switched off.
-    // The bound is the worst ratio the model supports -- the fastest clock
-    // against the lowest host rate -- so every elapsed edge is consumed and no
-    // backlog can build up and drag the delay off its setting.
-    int shifts = 0;
-    while (clockPhase >= 1.0 && shifts < maximumShiftsPerSample)
+    const double endPhase = clockPhase + increment;
+    // Panasonic MN3009 p.43: C0 is captured when CP2 closes, then odd stages
+    // move on CP1; the complementary edge moves even stages. The
+    // alternating output followers read C256/C257: a captured sample holds over
+    // [127.5,128.5) full periods, with center delay 128/fcp.
+    // https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf#page=2
+    // Holters/Parker Eq.1 likewise places input/output on opposite edges:
+    // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=2
+    // A same-edge read/write ring adds an unintended half-period to that
+    // center. Keep the 128-slot transport, but separate its input and output
+    // events rather than compensating with a fitted time or clock offset.
+    // At reset the zero ring includes the implicit zero capture at phase 0;
+    // the first live output event is .5 and the first live input is 1.
+    int halfEvent = clockPhase < 0.5 ? 1 : 2;
+    for (int events = 0;
+         events < maximumHalfCycleEventsPerSample && 0.5 * halfEvent <= endPhase;
+         ++events, ++halfEvent)
     {
-        clockPhase -= 1.0;
-        ++shifts;
-#if defined(YOUKNOW_WORK_AUDIT)
-        YOUKNOW_COUNT_DOMAIN_WORK(bbdShifts, 1);
-#endif
-
-        // The remaining phase is the time since this edge in clock cycles.
-        // Dividing it by the increment gives exactly the Octave reference's
-        // distance in numerical samples, including when several edges occur
-        // during this one sample. Its complement locates the input between the
-        // previous and current numerical samples.
+        const double eventPhase = 0.5 * halfEvent;
         const double ageInSamples = increment > 0.0
-            ? std::clamp(clockPhase / increment, 0.0, 1.0)
+            ? std::clamp((endPhase - eventPhase) / increment, 0.0, 1.0)
             : 0.0;
-        const float atEdge = Chorus::interpolateBbdInput(
-            limitedInput, previousInput, previousInput2, previousInput3,
-            ageInSamples);
-        // The line's own overload. The charge a cell can hold is bounded by
-        // its bias window, so the wet path saturates before anything around
-        // it does; driving the chorus hot grits the delayed signal only.
-        const float bounded = Chorus::bbdTransfer(atEdge);
+        if ((halfEvent & 1) == 0)
+        {
+#if defined(YOUKNOW_WORK_AUDIT)
+            YOUKNOW_COUNT_DOMAIN_WORK(bbdShifts, 1);
+#endif
+            float atEdge;
+            if (capture != nullptr && capture->enabled)
+            {
+#if defined(YOUKNOW_WORK_AUDIT)
+                YOUKNOW_COUNT_DOMAIN_WORK(bbdDenseInputCaptures, 1);
+#endif
+                atEdge = static_cast<float>(capture->valueAt(1.0 - ageInSamples));
+            }
+            else
+                atEdge = Chorus::interpolateBbdInput(
+                    limitedInput, previousInput, previousInput2, previousInput3,
+                    ageInSamples);
+            // Charge acquisition/overload happens only at the input edge.
+            writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
+            cells[static_cast<std::size_t>(writeIndex)] = Chorus::bbdTransfer(atEdge);
+            continue;
+        }
 
-        writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
-        const float emerging = cells[static_cast<std::size_t>(writeIndex)];
-        cells[static_cast<std::size_t>(writeIndex)] = bounded;
-
+        // This slot will be overwritten by the next integer input edge.
+        // Reading it here makes input n emerge at output phase n+127.5.
+        const int readIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
+        const float emerging = cells[static_cast<std::size_t>(readIndex)];
         const float heldBefore = held;
+#if defined(YOUKNOW_WORK_AUDIT)
+        YOUKNOW_COUNT_DOMAIN_WORK(bbdPhysicalOutputEvents, 1);
+#endif
         Chorus::transferLossStep(transferState, emerging);
 
-        // Keep the literal per-edge source and its rounded physical held
+        // Keep the literal per-output-event source and its rounded physical held
         // value unchanged. Its discontinuity needs the same host-grid
         // reconstruction as the signal; no new physical color or amplitude is
         // inferred. The continuous iid staircase's averaged PSD is
@@ -1300,55 +2227,124 @@ float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
         // AuditChorusNoise checks an independently integrated staircase and
         // the high-rate limit, not a fitted noise spectrum from this part's
         // single A-weighted maximum row.
+        // This iid source does not represent every BBD noise mechanism:
+        // Weckler/Buss, Reticon 1977, printed p.5/Fig.6 describe transfer
+        // noise with a sin^2(pi*f/fcp) shape and distributed transfer loss.
+        // https://www.imagesensors.org/Past%20Workshops/Marvin%20White%20Collection/1977%20Short%20Course/1977%203%20Weckler.pdf
+        // A unit-variance first difference reproduces the ideal shape, but
+        // alone overstates the captured high/low density contrast. Storage
+        // and output noise proportions are unknown; replacing or adding it
+        // at this calibrated amplitude would invent that mixture (OQ-03).
         noiseState = nextNoiseState(noiseState);
         held = transferState
              + noiseFromState(noiseState)
                * Chorus::independentLineRandomAmplitude * noiseScale;
         rememberBlepEvent(held - heldBefore, ageInSamples);
+        if (recoverHeldOutput && outputEventCount < maximumHalfCycleEventsPerSample)
+            outputEvents[static_cast<std::size_t>(outputEventCount++)] = {
+                static_cast<double>(held) - static_cast<double>(heldBefore),
+                ageInSamples
+            };
     }
-    // If the ratio somehow exceeded even that bound, drop the remainder rather
-    // than carrying it: a backlog would make the line run slower than the clock
-    // it was asked for and drift further out every sample.
+    // Every declared-rate event fits the bound. If a corrupt ratio exceeds
+    // it, discard excess whole periods instead of retaining a clock backlog.
+    // Stopped clocks retain the fractional position and consume no events.
+    clockPhase = endPhase;
     if (clockPhase >= 1.0)
         clockPhase -= std::floor(clockPhase);
     previousInput3 = previousInput2;
     previousInput2 = previousInput;
     previousInput = limitedInput;
 
+    if (recoverHeldOutput)
+        return held;
     return held + static_cast<float>(deterministicBlepCorrection(increment, noiseScale));
 }
 
 float Chorus::Line::process(
-    float limited, float clockHz, float sampleRate,
+    float limited, double clockHz, float sampleRate,
     const SupportChain::ExactTransition& outputTransition,
-    float noiseScale, bool useBlep) noexcept
+    float noiseScale, bool useBlep,
+    const InputCaptureInterval* capture) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(bbdLineFrames, 1);
 #endif
+    const auto& eventMap = outputTransition.heldOutputMap;
+    const bool eventOutput = eventMap.available;
+    const double heldStart = held;
     const float correctedHold = processClockedCore(
-        limited, clockHz, sampleRate, noiseScale);
-    const float reconstructedHold = useBlep ? correctedHold : held;
+        limited, clockHz, sampleRate, noiseScale, capture, eventOutput);
+    const float reconstructedHold = eventOutput ? held : (useBlep ? correctedHold : held);
+    std::array<double, 6> forcing {};
+    if (eventOutput)
+    {
+#if defined(YOUKNOW_WORK_AUDIT)
+        YOUKNOW_COUNT_DOMAIN_WORK(bbdEventOutputFrames, 1);
+        YOUKNOW_COUNT_DOMAIN_WORK(bbdEventOutputForcingMacs, 6);
+#endif
+        for (std::size_t row = 0; row < 6; ++row)
+            forcing[row] = eventMap.fullIntervalDrive[row] * heldStart;
+        for (int event = 0; event < outputEventCount; ++event)
+        {
+#if defined(YOUKNOW_WORK_AUDIT)
+            YOUKNOW_COUNT_DOMAIN_WORK(bbdEventOutputEvents, 1);
+            YOUKNOW_COUNT_DOMAIN_WORK(bbdEventOutputForcingMacs, 6);
+#endif
+            const auto& change = outputEvents[static_cast<std::size_t>(event)];
+            const auto weight = eventMap.valueAt(change.ageInSamples);
+            for (std::size_t row = 0; row < 6; ++row)
+                forcing[row] += weight[row] * change.jump;
+        }
+    }
+    const auto* forcingPointer = eventOutput ? &forcing : nullptr;
 
-    // Sum the complementary BBD output taps through their 3.3 kOhm resistors,
-    // then reconstruct the BLEP-sampled physical staircase through the two
-    // output sections. The correction is deliberately upstream of every
-    // hardware reconstruction pole and downstream of charge transfer/noise.
+    // HQ integrates the literal held transfer/noise steps through all output
+    // poles before sampling; lower grids retain the qualified BLEP/cubic
+    // reconstruction. The nonlinear current polynomial still spans this
+    // complete uniform interval: exact linear step forcing does not make
+    // that residual-current interpolation an exact nonlinear solution.
+    // Held jumps leave current continuous but can kink its derivative, so
+    // the cubic residual need not retain its smooth-input convergence order.
     const double exactOutput = std::isfinite(reconstructedHold)
         ? static_cast<double>(reconstructedHold) : 0.0;
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(bbdExactOutputSupportAdvances, 1);
     YOUKNOW_COUNT_DOMAIN_WORK(bbdExactSupportCoordinateUpdates, 6);
-    YOUKNOW_COUNT_DOMAIN_WORK(bbdExactSupportMacs, 60);
+    YOUKNOW_COUNT_DOMAIN_WORK(bbdExactSupportMacs, eventOutput ? 36 : 60);
 #endif
-    advanceExactSupport(
-        exactOutputState, outputTransition,
-        exactOutput, exactOutputPrevious,
-        exactOutputPrevious2, exactOutputPrevious3);
+    if (outputTransition.nonlinear.enabled)
+        advanceNonlinearSupport(exactOutputState, nonlinearOutput, outputTransition,
+            exactOutput, eventOutput ? heldStart : exactOutputPrevious,
+            exactOutputPrevious2, exactOutputPrevious3, forcingPointer);
+    else
+        advanceExactSupport(exactOutputState, outputTransition,
+            exactOutput, exactOutputPrevious, exactOutputPrevious2, exactOutputPrevious3,
+            forcingPointer);
     exactOutputPrevious3 = exactOutputPrevious2;
     exactOutputPrevious2 = exactOutputPrevious;
     exactOutputPrevious = exactOutput;
+    if (outputTransition.finiteReadout)
+    {
+        double output = outputTransition.outputDirect * exactOutput;
+        for (std::size_t index = 0; index < exactOutputState.size(); ++index)
+            output += outputTransition.outputByState[index] * exactOutputState[index];
+        if (outputTransition.nonlinear.enabled && nonlinearOutput.valid)
+            for (std::size_t port = 0; port < 2; ++port)
+                output += outputTransition.nonlinear.outputByCurrent[port]
+                        * nonlinearOutput.previousCurrent[port];
+        return static_cast<float>(output);
+    }
     return static_cast<float>(exactOutputState[4] - exactOutputState[5]);
+}
+
+bool Chorus::configureSupportProfile(ChorusSupportProfile profile) noexcept
+{
+    if (supportProfilePrepared_)
+        return false;
+    supportProfile_ = profile;
+    supportRatesPrepared_ = false;
+    return true;
 }
 
 void Chorus::prepareSupportRates(double hostSampleRate) noexcept
@@ -1361,7 +2357,7 @@ void Chorus::prepareSupportRates(double hostSampleRate) noexcept
             std::clamp(base * static_cast<double> (factors[index]),
                        8000.0, 768000.0));
         preparedSupportRates_[index] = rate;
-        preparedSupport_[index] = supportChainFor(rate);
+        preparedSupport_[index] = supportChainFor(rate, supportProfile_);
         ++supportBuildCount_;
     }
     supportRatesPrepared_ = true;
@@ -1369,6 +2365,7 @@ void Chorus::prepareSupportRates(double hostSampleRate) noexcept
 
 void Chorus::prepare(double sampleRate, bool preserveState) noexcept
 {
+    supportProfilePrepared_ = true;
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
     wetMuteGlide_ = 1.0f - std::exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds);
@@ -1383,7 +2380,7 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
     }
     else
     {
-        support_ = supportChainFor(sampleRate_);
+        support_ = supportChainFor(sampleRate_, supportProfile_);
         ++supportBuildCount_;
     }
     if (preserveState)
@@ -1416,6 +2413,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     optionalSpurPhaseA_ = 0.0;
     optionalSpurPhaseB_ = 0.0;
     runningMode_ = ChorusMode::One;
+    hardwareModeSelection_ = ChorusMode::Off;
     // A patch loaded with the effect switched on is not a player reaching for
     // the button: there is nothing to glide from. The first sample after a
     // reset takes the mode as it stands, and only changes made afterwards
@@ -1468,7 +2466,7 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
 
     // The modulation LFO free-runs behind the switch, exactly as it does
     // through the full path with mode Off.
-    lfoPhase_ += rateHz_ * inverseSampleRate_;
+    lfoPhase_ += static_cast<double>(rateHz_) / static_cast<double>(sampleRate_);
     if (lfoPhase_ >= 1.0f)
         lfoPhase_ -= std::floor(lfoPhase_);
 
@@ -1529,34 +2527,78 @@ void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
         }
         return result;
     };
-    const auto diodeVoltage = [](const State& value) {
-        return value[2] - value[0] - muteDriveJunctionVolts;
+    const auto junctionVoltages = [](const State& value) {
+        return std::array<double, 3> {{
+            value[2] - value[0] - muteDriveJunctionVolts,
+            value[1] - muteDriveThresholdVolts,
+            value[2] - clockMuteThresholdVolts
+        }};
     };
-    const bool diodeConducting = diodeVoltage(state) > 0.0;
-    const std::size_t base = commandMute ? 0u : 2u;
-    const auto& circuit = support_.clockMuteTransitions[base + (diodeConducting ? 1u : 0u)];
-    const State candidate = apply(circuit.transition, state);
-    if ((diodeVoltage(candidate) > 0.0) != diodeConducting)
+    const auto initial = junctionVoltages(state);
+    std::size_t region = (initial[0] > 0.0 ? 1u : 0u)
+                       | (initial[1] > 0.0 ? 2u : 0u)
+                       | (initial[2] > 0.0 ? 4u : 0u);
+    const std::size_t command = commandMute ? 0u : 8u;
+    double remaining = 1.0;
+    // A sample can cross more than one junction, especially immediately after
+    // an interrupted command. Process the earliest crossing and then all the
+    // remaining charge evolution. Eight segments bound callback work even for
+    // a degenerate state exactly on several boundaries; three independent
+    // junctions are ample margin on the supported >=8 kHz passive RC grid.
+    for (int segment = 0; segment < 8 && remaining > 0.0; ++segment)
     {
-        // Locate the physical diode crossing within the sample and continue
-        // with the other conductance matrix, preserving all capacitor charge.
-        double lower = 0.0, upper = 1.0;
-        for (int iteration = 0; iteration < 32; ++iteration)
+        const auto& circuit = support_.clockMuteTransitions[command | region];
+        const State candidate = remaining == 1.0
+            ? apply(circuit.transition, state)
+            : fractional(circuit.generator, state, remaining);
+        const auto candidateVoltages = junctionVoltages(candidate);
+        double firstCrossing = remaining;
+        std::size_t firstBit = 0;
+        for (std::size_t junction = 0; junction < 3; ++junction)
         {
-            const double middle = 0.5 * (lower + upper);
-            const auto value = fractional(circuit.generator, state, middle);
-            if ((diodeVoltage(value) > 0.0) == diodeConducting)
-                lower = middle;
-            else
-                upper = middle;
+            const std::size_t bit = std::size_t { 1 } << junction;
+            const bool conducting = (region & bit) != 0;
+            // Suppress roundoff-sized excursions at simultaneous crossings;
+            // the omitted current is <1e-16 A, not a physical hysteresis model.
+            const double signedEnd = conducting ? -candidateVoltages[junction]
+                                                : candidateVoltages[junction];
+            if (signedEnd <= 1.0e-12)
+                continue;
+            double lower = 0.0, upper = remaining;
+            for (int iteration = 0; iteration < 32; ++iteration)
+            {
+                const double middle = 0.5 * (lower + upper);
+                const auto value = fractional(circuit.generator, state, middle);
+                if ((junctionVoltages(value)[junction] > 0.0) == conducting)
+                    lower = middle;
+                else
+                    upper = middle;
+            }
+            const double crossing = 0.5 * (lower + upper);
+            if (crossing < firstCrossing)
+            {
+                firstCrossing = crossing;
+                firstBit = bit;
+            }
         }
-        const double crossing = 0.5 * (lower + upper);
-        state = fractional(circuit.generator, state, crossing);
-        const auto& next = support_.clockMuteTransitions[base + (diodeConducting ? 0u : 1u)];
-        state = fractional(next.generator, state, 1.0 - crossing);
+        if (firstBit == 0)
+        {
+            state = candidate;
+            remaining = 0.0;
+        }
+        else
+        {
+            state = fractional(circuit.generator, state, firstCrossing);
+            remaining -= firstCrossing;
+            region ^= firstBit;
+        }
     }
-    else
-        state = candidate;
+    // Numerical fail-safe only: finish a degenerate sub-sample with the last
+    // region rather than losing elapsed time or resetting capacitor charge.
+    // The component-node reference includes simultaneous/multiple crossings.
+    if (remaining > 0.0)
+        state = fractional(support_.clockMuteTransitions[command | region].generator,
+                           state, remaining);
     muteDriveNodeVolts_ = state[0];
     muteDriveHoldVolts_ = state[1];
     clockMuteVolts_ = state[2];
@@ -1594,14 +2636,17 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     }
 
     const auto target = settingsFor(mode, timingProfile);
+    const bool hardwareSelection = hardwareModeSelection_ != ChorusMode::Off;
+    const auto clockTarget = hardwareSelection
+                           ? settingsFor(hardwareModeSelection_, timingProfile) : target;
 
     const bool commandMute = mode == ChorusMode::Off;
     const bool nextClockMuteEnabled = enableClockMuteCircuit && enableMuteDrive;
     if (!primed_)
     {
-        rateHz_ = target.rateHz;
-        sweep_ = target.sweepSeconds;
-        centreDelay_ = target.centreDelaySeconds;
+        rateHz_ = clockTarget.rateHz;
+        sweep_ = clockTarget.sweepSeconds;
+        centreDelay_ = clockTarget.centreDelaySeconds;
         wetGain_ = target.wetGain;
         // The drive rests where the command has held it: Tr5 open and both
         // capacitors at their positive rests when muted, or the finite-R46
@@ -1613,7 +2658,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         if (nextClockMuteEnabled)
         {
             // D3 is reverse biased at both settled command states.
-            const auto& rest = support_.clockMuteTransitions[commandMute ? 0u : 2u].equilibrium;
+            const auto& rest = support_.clockMuteTransitions[commandMute ? 6u : 8u].equilibrium;
             muteDriveNodeVolts_ = rest[0];
             muteDriveHoldVolts_ = rest[1];
             clockMuteVolts_ = rest[2];
@@ -1624,12 +2669,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     clockMuteEnabled_ = nextClockMuteEnabled;
     clocksStopped_ = clockMuteEnabled_ && clockMuteVolts_ >= clockMuteThresholdVolts;
 
-    if (mode != ChorusMode::Off)
+    if (mode != ChorusMode::Off || hardwareSelection)
     {
-        rateHz_ = target.rateHz;
-        sweep_ = target.sweepSeconds;
-        centreDelay_ = target.centreDelaySeconds;
-        runningMode_ = mode;
+        rateHz_ = clockTarget.rateHz;
+        sweep_ = clockTarget.sweepSeconds;
+        centreDelay_ = clockTarget.centreDelaySeconds;
+        runningMode_ = hardwareSelection ? hardwareModeSelection_ : mode;
     }
     float wetTarget = target.wetGain;
     muteDriveEnabled_ = enableMuteDrive;
@@ -1663,10 +2708,13 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // transient and leakage remain OQ-20 and are deliberately not invented;
     // the 5 ms wet-mute glide above is declared plug-in declick policy.
 
-    lfoPhase_ += rateHz_ * inverseSampleRate_;
-    if (lfoPhase_ >= 1.0f)
+    const double intervalStartPhase = lfoPhase_;
+    const double phaseIncrement = static_cast<double>(rateHz_)
+                                / static_cast<double>(sampleRate_);
+    const double intervalEndPhase = intervalStartPhase + phaseIncrement;
+    lfoPhase_ = intervalEndPhase;
+    if (lfoPhase_ >= 1.0)
         lfoPhase_ -= std::floor(lfoPhase_);
-    const float modulation = triangle(lfoPhase_);
 
     // Delay sweep trajectory. The linear-in-delay law below is the circuit's
     // own: on p. 15 each MN3101's oscillator is Tr19 (R123 1.8k / R124 8.2k /
@@ -1692,37 +2740,67 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // Bending about the endpoint clocks keeps both endpoints exact at every
     // blend amount, so the two laws differ only in the trajectory between
     // them.
-    float nominalDelayA = centreDelay_ + sweep_ * modulation;
-    float nominalDelayB = centreDelay_ - sweep_ * modulation;
-
-    if (enableHyperbolicSweep && calibration > 0.0f && centreDelay_ > 1.0e-5f)
+    const auto clockAtPhase = [&](double phase) noexcept
     {
-        const float maxDelay = centreDelay_ + sweep_;
-        const float minDelay = std::max(centreDelay_ - sweep_, 1.0e-5f);
-        const float clockAtMinDelay = clockForDelaySeconds(minDelay);
-        const float clockAtMaxDelay = clockForDelaySeconds(maxDelay);
-        const float clockMid = 0.5f * (clockAtMinDelay + clockAtMaxDelay);
-        const float clockSpread = 0.5f * (clockAtMinDelay - clockAtMaxDelay);
+        phase -= std::floor(phase);
+        const double modulation = triangle(phase);
+        double nominalDelayA = centreDelay_ + sweep_ * modulation;
+        double nominalDelayB = centreDelay_ - sweep_ * modulation;
 
-        const float hypDelayA = delaySecondsForClock(clockMid - clockSpread * modulation);
-        const float hypDelayB = delaySecondsForClock(clockMid + clockSpread * modulation);
+        if (enableHyperbolicSweep && calibration > 0.0f && centreDelay_ > 1.0e-5f)
+        {
+            const double maxDelay = static_cast<double>(centreDelay_) + sweep_;
+            const double minDelay = std::max(
+                static_cast<double>(centreDelay_) - sweep_, 1.0e-5);
+            const double clockAtMinDelay = cellPairs / minDelay;
+            const double clockAtMaxDelay = cellPairs / maxDelay;
+            const double clockMid = 0.5 * (clockAtMinDelay + clockAtMaxDelay);
+            const double clockSpread = 0.5 * (clockAtMinDelay - clockAtMaxDelay);
+            const double hypDelayA = cellPairs / (clockMid - clockSpread * modulation);
+            const double hypDelayB = cellPairs / (clockMid + clockSpread * modulation);
+            // Retain the comparison law and its bounded blend. Only the
+            // numerical clock-integration point changes for this hypothesis.
+            const double blend = std::clamp(static_cast<double>(calibration), 0.0, 1.0);
+            nominalDelayA += (hypDelayA - nominalDelayA) * blend;
+            nominalDelayB += (hypDelayB - nominalDelayB) * blend;
+        }
+        return std::array<double, 2> {{
+            std::clamp(cellPairs / std::max(nominalDelayA, 1.0e-4),
+                       static_cast<double>(minimumClockHz), static_cast<double>(maximumClockHz)),
+            std::clamp(cellPairs / std::max(nominalDelayB, 1.0e-4),
+                       static_cast<double>(minimumClockHz), static_cast<double>(maximumClockHz))
+        }};
+    };
 
-        // The blend saturates at one: which trajectory the clock follows is a
-        // topology hypothesis, not a component tolerance, so Character can
-        // select it but never exaggerate it. Unclamped, the 0..2 range
-        // extrapolated past the hyperbolic path -- leaving the measured
-        // delay envelope and folding the sweep back mid-flank.
-        const float blend = std::clamp(calibration, 0.0f, 1.0f);
-        nominalDelayA += (hypDelayA - nominalDelayA) * blend;
-        nominalDelayB += (hypDelayB - nominalDelayB) * blend;
+    // Advance the BBD clock through the elapsed interval, not at its right
+    // endpoint. With delay affine along a triangle flank, f=N/delay has the
+    // exact integral (N/slope)*log(delayEnd/delayStart). Midpoint quadrature
+    // has local O(dt^3) error there; an endpoint rectangle accumulates an
+    // O(dt) phase bias that moves genuine clock-folded images in phase.
+    // Split at triangle cusps before applying midpoint, so a derivative
+    // discontinuity cannot degrade that bound. Declared LFO rates and the
+    // 8 kHz minimum grid permit at most one cusp in an interval.
+    // Tools/AuditBbdDynamicQuality.cpp independently integrates this clock
+    // law with its exact logarithm/inverse. Continuous BBD event chronology:
+    // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf
+    // No physical delay/clock-cycle convention or fitted time shift changes.
+    auto clock = clockAtPhase(0.5 * (intervalStartPhase + intervalEndPhase));
+    const double cusp = intervalStartPhase < 0.5 ? 0.5 : 1.0;
+    if (intervalEndPhase > cusp)
+    {
+        const double firstFraction = (cusp - intervalStartPhase) / phaseIncrement;
+        const auto first = clockAtPhase(0.5 * (intervalStartPhase + cusp));
+        const auto second = clockAtPhase(0.5 * (cusp + intervalEndPhase));
+        for (std::size_t line = 0; line < clock.size(); ++line)
+            clock[line] = firstFraction * first[line]
+                        + (1.0 - firstFraction) * second[line];
     }
-
-    const float delayA = std::max(nominalDelayA, 1.0e-4f);
-    const float delayB = std::max(nominalDelayB, 1.0e-4f);
-    const float clockA = clocksStopped_ ? 0.0f : std::clamp(clockForDelaySeconds(delayA),
-                                    minimumClockHz, maximumClockHz);
-    const float clockB = clocksStopped_ ? 0.0f : std::clamp(clockForDelaySeconds(delayB),
-                                    minimumClockHz, maximumClockHz);
+    // This interval-average approximation feeds the existing constant-clock
+    // edge-age calculation and two-sample BLEP predictor. Their within-sample
+    // scheduling error remains a separate O(dt^2) approximation; fixed-clock
+    // Line callers keep their exact former behavior, including RNG advances.
+    const double clockA = clocksStopped_ ? 0.0 : clock[0];
+    const double clockB = clocksStopped_ ? 0.0 : clock[1];
 
     // C28/C25 see the 39 kOhm mixer legs through Tr11/Tr12, so their
     // loading follows the RC-delayed gate state. The button command can
@@ -1743,11 +2821,22 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // One input support network for both wet branches; only the clock differs
     // between them. See `InputSupport` for why that is the model rather than
     // an optimisation of it.
-    const float limitedInput = advanceInputSupport(input);
+    // Evaluate the shared physical input filter at each BBD capture instant,
+    // rather than interpolating four already filtered endpoint samples.
+    // Fractional physical-filter evaluation: Holters/Parker2018, Section3.1.
+    // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=2
+    // This dense extension retains OUR existing cubic input/current forcing;
+    // it does not replace it with that paper's impulse-invariant input model.
+    const bool capturePending = support_.denseInput.available
+        && ((clockA > 0.0 && lineA_.clockPhase + clockA / sampleRate_ >= 1.0)
+            || (clockB > 0.0 && lineB_.clockPhase + clockB / sampleRate_ >= 1.0));
+    const float limitedInput = advanceInputSupport(input, capturePending);
+    const auto* capture = inputSupport_.captureInterval.enabled
+        ? &inputSupport_.captureInterval : nullptr;
     float wetA = lineA_.process(limitedInput, clockA, sampleRate_,
-                                wetOutputTransition, lineNoiseScale);
+                                wetOutputTransition, lineNoiseScale, true, capture);
     float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
-                                wetOutputTransition, lineNoiseScale);
+                                wetOutputTransition, lineNoiseScale, true, capture);
 
     if (enableClockBleed && !clocksStopped_)
     {

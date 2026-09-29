@@ -304,19 +304,25 @@ struct YouKnowTestAccess
     }
 
     static float processBbdFullLine(Chorus& chorus, float input,
-                                    float clockHz, bool useBlep) noexcept
+                                    float clockHz, bool useRecovery) noexcept
     {
         auto& line = chorus.lineA_;
         const auto& support = chorus.support_;
         // Both sides use the exact same physical support. The seam changes
-        // only whether its output side sees the BLEP-corrected or raw held
-        // BBD staircase, so the comparison cannot accidentally measure two
-        // different filter implementations. The input side is shared by the
+        // only whether its output side uses the selected recovery (HQ held
+        // events, lower-grid BLEP) or a raw sampled staircase. Disable the
+        // HQ map in the raw control so the comparison cannot silently become
+        // two identical paths. Both retain the same physical filter. Input is
+        // shared by the
         // two branches and belongs to the Chorus, so drive it here exactly as
         // Chorus::process does.
         const float limited = chorus.advanceInputSupport(input);
+        auto transition = support.exactOutputConnected;
+        if (!useRecovery)
+            transition.heldOutputMap.available = false;
         return line.process(limited, clockHz, chorus.sampleRate_,
-                            support.exactOutputConnected, 0.0f, useBlep);
+                            transition, 0.0f, useRecovery,
+                            &chorus.inputSupport_.captureInterval);
     }
 
     static float processBbdExactMode(Chorus& chorus, float input,
@@ -329,7 +335,8 @@ struct YouKnowTestAccess
             ? support.exactOutputConnected : support.exactOutputMuted;
         const float limited = chorus.advanceInputSupport(input);
         return line.process(limited, clockHz, chorus.sampleRate_,
-                            transition, 0.0f, true);
+                            transition, 0.0f, true,
+                            &chorus.inputSupport_.captureInterval);
     }
 
     static const std::array<double, 6>& chorusExactInputState(
@@ -807,11 +814,29 @@ struct ReferenceBbdCore
 
         const double increment = static_cast<double>(clockHz)
                                / static_cast<double>(sampleRate);
-        clockPhase += increment;
-        while (clockPhase >= 1.0)
+        const double endPhase = clockPhase + increment;
+        // Enumerate the alternating physical phases in chronological order:
+        // even half-edges capture input; odd half-edges expose the next old
+        // bucket at the complementary outputs. This integer event ledger is
+        // separate from production's clock-phase loop.
+        const auto firstHalfEdge = static_cast<int>(std::floor(2.0 * clockPhase)) + 1;
+        const auto lastHalfEdge = static_cast<int>(std::floor(2.0 * endPhase));
+        for (int halfEdge = firstHalfEdge; halfEdge <= lastHalfEdge; ++halfEdge)
         {
-            clockPhase -= 1.0;
-            const double age = clockPhase / increment;
+            const double age = (endPhase - 0.5 * halfEdge) / increment;
+            if (halfEdge % 2 != 0)
+            {
+                const int readIndex = (writeIndex + 1) % Chorus::cellPairs;
+                const float emerging = cells[static_cast<std::size_t>(readIndex)];
+                const float before = transferState;
+                transferState += 0.8654743f * (emerging - transferState);
+                pastEvents.push_back({ transferState - before, age });
+                // Noise is disabled here, but each output event still
+                // consumes exactly one live draw. Input captures do not.
+                noiseState = referenceXorshift32(noiseState);
+                held = transferState;
+                continue;
+            }
             // Express the causal cubic on a coordinate whose zero is the
             // preceding sample: current is at u=1 and the three histories are
             // at u=0,-1,-2. Production uses age and a different association,
@@ -834,18 +859,9 @@ struct ReferenceBbdCore
 
             writeIndex = writeIndex + 1 < Chorus::cellPairs
                 ? writeIndex + 1 : 0;
-            const float emerging = cells[static_cast<std::size_t>(writeIndex)];
             cells[static_cast<std::size_t>(writeIndex)] = bounded;
-
-            const float before = transferState;
-            transferState += 0.8654743f * (emerging - transferState);
-            pastEvents.push_back({ transferState - before, age });
-
-            // Noise is disabled in correspondence renders, but the hardware
-            // state advances at every edge irrespective of its level control.
-            noiseState = referenceXorshift32(noiseState);
-            held = transferState;
         }
+        clockPhase = endPhase - std::floor(endPhase);
         previousInput3 = previousInput2;
         previousInput2 = previousInput;
         previousInput = input;
@@ -855,14 +871,15 @@ struct ReferenceBbdCore
             correction += static_cast<double>(event.jump)
                         * referenceBbdPolyBlep(event.age);
 
-        const double inverseIncrement = 1.0 / increment;
-        double futureDistance = (1.0 - clockPhase) * inverseIncrement;
+        const double inverseIncrement = increment > 0.0 ? 1.0 / increment : 0.0;
+        double futureDistance = increment > 0.0
+            ? ((clockPhase < 0.5 ? 0.5 : 1.5) - clockPhase) * inverseIncrement
+            : 2.0;
         float predicted = transferState;
-        int futureIndex = writeIndex;
+        int futureIndex = (writeIndex + (clockPhase < 0.5 ? 1 : 2))
+                        % Chorus::cellPairs;
         while (futureDistance < 2.0)
         {
-            futureIndex = futureIndex + 1 < Chorus::cellPairs
-                ? futureIndex + 1 : 0;
             const float before = predicted;
             predicted += 0.8654743f
                        * (cells[static_cast<std::size_t>(futureIndex)]
@@ -870,6 +887,7 @@ struct ReferenceBbdCore
             correction -= static_cast<double>(predicted - before)
                         * referenceBbdPolyBlep(futureDistance);
             futureDistance += inverseIncrement;
+            futureIndex = (futureIndex + 1) % Chorus::cellPairs;
         }
 
         return held + static_cast<float>(correction);
@@ -4963,7 +4981,8 @@ void testBbdOutputPolyBlepReferenceAndBounds()
                1.0e-8, "BBD polyBLEP pieces are discontinuous at one sample");
 
     // A short, deliberately irregular vector crosses from 1.25 through 25
-    // edges per numerical sample. The independent implementation above uses a
+    // full clock cycles per numerical sample, separating input and output
+    // half-phases. The independent implementation above uses a
     // separately associated coordinate form for the causal cubic and the
     // companion source's past/future output-correction signs rather than
     // calling any production reconstruction helper. The prefilled ring makes
@@ -5040,7 +5059,7 @@ void testBbdOutputPolyBlepReferenceAndBounds()
     expectNear(coreState.transferState, reference.transferState, 1.0e-7,
                "BBD reference correspondence changed transfer-loss state");
     expect(coreState.noiseState == reference.noiseState,
-           "BBD output reconstruction changed the per-edge RNG sequence");
+           "BBD output reconstruction changed the per-output-edge RNG sequence");
     expect(coreState.previousInput == reference.previousInput
                && coreState.previousInput2 == reference.previousInput2
                && coreState.previousInput3 == reference.previousInput3,
@@ -5066,8 +5085,9 @@ void testBbdOutputPolyBlepReferenceAndBounds()
                     == eventsBefore,
            "BBD lookahead mutated buckets/index/phase/transfer/held/RNG");
 
-    // At the full declared ratio there are exactly 25 edges per sample and 50
-    // in the residual's open two-sample support. The 54-slot fixed array must
+    // At the full declared ratio there are exactly 25 output edges per sample
+    // and 50 in the residual's open two-sample support. Input edges do not
+    // enter this output history. The 54-slot fixed array must
     // hold that state indefinitely without clipping or growing.
     Chorus maximumRate;
     maximumRate.prepare(8000.0);
@@ -5087,7 +5107,7 @@ void testBbdOutputPolyBlepReferenceAndBounds()
            "BBD polyBLEP did not retain every edge in the worst two-sample window");
 
     // Noise reconstruction changes the sampled output, while the physical
-    // held value and xorshift draws stay unchanged even at 25 edges/sample.
+    // held value and xorshift draws stay unchanged even at 25 output edges/sample.
     // The independent continuous-staircase quadrature and high-rate PSD
     // oracles in AuditChorusNoise qualify the reconstructed output itself.
     Chorus noiseOnly;
@@ -5317,7 +5337,7 @@ void testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases()
         }
         expect(YouKnowTestAccess::bbdCorePhysicalState(rawLine)
                    == YouKnowTestAccess::bbdCorePhysicalState(correctedLine),
-               "full-Line BLEP changed physical BBD state relative to raw output");
+               "full-Line recovery changed physical BBD state relative to raw output");
         return rendered;
     };
 
@@ -6259,18 +6279,16 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     using Matrix = std::array<std::array<double, 6>, 6>;
     using State = std::array<double, 6>;
 
-    // Independent component solve for the loaded tap node. Panasonic's
-    // Gi-RL curve gives about 3.7 kOhm per output follower near the JUNO's
-    // approximately 100 kOhm per-pin load. Roland then gives each follower a
-    // 3.3 kOhm leg into the shared 47 kOhm / 2.2 nF node.
-    constexpr float mn3009OutputSourceEstimate = 3700.0f;
-    constexpr float tapSeries = 3300.0f;
+    // Independent solve of the declared loaded-tap network. The retained
+    // 3.5 kOhm effective boundary is provisional: Panasonic's load fixture
+    // does not identify an active output resistance (see OQ-04 and the
+    // source comment beside outputTapEffectiveDriveOhms). This checks the
+    // implementation of that boundary, not its identification as hardware.
+    constexpr float effectiveDrive = 3500.0f;
     constexpr float tapReturn = 47000.0f;
     constexpr float tapShunt = 2.2e-9f;
-    constexpr float parallelDrive =
-        0.5f * (mn3009OutputSourceEstimate + tapSeries);
     constexpr float tapNodeResistance =
-        parallelDrive * tapReturn / (parallelDrive + tapReturn);
+        effectiveDrive * tapReturn / (effectiveDrive + tapReturn);
     constexpr float isolatedTapCornerHzFloat = 1.0f
         / (2.0f * static_cast<float>(pi) * tapNodeResistance * tapShunt);
     constexpr double isolatedTapCornerHz =
@@ -6287,7 +6305,7 @@ void testCombinedBbdSupportTransitionAndStateSafety()
         constexpr double feedback = 820.0e-12;
         constexpr double shunt = 680.0e-12;
         const std::complex<double> s(0.0, 2.0 * pi * frequency);
-        const double source = 0.5 * (3700.0 + 3300.0);
+        const double source = 3500.0;
         const double sourceConductance = 1.0 / source + 1.0 / 47000.0;
         const double seriesConductance = 1.0 / series;
         const auto denominator = 1.0
@@ -6433,8 +6451,7 @@ void testCombinedBbdSupportTransitionAndStateSafety()
         return matrix;
     };
     const auto outputMatrix = [](bool connected) {
-        const double source = 0.5 * (
-            static_cast<double>(3300.0f) + static_cast<double>(3700.0f));
+        const double source = 3500.0;
         const double tapReturn = static_cast<double>(47000.0f);
         const double tapCap = static_cast<double>(2.2e-9f);
         const double series = static_cast<double>(22000.0f);
@@ -6470,8 +6487,7 @@ void testCombinedBbdSupportTransitionAndStateSafety()
     State inputDrive {};
     inputDrive[0] = 2.0 * pi * static_cast<double>(9688.0f);
     State outputDrive {};
-    constexpr double outputSource = 0.5 * (
-        static_cast<double>(3300.0f) + static_cast<double>(3700.0f));
+    constexpr double outputSource = 3500.0;
     constexpr double outputReturn = static_cast<double>(47000.0f);
     constexpr double outputCap = static_cast<double>(2.2e-9f);
     outputDrive[0] = (1.0 / outputSource + 1.0 / outputReturn) / outputCap;
@@ -7102,7 +7118,7 @@ void testOutputResistorNoiseFollowsJohnsonNyquistLaw()
 
     // Solve the post-coupling wiper Thevenin resistance independently at both
     // stops and mid travel. At zero the grounded lower pot segment shorts the
-    // output noise; at other positions all three paths remain in parallel.
+    // wiper noise; at other positions all three paths remain in parallel.
     constexpr double pot = 10000.0;
     constexpr double series = 1500.0;
     constexpr double selector = 41300.0;
@@ -7116,10 +7132,16 @@ void testOutputResistorNoiseFollowsJohnsonNyquistLaw()
         return 1.0 / (1.0 / upper + 1.0 / lower + 1.0 / load);
     };
     for (const double position : { 0.0, 0.5, 1.0 })
+    {
         expectNear(YouKnowEngine::outputWiperNoiseResistance(
                        static_cast<float>(position)),
                    reference(position), 0.01,
                    "the loaded output wiper has the wrong noise resistance");
+        expectNear(YouKnowEngine::outputJackNoiseResistance(
+                       static_cast<float>(position)),
+                   reference(position) + 2200.0, 0.01,
+                   "R64/R65 must add independent thermal-noise power at the jack");
+    }
 }
 
 void testOutputSummerSlewMatchesDatasheetTypical()

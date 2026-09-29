@@ -324,6 +324,7 @@ private:
     YouKnowDisplay display;
 
     juce::TextButton panicButton { "PANIC" };
+    juce::TextButton outputButton { "OUTPUT..." };
     // The quality ladder. A three-rung setting needs a selector, not a lamp:
     // the button this replaced could only say on or off.
     juce::ComboBox qualityBox;

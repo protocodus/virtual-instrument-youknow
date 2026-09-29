@@ -74,30 +74,37 @@ enum class ChorusNoiseCalibrationProfile : std::uint8_t
 [[nodiscard]] constexpr float chorusNoiseCalibrationScale(
     ChorusNoiseCalibrationProfile profile) noexcept
 {
-    // Hiss B, chosen by ear on 2026-09-22 (Docs/decisions.md): the hiss
-    // matched to #439522's four hash-pinned April 2026 bank captures, whose
-    // chorus board is original. The choice was the target; the number is
-    // measured. Tools/AnalyzeChorusIdleFloors.py compares each patch's idle
-    // floor with its own C4 note, which cancels the recording gain.
+    // Hiss B's captured-level target was chosen on 2026-09-22; the
+    // gain was corrected on 2026-09-28 (Docs/decisions.md).
+    // Tools/AnalyzeChorusIdleFloors.py compares the A-weighted idle floor
+    // with each patch's unweighted C4 note, cancelling recording gain.
+    // Its Hann window rejects the sub-20 Hz drift that biased the former
+    // boxcar measurement. A-weighting selects audible hiss rather than the
+    // additional low-frequency chorus-on energy in these captures; it is
+    // also the measure used by Panasonic's noise row and HISS-100 policy.
     //
-    // 3.98 was measured wrongly. It read 0.00 dB through a boxcar window,
-    // which leaked the hardware idle floors' sub-20 Hz drift into the
-    // 20 Hz-20 kHz band (+1.1 dB there, 0.08 dB on the model), and that band
-    // also counts chorus-on energy below 200 Hz that is not hiss. Through the
-    // fixed analyzer and the complete product -- drive B, noise B,
-    // Character 1, 96 kHz/2x, shipping kernels -- 3.98 reads +1.33 dB over
-    // the full band and +4.48 dB A-weighted (seven tail-free Mode I patches,
-    // both channels; single patches spread over 9-13 dB with the clock
-    // sweep). The corrected matches, 3.41 full-band and 2.37 A-weighted,
-    // await a listening choice (2026-09-22).
+    // The four hash-pinned April captures of #439522's original chorus board
+    // contain seven tail-free Mode I patches. The paired comparison uses
+    // Character 1, 96 kHz/2x, shipping kernels and the complete product path
+    // before the separate pulse-level correction: x3.98 reads +4.48 dB
+    // A-weighted over both channels; x2.37 reads +0.03 dB. That paired render
+    // reads +0.51 dB with the pulse correction lowering the note reference,
+    // with the same idle floor. Later circuit changes retain this source
+    // scalar rather than silently refitting it to absorb their attenuation.
+    // This rounded, single-unit level calibration
+    // is not a typical MN3009 noise voltage or a population estimate.
     //
-    // Level only, and the captured hiss is shaped differently: roughly flat
-    // over 0.2-2 kHz, about 5 dB higher over 2-8 kHz and falling above,
-    // where this one is white to the reconstruction roll-off. No mechanism
-    // for that shape is modelled (OQ-03). The two tail-free Mode II patches
-    // read L +4.7/+7.8 dB and R +10.2/+16.3 dB A-weighted, too few to
-    // calibrate that mode.
+    // Level only. A separate Welch/Hann density audit (0.2 s, 50% overlap)
+    // reads mean PSD 4.75 dB higher in 2-8 kHz than 0.2-2 kHz across the
+    // same seven Mode I patches, versus -1.17 dB for the finite-support
+    // product. These are per-hertz densities: integrated band powers differ
+    // by another 5.23 dB solely from their unequal bandwidths. The stricter
+    // RELEASE<=11 subset reads +4.76 dB, so release tails do not explain it.
+    // Transfer-noise correlations are a supported mechanism candidate, but
+    // their mixture with storage/output noise remains unidentified (OQ-03).
+    // No spectral correction is hidden in this scalar. The two Mode II patches
+    // are too few for a separate fit; its existing relative lift is kept.
     return profile == ChorusNoiseCalibrationProfile::IdleFloor439522
-        ? 3.98f : 1.0f;
+        ? 2.37f : 1.0f;
 }
 } // namespace youknow

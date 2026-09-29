@@ -77,6 +77,19 @@ enum class ChorusTimingProfile
     OwnerBlend
 };
 
+// A named component approximation, separate from timing and
+// insertion-gain calibration. The raw reference retains ideal followers.
+// Nominal2SA1015 is the small-signal model and uses Toshiba's typical beta200/Cob4pF coordinates and
+// source-based DC bias; it is not a measurement of an installed instrument.
+enum class ChorusSupportProfile
+{
+    IdealFollowers,
+    Nominal2SA1015,
+    // Same nominal bias/component network, with forward-active exponential
+    // collector and finite base currents. Not a transistor saturation model.
+    Nominal2SA1015Nonlinear
+};
+
 // The four parameter states map one-to-one to the four button combinations.
 [[nodiscard]] constexpr ChorusMode chorusModeFor(bool one, bool two) noexcept
 {
@@ -110,8 +123,10 @@ class Chorus
 {
 public:
     // MN3009-class line: 256 stages, two-phase clocked, so one full delay is
-    // stages / (2 * clock). At the 10 kHz minimum clock that is the part's
-    // quoted 12.8 ms maximum.
+    // stages / (2 * clock), measured at the center of its composite output
+    // hold. Input captures and new output holds occur on opposite phases:
+    // a captured value begins its hold after 127.5 periods, centered at 128.
+    // At the 10 kHz minimum clock that center is the quoted 12.8 ms maximum.
     static constexpr int stages = 256;
     static constexpr int cellPairs = stages / 2;
 
@@ -121,19 +136,23 @@ public:
     static constexpr float minimumClockHz = 10000.0f;
     static constexpr float maximumClockHz = 200000.0f;
     // Lowest host rate the engine accepts. The fastest clock against it is the
-    // most edges a single sample can ever have to consume.
+    // most input captures a single sample can ever have to consume.
     static constexpr float minimumSampleRate = 8000.0f;
     // The shipping HQ policy targets at least 176.4 kHz internally. At and
-    // above that grid the input support uses the combined exact transition;
-    // lower grids retain the reviewed TPT anti-alias path because an exact
-    // cubic drive there worsens the independently measured SGA boundary.
+    // above that grid every profile retains its physical exact linear circuit.
+    // Below it the raw reference retains legacy TPT sections; finite followers
+    // use a coupled bilinear solve with component-anchored capacitor prewarps.
+    // Exact cubic at low grids increases the measured stationary SGA boundary.
     static constexpr float minimumExactInputSupportRate = 176400.0f;
     static constexpr int maximumShiftsPerSample =
         static_cast<int>(maximumClockHz / minimumSampleRate) + 2;
+    // One input capture and one new composite output hold per full period.
+    static constexpr int maximumHalfCycleEventsPerSample =
+        2 * maximumShiftsPerSample;
 
     // The output polyBLEP has compact support over two numerical samples. At
     // the declared 200 kHz / 8 kHz extreme that interval can contain 50 BBD
-    // edges. Two shift-loop bounds leave a little explicit headroom while
+    // output events. Two full-period bounds leave explicit headroom while
     // keeping the reconstruction fixed-size and allocation-free.
     static constexpr int maximumBlepEvents = 2 * maximumShiftsPerSample;
     static_assert(maximumBlepEvents
@@ -247,8 +266,10 @@ public:
 
     // Amplitude of the uniform random sample each line writes at its own clock
     // edges, in model units. One equation, solved once: the recovered
-    // A-weighted wet line equals the declared product target. A separate
-    // fixed-100-kHz raw-node regression guards Panasonic's part-output maximum.
+    // A-weighted wet line in the ideal-follower reference equals the declared
+    // product target. The finite support profile retains this source amplitude
+    // and its real attenuation; it does not renormalize recovered hiss.
+    // A separate fixed-100-kHz raw-node regression guards the part-output maximum.
     static constexpr float independentLineRandomAmplitude =
         productWetLineNoiseTargetAWeightedVrms
             / (nodeVoltsPerUnit * productWetLineAWeightedTransfer);
@@ -263,6 +284,11 @@ public:
     // selects fixed coefficients on the audio thread instead of solving matrix
     // exponentials there.
     void prepareSupportRates(double hostSampleRate) noexcept;
+    // Configure before the first prepare(). Live changes would reinterpret
+    // capacitor coordinates, so they are rejected, including after reset().
+    [[nodiscard]] bool configureSupportProfile(ChorusSupportProfile) noexcept;
+    [[nodiscard]] ChorusSupportProfile getSupportProfile() const noexcept
+    { return supportProfile_; }
     void prepare(double sampleRate,
                  bool preserveState = false) noexcept;
     void reset(bool preserveLfoPhase = false) noexcept;
@@ -290,6 +316,16 @@ public:
     // the established always-running lines.
     bool processBypassedWhenSettled(float input, float& left,
                                     float& right) noexcept;
+
+    // IC40's mode-select output is independent of its mute output (Roland
+    // service notes p. 13). The serial-board replay drives I/II even while
+    // muted. Off disables this override; ordinary host controls retain their
+    // existing last-engaged-mode behaviour. OneTwo is not an IC40 state.
+    void setHardwareModeSelection(ChorusMode mode) noexcept
+    {
+        hardwareModeSelection_ = mode == ChorusMode::One || mode == ChorusMode::Two
+                                   ? mode : ChorusMode::Off;
+    }
 
     void process(float input, ChorusMode mode, float noiseScale,
                  float& left, float& right,
@@ -327,12 +363,11 @@ public:
     // not individual cutoff or installed switching-time measurements (OQ-20).
     // https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf#page=1
     // Off by default here so bare-chorus suites keep immediate switching; the
-    // engine enables it. The passive two-node solve includes R48's loading
-    // back into C16 and R46's finite sink in the conducting state. Tr5's
-    // saturation voltage is still idealised; Tr4's base-current loading above
-    // threshold, the shared C15 clock-clamp branch and the transistors'
-    // actual junction voltages still need a fuller model/device data. These
-    // are circuit-prior timings, not measured original-unit switching times.
+    // engine enables it. The passive two-node comparison includes R48's
+    // loading back into C16 and R46's finite sink. The product also selects
+    // the three-node clock-mute circuit below, including base-junction loads.
+    // Tr5 saturation and installed junction voltages remain idealised. These
+    // two-node timings are circuit priors, not original-unit measurements.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
     static constexpr float muteDrivePullUpOhms = 10.0e3f;        // R50
     static constexpr float muteDriveSinkOhms = 330.0f;          // R46
@@ -393,9 +428,13 @@ public:
     // C15 also loads BOTH Tr23/Tr28 330k/33k base dividers. Those transistors
     // clamp the clock oscillators while the wet-return switch remains separate.
     // The topology/parts are anchored; D3 and both ideal transistor switches
-    // reuse the existing 0.6 V junction prior. Finite transistor base currents,
-    // clock restart phase, capacitor leakage and installed switching times are
-    // unmeasured. Stopped buckets retain charge ideally, without invented decay.
+    // reuse the existing 0.6 V junction prior. Once a base reaches that voltage,
+    // its junction clamps the divider and loads C13/C15 through the upper
+    // resistor alone. This is a constant-Vbe approximation, not a beta model.
+    // Tr23/Tr28's local negative supplies (R99/R108 100 Ohm) are approximated
+    // as -15 V; oscillator supply-current drops, nonzero Tr5 saturation,
+    // junction curves, clock restart phase, leakage and installed switching
+    // times remain unmeasured. Stopped buckets retain charge without decay.
     static constexpr double clockMuteBypassOhms = 330000.0;     // R47
     static constexpr double clockMuteDiodeSeriesOhms = 10000.0; // R41
     static constexpr double clockMuteFarads = 2.2e-6;           // C15
@@ -625,10 +664,80 @@ public:
     // there is nothing to recompute per sample.
     struct SupportChain
     {
+        struct DenseInputMap
+        {
+            // Scalar row of the same augmented exponential used by the HQ
+            // endpoint integrator: six old capacitor states, four input
+            // samples and four residual-current samples for each transistor.
+            // Taylor powers 0..10 plus an accepted-endpoint correction give
+            // the degree-11 interval below. Coefficients are prepare-only.
+            std::array<std::array<double, 18>, 11> outputByPower {};
+            bool available { false };
+        };
+        struct NonlinearFollowerPorts
+        {
+            // Junction differences and capacitor states use model units
+            // (2.6 V/unit). Current residuals use amperes / 2.6, so these
+            // maps retain the physical nodal conductances and capacitances.
+            std::array<double, 2> collectorCurrentAmps {};
+            std::array<std::array<double, 6>, 2> junctionByState {};
+            std::array<double, 2> junctionByInput {};
+            std::array<std::array<double, 2>, 2> junctionByCurrent {};
+            // Includes the endpoint current's effect through stateByCurrent.
+            std::array<std::array<double, 2>, 2> endpointJunctionByCurrent {};
+            std::array<std::array<double, 6>, 2> stateByPreviousCurrent {};
+            std::array<std::array<double, 6>, 2> stateByCurrent {};
+            std::array<double, 2> outputByCurrent {};
+            // HQ residual current uses the same four-point interpolation as
+            // the input. Endpoint-linear weights above also re-prime history
+            // after reset or a load change without reinterpreting cap charge.
+            std::array<std::array<std::array<double, 6>, 2>, 4> cubicStateByCurrentSample {};
+            std::array<std::array<double, 2>, 2> cubicEndpointJunctionByCurrent {};
+            bool cubicResidual { false };
+            std::uint8_t topology { 0 }; // 1=input, 2=muted, 3=connected
+            bool enabled { false };
+        };
+
+        struct NonlinearState
+        {
+            std::array<double, 2> previousCurrent {};
+            std::array<double, 2> previous2Current {};
+            std::array<double, 2> previous3Current {};
+            // Dimensionless delta(Ve-Vb)/VT, not a voltage in model units.
+            std::array<double, 2> junctionThermalVolts {};
+            std::uint8_t currentHistoryDepth { 0 };
+            // Diagnostics reset with support history; maximum is per Newton
+            // solve, not the sum of iterations taken by an entire audio frame.
+            std::uint32_t fallbackCount { 0 };
+            std::uint32_t maximumIterations { 0 };
+            std::uint8_t topology { 0 };
+            bool valid { false };
+        };
+
+        struct HeldOutputMap
+        {
+            // G(T*theta)=sum_{k=0}^{17} A^k*b*T^(k+1)*theta^(k+1)/(k+1)!.
+            // Six prepared scalar polynomials integrate each actual held step.
+            // A tiny theta^19 correction retains the stored DC equilibrium.
+            std::array<std::array<double, 6>, 18> byPower {};
+            std::array<double, 6> fullIntervalDrive {};
+            std::array<double, 6> endpointCorrection {};
+            bool available { false };
+            [[nodiscard]] std::array<double, 6> valueAt(double age) const noexcept;
+        };
+
         struct ExactTransition
         {
             std::array<std::array<double, 6>, 6> stateByColumn {};
             std::array<std::array<double, 6>, 4> driveBySample {};
+            // Finite followers need the loaded emitter-node readout, rather
+            // than equating a transistor's base and emitter. These fields do
+            // not alter the legacy ideal-coordinate processing path.
+            std::array<double, 6> outputByState {{ 0, 0, 0, 0, 1, -1 }};
+            double outputDirect { 0.0 };
+            bool finiteReadout { false };
+            HeldOutputMap heldOutputMap {};
+            NonlinearFollowerPorts nonlinear {};
         };
 
         float inputCouplingG { 0.001f };    // C44 / R120, wet path only
@@ -643,6 +752,8 @@ public:
         BiquadCoefficients antiAliasFirst {};
         BiquadCoefficients antiAliasSecond {};
         ExactTransition exactInput {};
+        DenseInputMap denseInput {};
+        ExactTransition bilinearInput {};
         ExactTransition exactOutputMuted {};
         ExactTransition exactOutputConnected {};
         // Prepared with the audio support at every cached numerical rate, so
@@ -656,11 +767,30 @@ public:
             std::array<std::array<double, 4>, 4> transition {};
             std::array<double, 3> equilibrium {};
         };
-        // Tr5 open/conducting, each with D3 blocked/conducting. Prepared here
-        // so a live quality change never constructs a matrix exponential.
-        std::array<ClockMuteTransition, 4> clockMuteTransitions {};
+        // Bit 3: Tr5 conducting; bit 2: both clock bases clamped;
+        // bit 1: Tr4 base clamped; bit 0: D3 conducting. Prepared here so a
+        // live quality change never constructs a matrix exponential.
+        std::array<ClockMuteTransition, 16> clockMuteTransitions {};
     };
-    [[nodiscard]] static SupportChain supportChainFor(float sampleRate) noexcept;
+    [[nodiscard]] static SupportChain supportChainFor(
+        float sampleRate,
+        ChorusSupportProfile = ChorusSupportProfile::IdealFollowers) noexcept;
+
+    // Immutable dense extension of ONE completed HQ input-filter interval.
+    // Both asynchronous BBD lines query this same physical node without
+    // advancing capacitor/current histories. Fraction 0 is the previous
+    // endpoint, fraction 1 the current accepted endpoint. Residual currents
+    // retain the endpoint integrator's cubic (or startup linear) polynomial;
+    // this is not an additional nonlinear solve at each fractional instant.
+    struct InputCaptureInterval
+    {
+        static constexpr int degree = 11;
+        std::array<double, degree + 1> outputByPower {};
+        double initialOutput { 0.0 };
+        double finalOutput { 0.0 };
+        bool enabled { false };
+        [[nodiscard]] double valueAt(double fraction) const noexcept;
+    };
 
     [[nodiscard]] double getLfoPhase() const noexcept { return lfoPhase_; }
 
@@ -732,7 +862,16 @@ private:
             double ageInSamples { 0.0 };
         };
 
+        struct OutputEvent
+        {
+            double jump {};
+            double ageInSamples {};
+        };
+        std::array<OutputEvent, maximumHalfCycleEventsPerSample> outputEvents {};
+        int outputEventCount { 0 };
         std::array<float, cellPairs> cells {};
+        // Most recently captured input slot. Integer clock phase captures
+        // input; half-integer phase reads the next slot for the output hold.
         int writeIndex { 0 };
         double clockPhase { 0.0 };
         float held { 0.0f };
@@ -747,12 +886,14 @@ private:
         // The BBD's clock-grid images are physical and remain in the modeled
         // staircase. Sampling that asynchronous staircase on the numerical
         // grid creates a second, non-physical family of aliases. A short
-        // polyBLEP history reduces that host-grid error for both the signal
-        // and held random noise before the five hardware output poles. It is
-        // numerical state: unlike buckets,
+        // HQ integrates the literal held steps through the output network
+        // before sampling it. Lower grids retain polyBLEP reconstruction to
+        // suppress their larger simulation aliases. Its history is numerical
+        // state: unlike buckets,
         // clock phase, transfer loss and held noise, it is cleared when the
         // engine changes processing rate.
         std::array<double, 6> exactOutputState {};
+        SupportChain::NonlinearState nonlinearOutput {};
         double exactOutputPrevious { 0.0 };
         double exactOutputPrevious2 { 0.0 };
         double exactOutputPrevious3 { 0.0 };
@@ -767,14 +908,19 @@ private:
         void rememberBlepEvent(float jump, double ageInSamples) noexcept;
         [[nodiscard]] double deterministicBlepCorrection(
             double clockIncrement, float noiseScale = 0.0f) const noexcept;
+        // Full Chorus supplies an interval-average clock in double; fixed
+        // float-clock callers convert exactly, preserving input-edge precision.
         [[nodiscard]] float processClockedCore(
-            float limitedInput, float clockHz, float sampleRate,
-            float noiseScale) noexcept;
+            float limitedInput, double clockHz, float sampleRate,
+            float noiseScale,
+            const InputCaptureInterval* capture = nullptr,
+            bool recoverHeldOutput = false) noexcept;
         // `limitedInput` has already been through the shared input support
         // chain -- see `Chorus::advanceInputSupport`.
-        float process(float limitedInput, float clockHz, float sampleRate,
+        float process(float limitedInput, double clockHz, float sampleRate,
                       const SupportChain::ExactTransition& outputTransition,
-                      float noiseScale, bool useBlep = true) noexcept;
+                      float noiseScale, bool useBlep = true,
+                      const InputCaptureInterval* capture = nullptr) noexcept;
     };
 
     // Both wet branches take the same node through the same input support
@@ -798,14 +944,17 @@ private:
         BiquadState antiAliasFirst {};
         BiquadState antiAliasSecond {};
         std::array<double, 6> exactState {};
+        SupportChain::NonlinearState nonlinear {};
         double exactPrevious { 0.0 };
         double exactPrevious2 { 0.0 };
         double exactPrevious3 { 0.0 };
+        InputCaptureInterval captureInterval {};
 
         void reset() noexcept;
     };
 
-    [[nodiscard]] float advanceInputSupport(float input) noexcept;
+    [[nodiscard]] float advanceInputSupport(
+        float input, bool prepareCapture = true) noexcept;
 
     Line lineA_ {};
     Line lineB_ {};
@@ -825,6 +974,8 @@ private:
     std::array<SupportChain, 3> preparedSupport_ {};
     std::array<float, 3> preparedSupportRates_ {};
     bool supportRatesPrepared_ { false };
+    ChorusSupportProfile supportProfile_ { ChorusSupportProfile::IdealFollowers };
+    bool supportProfilePrepared_ { false };
     // Regression seam: Engine quality changes must only select these prepared
     // values, never rebuild matrix transitions on the audio callback.
     std::uint64_t supportBuildCount_ { 0 };
@@ -850,6 +1001,7 @@ private:
     // Bypass mutes the wet return but retains the last-selected I/II noise
     // profile, matching the clock-program behaviour this model already had.
     ChorusMode runningMode_ { ChorusMode::One };
+    ChorusMode hardwareModeSelection_ { ChorusMode::Off };
     // Whether the glided settings have a starting point yet.
     bool primed_ { false };
     // The wet-mute drive's physical capacitor coordinates and Tr4's state;

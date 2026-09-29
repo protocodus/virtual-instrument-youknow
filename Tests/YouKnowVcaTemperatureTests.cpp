@@ -97,6 +97,7 @@ std::unique_ptr<YouKnowEngine> makeEngine(float character = 1.0f,
 {
     auto engine = std::make_unique<YouKnowEngine>();
     require(engine->configureThermalStart(settled), "thermal start rejected");
+    require(engine->configureServiceDerivedVcaCoupling(true), "nominal C59 rejected");
     EngineParameters parameters;
     parameters.calibration = character;
     parameters.aging = 0.0f;

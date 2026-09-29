@@ -28,7 +28,7 @@ struct PublicParameter
     bool automatable = true;
 };
 
-inline constexpr std::array<PublicParameter, 48> publicParameterOrder {{
+inline constexpr std::array<PublicParameter, 50> publicParameterOrder {{
     PublicParameter { "volume", "Volume" },
     PublicParameter { "benderDco", "Bender DCO" },
     PublicParameter { "benderVcf", "Bender VCF" },
@@ -77,6 +77,8 @@ inline constexpr std::array<PublicParameter, 48> publicParameterOrder {{
     PublicParameter { "aging", "Aging" },
     PublicParameter { "pitchBend", "Pitch Bend" },
     PublicParameter { "modulation", "Modulation" },
+    PublicParameter { "outputSelector", "Output Level", false },
+    PublicParameter { "outputLoad", "Output Load", false },
 }};
 
 } // namespace youknow::tests

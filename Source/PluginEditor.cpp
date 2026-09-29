@@ -2203,11 +2203,50 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
     // Service actions are momentary utilities, not synth modes. Give them the
     // compact key treatment so they do not carry misleading unlit lamps or
     // compete with the controls above the keyboard.
-    for (auto* button : { &panicButton, &resetButton, &randomize1Button,
+    for (auto* button : { &panicButton, &resetButton, &outputButton, &randomize1Button,
                           &randomize10Button, &randomize50Button })
         button->getProperties().set (compactStyleProperty, true);
     panicButton.getProperties().set (actionIconProperty, "stop");
     resetButton.getProperties().set (actionIconProperty, "reset");
+
+    outputButton.setName ("Output connections");
+    outputButton.setTitle ("Output connections");
+    outputButton.setTooltip (
+        "Select the rear-panel High, Medium or Low output level and the input "
+        "resistance of the connected equipment. Open leaves the jack unloaded. "
+        "These settings stay unchanged when you load a preset.");
+    outputButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        for (const auto* id : { outputSelector, outputLoad })
+        {
+            auto* choice = dynamic_cast<juce::AudioParameterChoice*> (
+                audioProcessor.parameters.getParameter (id));
+            if (choice == nullptr)
+                continue;
+            menu.addSectionHeader (id == outputSelector ? "Output level" : "Receiver input resistance");
+            const int base = id == outputSelector ? 1 : 101;
+            for (int index = 0; index < choice->choices.size(); ++index)
+                menu.addItem (base + index, choice->choices[index], true,
+                              choice->getIndex() == index);
+        }
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&outputButton),
+            [safe = juce::Component::SafePointer<YouKnowAudioProcessorEditor> (this)] (int result)
+            {
+                if (safe == nullptr || result == 0)
+                    return;
+                const auto* id = result >= 101 ? youknow::parameters::outputLoad
+                                               : youknow::parameters::outputSelector;
+                const int index = result >= 101 ? result - 101 : result - 1;
+                if (auto* parameter = safe->audioProcessor.parameters.getParameter (id))
+                {
+                    parameter->beginChangeGesture();
+                    parameter->setValueNotifyingHost (parameter->convertTo0to1 (static_cast<float> (index)));
+                    parameter->endChangeGesture();
+                }
+            });
+    };
+    addAndMakeVisible (outputButton);
 }
 
 void YouKnowAudioProcessorEditor::buildPresetBar()
@@ -3447,7 +3486,7 @@ void YouKnowAudioProcessorEditor::resized()
     // SESSION and VARIATION use their vertical rhythm instead of consuming
     // the width needed by MODEL. Each stack shares one centreline.
     constexpr float sessionX = 1184.0f;
-    constexpr float sessionTop = panel::extensionDeckTop + 48.0f;
+    constexpr float sessionTop = panel::extensionDeckTop + 32.0f;
     constexpr float sessionWidth = 112.0f;
     constexpr float sessionHeight = 24.0f;
     constexpr float sessionGap = 8.0f;
@@ -3455,6 +3494,9 @@ void YouKnowAudioProcessorEditor::resized()
         scaled (sessionX, sessionTop, sessionWidth, sessionHeight).toNearestInt());
     resetButton.setBounds (
         scaled (sessionX, sessionTop + sessionHeight + sessionGap,
+                sessionWidth, sessionHeight).toNearestInt());
+    outputButton.setBounds (
+        scaled (sessionX, sessionTop + 2.0f * (sessionHeight + sessionGap),
                 sessionWidth, sessionHeight).toNearestInt());
 
     constexpr float variationX = 1350.0f;

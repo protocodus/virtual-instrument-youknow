@@ -102,6 +102,83 @@ std::vector<float> render(int block)
         require(std::isfinite(sample), "volume automation generated nonfinite audio");
     return result;
 }
+
+struct NoiseTake
+{
+    std::vector<float> left, right;
+};
+
+NoiseTake renderGroundedWiperNoise(double rate, int quality, float character,
+                                 int block, int frames)
+{
+    YouKnowEngine engine;
+    require(engine.configureThermalStart(true), "cannot settle jack temperature");
+    engine.prepare(rate, 256, quality);
+    EngineParameters p;
+    p.volume = 0;
+    p.calibration = character;
+    p.chorus = ChorusMode::Off;
+    p.enableVoiceVcaServiceGain = false;
+    p.vcfTanhMode = VcfTanhMode::PolyZoned;
+    p.vcfSolverMode = VcfSolverMode::Rk4Single;
+    engine.setParameters(p);
+    NoiseTake take { std::vector<float>(frames), std::vector<float>(frames) };
+    for (int i = 0; i < frames;)
+    {
+        const int count = std::min(block, frames - i);
+        engine.process(take.left.data() + i, take.right.data() + i, count);
+        i += count;
+    }
+    return take;
+}
+
+void testOutputSeriesResistorNoise()
+{
+    // Grounding VR1 removes every upstream signal/noise source. Only the
+    // independent R64/R65 thermal sources remain at the jacks. Integrate the
+    // analogue 4kTR/(1+(f/fc)^2) PSD over the host Nyquist band, independently
+    // of production resistance helpers and digital filter coefficients.
+    constexpr double k = 1.380649e-23;
+    constexpr double temperature = 313.15; // settled Character 1: 25+15 C
+    constexpr double resistance = 2200.0;
+    constexpr double cutoff = 1.0 / (2.0 * pi * resistance * 1e-9);
+    constexpr int settle = 256, frames = 131072;
+    const double boundary = YouKnowEngine::outputBoundaryGain()
+                          / YouKnowEngine::internalVoltsPerUnit;
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const auto take = renderGroundedWiperNoise(rate, 1, 1, 256, settle + frames);
+        double leftPower = 0, rightPower = 0, cross = 0;
+        for (int i = settle; i < settle + frames; ++i)
+        {
+            const double l = take.left[i], r = take.right[i];
+            require(std::isfinite(l) && std::isfinite(r), "nonfinite jack noise");
+            leftPower += l * l;
+            rightPower += r * r;
+            cross += l * r;
+        }
+        const double expectedRms = boundary * std::sqrt(4.0 * k * temperature
+            * resistance * cutoff * std::atan(rate / (2.0 * cutoff)));
+        // Sampling uncertainty plus the separately tested magnitude-fit
+        // approximation (<0.065 dB integrated RMS error at these rates).
+        require(std::abs(std::sqrt(leftPower / frames) / expectedRms - 1.0) < .02
+                    && std::abs(std::sqrt(rightPower / frames) / expectedRms - 1.0) < .02,
+                "grounded-wiper jack noise does not match R64/R65 Johnson PSD");
+        require(std::abs(cross / std::sqrt(leftPower * rightPower)) < .02,
+                "left and right output resistor noises are correlated");
+    }
+    const auto reference = renderGroundedWiperNoise(48000, 1, 1, 1, 4096);
+    const auto blocked = renderGroundedWiperNoise(48000, 1, 1, 128, 4096);
+    const auto oversampled = renderGroundedWiperNoise(48000, 4, 1, 128, 4096);
+    require(reference.left == blocked.left && reference.right == blocked.right,
+            "output resistor noise depends on block boundaries");
+    require(reference.left == oversampled.left && reference.right == oversampled.right,
+            "host-rate output resistor noise changes with the quality rung");
+    const auto nominal = renderGroundedWiperNoise(48000, 1, 0, 128, 4096);
+    require(std::all_of(nominal.left.begin(), nominal.left.end(), [](float x) { return x == 0; })
+                && std::all_of(nominal.right.begin(), nominal.right.end(), [](float x) { return x == 0; }),
+            "Character zero lost its exact-silence contract");
+}
 }
 
 int main()
@@ -151,9 +228,10 @@ int main()
         require(dc.process(0.0f, OutputJackLowPass::coefficients(corner(1), 48000)) == 0.0f,
                 "jack reset retains history");
         require(render(1) == render(128), "jack/volume processing depends on block boundaries");
+        testOutputSeriesResistorNoise();
         std::cout << "PASS: output-jack worst magnitude error " << worst
                   << " dB (former " << oldWorst << " dB); stable across 8--768 kHz; "
-                     "host-rate wiring, DC automation, reset and block invariance\n";
+                     "host-rate wiring, DC automation, reset, block invariance and R64/R65 Johnson noise\n";
         return 0;
     }
     catch (const std::exception& error)

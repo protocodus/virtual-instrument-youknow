@@ -19,11 +19,23 @@ RELEASE above 40 or any NOISE are reported but excluded from the summary: their
 windows hold release tails or the main noise source rather than the idle
 floor. Chorus-off patches give the dry floor the chorus lifts.
 
+Separate unweighted density observations use Welch/Hann 0.2 s segments with
+50% overlap. Each band reports integrated power in dBFS and mean one-sided
+PSD in dBFS/Hz, along with its actual bin bandwidth. A white source has about
+5.23 dB more integrated power in 2-8 kHz than 0.2-2 kHz solely because the
+bands are unequal; its mean-density contrast is zero. These new observations
+do not change the established Hann-periodogram level calibration above.
+SciPy's density units and estimator definition:
+https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.welch.html
+
 Limits. One serviced unit, not an original-unit population. The hiss level
 follows the clock sweep -- about 8 dB inside one 0.7 s window -- so single
 windows scatter by a few dB and only the mean over patches is reported as a
 level. The recording's dry floor includes hum and interface noise, so the
 chorus-on/off lift is a lower bound on the line's own contribution below 2 kHz.
+Density summaries retain per-patch/channel dispersion: the short windows do
+not identify LFO phase, average a complete sweep, remove hum/tonal components,
+or separate chorus electronics from the recording chain. No gain or EQ is fit.
 
 Sources: https://www.lewisfrancis.com/nwio/Juno-10-test-audio-96K.zip
 (892,109,573 bytes; each member below can be fetched alone by HTTP range from
@@ -52,10 +64,26 @@ from pathlib import Path
 
 import numpy as np
 from scipy.io import wavfile
-from scipy.signal import periodogram
+from scipy.signal import periodogram, welch
 
 BAND_HZ = (20.0, 20000.0)
 MAX_RELEASE = 40
+DENSITY_BANDS_HZ = ((200, 500), (500, 1000), (1000, 2000), (200, 2000),
+                    (2000, 4000), (4000, 8000), (2000, 8000),
+                    (8000, 12000), (12000, 20000))
+DENSITY_PROTOCOL = {
+    "estimator_reference": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.welch.html",
+    "weighting": "unweighted; one-sided power spectral density",
+    "estimator": "Welch, Hann, 0.2 s segments, 50% overlap, constant detrend",
+    "integrated_power_units": "dBFS; sum(PSD) times frequency-bin width",
+    "mean_density_units": "dBFS/Hz; integrated power divided by retained bin bandwidth",
+    "aggregation": "equal-weight dB observations over qualified patches and channels",
+    "coverage": "full-band summaries exclude bands/contrasts clipped at Nyquist; raw rows retain them",
+    "limitations": ["same single-unit corpus used for the level calibration, not a hardware holdout",
+                    "short windows do not identify LFO phase or average a complete sweep",
+                    "density includes any hum, tones and recording-chain noise; no spectral fit or subtraction",
+                    "channel observations and overlapping Welch segments are not independent samples"],
+}
 # offset/compressed: the member's local header and deflated size in the archive.
 BANKS = {
     "A1x": {"offset": 109350436, "compressed": 49311337,
@@ -203,6 +231,60 @@ def levels(recording, window, weighted=False):
     return [band_db(audio[begin:end, c], rate, weighted) for c in range(audio.shape[1])]
 
 
+def density_observation(samples, rate):
+    """Keep unequal-band power and per-hertz density distinct, per channel."""
+    samples = np.asarray(samples)
+    if samples.ndim == 1:
+        samples = samples[:, None]
+    segment = min(len(samples), round(0.2 * rate))
+    if segment < 2:
+        raise ValueError("density observation needs at least two samples")
+    overlap = segment // 2
+    frequencies, density = welch(samples, rate, window="hann", nperseg=segment,
+                                 noverlap=overlap, detrend="constant",
+                                 scaling="density", axis=0)
+    bin_width = float(frequencies[1] - frequencies[0])
+    bands = {}
+    for low, high in DENSITY_BANDS_HZ:
+        # Keep bands half-open, including when a low-rate model clips one at
+        # Nyquist; its undoubled endpoint is not an ordinary one-sided bin.
+        selected = (frequencies >= low) & (frequencies < min(high, rate / 2))
+        count = int(selected.sum())
+        width = count * bin_width
+        power = density[selected].sum(0) * bin_width
+        bands[f"{low}_{high}_hz"] = {
+            "requested_band_hz": [low, high], "frequency_bin_count": count,
+            "full_band_below_nyquist": high <= rate / 2,
+            "effective_bandwidth_hz": width,
+            "integrated_power_dbfs": (10 * np.log10(np.maximum(power, 1e-30))).tolist() if count else None,
+            "mean_psd_dbfs_per_hz":
+                (10 * np.log10(np.maximum(power / width, 1e-30))).tolist() if count else None,
+        }
+    low, high = bands["200_2000_hz"], bands["2000_8000_hz"]
+    contrast = None
+    if low["frequency_bin_count"] and high["frequency_bin_count"]:
+        contrast = {
+            "full_bands_below_nyquist": low["full_band_below_nyquist"] and high["full_band_below_nyquist"],
+            "integrated_power_db": (np.asarray(high["integrated_power_dbfs"])
+                                     - low["integrated_power_dbfs"]).tolist(),
+            "mean_density_db": (np.asarray(high["mean_psd_dbfs_per_hz"])
+                                 - low["mean_psd_dbfs_per_hz"]).tolist(),
+            "white_noise_bandwidth_difference_db": float(10 * np.log10(
+                high["effective_bandwidth_hz"] / low["effective_bandwidth_hz"])),
+        }
+    return {"sample_rate_hz": rate, "sample_count": len(samples),
+            "segment_samples": segment, "overlap_samples": overlap,
+            "welch_segments": 1 + (len(samples) - segment) // (segment - overlap),
+            "frequency_bin_width_hz": bin_width, "bands": bands,
+            "contrast_2000_8000_vs_200_2000": contrast}
+
+
+def idle_density(recording, window):
+    rate, audio = recording
+    begin, end = (round(t * rate) for t in window)
+    return density_observation(audio[begin:end], rate)
+
+
 def measure(rows, capture, model):
     result = []
     for row in rows:
@@ -216,11 +298,18 @@ def measure(rows, capture, model):
             idle_a = levels(recording, row["idle_seconds"], weighted=True)
             entry[name] = {"idle_dbfs": idle, "idle_a_weighted_dbfs": idle_a, "note_dbfs": note,
                            "idle_minus_note_db": [i - n for i, n in zip(idle, note)],
-                           "idle_a_weighted_minus_note_db": [i - n for i, n in zip(idle_a, note)]}
+                           "idle_a_weighted_minus_note_db": [i - n for i, n in zip(idle_a, note)],
+                           "idle_density": idle_density(recording, row["idle_seconds"])}
         if "hardware" in entry and "model" in entry:
             for key, source in (("model_minus_hardware_db", "idle_minus_note_db"),
                                 ("model_minus_hardware_a_weighted_db", "idle_a_weighted_minus_note_db")):
                 entry[key] = [m - h for m, h in zip(entry["model"][source], entry["hardware"][source])]
+            h = entry["hardware"]["idle_density"]["contrast_2000_8000_vs_200_2000"]
+            m = entry["model"]["idle_density"]["contrast_2000_8000_vs_200_2000"]
+            if (h is not None and m is not None
+                    and h["full_bands_below_nyquist"] and m["full_bands_below_nyquist"]):
+                entry["model_minus_hardware_density_contrast_db"] = [
+                    mv - hv for mv, hv in zip(m["mean_density_db"], h["mean_density_db"])]
         result.append(entry)
     return result
 
@@ -247,6 +336,51 @@ def summarize(entries):
     return summary
 
 
+def density_statistics(values):
+    values = np.asarray(values, dtype=float).reshape(-1)
+    return {"observations": len(values), "mean_db": float(values.mean()),
+            "median_db": float(np.median(values)),
+            "range_db": [float(values.min()), float(values.max())],
+            "sample_standard_deviation_db": float(values.std(ddof=1)) if len(values) > 1 else None}
+
+
+def summarize_density(entries):
+    result = {}
+    for chorus in ("I", "II", "off"):
+        mode = {}
+        for name in ("hardware", "model"):
+            selected = [e[name]["idle_density"] for e in entries
+                        if e["used"] and e["chorus"] == chorus and name in e]
+            if not selected:
+                continue
+            contrasts = [r["contrast_2000_8000_vs_200_2000"] for r in selected
+                         if r["contrast_2000_8000_vs_200_2000"] is not None
+                         and r["contrast_2000_8000_vs_200_2000"]["full_bands_below_nyquist"]]
+            bands = {}
+            for key in selected[0]["bands"]:
+                values = [r["bands"][key]["mean_psd_dbfs_per_hz"] for r in selected
+                          if r["bands"][key]["mean_psd_dbfs_per_hz"] is not None
+                          and r["bands"][key]["full_band_below_nyquist"]]
+                if values:
+                    bands[key] = density_statistics([value for row in values for value in row])
+            mode[name] = {"patches": len(selected), "mean_psd_dbfs_per_hz": bands,
+                          "contrast_patches": len(contrasts),
+                          "channel_windows": sum(len(r["mean_density_db"]) for r in contrasts)}
+            if contrasts:
+                mode[name]["contrast_2000_8000_vs_200_2000"] = {
+                    metric: density_statistics([value for row in contrasts for value in row[metric]])
+                    for metric in ("integrated_power_db", "mean_density_db")}
+        paired = [e["model_minus_hardware_density_contrast_db"] for e in entries
+                  if e["used"] and e["chorus"] == chorus
+                  and "model_minus_hardware_density_contrast_db" in e]
+        if paired:
+            mode["model_minus_hardware_density_contrast_db"] = density_statistics(
+                [value for row in paired for value in row])
+        if mode:
+            result[f"chorus_{chorus}"] = mode
+    return result
+
+
 def export_events(midi_zip, directory):
     directory.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(midi_zip) as archive:
@@ -269,7 +403,7 @@ def export_events(midi_zip, directory):
 
 def run(args):
     report = {"analyzer_sha256": sha256(Path(__file__).read_bytes()), "band_hz": BAND_HZ,
-              "max_release": MAX_RELEASE, "banks": {}}
+              "max_release": MAX_RELEASE, "density_protocol": DENSITY_PROTOCOL, "banks": {}}
     all_entries = []
     with zipfile.ZipFile(args.midi_zip) as archive:
         for bank, pins in BANKS.items():
@@ -286,6 +420,7 @@ def run(args):
             report["banks"][bank] = entries
             all_entries += entries
     report["summary"] = summarize(all_entries)
+    report["density_summary"] = summarize_density(all_entries)
     args.output.write_text(json.dumps(report, indent=1, allow_nan=False) + "\n")
     print(json.dumps(report["summary"], indent=1))
 
@@ -320,6 +455,50 @@ def self_test():
     row = patches(events, 6.0)[0]
     assert row["chorus"] == "I" and row["release"] == 5 and row["patch"] == 3
     assert row["idle_seconds"] == [3.7, 5.9] and row["note_seconds"] == [1.7, 2.4]
+    # Independent known-source recovery: unequal white-noise band powers are
+    # not a spectral-density tilt. The one-sided density is 2*variance/Fs.
+    white = np.random.default_rng(20260929).standard_normal(9 * rate)
+    white_density = density_observation(white[rate:], rate)
+    contrast = white_density["contrast_2000_8000_vs_200_2000"]
+    bandwidth_db = 10 * np.log10(6000 / 1800)
+    assert abs(contrast["mean_density_db"][0]) < 0.15
+    assert abs(contrast["integrated_power_db"][0] - bandwidth_db) < 0.15
+    assert abs(contrast["white_noise_bandwidth_difference_db"] - bandwidth_db) < 1e-12
+    for key, width in (("200_2000_hz", 1800), ("2000_8000_hz", 6000)):
+        band = white_density["bands"][key]
+        assert band["effective_bandwidth_hz"] == width
+        assert abs(band["mean_psd_dbfs_per_hz"][0] - 10 * np.log10(2 / rate)) < 0.15
+    # A known one-zero FIR produces a non-flat density. Predict each band's
+    # mean squared response by independently integrating |1-a*exp(-jw)|^2.
+    a = 0.8
+    colored = white[1:] - a * white[:-1]
+    colored_density = density_observation(colored[rate:], rate)
+    def mean_fir_power(low, high):
+        w = 2 * np.pi / rate
+        return 1 + a * a - 2 * a * (np.sin(w * high) - np.sin(w * low)) / (w * (high - low))
+    expected_tilt = 10 * np.log10(mean_fir_power(2000, 8000) / mean_fir_power(200, 2000))
+    assert abs(colored_density["contrast_2000_8000_vs_200_2000"]["mean_density_db"][0]
+               - expected_tilt) < 0.15
+    density_summary = summarize_density([measured, tail])["chorus_I"]
+    assert density_summary["hardware"]["patches"] == 1
+    assert density_summary["hardware"]["channel_windows"] == 2
+    assert density_summary["hardware"]["contrast_2000_8000_vs_200_2000"]["mean_density_db"]["observations"] == 2
+    assert max(abs(e) for e in measured["model_minus_hardware_density_contrast_db"]) < 1e-9
+    for name in ("200_2000_hz", "2000_8000_hz"):
+        hardware = measured["hardware"]["idle_density"]["bands"][name]["mean_psd_dbfs_per_hz"]
+        model = measured["model"]["idle_density"]["bands"][name]["mean_psd_dbfs_per_hz"]
+        assert np.max(np.abs(np.asarray(model) - hardware - 20 * np.log10(3))) < 1e-9
+    # Truncated bands retain their actual width; absent bands stay explicit.
+    low_rate = density_observation(white[:8000], 8000)
+    assert low_rate["bands"]["2000_8000_hz"]["effective_bandwidth_hz"] == 2000
+    assert not low_rate["bands"]["2000_8000_hz"]["full_band_below_nyquist"]
+    assert low_rate["bands"]["8000_12000_hz"]["mean_psd_dbfs_per_hz"] is None
+    assert low_rate["contrast_2000_8000_vs_200_2000"] is not None
+    partial = summarize_density([{"used": True, "chorus": "I", "hardware": {"idle_density": low_rate}}])
+    partial = partial["chorus_I"]["hardware"]
+    assert "200_2000_hz" in partial["mean_psd_dbfs_per_hz"]
+    assert "2000_8000_hz" not in partial["mean_psd_dbfs_per_hz"]
+    assert partial["contrast_patches"] == 0 and partial["channel_windows"] == 0
     print("chorus idle-floor analyzer self-check passed")
 
 

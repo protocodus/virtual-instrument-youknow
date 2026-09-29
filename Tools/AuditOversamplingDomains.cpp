@@ -936,6 +936,177 @@ void expectTrue(std::vector<std::string>& errors, std::string_view caseName,
                          + std::string(expression));
 }
 
+void validateDenseInputCounters(std::string_view caseName,
+                                const DomainWorkCounters& counters,
+                                double processingRate,
+                                std::vector<std::string>& errors)
+{
+    const bool denseSelected = processingRate
+        >= youknow::Chorus::minimumExactInputSupportRate;
+    expectEqual(errors, caseName, "dense preparation MACs",
+                counters.bbdDenseInputMacs,
+                198u * counters.bbdDenseInputIntervals);
+    expectTrue(errors, caseName, "dense Horner work exceeds enabled captures",
+               counters.bbdDenseInputHornerMacs
+                   <= 11u * counters.bbdDenseInputCaptures);
+    expectEqual(errors, caseName, "dense Horner whole-query work",
+                counters.bbdDenseInputHornerMacs % 11u, 0u);
+    if (!denseSelected)
+    {
+        expectEqual(errors, caseName, "low-grid dense intervals",
+                    counters.bbdDenseInputIntervals, 0u);
+        expectEqual(errors, caseName, "low-grid dense captures",
+                    counters.bbdDenseInputCaptures, 0u);
+        return;
+    }
+
+    // These are physical scheduling bounds, not a snapshot of polynomial
+    // coefficients: every integer clock event captures once, both lines share
+    // one input node, and no interval without a capture needs preparing.
+    expectEqual(errors, caseName, "dense captures vs physical input events",
+                counters.bbdDenseInputCaptures, counters.bbdShifts);
+    expectTrue(errors, caseName, "dense intervals exceed shared input advances",
+               counters.bbdDenseInputIntervals
+                   <= counters.bbdExactInputSupportAdvances);
+    expectTrue(errors, caseName, "dense intervals exceed Chorus frames",
+               counters.bbdDenseInputIntervals <= counters.chorusFrames);
+    expectTrue(errors, caseName, "dense preparation without an input capture",
+               counters.bbdDenseInputIntervals <= counters.bbdDenseInputCaptures);
+    const auto maximumCapturesPerFrame = 2u * static_cast<std::uint64_t>(
+        std::ceil(youknow::Chorus::maximumClockHz / processingRate));
+    expectTrue(errors, caseName, "dense captures exceed two physical clock bounds",
+               counters.bbdDenseInputCaptures
+                   <= maximumCapturesPerFrame * counters.bbdDenseInputIntervals);
+}
+
+void validateEventOutputCounters(std::string_view caseName,
+                                 const DomainWorkCounters& counters,
+                                 double processingRate,
+                                 std::vector<std::string>& errors)
+{
+    const bool eventSelected = processingRate
+        >= youknow::Chorus::minimumExactInputSupportRate;
+    expectEqual(errors, caseName, "event forcing MACs",
+                counters.bbdEventOutputForcingMacs,
+                6u * (counters.bbdEventOutputFrames + counters.bbdEventOutputEvents));
+    expectEqual(errors, caseName, "event Horner whole-query work",
+                counters.bbdEventOutputHornerMacs % 108u, 0u);
+    expectTrue(errors, caseName, "event Horner work exceeds physical events",
+               counters.bbdEventOutputHornerMacs <= 108u * counters.bbdEventOutputEvents);
+    expectEqual(errors, caseName, "event endpoint correction scales",
+                counters.bbdEventOutputEndpointScales,
+                counters.bbdEventOutputHornerMacs / 18u);
+    const auto edgeDifference = counters.bbdPhysicalOutputEvents > counters.bbdShifts
+        ? counters.bbdPhysicalOutputEvents - counters.bbdShifts
+        : counters.bbdShifts - counters.bbdPhysicalOutputEvents;
+    // In any contiguous window the alternating input/output counts can differ
+    // by at most one edge per line, regardless of clock motion or clock stop.
+    expectTrue(errors, caseName, "half-phase output/input ledger differs by more than two",
+               edgeDifference <= 2u);
+    const auto maximumEventsPerLine = static_cast<std::uint64_t>(
+        std::ceil(youknow::Chorus::maximumClockHz / processingRate));
+    expectTrue(errors, caseName, "output edges exceed physical clock bound",
+               counters.bbdPhysicalOutputEvents <= maximumEventsPerLine * counters.bbdLineFrames);
+    if (!eventSelected)
+    {
+        expectEqual(errors, caseName, "low-grid event output frames", counters.bbdEventOutputFrames, 0u);
+        expectEqual(errors, caseName, "low-grid event output events", counters.bbdEventOutputEvents, 0u);
+        return;
+    }
+    expectEqual(errors, caseName, "event output frames vs support advances",
+                counters.bbdEventOutputFrames, counters.bbdExactOutputSupportAdvances);
+    expectEqual(errors, caseName, "event output forcing vs physical half edges",
+                counters.bbdEventOutputEvents, counters.bbdPhysicalOutputEvents);
+    expectEqual(errors, caseName, "HQ BLEP past visits", counters.blepPastCorrectionVisits, 0u);
+    expectEqual(errors, caseName, "HQ BLEP future predictions", counters.blepFuturePredictionVisits, 0u);
+}
+
+int runDenseInputCounterAudit()
+{
+    std::vector<std::string> errors;
+    constexpr int frames = 512;
+    for (const auto profile : { youknow::ChorusSupportProfile::IdealFollowers,
+                               youknow::ChorusSupportProfile::Nominal2SA1015,
+                               youknow::ChorusSupportProfile::Nominal2SA1015Nonlinear })
+        for (const double rate : { 8000., 48000., 96000., 176400., 192000., 768000. })
+            for (const auto mode : { ChorusMode::One, ChorusMode::Two })
+            {
+                youknow::Chorus chorus;
+                if (!chorus.configureSupportProfile(profile))
+                    throw std::runtime_error("dense work fixture profile rejected");
+                chorus.prepare(rate);
+                DomainWorkCounters counters;
+                {
+                    youknow::oversampling_audit::ScopedDomainWorkCounterSink sink(counters);
+                    for (int frame = 0; frame < frames; ++frame)
+                    {
+                        float left {}, right {};
+                        chorus.process(static_cast<float>(0.3 * std::sin(0.17 * frame)),
+                                       mode, 0.0f, left, right);
+                    }
+                }
+                const auto name = "dense-profile-" + std::to_string(static_cast<int>(profile))
+                    + "-" + std::to_string(static_cast<int>(rate))
+                    + "-mode-" + std::to_string(static_cast<int>(mode));
+                validateDenseInputCounters(name, counters, rate, errors);
+                validateEventOutputCounters(name, counters, rate, errors);
+                expectEqual(errors, name, "Chorus frame count", counters.chorusFrames, frames);
+                expectTrue(errors, name, "fixture produced no physical input events",
+                           counters.bbdShifts > 0u);
+                if (rate == 768000.)
+                    expectTrue(errors, name, "dense preparation ran on capture-free frames",
+                               counters.bbdDenseInputIntervals < counters.chorusFrames);
+                std::cout << name << " intervals=" << counters.bbdDenseInputIntervals
+                          << " captures=" << counters.bbdDenseInputCaptures
+                          << " shifts=" << counters.bbdShifts
+                          << " prepare_macs=" << counters.bbdDenseInputMacs
+                          << " horner_macs=" << counters.bbdDenseInputHornerMacs
+                          << " output_events=" << counters.bbdPhysicalOutputEvents
+                          << " output_forcing_macs=" << counters.bbdEventOutputForcingMacs
+                          << " output_horner_macs=" << counters.bbdEventOutputHornerMacs
+                          << " output_endpoint_scales=" << counters.bbdEventOutputEndpointScales << '\n';
+            }
+
+    // The supported physical clock-stop circuit keeps processing its analogue
+    // support, but cannot incur capture preparation/query work after settling.
+    youknow::Chorus stopped;
+    if (!stopped.configureSupportProfile(
+            youknow::ChorusSupportProfile::Nominal2SA1015Nonlinear))
+        throw std::runtime_error("stopped dense work fixture profile rejected");
+    constexpr double stoppedRate = 192000.;
+    stopped.prepare(stoppedRate);
+    const auto processStopped = [&](ChorusMode mode) {
+        float left {}, right {};
+        stopped.process(0.1f, mode, 0.0f, left, right, false, false, 1.0f,
+                        false, true, true, false,
+                        youknow::ChorusTimingProfile::OwnerBlend, true);
+    };
+    processStopped(ChorusMode::One);
+    for (int frame = 0; frame < static_cast<int>(0.6 * stoppedRate); ++frame)
+        processStopped(ChorusMode::Off);
+    DomainWorkCounters stoppedCounters;
+    {
+        youknow::oversampling_audit::ScopedDomainWorkCounterSink sink(stoppedCounters);
+        for (int frame = 0; frame < frames; ++frame)
+            processStopped(ChorusMode::Off);
+    }
+    validateDenseInputCounters("dense-stopped", stoppedCounters, stoppedRate, errors);
+    validateEventOutputCounters("event-stopped", stoppedCounters, stoppedRate, errors);
+    expectEqual(errors, "event-stopped", "physical output events", stoppedCounters.bbdPhysicalOutputEvents, 0u);
+    expectEqual(errors, "event-stopped", "ongoing output support",
+                stoppedCounters.bbdEventOutputFrames, 2u * frames);
+    expectEqual(errors, "dense-stopped", "physical input events", stoppedCounters.bbdShifts, 0u);
+    expectEqual(errors, "dense-stopped", "ongoing input support",
+                stoppedCounters.bbdExactInputSupportAdvances, frames);
+    if (!errors.empty())
+    {
+        for (const auto& error : errors) std::cerr << "FAIL: " << error << '\n';
+        return 1;
+    }
+    std::cout << "dense input and event-output work domains and settled clock stop: PASS\n";
+    return 0;
+}
+
 void validateVcfCounterAlgebra(std::string_view caseName,
                                const DomainWorkCounters& counters,
                                std::uint64_t expectedSteps,
@@ -1052,7 +1223,14 @@ void validateCounterAlgebra(const CounterCase& testCase,
                 counters.bbdExactSupportCoordinateUpdates,
                 6u * exactAdvances);
     expectEqual(errors, testCase.name, "bbdExactSupportMacs",
-                counters.bbdExactSupportMacs, 60u * exactAdvances);
+                counters.bbdExactSupportMacs,
+                60u * exactAdvances - 24u * counters.bbdEventOutputFrames);
+    validateDenseInputCounters(
+        testCase.name, counters,
+        static_cast<double>(testCase.sampleRate) * testCase.expectedFactor, errors);
+    validateEventOutputCounters(
+        testCase.name, counters,
+        static_cast<double>(testCase.sampleRate) * testCase.expectedFactor, errors);
     expectEqual(errors, testCase.name, "decimatorCalls",
                 counters.decimatorCalls, decimatorCalls);
     expectEqual(errors, testCase.name, "decimatorNonzeroTapVisits",
@@ -1183,7 +1361,7 @@ void printUsage(const char* executable)
 {
     std::cout << "usage: " << executable
               << " [--fingerprint|--tanh-benchmark|--merson-benchmark"
-                 "|--self-test|--help]\n"
+                 "|--self-test|--dense-input-self-test|--help]\n"
               << "       " << executable
               << " --cpu-benchmark [sample-rate [factor]]\n"
               << "CPU defaults: 48000 Hz, requested factor 1 (allowed: 1, 2, 4).\n";
@@ -1245,6 +1423,15 @@ int main(int argc, char** argv)
             return 2;
 #else
             return printMersonTimingReport();
+#endif
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dense-input-self-test")
+        {
+#if defined(YOUKNOW_WORK_AUDIT)
+            return runDenseInputCounterAudit();
+#else
+            std::cerr << "--dense-input-self-test requires YouKnowOversamplingWorkAudit\n";
+            return 2;
 #endif
         }
         if (argc == 2 && std::string_view(argv[1]) == "--self-test")

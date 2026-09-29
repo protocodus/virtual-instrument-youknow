@@ -13,6 +13,11 @@ grid attenuation from the finite Lagrange reconstruction kernel.
 The optional pinned hardware input reports ONLY the original A11 pre-roll
 before its first chord at 0.25s. Neither a gain reference, a clock measurement,
 nor sufficient independent silence is available to calibrate the noise law.
+Band powers integrate the one-sided PSD in FS²/Hz over the stated band.
+Compare spectral color with band_mean_psd_dbfs_per_hz, not band_dbfs:
+unequal-width bands contain different power even for white noise. These short
+pre-roll observations do not replace AnalyzeChorusIdleFloors.py's longer,
+release-qualified patch windows.
 The owner video shows the KR106 UI and has AAC audio; its routing/processing
 cannot identify original-unit noise, so it is not a hardware fitting source.
 
@@ -44,7 +49,8 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 def spectrum(samples,rate):
-    return welch(samples,rate,nperseg=rate//10,axis=0)
+    return welch(samples,rate,window='hann',nperseg=rate//10,
+                 detrend='constant',scaling='density',axis=0)
 
 def powers(frequencies,density):
     return np.asarray([density[(frequencies>=low)&(frequencies<high)].sum(axis=0)
@@ -56,6 +62,9 @@ def response(support,frequencies):
     drive=np.asarray(support['drive_by_sample'])
     rhs=np.einsum('fk,ki->fi',z[:,None]**np.arange(4),drive)
     solved=np.linalg.solve(np.eye(6)[None,:,:]-z[:,None,None]*state,rhs[:,:,None])[:,:,0]
+    if 'output_by_state' in support:
+        return solved @ np.asarray(support['output_by_state']) + support.get('output_direct',0.0)
+    # Archived ideal-follower exports predate generic physical-state readouts.
     return solved[:,4]-solved[:,5]
 
 def read_directory(directory):
@@ -87,9 +96,16 @@ def hardware_observations(path):
     for start,end in [(0,.1),(.1,.2)]:
         x=samples[int(start*rate):int(end*rate)]
         f,p=spectrum(x,rate)
+        band_power=powers(f,p)
+        # Use actual bin coverage, including the high-exclusive band boundary.
+        # Dividing by this width gives mean PSD, not RMS voltage per hertz.
+        bandwidth=np.asarray([np.count_nonzero((f>=low)&(f<high))*(f[1]-f[0])
+                              for low,high in BANDS])
         result['windows'].append({'seconds':[start,end],
             'rms_dbfs':(20*np.log10(np.sqrt(np.mean(x*x,axis=0)))).tolist(),
-            'band_dbfs':(10*np.log10(powers(f,p))).tolist(),
+            'band_dbfs':(10*np.log10(band_power)).tolist(),
+            'band_mean_psd_dbfs_per_hz':(10*np.log10(band_power/bandwidth[:,None])).tolist(),
+            'bandwidth_hz':bandwidth.tolist(),
             'stereo_correlation':float(np.corrcoef(x.T)[0,1])})
     return result
 
@@ -132,6 +148,8 @@ def main():
     result={'scope':'numerical reconstruction of the existing held BBD source; no installed-unit amplitude/color fit',
             'versions':{'python':platform.python_version(),'numpy':np.__version__,'scipy':scipy.__version__},
             'analyzer_sha256':sha(__file__),'support_sha256':sha(args.support),'bands_hz':BANDS,
+            'band_dbfs_definition':'integrated one-sided PSD in each high-exclusive band; not density',
+            'band_mean_psd_dbfs_per_hz_definition':'10 log10(mean PSD / (1 FS^2/Hz))',
             'known_model_recovery':recovery,'known_model_maximum_absolute_error_db':known_max,
             'known_model_screen_passes':known_max<0.75,'comparisons':rows,'summary':summaries,
             'remaining_limit':'finite reconstruction kernel attenuates 12–16kHz by about1dB at 44.1kHz; higher-rate paths reduce this numerical error',

@@ -400,12 +400,14 @@ struct Event
 
 struct EventLine
 {
-    std::array<double, referenceCellPairs> cells {};
-    int index {};
+    // Manufacturer C0..C258, not a copy of the runtime circular buffer.
+    std::array<double, 259> capacitor {};
+    bool nextIsOutput { true };
     long double clockPhase {};
     double transfer {};
     std::uint32_t rng {};
     std::uint64_t edgeCount {};
+    std::uint64_t inputCount {};
     std::vector<Event> events;
 };
 
@@ -464,7 +466,7 @@ EventLine buildEvents(bool lineA, const Drive& drive, bool noiseEnabled)
             const double slope = sign * sweepDelay * modulationSlope;
             const double remaining = dt - local;
             const double available = cyclesOver(delay0, slope, remaining);
-            const double needed = 1.0 - static_cast<double>(line.clockPhase);
+            const double needed = 0.5 - static_cast<double>(line.clockPhase);
             if (available + 2.0e-15 < needed)
             {
                 line.clockPhase += available;
@@ -476,17 +478,38 @@ EventLine buildEvents(bool lineA, const Drive& drive, bool noiseEnabled)
             local += toEdge;
             line.clockPhase = 0.0L;
             const double edgeTime = time + local;
-            const double bounded = saturate(drive.filtered(edgeTime));
-            line.index = (line.index + 1) % referenceCellPairs;
-            const double emerging = line.cells[static_cast<std::size_t>(line.index)];
-            line.cells[static_cast<std::size_t>(line.index)] = bounded;
-            line.transfer += transferSmear * (emerging - line.transfer);
-            line.rng = xorshift(line.rng);
-            const double held = line.transfer + (noiseEnabled
-                ? randomFrom(line.rng) * noiseAmplitude * noiseGain(mode)
-                : 0.0);
-            line.events.push_back({ edgeTime, held });
-            ++line.edgeCount;
+            // CP2 advances even stages and changes the continuous C256/C257
+            // composite. CP1 captures the input and advances odd stages; moving
+            // the packet from C256 to C257 leaves that composite unchanged.
+            // The first cold output is phase .5, first live input is phase 1.
+            if (line.nextIsOutput)
+            {
+                for (int node = 258; node >= 2; node -= 2)
+                {
+                    line.capacitor[node] = line.capacitor[node - 1];
+                    line.capacitor[node - 1] = 0.0;
+                }
+                line.capacitor[258] = 0.0;
+                const double emerging = line.capacitor[256] + line.capacitor[257];
+                line.transfer += transferSmear * (emerging - line.transfer);
+                line.rng = xorshift(line.rng);
+                const double held = line.transfer + (noiseEnabled
+                    ? randomFrom(line.rng) * noiseAmplitude * noiseGain(mode)
+                    : 0.0);
+                line.events.push_back({ edgeTime, held });
+                ++line.edgeCount;
+            }
+            else
+            {
+                ++line.inputCount;
+                line.capacitor[0] = saturate(drive.filtered(edgeTime));
+                for (int node = 257; node >= 1; node -= 2)
+                {
+                    line.capacitor[node] = line.capacitor[node - 1];
+                    line.capacitor[node - 1] = 0.0;
+                }
+            }
+            line.nextIsOutput = !line.nextIsOutput;
             if (toEdge <= 1.0e-16)
             {
                 local = std::nextafter(local, remaining);
@@ -664,10 +687,11 @@ void hashScalar(std::uint64_t& hash, Value value) noexcept
     }
 }
 
-float productionTriangle(double phase) noexcept
+double productionTriangle(double phase) noexcept
 {
+    phase -= std::floor(phase);
     const double folded = phase < 0.5 ? phase : 1.0 - phase;
-    return static_cast<float>(folded * 4.0 - 1.0);
+    return folded * 4.0 - 1.0;
 }
 
 float noiseFromStateFloat(std::uint32_t state) noexcept
@@ -695,8 +719,8 @@ struct DiscreteShadow
 
 struct ShadowFrame
 {
-    float clockA {};
-    float clockB {};
+    double clockA {};
+    double clockB {};
     int shiftsA {};
     int shiftsB {};
 };
@@ -724,21 +748,41 @@ ShadowFrame advanceShadow(DiscreteShadow& shadow, ChorusMode mode,
     const float muteGlide = 1.0f - std::exp(
         -inverse / static_cast<float>(wetTau));
     shadow.wetGain += (targetWet - shadow.wetGain) * muteGlide;
-    shadow.lfoPhase += shadow.rate * inverse;
-    if (shadow.lfoPhase >= 1.0f)
-        shadow.lfoPhase -= std::floor(shadow.lfoPhase);
-    const float modulation = productionTriangle(shadow.lfoPhase);
-    const float centre = static_cast<float>(centreDelay);
-    const float sweep = static_cast<float>(sweepDelay);
+    // This is the declared DISCRETE schedule ledger, not the physical oracle.
+    // It checks the corrected midpoint policy, while buildEvents() above
+    // independently solves exact log/expm1 clock integrals and event times.
+    const double beginPhase = shadow.lfoPhase;
+    const double phaseStep = static_cast<double>(shadow.rate)
+                           / static_cast<double>(sampleRate);
+    const double endPhase = beginPhase + phaseStep;
+    shadow.lfoPhase = endPhase - std::floor(endPhase);
+    const double centre = static_cast<float>(centreDelay);
+    const double sweep = static_cast<float>(sweepDelay);
+    const auto atPhase = [&](double phase) {
+        const double modulation = productionTriangle(phase);
+        return std::array<double, 2> {{
+            std::clamp(referenceCellPairs / (centre + sweep * modulation),
+                       static_cast<double>(referenceMinimumClockHz),
+                       static_cast<double>(referenceMaximumClockHz)),
+            std::clamp(referenceCellPairs / (centre - sweep * modulation),
+                       static_cast<double>(referenceMinimumClockHz),
+                       static_cast<double>(referenceMaximumClockHz))
+        }};
+    };
+    auto clock = atPhase(0.5 * (beginPhase + endPhase));
+    const double cusp = beginPhase < 0.5 ? 0.5 : 1.0;
+    if (endPhase > cusp)
+    {
+        const double weight = (cusp - beginPhase) / phaseStep;
+        const auto first = atPhase(0.5 * (beginPhase + cusp));
+        const auto second = atPhase(0.5 * (cusp + endPhase));
+        for (std::size_t line = 0; line < clock.size(); ++line)
+            clock[line] = weight * first[line] + (1.0 - weight) * second[line];
+    }
     ShadowFrame result;
-    result.clockA = std::clamp(
-        static_cast<float>(referenceCellPairs)
-            / (centre + sweep * modulation),
-        referenceMinimumClockHz, referenceMaximumClockHz);
-    result.clockB = std::clamp(
-        static_cast<float>(referenceCellPairs)
-            / (centre - sweep * modulation),
-        referenceMinimumClockHz, referenceMaximumClockHz);
+    result.clockA = clock[0];
+    result.clockB = clock[1];
+    const double oldPhaseA = shadow.phaseA, oldPhaseB = shadow.phaseB;
     shadow.phaseA += static_cast<double>(result.clockA)
                    / static_cast<double>(sampleRate);
     shadow.phaseB += static_cast<double>(result.clockB)
@@ -747,7 +791,6 @@ ShadowFrame advanceShadow(DiscreteShadow& shadow, ChorusMode mode,
     {
         shadow.phaseA -= 1.0;
         shadow.indexA = (shadow.indexA + 1) % referenceCellPairs;
-        shadow.rngA = xorshift(shadow.rngA);
         ++shadow.edgesA;
         ++result.shiftsA;
     }
@@ -755,10 +798,13 @@ ShadowFrame advanceShadow(DiscreteShadow& shadow, ChorusMode mode,
     {
         shadow.phaseB -= 1.0;
         shadow.indexB = (shadow.indexB + 1) % referenceCellPairs;
-        shadow.rngB = xorshift(shadow.rngB);
         ++shadow.edgesB;
         ++result.shiftsB;
     }
+    const int outputsA = result.shiftsA + int(shadow.phaseA >= 0.5) - int(oldPhaseA >= 0.5);
+    const int outputsB = result.shiftsB + int(shadow.phaseB >= 0.5) - int(oldPhaseB >= 0.5);
+    for (int event = 0; event < outputsA; ++event) shadow.rngA = xorshift(shadow.rngA);
+    for (int event = 0; event < outputsB; ++event) shadow.rngB = xorshift(shadow.rngB);
     return result;
 }
 
@@ -826,7 +872,7 @@ public:
             && state.primed == result_.expected.primed;
         const float modeGain = result_.expected.runningMode == ChorusMode::Two
             ? referenceModeTwoNoiseGain : 1.0f;
-        if (actualShiftsA > 0)
+        if (actualShiftsA + int(state.phaseA >= 0.5) - int(previousPhaseA >= 0.5) > 0)
         {
             const float expectedHeld = state.transferA
                 + noiseFromStateFloat(state.rngA)
@@ -836,7 +882,7 @@ public:
                 && std::bit_cast<std::uint32_t>(state.heldA)
                     == std::bit_cast<std::uint32_t>(expectedHeld);
         }
-        if (actualShiftsB > 0)
+        if (actualShiftsB + int(state.phaseB >= 0.5) - int(previousPhaseB >= 0.5) > 0)
         {
             const float expectedHeld = state.transferB
                 + noiseFromStateFloat(state.rngB)
@@ -875,8 +921,8 @@ public:
     }
 
 private:
-    static void hashFrame(std::uint64_t& hash, double lfo, float clockA,
-                          float clockB, int shiftsA, int shiftsB,
+    static void hashFrame(std::uint64_t& hash, double lfo, double clockA,
+                          double clockB, int shiftsA, int shiftsB,
                           int indexA, int indexB, double phaseA,
                           double phaseB, std::uint32_t rngA,
                           std::uint32_t rngB, float wetGain,
@@ -906,7 +952,7 @@ StructuralAudit auditFullCycle(float sampleRate, ChorusMode mode)
     chorus.prepare(sampleRate);
     StructuralChecker checker(sampleRate);
     const float rate = static_cast<float>(rateFor(mode == ChorusMode::One));
-    const float step = rate * (1.0f / sampleRate);
+    const double step = static_cast<double>(rate) / static_cast<double>(sampleRate);
     const std::size_t frames = static_cast<std::size_t>(
         std::ceil(1.0 / static_cast<double>(step)));
     for (std::size_t frame = 0u; frame < frames; ++frame)
@@ -1402,6 +1448,8 @@ struct ReferenceProducts
     Comparison convergenceMetrics;
     std::uint64_t continuousEdgesA {};
     std::uint64_t continuousEdgesB {};
+    std::uint64_t continuousInputsA {};
+    std::uint64_t continuousInputsB {};
     bool filterInfrastructurePassed {};
     bool filterResponsePassed {};
     bool filterMetadataPassed {};
@@ -1442,6 +1490,8 @@ ReferenceProducts makeReferenceProducts(double hostRate, bool noiseOnly)
         result.rk64Left, result.rk64Right, hostRate);
     result.continuousEdgesA = rk128.eventsA.edgeCount;
     result.continuousEdgesB = rk128.eventsB.edgeCount;
+    result.continuousInputsA = rk128.eventsA.inputCount;
+    result.continuousInputsB = rk128.eventsB.inputCount;
     const auto alignedExactly = [hostRate](
         const quality::HostAlignedSignal& signal) {
         constexpr std::size_t delay = (filterTaps - 1u) / 2u;
@@ -1492,8 +1542,16 @@ ReferenceProducts makeReferenceProducts(double hostRate, bool noiseOnly)
         && allFinite(result.rk64Right.samples)
         && allFinite(result.rk128Left.samples)
         && allFinite(result.rk128Right.samples)
+        // Independent 50-digit integration of the complete .72s program:
+        // PhiA=30030.3962640058089, PhiB=27098.6039660381718 periods.
+        // Inputs are floor(Phi); complementary outputs are floor(Phi+.5).
+        // Keep BOTH ledgers pinned: the old same-edge count missed B's final
+        // output. Derivation/script retained in bbd-half-cycle/verification/
+        // dynamic-endpoint-ledgers.py and dynamic-endpoint-ledgers.json.
+        && result.continuousInputsA == 30030u
+        && result.continuousInputsB == 27098u
         && result.continuousEdgesA == 30030u
-        && result.continuousEdgesB == 27098u
+        && result.continuousEdgesB == 27099u
         && result.filterInfrastructurePassed
         && result.convergenceMetrics.worstDb()
             <= referenceConvergenceGateDb;
@@ -1648,29 +1706,54 @@ bool within(double actual, double expected, double tolerance) noexcept
 
 bool metricGoldensExact(const std::array<CellResult, 10>& cells)
 {
+    // HQ held-event output recovery improves seven snapshots (2026-09-29).
+    // Only exceeded coordinates change; gates/tolerances remain unchanged.
+    // Original values/output are in bbd-output-recovery/work/repin/.
+    // HQ dense input capture improves five waveform snapshots (2026-09-29).
+    // Physical gates, tolerances and all other coordinates stay unchanged;
+    // old/new evidence is in bbd-dense-input/work/repin/ under research output.
+    // Half-cycle correction (2026-09-29): the independent oracle now advances
+    // explicit C0..C258 on opposite input/output phases. Full-matrix physical
+    // classification, convergence, discrete ledgers and mutations passed;
+    // stale infrastructure output-count B=27098 was independently corrected
+    // to floor(27098.603966+.5)=27099, then the bounded HQ44.1 row confirmed
+    // infrastructure. Only the five exceeded snapshot coordinates below were
+    // updated; all acceptance/golden tolerances are unchanged. Original failure,
+    // independent endpoint calculation and pre-repin source are retained under
+    // out/research-2026-09-29/bbd-half-cycle/verification/.
+    // Clock integration re-pin (2026-09-29): cusp-split midpoint clocks
+    // replace the endpoint rectangle. The independent exact log/expm1 event
+    // oracle and RK4 physical reconstruction are unchanged. Every physical
+    // admission, oracle-convergence, mutation and raw-family test passed
+    // before these deterministic coordinates were updated. Keep all gates
+    // and golden tolerances unchanged; the original failure log is retained
+    // at out/research-2026-09-29/bbd-numerical-fidelity/verification/
+    // dynamic-contract-pre-repin.log. Only out-of-tolerance coordinates move.
+    // A changed output-event schedule also changes finite-window noise
+    // correlation; per-edge RNG/amplitude and analytical noise gates stay put.
     // Re-pinned after replacing the separable MN3009 tap/first reconstruction
     // approximation with Roland's coupled C45/R98/R97/C37/C35 network. The
     // admission classes and gates are unchanged; these deterministic waveform
     // coordinates now include the documented extra loaded attenuation.
     constexpr std::array<double, 10> whole {
-        -63.883, -63.329, -62.259, -62.935, -62.271,
-        -62.943, -24.198, -25.714, -36.427, -37.901
+        -72.450, -68.718, -82.394, -84.689, -90.610,
+        -89.814, -24.198, -25.714, -36.427, -37.901
     };
     constexpr std::array<double, 10> modeOne {
-        -71.715, -66.765, -76.158, -76.782, -76.179,
-        -76.860, -24.202, -25.720, -36.463, -37.948
+        -73.200, -67.149, -91.361, -90.545, -104.502,
+        -108.177, -24.202, -25.720, -36.463, -37.948
     };
     constexpr std::array<double, 10> mute {
-        -70.061, -73.554, -75.743, -76.720, -76.246,
-        -76.934, -24.143, -25.652, -36.410, -37.899
+        -70.044, -75.663, -82.706, -84.829, -99.453,
+        -99.081, -24.143, -25.652, -36.410, -37.899
     };
     constexpr std::array<double, 10> modeTwo {
-        -61.618, -61.351, -59.421, -60.097, -59.432,
-        -60.104, -24.196, -25.712, -36.394, -37.859
+        -76.210, -69.597, -80.406, -83.090, -87.463,
+        -86.863, -24.196, -25.712, -36.394, -37.859
     };
     constexpr std::array<double, 10> residual {
-        -75.714, -76.439, -75.587, -76.269, -75.473,
-        -76.142, -24.839, -26.344, -36.992, -38.458
+        -94.190, -92.352, -89.274, -88.131, -87.225,
+        -86.487, -24.839, -26.344, -37.253, -38.737
     };
     // Noise coordinates re-pinned for the held-noise BLEP correction in
     // ad0382e. Its local RNG lookahead reconstructs the same edge-held source
@@ -1694,7 +1777,7 @@ bool metricGoldensExact(const std::array<CellResult, 10>& cells)
     };
     constexpr std::array<double, 10> noiseCorrelationTwo {
         0.000, 0.000, 0.000, 0.001, 0.000,
-        0.001, -0.015, -0.013, -0.004, -0.003
+        0.001, 0.002, 0.002, 0.002, 0.003
     };
     constexpr std::array<double, 10> noiseModeDelta {
         4.083, 4.083, 4.083, 4.083, 4.083,
@@ -2013,7 +2096,11 @@ bool runAudit(int selectedRow, bool selfTest)
                       << (hotReferences[hostIndex].filterMetadataPassed
                               ? "PASS" : "FAIL") << "/"
                       << (hotReferences[hostIndex].filterAlignmentPassed
-                              ? "PASS" : "FAIL") << '\n';
+                              ? "PASS" : "FAIL")
+                      << " inputs[A/B]=" << hotReferences[hostIndex].continuousInputsA
+                      << "/" << hotReferences[hostIndex].continuousInputsB
+                      << " outputs[A/B]=" << hotReferences[hostIndex].continuousEdgesA
+                      << "/" << hotReferences[hostIndex].continuousEdgesB << '\n';
             if (!hotReferences[hostIndex].filterResponsePassed)
             {
                 const auto& check = hotReferences[hostIndex].filterCheck;

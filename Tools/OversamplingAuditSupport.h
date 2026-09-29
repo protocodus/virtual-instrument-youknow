@@ -60,6 +60,20 @@ struct DomainWorkCounters
     std::uint64_t bbdExactOutputSupportAdvances {};
     std::uint64_t bbdExactSupportCoordinateUpdates {};
     std::uint64_t bbdExactSupportMacs {};
+    // Dense capture is additional work beside the endpoint support advance.
+    // One prepared input interval can serve both asynchronous BBD clocks.
+    std::uint64_t bbdDenseInputIntervals {};
+    std::uint64_t bbdDenseInputMacs {};
+    std::uint64_t bbdDenseInputCaptures {};
+    std::uint64_t bbdDenseInputHornerMacs {};
+    // Literal complementary output edges, and the HQ direct-hold recovery
+    // work. Keep its event-polynomial work separate from state-transition MACs.
+    std::uint64_t bbdPhysicalOutputEvents {};
+    std::uint64_t bbdEventOutputFrames {};
+    std::uint64_t bbdEventOutputEvents {};
+    std::uint64_t bbdEventOutputForcingMacs {};
+    std::uint64_t bbdEventOutputHornerMacs {};
+    std::uint64_t bbdEventOutputEndpointScales {};
     std::uint64_t bbdShifts {};
     std::uint64_t blepPastCorrectionVisits {};
     std::uint64_t blepFuturePredictionVisits {};
@@ -112,6 +126,16 @@ inline constexpr std::array counterDescriptors {
     CounterDescriptor { "bbdExactOutputSupportAdvances", &DomainWorkCounters::bbdExactOutputSupportAdvances },
     CounterDescriptor { "bbdExactSupportCoordinateUpdates", &DomainWorkCounters::bbdExactSupportCoordinateUpdates },
     CounterDescriptor { "bbdExactSupportMacs", &DomainWorkCounters::bbdExactSupportMacs },
+    CounterDescriptor { "bbdDenseInputIntervals", &DomainWorkCounters::bbdDenseInputIntervals },
+    CounterDescriptor { "bbdDenseInputMacs", &DomainWorkCounters::bbdDenseInputMacs },
+    CounterDescriptor { "bbdDenseInputCaptures", &DomainWorkCounters::bbdDenseInputCaptures },
+    CounterDescriptor { "bbdDenseInputHornerMacs", &DomainWorkCounters::bbdDenseInputHornerMacs },
+    CounterDescriptor { "bbdPhysicalOutputEvents", &DomainWorkCounters::bbdPhysicalOutputEvents },
+    CounterDescriptor { "bbdEventOutputFrames", &DomainWorkCounters::bbdEventOutputFrames },
+    CounterDescriptor { "bbdEventOutputEvents", &DomainWorkCounters::bbdEventOutputEvents },
+    CounterDescriptor { "bbdEventOutputForcingMacs", &DomainWorkCounters::bbdEventOutputForcingMacs },
+    CounterDescriptor { "bbdEventOutputHornerMacs", &DomainWorkCounters::bbdEventOutputHornerMacs },
+    CounterDescriptor { "bbdEventOutputEndpointScales", &DomainWorkCounters::bbdEventOutputEndpointScales },
     CounterDescriptor { "bbdShifts", &DomainWorkCounters::bbdShifts },
     CounterDescriptor { "blepPastCorrectionVisits", &DomainWorkCounters::blepPastCorrectionVisits },
     CounterDescriptor { "blepFuturePredictionVisits", &DomainWorkCounters::blepFuturePredictionVisits },

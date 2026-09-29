@@ -79,6 +79,12 @@ include(CTest)
 set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowEngine.cpp
     Source/DSP/YouKnowFirmwareTrace.cpp
+    Source/DSP/YouKnowFirmwareSerialTrace.cpp
+    Source/DSP/YouKnowFirmwareAssignerTrace.cpp
+    Source/DSP/YouKnowFirmwareAssignerScheduler.cpp
+    Source/DSP/YouKnowFirmwareAssignerAudioBridge.cpp
+    Source/DSP/YouKnowFirmwareUartTrace.cpp
+    Source/DSP/YouKnowFirmwareSerialPinDecoder.cpp
     Source/DSP/YouKnowChorus.cpp
     Source/DSP/YouKnowPanel.cpp
     Source/DSP/YouKnowPresets.cpp
@@ -87,6 +93,16 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
     Source/DSP/YouKnowFirmwareTrace.h
     Source/DSP/YouKnowFirmwareProgram.h
+    Source/DSP/YouKnowFirmwareSerialTrace.h
+    Source/DSP/YouKnowFirmwareSerialProgram.h
+    Source/DSP/YouKnowFirmwareAssignerTrace.h
+    Source/DSP/YouKnowFirmwareAssignerProgram.h
+    Source/DSP/YouKnowFirmwareAssignerScheduler.h
+    Source/DSP/YouKnowFirmwareAssignerAudioBridge.h
+    Source/DSP/YouKnowFirmwareAssignerSchedulerProgram.h
+    Source/DSP/YouKnowFirmwareAssignerIo.h
+    Source/DSP/YouKnowFirmwareUartTrace.h
+    Source/DSP/YouKnowFirmwareSerialPinDecoder.h
     Source/DSP/YouKnowDcoTemperature.h
     Source/DSP/YouKnowDcoComponents.h
     Source/DSP/YouKnowDcoReset.h
@@ -102,6 +118,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
+    Source/DSP/YouKnowOutputNetwork.h
     Source/DSP/YouKnowPanel.h
     Source/DSP/YouKnowPresets.h
     Source/DSP/YouKnowSysEx.h)
@@ -437,7 +454,8 @@ if(YOUKNOW_BUILD_TOOLS)
 
     add_library(YouKnowDSPWorkAudit STATIC
         Source/DSP/YouKnowEngine.cpp
-    Source/DSP/YouKnowFirmwareTrace.cpp
+        Source/DSP/YouKnowFirmwareTrace.cpp
+        Source/DSP/YouKnowFirmwareSerialTrace.cpp
         Source/DSP/YouKnowChorus.cpp
         Source/DSP/YouKnowEngine.h
         Source/DSP/YouKnowChorus.h
@@ -641,10 +659,64 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.ChorusInputLoading COMMAND YouKnowChorusInputLoadingTests)
     set_tests_properties(YouKnow.ChorusInputLoading PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowChorusFollowerTests Tests/YouKnowChorusFollowerTests.cpp)
+    target_link_libraries(YouKnowChorusFollowerTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusFollowerTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.ChorusFollower COMMAND YouKnowChorusFollowerTests)
+    set_tests_properties(YouKnow.ChorusFollower PROPERTIES TIMEOUT 120)
+
+    add_executable(YouKnowChorusNonlinearTests Tests/YouKnowChorusNonlinearTests.cpp)
+    target_link_libraries(YouKnowChorusNonlinearTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusNonlinearTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.ChorusNonlinear COMMAND YouKnowChorusNonlinearTests)
+    set_tests_properties(YouKnow.ChorusNonlinear PROPERTIES TIMEOUT 180)
+
+    add_executable(YouKnowChorusClockIntegrationTests Tests/YouKnowChorusClockIntegrationTests.cpp)
+    target_link_libraries(YouKnowChorusClockIntegrationTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusClockIntegrationTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.ChorusClockIntegration COMMAND YouKnowChorusClockIntegrationTests)
+    set_tests_properties(YouKnow.ChorusClockIntegration PROPERTIES TIMEOUT 120)
+
+    add_executable(YouKnowChorusHalfCycleTests Tests/YouKnowChorusHalfCycleTests.cpp)
+    target_link_libraries(YouKnowChorusHalfCycleTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusHalfCycleTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.ChorusHalfCycle COMMAND YouKnowChorusHalfCycleTests)
+    set_tests_properties(YouKnow.ChorusHalfCycle PROPERTIES TIMEOUT 120)
+
+    add_executable(YouKnowChorusDenseInputTests Tests/YouKnowChorusDenseInputTests.cpp)
+    target_link_libraries(YouKnowChorusDenseInputTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusDenseInputTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.ChorusDenseInput COMMAND YouKnowChorusDenseInputTests)
+    set_tests_properties(YouKnow.ChorusDenseInput PROPERTIES TIMEOUT 180)
+
+    add_executable(YouKnowChorusOutputRecoveryTests Tests/YouKnowChorusOutputRecoveryTests.cpp)
+    target_link_libraries(YouKnowChorusOutputRecoveryTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusOutputRecoveryTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.ChorusOutputRecovery COMMAND YouKnowChorusOutputRecoveryTests)
+    set_tests_properties(YouKnow.ChorusOutputRecovery PROPERTIES TIMEOUT 180)
+
     add_executable(YouKnowOutputJackTests Tests/YouKnowOutputJackTests.cpp)
     target_link_libraries(YouKnowOutputJackTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputJack COMMAND YouKnowOutputJackTests)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowOutputNetworkTests Tests/YouKnowOutputNetworkTests.cpp)
+    target_link_libraries(YouKnowOutputNetworkTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowOutputNetworkTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.OutputNetwork COMMAND YouKnowOutputNetworkTests)
+    set_tests_properties(YouKnow.OutputNetwork PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowPulseBalanceTests Tests/YouKnowPulseBalanceTests.cpp)
+    target_link_libraries(YouKnowPulseBalanceTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowPulseBalanceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.PulseBalance COMMAND YouKnowPulseBalanceTests)
+    set_tests_properties(YouKnow.PulseBalance PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowCommonVcaOutputTests Tests/YouKnowCommonVcaOutputTests.cpp)
+    target_link_libraries(YouKnowCommonVcaOutputTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowCommonVcaOutputTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.CommonVcaOutput COMMAND YouKnowCommonVcaOutputTests)
+    set_tests_properties(YouKnow.CommonVcaOutput PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowVcfCalibrationTests Tests/YouKnowVcfCalibrationTests.cpp)
     target_link_libraries(YouKnowVcfCalibrationTests PRIVATE YouKnowDSP)
@@ -660,6 +732,84 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowFirmwareControlTraceTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowFirmwareControlTraceTests PRIVATE cxx_std_20)
     add_test(NAME YouKnow.FirmwareControlTrace COMMAND YouKnowFirmwareControlTraceTests)
+
+    # Includes the trace implementation for private PC/PSW protocol fixtures;
+    # do not also link YouKnowDSP, which would duplicate that implementation.
+    add_executable(YouKnowFirmwareAdcTraceTests Tests/YouKnowFirmwareAdcTraceTests.cpp)
+    target_compile_features(YouKnowFirmwareAdcTraceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareAdcTrace COMMAND YouKnowFirmwareAdcTraceTests)
+    set_tests_properties(YouKnow.FirmwareAdcTrace PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareSerialTraceTests Tests/YouKnowFirmwareSerialTraceTests.cpp)
+    target_link_libraries(YouKnowFirmwareSerialTraceTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareSerialTraceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareSerialTrace COMMAND YouKnowFirmwareSerialTraceTests)
+    set_tests_properties(YouKnow.FirmwareSerialTrace PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareUartTraceTests Tests/YouKnowFirmwareUartTraceTests.cpp)
+    target_link_libraries(YouKnowFirmwareUartTraceTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareUartTraceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareUartTrace COMMAND YouKnowFirmwareUartTraceTests)
+    set_tests_properties(YouKnow.FirmwareUartTrace PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareAssignerTraceTests Tests/YouKnowFirmwareAssignerTraceTests.cpp)
+    target_link_libraries(YouKnowFirmwareAssignerTraceTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareAssignerTraceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareAssignerTrace COMMAND YouKnowFirmwareAssignerTraceTests)
+    set_tests_properties(YouKnow.FirmwareAssignerTrace PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareAssignerAudioTests Tests/YouKnowFirmwareAssignerAudioTests.cpp)
+    target_link_libraries(YouKnowFirmwareAssignerAudioTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareAssignerAudioTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareAssignerAudio COMMAND YouKnowFirmwareAssignerAudioTests)
+    set_tests_properties(YouKnow.FirmwareAssignerAudio PROPERTIES TIMEOUT 120)
+
+    add_executable(YouKnowFirmwareAssignerIoTests Tests/YouKnowFirmwareAssignerIoTests.cpp)
+    target_link_libraries(YouKnowFirmwareAssignerIoTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareAssignerIoTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareAssignerIo COMMAND YouKnowFirmwareAssignerIoTests)
+
+    add_executable(YouKnowFirmwareAssignerSchedulerTests Tests/YouKnowFirmwareAssignerSchedulerTests.cpp)
+    target_link_libraries(YouKnowFirmwareAssignerSchedulerTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareAssignerSchedulerTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareAssignerScheduler COMMAND YouKnowFirmwareAssignerSchedulerTests)
+    set_tests_properties(YouKnow.FirmwareAssignerScheduler PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareSerialPinDecoderTests Tests/YouKnowFirmwareSerialPinDecoderTests.cpp)
+    target_link_libraries(YouKnowFirmwareSerialPinDecoderTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareSerialPinDecoderTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareSerialPinDecoder COMMAND YouKnowFirmwareSerialPinDecoderTests)
+    set_tests_properties(YouKnow.FirmwareSerialPinDecoder PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareAssignerAudioBridgeTests Tests/YouKnowFirmwareAssignerAudioBridgeTests.cpp)
+    target_link_libraries(YouKnowFirmwareAssignerAudioBridgeTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareAssignerAudioBridgeTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareAssignerAudioBridge COMMAND YouKnowFirmwareAssignerAudioBridgeTests)
+    set_tests_properties(YouKnow.FirmwareAssignerAudioBridge PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowFirmwareLiveAssignerAudioTests Tests/YouKnowFirmwareLiveAssignerAudioTests.cpp)
+    target_link_libraries(YouKnowFirmwareLiveAssignerAudioTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareLiveAssignerAudioTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareLiveAssignerAudio COMMAND YouKnowFirmwareLiveAssignerAudioTests)
+    set_tests_properties(YouKnow.FirmwareLiveAssignerAudio PROPERTIES TIMEOUT 120)
+
+    add_executable(YouKnowFirmwareSchedulerAudioTests Tests/YouKnowFirmwareSchedulerAudioTests.cpp)
+    target_link_libraries(YouKnowFirmwareSchedulerAudioTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareSchedulerAudioTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareSchedulerAudio COMMAND YouKnowFirmwareSchedulerAudioTests)
+    set_tests_properties(YouKnow.FirmwareSchedulerAudio PROPERTIES TIMEOUT 120)
+
+    add_executable(YouKnowFirmwareSerialAudioTests Tests/YouKnowFirmwareSerialAudioTests.cpp)
+    target_link_libraries(YouKnowFirmwareSerialAudioTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareSerialAudioTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareSerialAudio COMMAND YouKnowFirmwareSerialAudioTests)
+    set_tests_properties(YouKnow.FirmwareSerialAudio PROPERTIES TIMEOUT 120)
+
+    add_executable(YouKnowFirmwareLiveParameterAudioTests Tests/YouKnowFirmwareLiveParameterAudioTests.cpp)
+    target_link_libraries(YouKnowFirmwareLiveParameterAudioTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowFirmwareLiveParameterAudioTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.FirmwareLiveParameterAudio COMMAND YouKnowFirmwareLiveParameterAudioTests)
+    set_tests_properties(YouKnow.FirmwareLiveParameterAudio PROPERTIES TIMEOUT 120)
 
     add_executable(YouKnowEnvelopeFirmwareTests Tests/YouKnowEnvelopeFirmwareTests.cpp)
     target_link_libraries(YouKnowEnvelopeFirmwareTests PRIVATE YouKnowDSP)
@@ -777,6 +927,7 @@ if(BUILD_TESTING)
 
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
                    YouKnowChorusInputLoadingTests YouKnowOutputJackTests
+                   YouKnowOutputNetworkTests YouKnowPulseBalanceTests YouKnowCommonVcaOutputTests
                    YouKnowVcfIntegratorTests YouKnowVcfNoiseTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
@@ -868,6 +1019,10 @@ if(BUILD_TESTING)
                          -P "${CMAKE_CURRENT_SOURCE_DIR}/Tools/CheckOversamplingAudit.cmake")
         set_tests_properties(YouKnow.OversamplingAuditContract
                              PROPERTIES TIMEOUT 300)
+
+        add_test(NAME YouKnow.ChorusDenseWork
+                 COMMAND YouKnowOversamplingWorkAudit --dense-input-self-test)
+        set_tests_properties(YouKnow.ChorusDenseWork PROPERTIES TIMEOUT 120)
 
         add_test(NAME YouKnow.DcoScanQualityContract
                  COMMAND YouKnowDcoScanQualityAudit --self-test)

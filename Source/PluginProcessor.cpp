@@ -24,10 +24,14 @@ constexpr float legacyCalibrationDefault = 0.35f;
 // C21) from each jack node to ground, and each jack's normally-closed contact
 // returns to the other jack's node. With one plug inserted the unplugged jack
 // therefore ties the two nodes together, and the plugged jack carries the two
-// wipers weighted R65 / (R64 + R65) and R64 / (R64 + R65) from a 1.1 kOhm
-// source (external load nominal-open, OQ-17). The instrument never delivers
+// wipers weighted equally for nominal identical channels. The two series
+// parts alone are 1.1 kOhm in parallel; the selector/pot source impedance
+// also contributes. The instrument never delivers
 // one channel alone on a mono output, so neither does a mono host bus. Equal
 // resistors give both channels the same weight, so one constant folds them.
+// For selected/loaded mono, OutputNetwork already solves the one shared
+// receiver load and returns the same mono voltage in both channels; this
+// final mean then leaves that result unchanged.
 constexpr float monoJackR64Ohms = 2200.0f;
 constexpr float monoJackR65Ohms = 2200.0f;
 constexpr float monoJackFoldGain =
@@ -878,6 +882,19 @@ YouKnowAudioProcessor::createParameterLayout()
         juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, 0.0f,
         percentAttributes()));
 
+    // Append with a new AU version hint: all historical automation indices
+    // stay put. Open is an explicit infinite-resistance reference, not a
+    // guess at the resistance of the user's audio interface. Both controls
+    // persist in sessions and stay put on tone/program recalls.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { outputSelector, 9 }, "Output Level",
+        juce::StringArray { "High", "Medium", "Low" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { outputLoad, 9 }, "Output Load",
+        juce::StringArray { "Open", "10 kOhm", "47 kOhm", "100 kOhm", "1 MOhm" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
     return layout;
 }
 
@@ -937,6 +954,8 @@ YouKnowAudioProcessor::YouKnowAudioProcessor()
         { ParameterIndex::vcfFastEarlyMode, vcfFastEarlyMode },
         { ParameterIndex::vcfSolverMode, vcfSolverMode },
         { ParameterIndex::aging, aging },
+        { ParameterIndex::outputSelector, outputSelector },
+        { ParameterIndex::outputLoad, outputLoad },
         { ParameterIndex::pitchBend, pitchBend },
         { ParameterIndex::modulation, modulation }
     });
@@ -1231,6 +1250,11 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
     engineParameters.velocityDepth = valueOf (P::velocity);
     engineParameters.calibration = valueOf (P::calibration);
     engineParameters.aging = valueOf (P::aging);
+    engineParameters.outputSelector = static_cast<youknow::OutputNetwork::Selector> (
+        choiceOf (P::outputSelector, 2));
+    engineParameters.outputLoadOhms = outputLoadOhmsForChoice (
+        choiceOf (P::outputLoad, outputLoadChoiceCount - 1));
+    engineParameters.outputMono = getTotalNumOutputChannels() == 1;
     engineParameters.chorusNoise = valueOf (P::chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (P::polyphony));
     engineParameters.vcfTanhMode = static_cast<VcfTanhMode> (

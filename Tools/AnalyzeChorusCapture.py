@@ -4,6 +4,10 @@
 Source: https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/16#issuecomment-4184997000
 Audio: Juno-10-test-audio-96K.zip / bank_A1x_bip.aif (96 kHz stereo).
 MIDI: https://kayrock.org/kr106/106_calibration.zip / bank_midi_106/bank_A1x.mid
+The owner reports that only the VCF/VCA chips were replaced:
+https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/41#issuecomment-4189199115
+That supports original chorus hardware, without identifying its transistor
+grades, bias settings or absolute recording gain.
 
 Only A11 is qualified here. The downloaded MIDI uses nonzero Manual markers
 for A12-A18, while the owner describes corrected banks; do not silently rewrite
@@ -23,13 +27,27 @@ that actual engine profile against the same held-out hardware notes. Only
 free-running phase and nuisance gains are fitted for that score; centre,
 depth and rate remain fixed. Keep the same mute/noise/other engine settings.
 
+The examples above retain the historical raw circuit. For current product
+renders use `1 product` and export with
+`YouKnowMeasureChorusSupport owner-blend nominal-2sa1015-nonlinear`. This exports
+the nonlinear model's zero-signal tangent; amplitude-dependent harmonics need
+a time-domain measurement. Timing and support profiles must describe the
+supplied render; the exporter records both and the response scope.
+
 Convert the original AIFF to a PCM WAV without resampling. Its normalized PCM
 hash is pinned, independent of WAV headers. The oscillator detune is a declared
 capture nuisance coordinate, not a DCO calibration. Frequency-domain channel
-ratios cancel the common source, while the exported shipping support response
+ratios cancel the common source, while the exported selected support response
 avoids fitting capture EQ as delay. A window-averaged triangular trajectory is
 only a diagnostic hypothesis: real loading, clock transfer, component spread,
 finite note duration and oscillator/envelope evolution remain confounds.
+
+Stereo difference/sum power is not a direct wet/dry-gain measurement. Even
+for an exactly common dry signal, L-R removes dry while L+R contains wet
+and coherent cross terms. For L=S*(1+a*exp(-j*w*tauL)) and the corresponding
+R, its ratio changes with mean/differential delay at fixed a. Short note
+windows do not average out a slow chorus cycle. Treat fitted channel gains
+as timing-dependent nuisance coordinates, not measured BBD insertion gains.
 
 Fit complete C1/C3/C5 note windows; withhold C2/C4 for validation. First recover
 the known model parameters with the same estimator. Report noise at the capture
@@ -70,7 +88,12 @@ def support_response(data, frequencies):
         rhs = np.einsum("fk,ki->fi", z[:, None] ** np.arange(4), drive)
         solved = np.linalg.solve(np.eye(6)[None, :, :] - z[:, None, None] * state,
                                  rhs[:, :, None])[:, :, 0]
-        response *= solved[:, 5] if index == 0 else solved[:, 4] - solved[:, 5]
+        if "output_by_state" in network:
+            response *= (solved @ np.asarray(network["output_by_state"])
+                         + network.get("output_direct", 0.0))
+        else:
+            # Archived exports predate physical capacitor-state readouts.
+            response *= solved[:, 5] if index == 0 else solved[:, 4] - solved[:, 5]
     return response
 
 
@@ -239,16 +262,22 @@ def main():
                   "original_aiff_sha256": AIFF_HASH, "reference_pcm_sha256": pcm_hash,
                   "reference_file_sha256": sha256(args.reference),
                   "model_file_sha256": sha256(args.model), "support_sha256": sha256(args.support),
-                  "scope": "A11 on one serviced Juno-106; chorus-part identity and capture gain unverified",
+                  "support_profile": support.get("support_profile", "ideal"),
+                  "support_timing_profile": support.get("timing_profile", "legacy-unspecified"),
+                  "scope": "A11 on one serviced Juno-106; owner reports original chorus, installed component coordinates and capture gain unverified",
                   "calibration_applied": False,
                   "nominal_calibration_qualified": False,
                   "identification_screen_passed": recovery["passes_screen"] and hardware["held_out_consistent"],
                   "limitations": ["no absolute voltage/noise reference", "no wet-only or physical I+II capture",
-                                  "triangular delay and shipping support are identification assumptions",
-                                  "another complete take and identified original chorus parts are required before nominal calibration"],
+                                  "triangular delay and selected support are identification assumptions",
+                                  "another complete take and installed chorus calibration are required before population calibration"],
                   "model_recovery": recovery, "model": known, "hardware": hardware,
                   "model_preroll": noise_observations(model_audio, model_rate),
                   "hardware_preroll": noise_observations(audio, rate)}
+        if "response_scope" in support:
+            result["support_response_scope"] = support["response_scope"]
+            result["limitations"].append(
+                "support export is a zero-signal tangent; amplitude-dependent harmonics are not represented by the identification model")
         args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
         print(json.dumps({"model_recovery": recovery,
                           "hardware_held_out_consistent": hardware["held_out_consistent"],

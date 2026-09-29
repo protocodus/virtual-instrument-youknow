@@ -81,8 +81,13 @@ constexpr float voltsToSample = 1.0f / YouKnowEngine::internalVoltsPerUnit;
 // against the saw and the sub 0.24 dB light (AnalyzeHardwareIsolators.py).
 // The MKS-7's 0.81 nominal would read the pulse 0.46 dB light, but its
 // printed tolerances span 0.64-1.05, so it cannot overrule the shared
-// coordinate on its own. A x0.857 pulse leg (the #439522 match) and a x0.81
-// one await a listening choice (2026-09-22).
+// coordinate on its own. On 2026-09-28 the owner delegated an evidence-based
+// choice: the product selects x0.857 on the pulse leg, leaving these raw
+// reference constants intact. A fresh canonical-PCM check reproduced +1.340 dB
+// pulse/saw error; disjoint steady thirds read +1.301/+1.371/+1.353 dB. This
+// is one serviced unit's output balance, not an original-card population fit.
+// The MKS-7 figures are peak-to-peak (not pulse/saw RMS ratios); they support
+// the direction, while its broad tolerances cannot choose the exact scale.
 // https://www.polynominal.com/roland-mks7/Roland-MKS-7-Service-Notes.pdf#page=10
 // (SHA-256 179234b24c20b5a3a010827e5606cf6d9744bb9585664e219d6b643e2c7eb8ae)
 constexpr float sawMixVolts = 6.0f;
@@ -236,21 +241,50 @@ constexpr float moduleCouplingResistanceOhms = 33000.0f;    // legacy raw refere
 // resistance for this nominal RC model. The old 33 kOhm analogy to C14/R39
 // was below that physical minimum and rejected too much bass.
 //
-// Use the conservative 82 kOhm limit, hence an 82 ms minimum time constant
-// and 1.941 Hz maximum corner for the nominal 1 uF part. The original-module
-// reading now corroborates the internal 4.7k series/560-ohm shunt network
-// (Sound Doctorin, cited by VoiceVcaSignalLaw), but VR27's setting and finite
-// module/buffer impedances remain unresolved (OQ-19). Their nonnegative
-// contributions lower the corner further. This remains a conservative bound,
-// not an exact installed pole or a new gain trim. Capacitor tolerance is not
-// inferred from the nominal value.
+// The raw reference retains that 82k bound. ProductFidelityProfile instead
+// solves the nominal divider from the existing service signal law (below).
+// TP19 is AFTER C59 at VR27's hot terminal, not at the bare VCF output;
+// the 4.8/6-Vpp service anchors therefore set the divider without a C59
+// amplitude correction. See p.19's early-board test-point note as well as p.13.
 constexpr float vcaInputCouplingCapacitanceF = 1.0e-6f;     // C59
 constexpr float vcaInputCouplingResistanceOhms = 82000.0f;  // R108 minimum, OQ-19
+
+// Original-module 4.7k series/560-ohm shunt: Sound Doctorin's 8/6/2017
+// measurements, linked by VoiceVcaSignalLaw. R112=2.2M reaches VR30=100k
+// across ideal +/-15-V rails; its centred null presents 25k in series.
+// With negligible BA662 input current, L=(4700+560)||(2.2M+25k) and
+// Vdiff/V_TP19=(560/5260)*L/(R108+VR27+L). The service law needs
+// Vdiff/V_TP19=2*V_T(service)/H, where H=2.4/atanh(3/(I_tail*47k)).
+// At 25 C this gives Rtotal=120191.8 ohms, VR27=32944.2 ohms, fc=1.32417Hz.
+// The existing per-card gain residual multiplies the divider, so Rtotal
+// scales as 298.15/T_service/inputTrim. VR27 is fixed through live warm-up.
+// Keep unity passband here: H already includes the divider; applying its
+// attenuation again would double-count it in the existing signal law.
+// Nominal assumptions: low VCF source impedance, negligible BA662 input
+// current, centred VR30, and the signal law's existing fixed tail-current,
+// 1:1 mirror and 47k output-load assumptions. Finite source/input impedance,
+// capacitor tolerance and the unknown parallel output capacitor are not
+// calibrated by this derivation; this is not an installed-unit pole claim.
+// https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13
+constexpr double vcaHybridInputOhms = 4700.0 + 560.0;
+constexpr double vcaOffsetInputOhms = 2200000.0 + 25000.0;
+constexpr double vcaInputLoadOhms = vcaHybridInputOhms * vcaOffsetInputOhms
+    / (vcaHybridInputOhms + vcaOffsetInputOhms);
+constexpr double vcaInputDividerNumeratorOhms =
+    vcaInputLoadOhms * 560.0 / vcaHybridInputOhms;
 
 // Manufacturer application input for IC5/uPC1252H2, populated by Roland as
 // C12 10 uF NP followed by R36 33 kOhm.
 constexpr float commonVcaInputCapacitanceF = 10.0e-6f;
 constexpr float commonVcaInputResistanceOhms = 33000.0f;
+
+// IC5 pin 8 drives IC2b (M5218L) as a current-to-voltage converter. Roland
+// p.15 prints R16 33k with C5 22p in parallel: Zf = R16/(1+s*R16*C5).
+// This nominal 219.22 kHz pole is common to dry and wet, before the chorus
+// support begins at C33/C34. No unknown IC5/M5218L bandwidth is inferred.
+// https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+constexpr double commonVcaFeedbackResistanceOhms = 33000.0;
+constexpr double commonVcaFeedbackCapacitanceF = 22.0e-12;
 
 // NEC 1983 consumer-IC data book, uPC1252H2 electrical characteristics
 // (p. 257; https://archive.org/download/bitsavers_necdataBooCircuitsforConsumerUse_42422169/1983_NEC_Integrated_Circuits_for_Consumer_Use.pdf#page=262): Output Noise Level NV typ -94 dBV, max -84 dBV, at Av = 0 dB,
@@ -300,9 +334,9 @@ constexpr float commonVcaC7Farads = 10.0e-6f;
 constexpr float commonVcaControlVoltsPerDecibel = -5.9e-3f;
 
 // Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1. The fixed
-// internal load is the complete selector ladder in parallel with IC7's input;
-// external jack loads and driven headphone behavior remain OQ-17, and the mono
-// normaling is the host bus's fold (PluginProcessor.cpp, monoJackFoldGain).
+// internal load is the complete selector ladder in parallel with IC7's input.
+// These constants feed the High/open compatibility helpers; OutputNetwork
+// additionally solves selected/loaded stereo and mono connections.
 constexpr float outputCouplingCapacitanceF = 10.0e-6f;
 constexpr float outputCouplingSeriesOhms = 1500.0f;
 constexpr float outputCouplingPotOhms = 10000.0f;
@@ -316,7 +350,8 @@ constexpr float outputWiperInternalLoadOhms =
 // R65/C21 into JA1: 2.2 kOhm in series with each jack and 1 nF (".001x2")
 // from the jack node to ground. This models High with the jack open (OQ-17):
 // the pole's resistance is the series part plus the wiper's Thevenin resistance.
-// Other selector/load responses are now derived, not implemented here:
+// The selected/loaded path is implemented in YouKnowOutputNetwork.h with
+// both capacitors retained. Its high-frequency limiting check is:
 // Q = (1.5k + (1-p)*10k) || (p*10k) || 101k, p = volume position;
 // Rt = B || (A+Q), with (A,B) = (0,41.3k)/(33k,8.3k)/(39.8k,1.5k)
 // for H/M/L. Rs = Rt+2.2k; a resistive load RL gives RL/(RL+Rs) passband gain
@@ -2120,6 +2155,12 @@ float YouKnowEngine::commonVcaInputCouplingCornerHz() noexcept
                        commonVcaInputResistanceOhms);
 }
 
+double YouKnowEngine::commonVcaOutputPoleHz() noexcept
+{
+    return 1.0 / (2.0 * std::numbers::pi * commonVcaFeedbackResistanceOhms
+                  * commonVcaFeedbackCapacitanceF);
+}
+
 float YouKnowEngine::moduleCouplingCornerHz() noexcept
 {
     return rcCornerHz(moduleCouplingCapacitanceF, moduleCouplingResistanceOhms);
@@ -2189,6 +2230,19 @@ float YouKnowEngine::outputWiperNoiseResistance(
     float conductance = 1.0f / upper + 1.0f / outputWiperInternalLoadOhms;
     conductance += 1.0f / lower;
     return 1.0f / conductance;
+}
+
+float YouKnowEngine::outputJackNoiseResistance(float volumePosition) noexcept
+{
+    // R64/R65's 2.2k series resistance adds independent Johnson noise to the
+    // wiper's passive floor. Both reach the open High jack through C22/C21's
+    // same pole, so their powers combine as 4kT*(R_wiper+2.2k). This uses
+    // the existing C17/C20 midband-short approximation; it is not a fitted
+    // floor or a measured installed-unit noise level. At zero Volume the
+    // grounded wiper removes its own contribution, but not R64/R65's.
+    // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+    // https://www.ti.com/document-viewer/lit/html/SBOA345/GUID-F87CE11A-8998-4FB4-BEA6-8D520E81351E
+    return outputWiperNoiseResistance(volumePosition) + outputJackSeriesOhms;
 }
 
 float YouKnowEngine::outputCouplingHighGain() noexcept
@@ -2759,7 +2813,7 @@ void YouKnowEngine::beginDcoCharge(
     if (!retainedReset)
         dco.renderScale = std::max(dcoLaunchScale(voice), 1.0e-12f);
     dco.rampSlopePerSecond = dcoChargingSlope(
-        voice.dcoCv, activeParameters_.range) / dco.renderScale;
+        voice.dcoCv, dcoCircuitRange()) / dco.renderScale;
     const double newSlope = dcoCorrectionSlope(
         dco.rampSlopePerSecond * static_cast<double>(dco.renderScale) * voice.rampCurrentScale
         * intervalSeconds);
@@ -5762,6 +5816,37 @@ void YouKnowEngine::refreshCardJohnsonTemperatureScales() noexcept
     }
 }
 
+void YouKnowEngine::refreshVoiceVcaCoupling() noexcept
+{
+    for (int index = 0; index < maxVoices; ++index)
+    {
+        auto& card = cards_[static_cast<std::size_t>(index)];
+        if (!serviceDerivedVcaCoupling_)
+        {
+            card.vcaInputCouplingG = vcaInputCouplingG_;
+            continue;
+        }
+        // The service trim is fixed after the settled adjustment. Neither
+        // live warm-up nor the thermal-drive comparison switch re-trims it.
+        const float serviceKelvin =
+            voiceCardCelsius(activeParameters_, index, 1.0f) + 273.15f;
+        const float inputTrim = 1.0f
+            + card.vcaGainError * 0.03f * activeParameters_.calibration;
+        const double requiredDivider = 2.0 * thermalVoltage
+            * (static_cast<double>(serviceKelvin) / 298.15)
+            / VoiceVcaSignalLaw::headroomVolts * inputTrim;
+        // The supported Character/card domain stays inside VR27's 0..50k
+        // travel. Retain that physical limit if a future profile exceeds it.
+        const double totalOhms = std::clamp(
+            vcaInputDividerNumeratorOhms / requiredDivider,
+            82000.0 + vcaInputLoadOhms,
+            82000.0 + 50000.0 + vcaInputLoadOhms);
+        card.vcaInputCouplingG = static_cast<float>(std::tan(
+            0.5 / (vcaInputCouplingCapacitanceF * totalOhms
+                   * oversampledRate_)));
+    }
+}
+
 void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
 {
     // Roland p. 19 trims EACH card after at least ten minutes, repeating
@@ -5897,6 +5982,17 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     oversamplingApplied_ = oversamplingRequested_;
     chorus_.prepareSupportRates(sampleRate_);
     activeConverterTimingProfile_ = converterTimingProfile_;
+    // Immutable B-2 regions use the exact model laws. Warm them for every
+    // prepared engine: selectConverterTimingProfile() can enter serial replay
+    // on a later reset without another prepare. Callbacks/reset only read them.
+    for (unsigned i = 0; i < 128; ++i)
+    {
+        firmwareSerialParameterTables_.dcoLfoDepth[i] = dcoLfoDepthScale(static_cast<std::uint8_t>(i));
+        firmwareSerialParameterTables_.lfoRate[i] = lfoRateIncrementForByte(static_cast<std::uint8_t>(i));
+        firmwareSerialParameterTables_.decayRelease[i] = decayReleaseMultiplierForByte(static_cast<std::uint8_t>(i));
+    }
+    for (unsigned i = 0; i < 8; ++i)
+        firmwareSerialParameterTables_.delayFade[i] = lfoDelayFadeIncrementForByte(static_cast<std::uint8_t>(i * 16));
     updateProcessingRate();
     prepared_ = true;
     reset();
@@ -5963,10 +6059,15 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     processingCoefficients_.commonVcaNoiseScale = commonVcaNoiseDensity
         * std::sqrt(1.5f * static_cast<float>(oversampledRate_))
         * voltsToSample;
+    // A TPT tan(pi*fc/Fs) is unsuitable when this pole is above Nyquist.
+    // Reuse the magnitude-matched realization at the actual internal rate;
+    // its signal history is not claimed to be a physical capacitor voltage.
+    processingCoefficients_.commonVcaOutputPole =
+        OutputJackLowPass::coefficients(commonVcaOutputPoleHz(), oversampledRate_);
 
     // C14's load and the following HPF are selected by one panel switch.  Their
     // coefficients move only with that mode or this internal rate.
-    updateSharedHighPass(activeParameters_);
+    updateSharedHighPass(circuitParameters());
     if (highPassSwitchResistance_ > 0)
         highPassSwitch_.prepare(oversampledRate_, highPassSwitchResistance_);
     // The two cut legs' undriven corners: each leg's own passband corner
@@ -5987,6 +6088,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         pi * moduleCouplingCorner * inverseOversampledRate_);
     vcaInputCouplingG_ = std::tan(
         pi * vcaInputCouplingCornerHz() * inverseOversampledRate_);
+    refreshVoiceVcaCoupling();
     commonVcaInputCouplingG_ = std::tan(
         pi * commonVcaInputCouplingCornerHz() * inverseOversampledRate_);
     noiseSourceHighPassG_ = std::tan(
@@ -6004,6 +6106,8 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         pi * noiseSourceLowPassDesignHz * inverseOversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
+    (void) outputNetwork_.prepare(sampleRate_, { activeParameters_.outputSelector,
+        activeParameters_.outputLoadOhms, activeParameters_.outputMono });
     const double deepest = totalLatencySamples(maximumOversampleFactor);
     const double running = totalLatencySamples(oversampling_);
     latencyPadSamples_ = std::clamp(
@@ -6069,7 +6173,11 @@ int YouKnowEngine::effectiveOversampleFactor(int requestedFactor) const noexcept
         ceilingFactor = maximumOversampleFactor;
 
     int result = std::min(sanitiseOversampleFactor(requestedFactor), ceilingFactor);
-    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt)
+    // The serial-program permissive CFG audit bounds DAC-enable gaps at216
+    // ordinary /395 restarted states (Tools/AuditFirmwareControlTrace.py).
+    // This32k floor makes each interval<=125states, hence at most one enable.
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
+        || activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
         while (sampleRate_ * result < 32000.0 && result < maximumOversampleFactor)
             result *= 2;
     return result;
@@ -6164,6 +6272,7 @@ void YouKnowEngine::clearRateDependentOutputPath(
 {
     firstDecimator_.reset();
     secondDecimator_.reset();
+    commonVcaOutputPole_.reset();
     // updateProcessingRate() has already replaced the chorus transitions,
     // retained its BBD buckets/free-running phases, and reinitialised the
     // sample-grid support histories and continuous-support coordinates under
@@ -6205,6 +6314,7 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputBandwidthStateRight_ = 0.0f;
     outputJackLeft_.reset();
     outputJackRight_.reset();
+    outputNetwork_.reset();
     outputNoiseStateLeft_ = 0x91e10da5u;
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
@@ -6300,9 +6410,26 @@ void YouKnowEngine::applyLatencyPad(float& left, float& right) noexcept
 
 void YouKnowEngine::reset()
 {
+    firmwareSerialStreamHead_ = firmwareSerialStreamCount_ = 0;
+    const bool profileChanged = activeConverterTimingProfile_ != converterTimingProfile_;
+    activeConverterTimingProfile_ = converterTimingProfile_;
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+    {
+        firmwareSerialCircuitParameters_ = activeParameters_;
+        firmwareSerialRange_ = firmwareSerialIntervalStartRange_ = firmwareSerialWalkRange_
+            = activeParameters_.range;
+    }
+    // Profile changes can impose a different minimum internal rate. They can
+    // also leave IC40-derived HPF coefficients behind when returning to chart
+    // timing, even at the same rate. Install the new grid/circuit view before
+    // resetting and priming any voices; prepare() already does this once.
+    if (prepared_ && (profileChanged
+        || effectiveOversampleFactor(oversamplingApplied_) != oversampling_))
+        updateProcessingRate();
     for (auto& hold : envelopeHolds_)
         hold.reset(VoiceVcaSignalLaw::holdStandoffVolts);
-    voiceBoardCommandReplayActive_ = voiceBoardCommandReplayRequested_;
+    voiceBoardCommandReplayActive_ = voiceBoardCommandReplayRequested_
+        || converterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay;
     for (auto& voice : voices_)
     {
         voice = Voice {};
@@ -6328,6 +6455,7 @@ void YouKnowEngine::reset()
     // reset, so put them back before anything can render a symmetric filter.
     refreshVoiceCardStageTrims();
     refreshVoiceCardServiceTrims();
+    refreshVoiceVcaCoupling();
     refreshAgedUnitState();
 
     clearOutputPath();
@@ -6369,7 +6497,6 @@ void YouKnowEngine::reset()
     rangeClockClocksToReload_ = 0.0;
     rangeClockTransitionPending_ = false;
     controlScanPhase_ = 1.0;
-    activeConverterTimingProfile_ = converterTimingProfile_;
     converterEventPhases_ = converterEventPhases(converterTimingProfile_);
     nextConverterWrite_ = 0;
     converterPassEnvelopeUpdated_.fill(false);
@@ -6414,7 +6541,10 @@ void YouKnowEngine::reset()
     refreshFirmwareControlTrace(true);
     controlScanPhase_ = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
         ? 0.0 : converterPassEndPhase_;
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+        initialiseFirmwareSerialReplay();
 }
+
 
 void YouKnowEngine::resetForHostStop()
 {
@@ -6486,6 +6616,11 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
     fix01(result.aging, 0.0f);
+    if (static_cast<unsigned>(result.outputSelector) > 2u)
+        result.outputSelector = OutputNetwork::Selector::High;
+    result.outputLoadOhms = std::isfinite(result.outputLoadOhms)
+        && result.outputLoadOhms > 0.0f
+        ? std::clamp(result.outputLoadOhms, 1.0f, 1.0e9f) : 0.0f;
     // Unlike every other 0-1 control, Unit Character extends to 2: 0 is the
     // digital reference, 1 matches real hardware, and the headroom to 2
     // extrapolates every blended mechanism past its physical draw. The old
@@ -6561,7 +6696,8 @@ bool YouKnowEngine::configureCoupledMixer(
     const CoupledSubMixer::Calibration& calibration) noexcept
 {
     if (prepared_ || moduleInputCouplingResistanceOverrideOhms_ > 0.0
-        || oscillatorLevelScale_ != 1.0f || !calibration.valid())
+        || oscillatorLevelScale_ != 1.0f || pulseLevelScale_ != 1.0f
+        || !calibration.valid())
         return false;
     coupledMixerCalibration_ = calibration;
     coupledMixerEnabled_ = true;
@@ -6585,12 +6721,37 @@ double YouKnowEngine::moduleInputCouplingResistanceOhms() const noexcept
         : static_cast<double>(moduleCouplingResistanceOhms);
 }
 
+bool YouKnowEngine::configureServiceDerivedVcaCoupling(bool enabled) noexcept
+{
+    if (prepared_)
+        return false;
+    serviceDerivedVcaCoupling_ = enabled;
+    refreshVoiceVcaCoupling();
+    return true;
+}
+
+bool YouKnowEngine::configureChorusSupport(ChorusSupportProfile profile) noexcept
+{
+    if (prepared_)
+        return false;
+    return chorus_.configureSupportProfile(profile);
+}
+
 bool YouKnowEngine::configureOscillatorLevelScale(float scale) noexcept
 {
     if (prepared_ || coupledMixerEnabled_ || !std::isfinite(scale)
         || scale < 0.25f || scale > 2.0f)
         return false;
     oscillatorLevelScale_ = scale;
+    return true;
+}
+
+bool YouKnowEngine::configurePulseLevelScale(float scale) noexcept
+{
+    if (prepared_ || coupledMixerEnabled_ || !std::isfinite(scale)
+        || scale < 0.25f || scale > 2.0f)
+        return false;
+    pulseLevelScale_ = scale;
     return true;
 }
 
@@ -6704,6 +6865,8 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
                                           || activeParameters_.keyMode
                                                  == KeyMode::Unison);
     const bool highPassChanged = next.highPass != activeParameters_.highPass;
+    if (next.enableCommonVcaOutputPole != activeParameters_.enableCommonVcaOutputPole)
+        commonVcaOutputPole_.reset();
     const bool rangeChanged = next.range != activeParameters_.range;
     const bool stageTrimsChanged =
         next.calibration != activeParameters_.calibration
@@ -6756,6 +6919,19 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay && prepared_)
+    {
+        const auto range = firmwareSerialCircuitParameters_.range;
+        const auto highPass = firmwareSerialCircuitParameters_.highPass;
+        const auto chorus = firmwareSerialCircuitParameters_.chorus;
+        const bool saw = firmwareSerialCircuitParameters_.sawEnabled;
+        firmwareSerialCircuitParameters_ = activeParameters_;
+        firmwareSerialCircuitParameters_.range = range;
+        firmwareSerialCircuitParameters_.highPass = highPass;
+        firmwareSerialCircuitParameters_.chorus = chorus;
+        firmwareSerialCircuitParameters_.sawEnabled = saw;
+        firmwareSerialCircuitParameters_.pulseEnabled = true;
+    }
     refreshDcoMasterClock();
     useCubicEarly_ =
         activeParameters_.vcfTanhMode != VcfTanhMode::Exact
@@ -6765,7 +6941,10 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     if (stageTrimsChanged)
         refreshVoiceCardStageTrims();
     if (thermalScalesChanged)
+    {
         refreshVoiceCardThermalScales();
+        refreshVoiceVcaCoupling();
+    }
     if (startupSnapshot || stageTrimsChanged || thermalScalesChanged)
         refreshVoiceCardServiceTrims();
     if (rampCurrentScalesChanged)
@@ -6773,7 +6952,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     if (agingChanged)
         refreshAgedUnitState();
     if (highPassChanged)
-        updateSharedHighPass(activeParameters_);
+        updateSharedHighPass(circuitParameters());
 
     // A host may deliver its saved snapshot before prepare(), after prepare(),
     // or more than once while restoring state. Until audio time begins, prime
@@ -7353,9 +7532,11 @@ void YouKnowEngine::restartVoiceBoardScanAfterSerialVoiceCommand() noexcept
     // SP with $ffff and jumps through $02eb to the beginning of the main loop,
     // so an interrupted converter pass resumes at RESONANCE rather than at its
     // former ordinal. Treat the engine's logical note command as that completed
-    // handler boundary. The 31.25-kbaud arrival phase and the installed NMOS
-    // uPD7810's automatic entry latency remain unmeasured and are deliberately
-    // not turned into random timing here.
+    // handler boundary. NEC's original-family manual (April 1987, stock 500375,
+    // pp.9-6..9-8) documents 16 nominal states for automatic entry. Arrival
+    // phase, buffering and instruction-boundary wait remain outside this
+    // logical-command adapter; a fixed entry delay alone cannot model them.
+    // https://drive.google.com/file/d/0B44NKm9yPA1bNDFXZnFrdG1PdDA/view
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L204-L244
     for (auto& voice : voices_)
         voice.envelope.latchGate(sustainPedalDown_);
@@ -7820,6 +8001,8 @@ void YouKnowEngine::releaseAllNotes()
 
 void YouKnowEngine::allNotesOff()
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+        return;
     clearHeldNotes();
     assignmentRescanPending_ = false;
     assignmentRescanPassArmed_ = false;
@@ -7838,16 +8021,22 @@ void YouKnowEngine::allNotesOff()
 
 void YouKnowEngine::setPitchBend(float normalisedBipolar) noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+        return;
     pitchBendTarget_ = std::clamp(sanitised(normalisedBipolar, 0.0f), -1.0f, 1.0f);
 }
 
 void YouKnowEngine::setModWheel(float amount) noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+        return;
     modWheelTarget_ = clamp01(sanitised(amount, 0.0f));
 }
 
 void YouKnowEngine::setSustainPedal(bool down) noexcept
 {
+    if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+        return;
     if (sustainPedalDown_ == down)
         return;
     sustainPedalDown_ = down;
@@ -8984,13 +9173,13 @@ YouKnowEngine::SteadyDcoCycle YouKnowEngine::steadyDcoCycle(
     // construction policy does not alter any PIT/CV write or running charge.
     const bool construction = voice.dco.pitState == Dco::PitState::stopped;
     const double nominalPeriod = construction
-        ? 7675.0 / rangeClockHz(activeParameters_.range)
+        ? 7675.0 / rangeClockHz(dcoCircuitRange())
         : std::max(voice.dco.periodSamples / oversampledRate_, 1.0e-12);
     const double reset = static_cast<double>(resetFraction(nominalPeriod))
                        * nominalPeriod;
     const double period = nominalPeriod / dcoMasterClockRatio_;
     const double slope = 0.5 * static_cast<double>(rampAmplitudeVolts)
-        * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, activeParameters_.range)
+        * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, dcoCircuitRange())
         * voice.rampCurrentScale;
     if (dcoResetCircuitEnabled_)
     {
@@ -9108,10 +9297,11 @@ float YouKnowEngine::dcoLaunchScale(const Voice& voice) const noexcept
     // Coordinate choice only: the nominal steady peak of the currently held
     // CV. No target or pending transaction may anticipate its converter write.
     return static_cast<float>(0.5 * dcoChargingSlope(
-        voice.dcoCv, activeParameters_.range) * (period - reset));
+        voice.dcoCv, dcoCircuitRange()) * (period - reset));
 }
 
-void YouKnowEngine::updateDcoHeldCv(Voice& voice, float code) noexcept
+void YouKnowEngine::updateDcoHeldCv(Voice& voice, float code, double samplesAgo,
+                                     bool addCorrections) noexcept
 {
     if (voice.dcoCv == code)
         return;
@@ -9121,23 +9311,23 @@ void YouKnowEngine::updateDcoHeldCv(Voice& voice, float code) noexcept
     {
         const double oldSlope = dco.rampSlopePerSecond;
         refreshDcoResetTrajectory(voice);
-        if (dco.saw.primed)
+        if (addCorrections && dco.saw.primed)
             addDcoSlope(voice, (dco.rampSlopePerSecond - oldSlope)
-                * dco.renderScale * voice.rampCurrentScale / oversampledRate_, 1.0);
+                * dco.renderScale * voice.rampCurrentScale / oversampledRate_, samplesAgo);
         return;
     }
     if (dco.resetSecondsRemaining > 0.0 || dco.positiveRailHeld
         || dco.pitState == Dco::PitState::stopped)
         return;
     const double oldSlope = dco.rampSlopePerSecond;
-    dco.rampSlopePerSecond = dcoChargingSlope(code, activeParameters_.range)
+    dco.rampSlopePerSecond = dcoChargingSlope(code, dcoCircuitRange())
                           / static_cast<double>(dco.renderScale);
-    // T remains the existing DCO converter boundary poll. Future captured
-    // transaction data cannot affect the preceding capacitor trajectory.
-    if (dco.saw.primed)
+    // Legacy callers retain their boundary poll; serial replay supplies the
+    // actual fractional DAC event age. Neither anticipates the held-CV step.
+    if (addCorrections && dco.saw.primed)
         addDcoSlope(voice, dcoCorrectionSlope(
             (dco.rampSlopePerSecond - oldSlope) * dco.renderScale
-            * voice.rampCurrentScale / oversampledRate_), 1.0f);
+            * voice.rampCurrentScale / oversampledRate_), samplesAgo);
 }
 
 void YouKnowEngine::refreshDcoResetTrajectory(Voice& voice) noexcept
@@ -9149,7 +9339,7 @@ void YouKnowEngine::refreshDcoResetTrajectory(Voice& voice) noexcept
     const double voltsPerCoordinate = 0.5 * rampAmplitudeVolts
                                     * dco.renderScale * voice.rampCurrentScale;
     const double slopeVolts = 0.5 * rampAmplitudeVolts
-        * dcoChargingSlope(voice.dcoCv, activeParameters_.range) * voice.rampCurrentScale;
+        * dcoChargingSlope(voice.dcoCv, dcoCircuitRange()) * voice.rampCurrentScale;
     const double target = dcoResetCalibration_.clampVolts
                         + slopeVolts * dco.resetTimeConstant;
     dco.resetTargetValue = target / voltsPerCoordinate - 1.0;
@@ -9226,11 +9416,11 @@ bool YouKnowEngine::pulseMixEnabled(
 }
 
 float YouKnowEngine::pulseWaveNodeMean(
-    const Voice& voice, const EngineParameters& parameters) noexcept
+    const Voice& voice, const EngineParameters& parameters) const noexcept
 {
     return pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty,
                            parameters.enablePulseOffWaveNodeCoupling)
-        ? pulseMixVolts * (2.0f * voice.pulseDuty - 1.0f)
+        ? pulseMixVolts * pulseLevelScale_ * (2.0f * voice.pulseDuty - 1.0f)
         : 0.0f;
 }
 
@@ -9463,7 +9653,13 @@ void YouKnowEngine::advanceDcoPitAndRamp(
     // correction-table grid, but large enough to absorb final-operation ULPs.
     const double eventToleranceSeconds = std::max(
         1.0e-15, intervalSeconds * 1.0e-9);
-    const double pitClockHz = actualRangeClockHz(range);
+    const bool serialReplay = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay
+        && voice.cardIndex >= 0 && voice.cardIndex < hardwareVoices;
+    if (serialReplay)
+        range = firmwareSerialWalkRange_ = firmwareSerialIntervalStartRange_;
+    double pitClockHz = actualRangeClockHz(range);
+    auto serialClock = firmwareSerialClockStart_;
+    double serialClockOrigin = 0.0;
     const double thresholdStart = std::isfinite(previousThresholdVolts)
         ? static_cast<double>(previousThresholdVolts) : 6.0;
     const double thresholdEnd = std::isfinite(thresholdVolts)
@@ -9498,7 +9694,9 @@ void YouKnowEngine::advanceDcoPitAndRamp(
         return dcoResetCircuitEnabled_ ? age : static_cast<double>(static_cast<float>(age));
     };
     const auto clocksToNextPitInputFalling = [&](double atElapsed) {
-        return rangeClockClocksToNextFallingEdge(atElapsed, range);
+        return serialReplay && firmwareSerialRangeChanged_
+            ? serialRangeClockPhase(serialClock, atElapsed - serialClockOrigin, range)
+            : rangeClockClocksToNextFallingEdge(atElapsed, range);
     };
 
     // A live card-current edit changes the physical interpretation of the
@@ -9522,6 +9720,10 @@ void YouKnowEngine::advanceDcoPitAndRamp(
     }
 
     double elapsed = 0.0;
+    unsigned serialEventIndex = 0;
+    const unsigned serialEventCount = serialReplay
+        ? firmwareSerialDcoCounts_[static_cast<std::size_t>(voice.cardIndex)] : 0;
+
     // At 8 kHz, 1x, the 4 MHz range clock and divider 8, the closed interval
     // can contain 126 OUT transitions plus 63 reset completions and 63 supply
     // hits. A fixed pitch transaction adds one pre-stage and two byte events;
@@ -9544,6 +9746,10 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             dco.pitWriteState == Dco::PitWriteState::idle
                 ? std::numeric_limits<double>::infinity()
                 : std::max(0.0, dco.cpuStatesToWrite) / voiceCpuStateHz;
+        const double serialWriteSeconds = serialEventIndex < serialEventCount
+            ? std::max(0.0, firmwareSerialDcoEvents_[static_cast<std::size_t>(voice.cardIndex)]
+                [serialEventIndex].position * intervalSeconds - elapsed)
+            : std::numeric_limits<double>::infinity();
         const double resetSeconds = dco.resetSecondsRemaining > 0.0
             ? dco.resetSecondsRemaining
             : std::numeric_limits<double>::infinity();
@@ -9573,7 +9779,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             ? 0.0
             : std::max(0.0, chargingRailSeconds);
         const double segment = std::min(
-            { remaining, pitSeconds, cpuWriteSeconds, resetSeconds,
+            { remaining, pitSeconds, cpuWriteSeconds, serialWriteSeconds, resetSeconds,
               positiveRailSeconds });
 
         if (addCorrections && !comparatorPinnedForInterval && segment > 0.0)
@@ -9708,8 +9914,9 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             pitSeconds <= segment + eventToleranceSeconds;
         const bool cpuWriteEvent =
             cpuWriteSeconds <= segment + eventToleranceSeconds;
+        const bool serialWriteEvent = serialWriteSeconds <= segment + eventToleranceSeconds;
         if (!resetComplete && !positiveRailHit && !pitEvent
-            && !cpuWriteEvent)
+            && !cpuWriteEvent && !serialWriteEvent)
             break;
 
         // Complete an older C54 discharge before processing a coincident new
@@ -9804,6 +10011,36 @@ void YouKnowEngine::advanceDcoPitAndRamp(
                 beginDcoDischarge(
                     voice, eventSamplesAgo(elapsed), addCorrections);
             }
+        }
+
+        if (serialWriteEvent)
+        {
+            const auto& event = firmwareSerialDcoEvents_[static_cast<std::size_t>(voice.cardIndex)]
+                [serialEventIndex++];
+            if (event.kind == SerialDcoEvent::Kind::Control)
+                writeDcoMode3Control(voice, clocksToNextPitInputFalling(elapsed),
+                                    eventSamplesAgo(elapsed), addCorrections);
+            else if (event.kind == SerialDcoEvent::Kind::Msb)
+                dco.stageMode3Count(event.value);
+            else if (event.kind == SerialDcoEvent::Kind::PitchCv)
+            {
+                voice.dcoCvTarget = static_cast<float>(event.value);
+                updateDcoHeldCv(voice, voice.dcoCvTarget, eventSamplesAgo(elapsed), addCorrections);
+            }
+            else if (event.kind == SerialDcoEvent::Kind::Range)
+            {
+                const auto next = static_cast<DcoRange>(event.value);
+                advanceSerialRangeClock(serialClock, elapsed - serialClockOrigin, range);
+                const double oldFalling = serialClock.falling;
+                changeSerialRangeClock(serialClock, range, next);
+                firmwareSerialWalkRange_ = next;
+                applySerialVoiceRange(voice, range, next, oldFalling, serialClock.falling,
+                                      eventSamplesAgo(elapsed), addCorrections);
+                range = next;
+                pitClockHz = actualRangeClockHz(range);
+                serialClockOrigin = elapsed;
+            }
+            // LSB is retained by the bus adapter; CE changes only on a complete pair.
         }
 
         if (cpuWriteEvent)
@@ -9901,7 +10138,7 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
     // SUB level as a C56 step.
     const bool trackPulseNode = activeParameters_.enablePulseOffWaveNodeCoupling;
     const bool trackSubNode = activeParameters_.enableSubHalfWaveNodeCoupling;
-    const bool trackSawNode = activeParameters_.sawEnabled
+    const bool trackSawNode = circuitParameters().sawEnabled
                            && (trackPulseNode || trackSubNode);
     if (trackPulseNode || trackSubNode || trackSawNode)
     {
@@ -9920,8 +10157,8 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
                           || rampVolts >= voice.pulseThresholdVolts
                            ? 1.0f : -1.0f;
             pulseNode = carrierHz <= endpointTrackingMaximumHz
-                ? dco.pulseState * pulseMixVolts
-                : pulseWaveNodeMean(voice, activeParameters_);
+                ? dco.pulseState * pulseMixVolts * pulseLevelScale_
+                : pulseWaveNodeMean(voice, circuitParameters());
         }
         // A common-clock offset changes ramp height at fixed current, hence
         // also the saw's DC mean. Retain its C56 charge behind the shut VCA,
@@ -10016,7 +10253,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Comparator and sub transitions were inserted at their PIT/ramp event
     // timestamps above; their logic levels are independent of ramp amplitude.
     const float pulseOut =
-        dco.pulse.advance(dco.pulseState) * pulseMixVolts;
+        dco.pulse.advance(dco.pulseState) * pulseMixVolts * pulseLevelScale_;
     const float subCurrent = parameters.enableSubDiodeControl
         ? SubLevelDiodeLaw::gain(subCv_) : static_cast<float>(subCv_);
     const float subGain = subMixVolts * subCurrent
@@ -10282,7 +10519,8 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     // node, so it is advanced for an inactive card too, ahead of the early
     // return below.
     const float vcaInput = voice.vcaInputCoupling.process(
-        filtered, vcaInputCouplingG_, 0.0f, 1.0f);
+        filtered, cards_[static_cast<std::size_t>(voice.cardIndex)].vcaInputCouplingG,
+        0.0f, 1.0f);
     voice.vcaInputVolts = vcaInput;
 
     if (!voice.active)
@@ -10589,7 +10827,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         }
     }
 
-    const auto& parameters = activeParameters_;
+    const auto& parameters = circuitParameters();
 
     // Resolve a reference calibration once per block, before the shared
     // Tr21/C42/BA662/C41 path. Nominal is exactly unity; the profile changes
@@ -10650,6 +10888,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     std::uint32_t outputCouplingCacheKey = 0u;
     float outputCouplingCacheGain = 0.0f;
     float outputCouplingCacheNoiseScale = 0.0f;
+    (void) outputNetwork_.configure({ parameters.outputSelector,
+        parameters.outputLoadOhms, parameters.outputMono });
+    const bool useSelectedOutput =
+        parameters.outputSelector != OutputNetwork::Selector::High
+        || parameters.outputLoadOhms > 0.0f;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -10719,6 +10962,18 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // normalized timing profile preserves that qualitative fact while
             // leaving exact physical offsets open.
             bool converterPassCompleted = false;
+            if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+            {
+                advanceFirmwareSerialInterval(coefficients.internalIntervalSeconds);
+                const auto& event = firmwareSerialHoldEvent_;
+                physicalHoldEvent.active = event.active;
+                physicalHoldEvent.write = event.write;
+                physicalHoldEvent.position = event.position;
+                physicalHoldEvent.previousTarget = event.previousTarget;
+                physicalHoldEvent.target = event.target;
+            }
+            else
+            {
             advanceFirmwareControlEvents(controlScanPhase_);
             if (controlScanPhase_ >= converterPassEndPhase_)
             {
@@ -10856,10 +11111,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     currentPassiveHoldTarget(physicalHoldEvent.write);
             }
 
+            }
+
             const bool resonanceEvent = physicalHoldEvent.active
                 && physicalHoldEvent.write.destination
                        == ConverterDestination::Resonance;
-            if (envelopeHoldsConfigured_)
+            if (envelopeHoldsConfigured_
+                && activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareSerialReplay)
                 advanceEnvelopeHoldControls(
                     controlScanPhase_, coefficients.scanPhasePerInternalSample,
                     physicalHoldEvent.active && physicalHoldEvent.position > 0.0
@@ -11028,6 +11286,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // notes rather than freeze notes that are already sounding.
             const auto updateVoiceForInterval = [&](int slot) {
                 auto& voice = voices_[static_cast<std::size_t>(slot)];
+                if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+                    firmwareSerialWalkRange_ = firmwareSerialIntervalStartRange_;
 #if defined(YOUKNOW_WORK_AUDIT)
                 YOUKNOW_COUNT_DOMAIN_WORK(holdVoiceUpdates, 1);
 #endif
@@ -11241,7 +11501,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // card-local event walk above read the same left-boundary phase;
             // advance that one physical divider once after every card consumes
             // this interval.
-            advanceRangeClock(parameters.range);
+            if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
+                commitFirmwareSerialClock();
+            else
+                advanceRangeClock(parameters.range);
             // Publish the next boundary's temperature only after all voices
             // and the shared prescaler consumed the preceding clock rate.
             refreshDcoMasterClock();
@@ -11251,6 +11514,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // Reassign only after the complete ordered pass, so every physical
             // envelope has observed gate-off before any replacement Note On.
             if (activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt
+                && activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareSerialReplay
                 && converterPassCompleted && assignmentRescanPending_
                 && assignmentRescanPassArmed_)
                 completeVoiceAssignmentRescan();
@@ -11376,10 +11640,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 patchLevelCacheValid = true;
             }
             float levelled = vcaInput * patchLevelCacheValue;
+            if (parameters.enableCommonVcaOutputPole)
+                levelled = commonVcaOutputPole_.process(
+                    levelled, coefficients.commonVcaOutputPole);
             // The uPC1252H2's own output noise (see commonVcaOutputNoiseDbv)
             // appears at IC2b's output regardless of what the bus carries, so
             // it is added here, ahead of the dry/wet split, and the dry and
-            // both wet legs carry it. Unit Character 0 keeps the exact-
+            // both wet legs carry it. NEC's value is already output-referred
+            // through its test I/V stage; do not filter it again as if it were
+            // an identified white current source before R16/C5.
+            // Unit Character 0 keeps the exact-
             // silence calibrated nominal, exactly as the resistor floors do.
             if (parameters.enableCommonVcaNoise)
             {
@@ -11401,7 +11671,15 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // modes skip the BBD work behind it; the wet path rebuilds from
             // silence on engage. Exact keeps the established always-running
             // lines -- the same policy split as the voice-card freewheel.
-            if (parameters.chorus != ChorusMode::Off
+            // IC40's mode and mute pins are independent. Keep the selected
+            // clock programme alive even while muted; the physical clock-mute
+            // circuit still decides whether individual BBD shifts run.
+            const bool serialChorus = activeConverterTimingProfile_
+                == ConverterTimingProfile::FirmwareSerialReplay;
+            chorus_.setHardwareModeSelection(serialChorus
+                ? ((firmwareSerialIc40_ & 2u) ? ChorusMode::Two : ChorusMode::One)
+                : ChorusMode::Off);
+            if (serialChorus || parameters.chorus != ChorusMode::Off
                 || parameters.vcfTanhMode == VcfTanhMode::Exact
                 || parameters.enableChorusClockMuteCircuit
                 || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
@@ -11520,7 +11798,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const auto outputCouplingKey =
             std::bit_cast<std::uint32_t>(glidedVolume_);
         float outputCouplingGain;
-        float outputWiperNoiseScale;
+        float outputPassiveNoiseScale;
         if (!outputCouplingCacheValid
             || outputCouplingCacheKey != outputCouplingKey)
         {
@@ -11541,19 +11819,19 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 : 0.0f;
             outputCouplingCacheKey = outputCouplingKey;
             outputCouplingCacheGain = outputCouplingGain;
-            const float wiperNoiseDensity = std::sqrt(
+            const float passiveNoiseDensity = std::sqrt(
                 4.0f * boltzmannConstant * outputNoiseTemperatureKelvin
-                * outputWiperNoiseResistance(glidedVolume_));
-            outputWiperNoiseScale = wiperNoiseDensity
+                * outputJackNoiseResistance(glidedVolume_));
+            outputPassiveNoiseScale = passiveNoiseDensity
                 * std::sqrt(1.5f * static_cast<float>(sampleRate_))
                 * voltsToSample;
-            outputCouplingCacheNoiseScale = outputWiperNoiseScale;
+            outputCouplingCacheNoiseScale = outputPassiveNoiseScale;
             outputCouplingCacheValid = true;
         }
         else
         {
             outputCouplingGain = outputCouplingCacheGain;
-            outputWiperNoiseScale = outputCouplingCacheNoiseScale;
+            outputPassiveNoiseScale = outputCouplingCacheNoiseScale;
         }
         outputNoiseStateLeft_ = xorshift32(outputNoiseStateLeft_);
         outputNoiseStateRight_ = xorshift32(outputNoiseStateRight_);
@@ -11569,24 +11847,43 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             coefficients.outputSummerNoiseScale * jackBoardJohnsonScale_;
         outputLeft += outputNoiseLeft * summerNoiseScale;
         outputRight += outputNoiseRight * summerNoiseScale;
+        // Feed both realizations continuously, so changing the connection
+        // does not resurrect stale filter history. The established High/open
+        // result remains bit-identical; the full network owns all passive
+        // resistor noise in the selected/loaded path, without adding it twice.
+        const float networkInputLeft = outputLeft;
+        const float networkInputRight = outputRight;
         outputLeft = outputCouplingLeft_.process(
             outputLeft, outputCouplingG_, 0.0f, outputCouplingGain);
         outputRight = outputCouplingRight_.process(
             outputRight, outputCouplingG_, 0.0f, outputCouplingGain);
         outputWiperNoiseStateLeft_ = xorshift32(outputWiperNoiseStateLeft_);
         outputWiperNoiseStateRight_ = xorshift32(outputWiperNoiseStateRight_);
-        const float wiperNoiseScale =
-            outputWiperNoiseScale * jackBoardJohnsonScale_;
+        (void) outputNetwork_.setVolume(glidedVolume_);
+        (void) outputNetwork_.setNoise(jackBoardCelsius_ + 273.15,
+                                parameters.calibration);
+        const auto selectedOutput = outputNetwork_.process(
+            networkInputLeft * internalVoltsPerUnit,
+            networkInputRight * internalVoltsPerUnit,
+            std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateLeft_),
+            std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateRight_));
+        const float passiveNoiseScale =
+            outputPassiveNoiseScale * jackBoardJohnsonScale_;
         outputLeft += bipolarFromState(outputWiperNoiseStateLeft_)
-                    * parameters.calibration * wiperNoiseScale;
+                    * parameters.calibration * passiveNoiseScale;
         outputRight += bipolarFromState(outputWiperNoiseStateRight_)
-                     * parameters.calibration * wiperNoiseScale;
-        // C22/C21 with R64/R65: the jack node the plug sees. The coupling and
-        // the wiper's noise both sit behind the 2.2 kOhm, so the pole follows
-        // them. It is the nominal circuit's, so Unit Character does not scale
+                     * parameters.calibration * passiveNoiseScale;
+        // C22/C21 with R64/R65: the jack node the plug sees. The signal,
+        // wiper noise and R64/R65's own series noise share this pole.
+        // It is the nominal circuit's, so Unit Character does not scale
         // it; see OutputJackLowPass for the numerical matching policy.
         outputLeft = outputJackLeft_.process(outputLeft, outputJackCoefficients_);
         outputRight = outputJackRight_.process(outputRight, outputJackCoefficients_);
+        if (useSelectedOutput)
+        {
+            outputLeft = static_cast<float>(selectedOutput[0] * voltsToSample);
+            outputRight = static_cast<float>(selectedOutput[1] * voltsToSample);
+        }
 
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.
@@ -11625,6 +11922,586 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         }
     }
 
+    updateActiveVoiceCount();
+}
+
+DcoRange YouKnowEngine::dcoCircuitRange() const noexcept
+{
+    return activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay
+        ? firmwareSerialWalkRange_ : activeParameters_.range;
+}
+
+const EngineParameters& YouKnowEngine::circuitParameters() const noexcept
+{
+    return activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay
+        ? firmwareSerialCircuitParameters_ : activeParameters_;
+}
+
+double YouKnowEngine::serialRangeClockPhase(
+    const SerialRangeClock& clock, double seconds, DcoRange range) const noexcept
+{
+    const double frequency = actualRangeClockHz(range);
+    const double advanced = std::max(0.0, seconds) * frequency;
+    const double tolerance = std::max(1.0e-15, (1.0 / oversampledRate_) * 1.0e-9) * frequency;
+    const auto phase = [tolerance](double clocks) {
+        double result = std::fmod(clocks, 1.0);
+        if (result < 0.0)
+            result += 1.0;
+        return result <= tolerance || 1.0 - result <= tolerance ? 1.0 : result;
+    };
+    if (!clock.pending)
+        return phase(clock.falling - advanced);
+    if (advanced + tolerance < clock.reload)
+        return advanced + tolerance < clock.falling
+            ? clock.falling - advanced : 1.0 - std::max(0.0, advanced - clock.falling);
+    return phase(1.0 - rangeClockHz(range) / masterClockHz
+                 - std::max(0.0, advanced - clock.reload));
+}
+
+void YouKnowEngine::advanceSerialRangeClock(
+    SerialRangeClock& clock, double seconds, DcoRange range) const noexcept
+{
+    const double frequency = actualRangeClockHz(range);
+    const double advanced = std::max(0.0, seconds) * frequency;
+    const double tolerance = std::max(1.0e-15, (1.0 / oversampledRate_) * 1.0e-9) * frequency;
+    const double falling = serialRangeClockPhase(clock, seconds, range);
+    if (clock.pending && advanced + tolerance < clock.reload)
+        clock.reload -= advanced;
+    else
+    {
+        clock.reload = 0.0;
+        clock.pending = false;
+    }
+    clock.falling = falling;
+}
+
+void YouKnowEngine::changeSerialRangeClock(
+    SerialRangeClock& clock, DcoRange previous, DcoRange next) const noexcept
+{
+    if (previous == next)
+        return;
+    const double frequency = actualRangeClockHz(previous);
+    const double ratio = actualRangeClockHz(next) / frequency;
+    const double tolerance = std::max(1.0e-15, (1.0 / oversampledRate_) * 1.0e-9) * frequency;
+    double reload = clock.reload;
+    if (!clock.pending)
+    {
+        const double rawTick = rangeClockHz(previous) / masterClockHz;
+        // Same IC35 policy as the existing boundary transition: exact old
+        // reload equality wins before PF; the new preset is captured next.
+        reload = clock.falling > 1.0 - rawTick + tolerance
+            ? clock.falling - (1.0 - rawTick) : clock.falling + rawTick;
+    }
+    const bool fallingBeforeReload = clock.falling + tolerance < reload;
+    clock.reload = reload * ratio;
+    clock.falling = fallingBeforeReload ? clock.falling * ratio
+        : clock.reload + 1.0 - rangeClockHz(next) / masterClockHz;
+    clock.pending = true;
+}
+
+void YouKnowEngine::applySerialVoiceRange(
+    Voice& voice, DcoRange previous, DcoRange next, double oldFalling,
+    double newFalling, double samplesAgo, bool addCorrections) noexcept
+{
+    if (previous == next)
+        return;
+    auto& dco = voice.dco;
+    const double oldSlope = dco.rampSlopePerSecond * dco.renderScale * voice.rampCurrentScale;
+    const float previousScale = voice.rampCurrentScale;
+    const float nextScale = rampCurrentScaleFor(
+        cards_[static_cast<std::size_t>(voice.cardIndex)], activeParameters_.calibration, next);
+    // Current selection changes at PF, not at the next oscillator reset.
+    // Preserve C54's voltage through the component-coordinate reprojection.
+    if (dco.rampSlopePerSecond > 0.0 && !dco.physicalResetActive)
+        dco.rampSlopePerSecond *= dcoChargingResistance(previous) / dcoChargingResistance(next);
+    if (nextScale != previousScale)
+    {
+        dco.rampValue = (dco.rampValue + 1.0) * static_cast<double>(previousScale) / nextScale - 1.0;
+        if (dco.resetSecondsRemaining > 0.0 && !dco.physicalResetActive)
+            dco.rampSlopePerSecond *= static_cast<double>(previousScale) / nextScale;
+        voice.rampCurrentScale = nextScale;
+    }
+    if (dco.physicalResetActive)
+        refreshDcoResetTrajectory(voice);
+    if (dco.positiveRailHeld)
+    {
+        dco.rampValue = dcoPositiveBaseRail(static_cast<double>(dco.renderScale) * nextScale);
+        dco.rampSlopePerSecond = 0.0;
+    }
+    const double newSlope = dco.rampSlopePerSecond * dco.renderScale * voice.rampCurrentScale;
+    if (addCorrections && dco.saw.primed && oldSlope != newSlope)
+        addDcoSlope(voice, dcoCorrectionSlope((newSlope - oldSlope) / oversampledRate_), samplesAgo);
+    if (dco.pitState != Dco::PitState::stopped && dco.pitClocksToEvent > 0.0)
+        dco.pitClocksToEvent = newFalling
+            + std::max(0.0, std::round(dco.pitClocksToEvent - oldFalling));
+    updateActiveDcoPeriod(dco, next);
+}
+
+void YouKnowEngine::commitFirmwareSerialClock() noexcept
+{
+    if (firmwareSerialRangeChanged_)
+    {
+        rangeClockClocksToFallingEdge_ = firmwareSerialClockEnd_.falling;
+        rangeClockClocksToReload_ = firmwareSerialClockEnd_.reload;
+        rangeClockTransitionPending_ = firmwareSerialClockEnd_.pending;
+    }
+    else
+        advanceRangeClock(firmwareSerialRange_);
+    firmwareSerialWalkRange_ = firmwareSerialRange_;
+}
+
+void YouKnowEngine::applyFirmwareSerialIc40(unsigned value, std::uint64_t states) noexcept
+{
+    firmwareSerialIc40States_ = states;
+    if (value == firmwareSerialIc40_)
+        return;
+    firmwareSerialIc40_ = value;
+    auto& parameters = firmwareSerialCircuitParameters_;
+    const auto previousHighPass = parameters.highPass;
+    parameters.sawEnabled = (value & 0x10u) == 0;
+    parameters.highPass = static_cast<HighPassMode>(3u - ((value >> 2) & 3u));
+    parameters.chorus = (value & 1u) != 0 ? ChorusMode::Off
+        : (value & 2u) != 0 ? ChorusMode::Two : ChorusMode::One;
+    if (parameters.highPass != previousHighPass)
+        updateSharedHighPass(parameters);
+}
+
+bool YouKnowEngine::configureFirmwareSerialReplay(
+    const FirmwareSerialReplayConfiguration& configuration) noexcept
+{
+    if (prepared_ || (configuration.streaming && !configuration.schedule.empty())
+        || configuration.initialAdc.elapsedStates != 0
+        || configuration.initialAdc.statesUntilConversion == 0
+        || configuration.initialAdc.statesUntilConversion > FirmwareAdcTrace::conversionStates
+        || configuration.initialAdc.channel > 3 || (configuration.initialAdc.anm & ~8u) != 0
+        || (configuration.initialAdc.mkh != 4 && configuration.initialAdc.mkh != 5)
+        || configuration.initialAdc.eiDeferred > 1
+        || static_cast<unsigned>(configuration.cpu.adc.anmWritePhase) > 2
+        || static_cast<unsigned>(configuration.cpu.adc.accessBoundary) > 1)
+        return false;
+    for (std::size_t i = 1; i < configuration.schedule.size(); ++i)
+        if (configuration.schedule[i].states < configuration.schedule[i - 1].states)
+            return false;
+    firmwareSerialConfiguration_ = configuration;
+    converterTimingProfile_ = ConverterTimingProfile::FirmwareSerialReplay;
+    return true;
+}
+
+bool YouKnowEngine::appendFirmwareSerialBytes(
+    std::span<const FirmwareSerialTrace::ByteReady> bytes) noexcept
+{
+    if (!prepared_ || !firmwareSerialConfiguration_.streaming
+        || activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareSerialReplay
+        || firmwareSerialStatus_ != FirmwareSerialTrace::Status::ReachedTarget
+        || bytes.size() > firmwareSerialStreamingCapacity - firmwareSerialStreamCount_)
+        return false;
+    std::uint64_t previous = firmwareSerialState_.now;
+    if (firmwareSerialStreamCount_ != 0)
+        previous = firmwareSerialStream_[firmwareSerialStreamHead_
+                                        + firmwareSerialStreamCount_ - 1].states;
+    for (const auto& byte : bytes)
+    {
+        if (byte.states < previous || byte.states < firmwareSerialState_.now
+            || (byte.states == firmwareSerialState_.now && firmwareSerialAudioStates_ > 0.0))
+            return false;
+        previous = byte.states;
+    }
+    if (bytes.empty())
+        return true;
+    if (firmwareSerialStreamHead_ + firmwareSerialStreamCount_ + bytes.size()
+            > firmwareSerialStreamingCapacity)
+    {
+        std::copy_n(firmwareSerialStream_.begin() + firmwareSerialStreamHead_,
+                    firmwareSerialStreamCount_, firmwareSerialStream_.begin());
+        firmwareSerialStreamHead_ = 0;
+    }
+    std::copy(bytes.begin(), bytes.end(), firmwareSerialStream_.begin()
+              + firmwareSerialStreamHead_ + firmwareSerialStreamCount_);
+    firmwareSerialStreamCount_ += bytes.size();
+    return true;
+}
+
+void YouKnowEngine::initialiseFirmwareSerialReplay() noexcept
+{
+    firmwareSerialState_ = {};
+    firmwareSerialState_.adc = firmwareSerialConfiguration_.initialAdc;
+    firmwareSerialEvents_ = {};
+    firmwareSerialStatus_ = FirmwareSerialTrace::Status::ReachedTarget;
+    firmwareSerialScheduleCursor_ = 0;
+    firmwareSerialStreamHead_ = firmwareSerialStreamCount_ = 0;
+    firmwareSerialAudioStates_ = 0.0;
+    firmwareSerialTimelineStates_ = firmwareSerialRateBaseStates_ = 0.0L;
+    firmwareSerialTimelineRate_ = 0.0;
+    firmwareSerialRateSamples_ = 0;
+    firmwareSerialDcoCounts_.fill(0);
+    firmwareSerialPitLsb_.fill(0);
+    firmwareSerialPitNeedsMsb_.fill(false);
+    firmwareSerialHoldEvent_ = {};
+    for (unsigned i = 0; i < 128; ++i)
+    {
+        firmwareSerialTables_.attack[i] = attackIncrementForByte(static_cast<std::uint8_t>(i));
+        firmwareSerialTables_.portamento[i] = portamentoIncrementForIndex(static_cast<std::uint8_t>(i));
+    }
+    for (int i = 0; i < 104; ++i)
+    {
+        firmwareSerialTables_.pitchCv[i] = derivedDcoCvAnchor(i);
+        firmwareSerialTables_.pitchDivider[i] = static_cast<std::uint16_t>(derivedDcoDividerAnchor(i));
+    }
+    firmwareSerialParameterTables_.control = firmwareSerialTables_;
+    firmwareSerialCircuitParameters_ = activeParameters_;
+    firmwareSerialRange_ = firmwareSerialIntervalStartRange_ = firmwareSerialWalkRange_
+        = activeParameters_.range;
+    firmwareSerialState_.registers.portf = activeParameters_.range == DcoRange::Four ? 0xc0
+        : activeParameters_.range == DcoRange::Eight ? 0x40 : 0x00;
+    firmwareSerialRangeChanged_ = false;
+    // A declared main02EC state, not a cold ROM reset image. Seed static panel
+    // coefficients and raw/processed histories once. Downstream ADC-derived
+    // caches start neutral; custom raw inputs take effect as subsequent passes
+    // compute those caches. Only the default neutral raw8 is initially settled.
+    firmwareControlState_ = {};
+    auto& ram = firmwareControlState_.ram;
+    ram[0x1e] = 8;
+    const auto putWord = [&ram](unsigned address, unsigned value) {
+        ram[address] = static_cast<std::uint8_t>(value);
+        ram[address + 1] = static_cast<std::uint8_t>(value >> 8);
+    };
+    const auto& p = activeParameters_;
+    ram[0x1e] |= p.pulseEnabled ? 0x40 : 0;
+    ram[0x37] = static_cast<std::uint8_t>((p.pwmSource == PwmSource::Lfo ? 1 : 0)
+        | (p.envPolarity == EnvPolarity::Normal ? 2 : 0)
+        | (p.vcaMode == VcaMode::Envelope ? 4 : 0)
+        | (static_cast<unsigned>(p.highPass) << 3));
+    putWord(0x21, envelopeDecayReleaseMultiplier(p.decay));
+    putWord(0x23, storedControlByte(p.sustain) * 128u);
+    putWord(0x25, envelopeDecayReleaseMultiplier(p.release));
+    putWord(0x39, storedControlByte(p.noiseLevel) * 128u);
+    putWord(0x3b, storedControlByte(p.subLevel) * 128u);
+    putWord(0x3d, storedControlByte(p.cutoff) * 128u);
+    putWord(0x3f, storedControlByte(p.resonance) * 128u);
+    putWord(0x43, storedControlByte(p.vcaLevel) * 128u);
+    ram[0x41] = static_cast<std::uint8_t>(storedControlByte(p.envDepth) * 2u);
+    ram[0x42] = static_cast<std::uint8_t>(storedControlByte(p.keyFollow) * 2u);
+    ram[0x45] = storedControlByte(p.attack);
+    ram[0x47] = static_cast<std::uint8_t>(storedControlByte(p.pwmDepth) * 2u);
+    ram[0x48] = static_cast<std::uint8_t>(storedControlByte(p.vcfLfoDepth) * 2u);
+    ram[0x49] = dcoLfoDepthScale(storedControlByte(p.dcoLfoDepth));
+    putWord(0x4b, lfoRateIncrement(p.lfoRate));
+    putWord(0x58, envelopeAttackIncrement(p.lfoDelay));
+    putWord(0x6c, lfoDelayFadeIncrement(p.lfoDelay));
+    // A-5 0BFB/0C2B complements the stored switch bytes before sending to
+    // B-2. The IC40 rails are active low; PF C0/40/00 means Four/Eight/Sixteen.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt
+    ram[0x46] = static_cast<std::uint8_t>((p.sawEnabled ? 0 : 0x10)
+        | ((3u - static_cast<unsigned>(p.highPass)) << 2)
+        | (p.chorus == ChorusMode::Off ? 1 : 0) | (p.chorus == ChorusMode::Two ? 2 : 0));
+    firmwareSerialIc40_ = ram[0x46];
+    firmwareSerialIc40States_ = 0;
+    // Pulse is physically disabled by its later PWM converter voltage; do not
+    // pre-gate the audio at the earlier command/RAM write (or host checkbox).
+    firmwareSerialCircuitParameters_.pulseEnabled = true;
+    updateSharedHighPass(firmwareSerialCircuitParameters_);
+    // OneTwo is a product extension with no ordinary stored switch encoding.
+    if (p.chorus == ChorusMode::OneTwo)
+        firmwareSerialStatus_ = FirmwareSerialTrace::Status::UnsupportedPath;
+    const auto processed = [](unsigned raw) {
+        return raw <= 4 ? 0u : raw <= 238 ? raw - 4 : std::min(255u, 2 * raw - 243);
+    };
+    for (unsigned i = 0; i < 8; ++i)
+    {
+        const auto raw = firmwareSerialConfiguration_.inputs.raw[i];
+        ram[0x80 + i] = raw;
+        ram[0x88 + i] = static_cast<std::uint8_t>(processed(raw));
+    }
+    const unsigned bank = firmwareSerialState_.adc.anm ? 4 : 0;
+    ram[0x5c] = firmwareSerialState_.adc.anm;
+    for (unsigned i = 0; i < 4; ++i)
+        ram[0x5d + i] = firmwareSerialState_.adc.conversion[i]
+            = firmwareSerialConfiguration_.inputs.raw[bank + i];
+    for (int card = 0; card < hardwareVoices; ++card)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(card)];
+        if (voice.dcoResetPending) ram[0] |= static_cast<std::uint8_t>(1u << card);
+        ram[9 + card] = static_cast<std::uint8_t>(voice.targetMidi);
+        putWord(0x71 + 2 * card, static_cast<unsigned>(voice.currentMidi * 256.0f));
+        putWord(0x27 + 2 * card, voice.envelope.level);
+    }
+    firmwareSerialState_.control = firmwareControlState_;
+    controlScanPhase_ = 0.0;
+}
+
+bool YouKnowEngine::decodeFirmwareSerialDac(unsigned pa, ConverterWrite& write) const noexcept
+{
+    const unsigned channel = pa & 7u;
+    const unsigned enables = (~pa) & 0x70u;
+    if (enables == 0x10u && channel < 7)
+        write = {channel == 6 ? ConverterDestination::Sub : ConverterDestination::Pitch,
+                 channel == 6 ? -1 : static_cast<int>(channel)};
+    else if (enables == 0x20u)
+        write = {channel == 6 ? ConverterDestination::CommonVca
+                 : channel == 7 ? ConverterDestination::Pwm : ConverterDestination::Vcf,
+                 channel < 6 ? static_cast<int>(channel) : -1};
+    else if (enables == 0x40u)
+        write = {channel == 6 ? ConverterDestination::Resonance
+                 : channel == 7 ? ConverterDestination::Noise : ConverterDestination::VoiceVca,
+                 channel < 6 ? static_cast<int>(channel) : -1};
+    else return false;
+    return true;
+}
+
+float YouKnowEngine::firmwareSerialDacTarget(const ConverterWrite& write, unsigned code) const noexcept
+{
+    if (write.destination == ConverterDestination::Pwm)
+        return pwmDacVolts(static_cast<std::uint16_t>(code));
+    if (write.destination == ConverterDestination::Vcf)
+    {
+        const float counts = static_cast<float>(code * 4);
+        return counts + vcfConverterCarryCounts(counts)
+            * (activeParameters_.useServiced439522VcfCalibration ? 1.0f : activeParameters_.calibration);
+    }
+    if (write.destination == ConverterDestination::VoiceVca)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
+        const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+        return clamp01(static_cast<float>(code) / 4095.0f
+            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+    }
+    return static_cast<float>(code) / 4095.0f;
+}
+
+void YouKnowEngine::applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event& event) noexcept
+{
+    auto& ram = firmwareControlState_.ram;
+    using K = FirmwareSerialTrace::EventKind;
+    if (event.kind == K::RamByte || event.kind == K::StackWrite)
+    {
+        ram[event.address & 255] = static_cast<std::uint8_t>(event.value);
+        for (int card = 0; card < hardwareVoices; ++card)
+        {
+            auto& voice = voices_[static_cast<std::size_t>(card)];
+            auto& env = voice.envelope;
+            const unsigned bit = 1u << card;
+            env.attackPhase = (ram[7] & bit) != 0;
+            env.decayPhase = (ram[8] & bit) != 0;
+            env.gate = (ram[0x10] & bit) != 0;
+            env.running = (ram[0x11] & bit) != 0;
+            env.phase = (ram[0x33] & bit) != 0;
+            voice.keyDown = env.gate;
+            voice.sustained = !env.gate && (ram[0x1e] & 1) && env.running;
+            voice.releasing = !env.running && env.level != 0;
+            voice.targetMidi = static_cast<float>(ram[9 + card]);
+            voice.rootMidi = -1; // Already decoded board pitch; no host transpose source.
+            voice.lastVoiceMidi = ram[9 + card];
+            voice.dcoResetPending = (ram[0] & bit) != 0;
+            if (env.gate || env.running || env.level)
+            {
+                voice.active = true;
+                voice.freewheeling = false;
+                voice.velocity = 1.0f;
+                voice.hasVoicePitchHistory = true;
+            }
+        }
+    }
+    else if (event.kind == K::Envelope && event.card < hardwareVoices)
+    {
+        auto& env = voices_[event.card].envelope;
+        env.level = event.value;
+        env.value = static_cast<float>(env.level >> 2u) / 4095.0f;
+        const unsigned sustain = ram[0x23] + 256u * ram[0x24];
+        env.stage = !env.running ? (env.level == 0 ? EnvelopeStage::Idle : EnvelopeStage::Release)
+            : !env.phase ? EnvelopeStage::Attack
+            : env.level <= sustain ? EnvelopeStage::Sustain : EnvelopeStage::Decay;
+    }
+    else if (event.kind == K::Portamento && event.card < hardwareVoices)
+        voices_[event.card].currentMidi = static_cast<float>(event.value) / 256.0f;
+}
+
+void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
+{
+    firmwareSerialEvents_.count = 0;
+    firmwareSerialDcoCounts_.fill(0);
+    firmwareSerialHoldEvent_ = {};
+    firmwareSerialIntervalStartRange_ = firmwareSerialRange_;
+    firmwareSerialWalkRange_ = firmwareSerialRange_;
+    firmwareSerialClockStart_ = {rangeClockClocksToFallingEdge_,
+        rangeClockClocksToReload_, rangeClockTransitionPending_};
+    firmwareSerialClockEnd_ = firmwareSerialClockStart_;
+    firmwareSerialRangeChanged_ = false;
+    if (firmwareSerialStatus_ != FirmwareSerialTrace::Status::ReachedTarget)
+        return;
+    // Count samples on each constant-rate segment rather than repeatedly
+    // adding a fractional CPU interval. A quality change starts a new segment
+    // from the retained exact-time coordinate and never resets the processor.
+    if (firmwareSerialTimelineRate_ != oversampledRate_)
+    {
+        firmwareSerialRateBaseStates_ = firmwareSerialTimelineStates_;
+        firmwareSerialTimelineRate_ = oversampledRate_;
+        firmwareSerialRateSamples_ = 0;
+    }
+    const double start = static_cast<double>(firmwareSerialTimelineStates_);
+    ++firmwareSerialRateSamples_;
+    const long double endStates = firmwareSerialRateBaseStates_
+        + static_cast<long double>(firmwareSerialRateSamples_) * voiceCpuStateHz
+            / static_cast<long double>(oversampledRate_);
+    const double end = static_cast<double>(endStates);
+    const double stateSpan = end - start;
+    const auto target = static_cast<std::uint64_t>(std::floor(endStates + 1.0e-10L));
+    firmwareSerialTimelineStates_ = endStates;
+    // Configuration/append validates the schedule once. Only the due prefix
+    // can affect this interval; validation never scales with track length in
+    // the sample loop. A live producer can fill the bounded queue immediately
+    // before each audio block without retaining a song-length byte schedule.
+    const auto pending = firmwareSerialConfiguration_.streaming
+        ? std::span<const FirmwareSerialTrace::ByteReady>(firmwareSerialStream_)
+            .subspan(firmwareSerialStreamHead_, firmwareSerialStreamCount_)
+        : firmwareSerialConfiguration_.schedule.subspan(firmwareSerialScheduleCursor_);
+    std::size_t dueCount = 0;
+    while (dueCount < pending.size() && pending[dueCount].states <= target)
+        ++dueCount;
+    const auto schedule = pending.first(dueCount);
+    const auto result = FirmwareSerialTrace::advanceTo(firmwareSerialState_, firmwareSerialParameterTables_,
+        firmwareSerialConfiguration_.inputs, firmwareSerialConfiguration_.cpu,
+        schedule, target, firmwareSerialEvents_);
+    if (firmwareSerialConfiguration_.streaming)
+    {
+        firmwareSerialStreamHead_ += result.consumedBytes;
+        firmwareSerialStreamCount_ -= result.consumedBytes;
+        if (firmwareSerialStreamCount_ == 0)
+            firmwareSerialStreamHead_ = 0;
+    }
+    else
+        firmwareSerialScheduleCursor_ += result.consumedBytes;
+    firmwareSerialStatus_ = result.status;
+    firmwareSerialAudioStates_ = end;
+    const auto appendDco = [&](int card, SerialDcoEvent::Kind kind, unsigned value, double position) {
+        auto& count = firmwareSerialDcoCounts_[static_cast<std::size_t>(card)];
+        if (count >= firmwareSerialDcoEvents_[static_cast<std::size_t>(card)].size())
+        { firmwareSerialStatus_ = FirmwareSerialTrace::Status::OutputFull; return; }
+        firmwareSerialDcoEvents_[static_cast<std::size_t>(card)][count++] = {kind, position, value};
+    };
+    double envelopeAt = 0.0;
+    double rangeAt = 0.0;
+    for (std::size_t i = 0; i < firmwareSerialEvents_.count; ++i)
+    {
+        const auto& event = firmwareSerialEvents_.entries[i];
+        const double position = std::clamp((static_cast<double>(event.states) - start) / stateSpan, 0.0, 1.0);
+        applyFirmwareSerialRamEvent(event);
+        using K = FirmwareSerialTrace::EventKind;
+        if (event.kind == K::PassStart)
+            refreshJackBoardTemperature(activeParameters_);
+        else if (event.kind == K::ExternalWrite)
+        {
+            const unsigned address = event.address, value = event.value;
+            if (address == 0x1300 || address == 0x2300)
+            {
+                const unsigned local = value >> 6;
+                if (local >= 3 || (value & 0x3fu) != 0x36u)
+                { firmwareSerialStatus_ = FirmwareSerialTrace::Status::UnsupportedPath; continue; }
+                const int card = static_cast<int>(local + (address == 0x1300 ? 3 : 0));
+                firmwareSerialPitNeedsMsb_[card] = false;
+                appendDco(card, SerialDcoEvent::Kind::Control, value, position);
+            }
+            else if ((address >= 0x1000 && address <= 0x1200)
+                  || (address >= 0x2000 && address <= 0x2200))
+            {
+                if ((address & 255u) != 0)
+                { firmwareSerialStatus_ = FirmwareSerialTrace::Status::UnsupportedPath; continue; }
+                const int card = static_cast<int>(((address >> 8) & 3u) + (address < 0x2000 ? 3 : 0));
+                if (!firmwareSerialPitNeedsMsb_[card])
+                {
+                    firmwareSerialPitLsb_[card] = value;
+                    firmwareSerialPitNeedsMsb_[card] = true;
+                    appendDco(card, SerialDcoEvent::Kind::Lsb, value, position);
+                }
+                else
+                {
+                    firmwareSerialPitNeedsMsb_[card] = false;
+                    const unsigned count = firmwareSerialPitLsb_[card] | (value << 8);
+                    appendDco(card, SerialDcoEvent::Kind::Msb, count ? count : 65536u, position);
+                }
+            }
+            else if (address == 0x3000)
+                applyFirmwareSerialIc40(value, event.states);
+        }
+        else if (event.kind == K::PortFWrite)
+        {
+            if (event.value != 0xc0 && event.value != 0x40 && event.value != 0x00)
+            { firmwareSerialStatus_ = FirmwareSerialTrace::Status::UnsupportedPath; continue; }
+            const DcoRange next = event.value == 0xc0 ? DcoRange::Four
+                : event.value == 0x40 ? DcoRange::Eight : DcoRange::Sixteen;
+            if (next != firmwareSerialRange_)
+            {
+                advanceSerialRangeClock(firmwareSerialClockEnd_,
+                    (position - rangeAt) * seconds, firmwareSerialRange_);
+                changeSerialRangeClock(firmwareSerialClockEnd_, firmwareSerialRange_, next);
+                rangeAt = position;
+                for (int card = 0; card < hardwareVoices; ++card)
+                    appendDco(card, SerialDcoEvent::Kind::Range, static_cast<unsigned>(next), position);
+                firmwareSerialRange_ = next;
+                firmwareSerialCircuitParameters_.range = next;
+                firmwareSerialRangeChanged_ = true;
+            }
+        }
+        else if (event.kind == K::Inhibit && envelopeHoldsConfigured_)
+        {
+            advanceEnvelopeHolds((position - envelopeAt) * seconds, activeParameters_);
+            envelopeAt = position;
+            inhibitEnvelopeHold();
+        }
+        else if (event.kind == K::Converter)
+        {
+            ConverterWrite write;
+            if (!decodeFirmwareSerialDac(event.pa, write))
+            { firmwareSerialStatus_ = FirmwareSerialTrace::Status::UnsupportedPath; continue; }
+            if (write.destination == ConverterDestination::Pitch)
+            {
+                appendDco(write.voice, SerialDcoEvent::Kind::PitchCv, event.value, position);
+                continue;
+            }
+            const float next = firmwareSerialDacTarget(write, event.value);
+            float previous = 0.0f;
+            switch (write.destination)
+            {
+                case ConverterDestination::Resonance: previous = resonanceCvTarget_; break;
+                case ConverterDestination::CommonVca: previous = sharedVcaTarget_; break;
+                case ConverterDestination::Sub: previous = subCvTarget_; break;
+                case ConverterDestination::Pwm: previous = pwmVoltsTarget_; break;
+                case ConverterDestination::Vcf: previous = voices_[write.voice].cutoffCountsTarget; break;
+                case ConverterDestination::VoiceVca: previous = voices_[write.voice].vcaControlTarget; break;
+                case ConverterDestination::Noise: noiseCvTarget_ = next; break;
+                case ConverterDestination::Pitch: break;
+            }
+            if (write.destination != ConverterDestination::Noise)
+            {
+                if (firmwareSerialHoldEvent_.active)
+                { firmwareSerialStatus_ = FirmwareSerialTrace::Status::OutputFull; continue; }
+                firmwareSerialHoldEvent_ = {true, write, position, previous, next};
+                performConverterWrite(write, activeParameters_, &next);
+            }
+            if (envelopeHoldsConfigured_ && write.destination == ConverterDestination::VoiceVca)
+            {
+                advanceEnvelopeHolds((position - envelopeAt) * seconds, activeParameters_);
+                envelopeAt = position;
+                beginEnvelopeHoldAcquisition(write.voice, next);
+            }
+        }
+    }
+    if (firmwareSerialRangeChanged_)
+        advanceSerialRangeClock(firmwareSerialClockEnd_, (1.0 - rangeAt) * seconds,
+                                firmwareSerialRange_);
+    if (envelopeHoldsConfigured_)
+        advanceEnvelopeHolds((1.0 - envelopeAt) * seconds, activeParameters_);
+    const auto& ram = firmwareControlState_.ram;
+    const auto word = [&ram](unsigned a) { return ram[a] + 256u * ram[a + 1]; };
+    lfoAccumulator_ = static_cast<std::uint16_t>(word(0x4d));
+    lfoRising_ = !(ram[0x4a] & 1);
+    lfoPolarity_ = (ram[0x4a] & 2) ? -1.0f : 1.0f;
+    lfoValue_ = lfoPolarity_ * static_cast<float>(lfoAccumulator_) / 8191.0f;
+    lfoDelayHoldoff_ = word(0x56);
+    lfoDelayFade_ = (ram[0x1e] & 4) ? 65536u : word(0x5a);
+    lfoDelayByte_ = (ram[0x1e] & 4) ? 255 : static_cast<std::uint8_t>(lfoDelayFade_ >> 8);
+    lfoDelayLevel_ = static_cast<float>(lfoDelayByte_) / 255.0f;
+    displayLfo_ = lfoValue_ * lfoDelayLevel_;
+    sustainPedalDown_ = (ram[0x1e] & 1) != 0;
     updateActiveVoiceCount();
 }
 

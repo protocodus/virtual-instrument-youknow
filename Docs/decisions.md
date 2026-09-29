@@ -5,6 +5,135 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-09-29 — Nominal nonlinear chorus followers
+
+Select the forward-active exponential-current extension of the existing
+2SA1015 support model under the owner's delegated evidence-based work.
+It uses the same DC currents, β 200, 25 °C, capacitor network and 2.6 V
+coordinate, with no new gain, noise or distortion fit. Current and loading
+are solved together; this is not a waveshaper placed after the filters.
+The ideal and finite-linear reference profiles remain available.
+
+Independent physical-node and perturbation calculations qualify harmonics,
+intermodulation and capacitor-charge continuity across output-load changes.
+The initial endpoint-linear integration missed its 0.2 dB high-quality
+second-harmonic limit; cubic residual integration passes the unchanged
+limit, with a worst tested error of 0.026 dB. The reference solver itself
+was refined where its third harmonic had not yet converged.
+
+Accept the measured CPU tradeoff: roughly 17–20% over finite linear followers
+in seven alternating pairs per quality/mode with hot six-voice material.
+All twelve full-product six/sixteen-voice diagnostic cases have no solver
+fallback; timing variability and the stress cases' above-unity output peaks
+remain recorded. Lower numerical rates retain aliasing and response errors;
+high quality is the fidelity choice. The current law does not establish
+installed transistor rank, temperature behaviour, saturation or original-unit
+large-signal transfer.
+
+A separate complete-Chorus rate-convergence screen includes the moving BBD
+clocks and recovered staircase. It exposed an end-of-interval clock-integration
+bias; after correcting that integration, the nonlinear increment at 192 versus
+768 kHz differs by 0.264–0.272 µVrms for the hot multitone against an approximately
+1.4 mVrms increment. For the 15 kHz stress source, the increment is about
+12 µVrms and its discrepancy is 0.486–0.561 µVrms. Doubling to 384 kHz reduces
+those discrepancies by 12.6–12.8 and 23.8 dB respectively. No alignment or
+amplitude fit is applied. The higher-rate implementation is not an independent
+physical oracle, and the short window is not every LFO phase. Keep this limit
+separate from the independent support-circuit accuracy tests.
+
+Whole-file stereo RMS-matched A/B files use the preserved current product
+as A, with separate unread keys. No new listening verdict is attributed to
+the owner; selection follows the standing preference for the more complete
+supported component model.
+
+## 2026-09-29 — Nominal chorus transistor loading
+
+The owner's delegated evidence-based work selects the named nominal 2SA1015
+support circuit: finite transistor gain, reciprocal loading, collector-base
+capacitance and the bias trimmer's source resistance. The complete shared
+input loads both BBD branches; output capacitor charge survives wet switching.
+This replaces ideal followers in the product, with the raw reference retained.
+It is a supported circuit approximation, not an installed-unit measurement.
+Transistor grade, Early effect, temperature dependence and large-signal
+behaviour remain open.
+
+The noise source and the captured-level scalar ×2.37 stay fixed. The new
+reconstruction filters lower recovered wet hiss by about 0.76 dB. In the
+same seven-patch capture check, mean hiss-to-note error moves from +0.50 to
++0.31 dB, but patch/channel RMS error remains about 4.2 dB; this is not a
+new noise fit or proof of improved spectral agreement.
+
+Select exact state transitions on the high-quality grid and a coupled,
+per-capacitor prewarped bilinear mapping below it. Low-grid exact input gave
+better signal-response accuracy but worse relative high-tone aliasing.
+The selected mapping keeps the existing low-grid frequency-response tradeoff;
+its absolute alias tones decrease against the paired current ideal reference.
+An inherited ideal-profile historical limit at 88.2 kHz is missed by 0.020 dB,
+while the paired current-reference increase is 0.55 dB, within the existing
+1.5 dB change allowance. This is an explicit qualification of a new physical
+profile; the historical raw-profile gate is unchanged. High quality retains
+the absolute accuracy limits.
+
+Whole-file stereo RMS-matched A/B renders accompany the work, with separate
+unread keys. No new listening preference is attributed to the owner. Selection
+uses the standing preference for the more complete supported model.
+
+## 2026-09-28 — Further circuit completion
+
+The owner's request to continue evidence-based fidelity work licenses these
+nominal circuit selections; none is a new listening verdict or unit calibration.
+
+- **Voice coupling:** select the C59 load implied by the existing BA662
+  signal law, measured hybrid resistors and Roland's service targets. This
+  replaces the R108-only upper corner with a conditional nominal 1.324 Hz
+  at 25 °C. Each card keeps its inferred service trim during warm-up; the
+  coupling filter does not apply the divider attenuation a second time.
+  Finite buffer/input impedance, actual current-mirror gain and capacitor
+  tolerance remain unmeasured. Raw reference defaults remain available.
+- **Common-VCA output:** enable the drawn R16/C5 feedback pole in the product,
+  preserving the existing magnitude-oriented numerical policy and separately
+  output-referred noise calibration.
+- **Chorus switching:** select the complete shared-capacitor circuit, including
+  base-junction loading and BBD clock clamps, after independent nodal, state and
+  bounded cost checks. Accept the additional chorus-off processing cost to
+  preserve the circuit's capacitor and bucket history. The established junction
+  and ideal-rail priors remain labelled; this does not settle installed switching
+  times, leakage or restart phase. Raw reference defaults remain available.
+
+## 2026-09-28 — Evidence-based hiss, pulse balance and output connections
+
+The owner asked to research the remaining choices, reach reasonable confidence
+and implement them. These are delegated engineering choices, not new listening
+verdicts.
+
+- **Hiss:** choose ×2.37, the A-weighted candidate from the 2026-09-22 set.
+  Repeating the hash-pinned four-bank measurement through the complete product
+  reproduced the old factor's +4.484 dB mean error over seven tail-free Mode I
+  patches. The chosen factor removes 4.503 dB of hiss-source gain; the paired
+  product render leaves +0.029 dB mean error. With the pulse correction also
+  applied, that calibration pass's combined mean is +0.506 dB because some reference C4 notes
+  become quieter; the idle floors are unchanged. The hiss coordinate is not
+  refitted to that interaction. A-weighting follows the noise
+  measure already used by Panasonic and HISS-100 and avoids treating the
+  recording's extra low-frequency chorus energy as hiss. This licenses a
+  level correction to one captured unit, not a spectral fit or a separate
+  Mode II calibration.
+- **Pulse:** choose ×0.857 on the pulse mixer leg alone. The identified
+  #439522 take reproduces +1.340 dB pulse/saw error with the former product;
+  applying the fixed factor leaves +0.019 dB. Three disjoint windows leave
+  −0.020/+0.050/+0.032 dB without refitting. The MKS-7 service levels support
+  the direction, while their broad tolerances do not identify an exact value.
+  This is calibration to original DCOs through replacement filter/VCA cards,
+  not proof of every original JUNO-106's balance. The raw engine reference and
+  independently calibrated coupled-mixer alternative remain unchanged.
+- **Output connections:** expose the nominal H/M/L selector and explicit
+  receiver resistance, with High/Open as the compatibility default. The
+  service drawing determines the passive source/noise law, including both
+  coupling and jack capacitors and one shared load in mono. Selecting a load
+  is the player's statement about the connected equipment; no unspecified
+  input impedance is assumed. The existing magnitude-oriented digital filter
+  policy remains approximate in phase and switching transients.
+
 ## 2026-09-22 — Correction: the hiss match was measured through a leaking window
 
 Hiss B's factor, 3.98, does not match the captures it was derived from.
@@ -32,7 +161,7 @@ measure of that level to match, and the physics does not settle it:
 Neither fixes the colour. The captured line hiss is roughly flat over
 0.2–2 kHz and about 5 dB higher over 2–8 kHz; the model's is white. Both were
 rendered against the shipping 3.98 as a lettered set the same day, and the
-product keeps 3.98 until the verdict. The Mode II numbers below were read
+product kept 3.98 until the delegated correction above. The Mode II numbers below were read
 the same way. Corrected and A-weighted, the two usable patches read
 L +4.7/+7.8 dB and R +10.2/+16.3 dB at 3.98, still too few to calibrate that
 mode.
@@ -1424,13 +1553,6 @@ candidate rather than an estimator of #439522.
 
 ## Pending
 
-- **Pulse level (OQ-15).** Through the product, #439522's isolator take
-  reads the 50 % pulse 1.34 dB hot against the saw, and the sub within
-  0.24 dB. A ×0.857 pulse leg (that unit's match) and ×0.81 (the MKS-7
-  Service Notes' nominal) were rendered against the shipping engine on
-  2026-09-22.
-- **Chorus hiss factor (OQ-03).** ×3.41 and ×2.37 against the shipping 3.98;
-  see the 2026-09-22 correction.
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
   standing candidate. Adoption is a product decision, not a listening
   question.

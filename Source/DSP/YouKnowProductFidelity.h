@@ -37,6 +37,13 @@ struct ProductFidelityProfile
     // loudness at its digital boundary, so this moves drive, not level.
     static constexpr float oscillatorLevelScale = 0.738f;
 
+    // Owner-delegated evidence choice (2026-09-28): remove the product's
+    // +1.34 dB pulse/saw excess against the identified #439522 isolator take.
+    // Its DCOs are original, its voice cards replacements; the MKS-7's lower
+    // nominal pulse/saw Vpp ratio supports the direction, not this exact value.
+    // This changes the pulse leg's relative level, with no output compensation.
+    static constexpr float pulseLevelScale = 0.857f;
+
     // Configure a newly constructed engine exactly once. Circuit configuration
     // persists across prepare()/reset(), but changing it live is unsupported.
     // A full coupled-mixer comparison replaces the independent C56 pole and,
@@ -48,12 +55,20 @@ struct ProductFidelityProfile
     {
         if (! engine.configureHighPassSwitch (highPassSwitchOhms)
             || ! engine.configureDcoTemperatureProxy (true, 25.0)
+            // C59's unity-passband load follows the same fixed service input
+            // trim as the BA662 signal law (nominal 120.192k at 25 C).
+            || ! engine.configureServiceDerivedVcaCoupling (true)
+            // Nominal forward-active PNP current/loading in the chorus chains.
+            // Independent physical-node, harmonic, switching and cost checks
+            // qualify this delegated component-model choice (2026-09-29).
+            || ! engine.configureChorusSupport (ChorusSupportProfile::Nominal2SA1015Nonlinear)
             || ! (coupledMixer != nullptr
                     ? engine.configureCoupledMixer (*coupledMixer)
                     : engine.configureModuleInputCouplingResistanceOhms (
                           moduleInputCouplingResistanceOhms)
                       && engine.configureOscillatorLevelScale (
-                          oscillatorLevelScale)))
+                          oscillatorLevelScale)
+                      && engine.configurePulseLevelScale (pulseLevelScale)))
             throw std::logic_error (
                 "Product fidelity needs valid, compatible circuits before the first prepare");
         // User-authorized approximate thermal coupling (2026-09-14): use the
@@ -71,12 +86,26 @@ struct ProductFidelityProfile
         // at the sheets' typicals. The engine's reference configuration
         // keeps ideal holds for its exactness fingerprints.
         parameters.enableConverterHoldDroop = true;
+        // Roland jack-board p.15: IC2b's R16 33k || C5 22p feedback
+        // limits the common-VCA signal before the dry/wet split. The
+        // magnitude-matched nominal pole is separate from NEC's already
+        // output-referred noise specification and unknown op-amp bandwidth.
+        // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+        parameters.enableCommonVcaOutputPole = true;
         // Chorus Mode I at the owner's by-ear blend of the three OQ-01
         // candidates (Docs/decisions.md, 2026-09-17); the engine default
         // keeps the clone endpoints as the reference configuration.
         parameters.chorusTimingProfile = ChorusTimingProfile::OwnerBlend;
-        // Noise B and chorus-hiss B, chosen by ear on 2026-09-22 (OQ-16,
-        // OQ-03); YouKnowNoiseCalibration.h carries both derivations.
+        // Complete the drawn C16/C13 drive with reciprocal C15 loading and
+        // the base-junction loads before stopping/restarting the BBD clocks.
+        // This uses the existing 0.6 V junction / ideal-rail priors; it is a
+        // nominal circuit completion, not installed-unit timing calibration.
+        // The 2026-09-28 nodal/state and bounded product-cost audits qualify
+        // the selection. Raw reference renders retain the two-node path.
+        parameters.enableChorusClockMuteCircuit = true;
+        // Noise B and the captured-hiss target, chosen by ear on 2026-09-22
+        // (OQ-16/OQ-03), with the delegated 2026-09-28 hiss-level correction.
+        // YouKnowNoiseCalibration.h carries both derivations.
         parameters.mainNoiseCalibrationProfile =
             MainNoiseCalibrationProfile::CoreBandTp8;
         parameters.chorusNoiseCalibrationProfile =

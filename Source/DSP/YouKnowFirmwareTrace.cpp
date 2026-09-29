@@ -21,6 +21,74 @@ struct Cpu {
     bool carry=false,skip=false,error=false;
     std::array<unsigned,64> stack {};
     unsigned stackSize=0,ordinal=0;
+    FirmwareAdcTrace::Result* adc=nullptr;
+    const FirmwareAdcTrace::Inputs* adcInputs=nullptr;
+    const FirmwareAdcTrace::Configuration* adcConfiguration=nullptr;
+    unsigned alternateA=0,alternateEa=0,alternateB=0,alternateC=0,
+             alternateD=0,alternateE=0,alternateH=0,alternateL=0;
+    unsigned interruptPc=0,interruptStackSize=0;
+    // CY and SK are the PSW bits used by these bounded paths; the unused
+    // overlay/status bits are not a general CPU model. V is FF in both banks
+    // after B-2 initialization, so EXA need only exchange A/EA here.
+    bool inInterrupt=false,interruptCarry=false,interruptSkip=false,returnEventPending=false;
+    void adcEvent(FirmwareAdcTrace::EventKind kind,unsigned value=0,unsigned channel=255) {
+        if(adc->count==adc->events.size()){error=true;return;}
+        const bool sourceInstruction=kind==FirmwareAdcTrace::EventKind::AnmWrite
+            ||kind==FirmwareAdcTrace::EventKind::MaskWrite
+            ||kind==FirmwareAdcTrace::EventKind::Return;
+        const unsigned eventPc=sourceInstruction?executingAddress
+            :kind==FirmwareAdcTrace::EventKind::Acceptance?pc:0xffff;
+        adc->events[adc->count++]={kind,adc->peripheral.elapsedStates,
+            static_cast<std::uint16_t>(eventPc),static_cast<std::uint8_t>(channel),
+            static_cast<std::uint8_t>(value)};
+    }
+    void advanceAdc(unsigned states) {
+        auto& p=adc->peripheral;
+        while(states>=p.statesUntilConversion) {
+            states-=p.statesUntilConversion;
+            p.elapsedStates+=p.statesUntilConversion;
+            const unsigned input=((p.anm&8)?4:0)+p.channel;
+            p.conversion[p.channel]=adcInputs->raw[input];
+            adcEvent(FirmwareAdcTrace::EventKind::Conversion,p.conversion[p.channel],input);
+            p.channel=(p.channel+1)&3;
+            p.statesUntilConversion=FirmwareAdcTrace::conversionStates;
+            if(p.channel==0) {
+                p.request=true;
+                adcEvent(FirmwareAdcTrace::EventKind::Request,p.anm);
+            }
+        }
+        p.statesUntilConversion-=states;
+        p.elapsedStates+=states;
+    }
+    void writeAnm(unsigned value) {
+        auto& p=adc->peripheral;
+        p.anm=value;
+        if(adcConfiguration->anmWritePhase!=FirmwareAdcTrace::AnmWritePhase::PreserveCompleteScanPhase)
+            p.channel=0;
+        if(adcConfiguration->anmWritePhase==FirmwareAdcTrace::AnmWritePhase::RestartConversion)
+            p.statesUntilConversion=FirmwareAdcTrace::conversionStates;
+        adcEvent(FirmwareAdcTrace::EventKind::AnmWrite,value);
+    }
+    void interruptBoundary(bool completedInstruction=true) {
+        auto& p=adc->peripheral;
+        if(p.eiDeferred) {
+            if(!completedInstruction)return;
+            --p.eiDeferred;
+            if(p.eiDeferred)return;
+        }
+        if(!adcConfiguration->interrupts||!p.interruptsEnabled||(p.mkh&1)||!p.request)
+            return;
+        if(inInterrupt){error=true;return;}
+        adcEvent(FirmwareAdcTrace::EventKind::Acceptance,p.anm);
+        ++adc->acceptedInterrupts;
+        interruptPc=pc;interruptCarry=carry;interruptSkip=skip;
+        interruptStackSize=stackSize;
+        p.request=false;p.interruptsEnabled=false;
+        inInterrupt=true;skip=false;carry=false;
+        // Sixteen states already include automatic PSW/PC saving. Ordinary
+        // instruction costs already contain their recognition cycle.
+        advanceAdc(FirmwareAdcTrace::interruptEntryStates);result.states+=FirmwareAdcTrace::interruptEntryStates;pc=0x20;
+    }
     explicit Cpu(const FirmwareControlTrace::State& state,
                  const FirmwareControlTrace::Tables& lookup):tables(lookup) {result.finalState=state;}
     unsigned bc()const{return b*256+c;}
@@ -106,7 +174,7 @@ struct Cpu {
         case Op::DCR_A: a=(a-1)&255;skip=a==255; break;
         case Op::DCR_C: c=(c-1)&255;skip=c==255; break;
         case Op::DGT_EA_BC: skip=ea>bc(); break;
-        case Op::DI:  break;
+        case Op::DI: if(adc){adc->peripheral.interruptsEnabled=false;adc->peripheral.eiDeferred=0;} break;
         case Op::DLT_EA_BC: skip=ea<bc(); break;
         case Op::DMOV_BC_EA: bc(ea); break;
         case Op::DMOV_EA_BC: ea=bc(); break;
@@ -118,7 +186,7 @@ struct Cpu {
         case Op::DSUB_EA_BC: ea=sub(ea,bc(),65535); break;
         case Op::EADD_EA_A: ea=add(ea,a,65535); break;
         case Op::EADD_EA_C: ea=add(ea,c,65535); break;
-        case Op::EI:  break;
+        case Op::EI: if(adc){adc->peripheral.interruptsEnabled=true;adc->peripheral.eiDeferred=2;} break;
         case Op::EQAW_wa: skip=(a==read(0xff00+x)); break;
         case Op::EQIW_wa_xx: skip=(read(0xff00+x)==y); break;
         case Op::EQI_A_xx: skip=(a==x); break;
@@ -176,7 +244,7 @@ struct Cpu {
         case Op::MVI_C_xx: c=x; break;
         case Op::MVI_H_xx: h=x; break;
         case Op::MVI_L_xx: l=x; break;
-        case Op::MVI_MKH_xx:  break;
+        case Op::MVI_MKH_xx: if(adc){adc->peripheral.mkh=x;adcEvent(FirmwareAdcTrace::EventKind::MaskWrite,x);} break;
         case Op::NEGA: a=(-a)&255; break;
         case Op::NEI_A_xx: skip=(a!=x); break;
         case Op::NOP:  break;
@@ -201,7 +269,10 @@ struct Cpu {
         case Op::RET: pc=pop(); break;
         case Op::RLL_A: {const bool old=carry;carry=(a&128)!=0;a=((a<<1)|old)&255;} break;
         case Op::SBCD_w: storeWord(x,bc(),address); break;
-        case Op::SKIT_FAD: skip=result.finalState.adcComplete;result.finalState.adcComplete=false; break;
+        case Op::SKIT_FAD:
+            if(adc){skip=adc->peripheral.request;adc->peripheral.request=false;}
+            else skip=result.finalState.adcComplete;
+            result.finalState.adcComplete=false; break;
         case Op::SLL_A: carry=(a&128)!=0;a=(a<<1)&255; break;
         case Op::SLR_A: carry=(a&1)!=0;a>>=1; break;
         case Op::STAW_wa: write(0xff00+x,a); break;
@@ -219,6 +290,19 @@ struct Cpu {
         case Op::SUI_A_xx: a=sub(a,x,255); break;
         case Op::XRAW_wa: a^=read(0xff00+x); break;
         case Op::XRI_A_xx: a^=x; break;
+        case Op::EXA: std::swap(a,alternateA);std::swap(ea,alternateEa);break;
+        case Op::EXX:
+            std::swap(b,alternateB);std::swap(c,alternateC);
+            std::swap(d,alternateD);std::swap(e,alternateE);
+            std::swap(h,alternateH);std::swap(l,alternateL);break;
+        case Op::MOV_A_ANM: if(adc)a=adc->peripheral.anm;else error=true;break;
+        case Op::XRI_ANM_xx: if(adc)writeAnm(adc->peripheral.anm^x);else error=true;break;
+        case Op::MOV_A_CR: if(adc)a=adc->peripheral.conversion[x];else error=true;break;
+        case Op::STAX_Hp: write(hl(),a);hl(hl()+1);break;
+        case Op::RETI:
+            if(!adc||!inInterrupt||stackSize!=interruptStackSize){error=true;break;}
+            pc=interruptPc;carry=interruptCarry;skip=interruptSkip;inInterrupt=false;
+            returnEventPending=true;break;
         }
     }
 };
@@ -245,5 +329,57 @@ FirmwareControlTrace::Result FirmwareControlTrace::run(const State& state,const 
     }
     cpu.result.stoppedAt=static_cast<std::uint16_t>(cpu.pc);
     return cpu.result;
+}
+
+FirmwareAdcTrace::Result FirmwareAdcTrace::run(const State& state,
+    const FirmwareControlTrace::Tables& tables,const Inputs& inputs,
+    const Configuration& configuration) noexcept
+{
+    Result output;
+    output.peripheral=state.peripheral;
+    if(output.peripheral.statesUntilConversion<1||output.peripheral.statesUntilConversion>conversionStates
+       ||output.peripheral.channel>3||(output.peripheral.anm&~8)!=0
+       ||(output.peripheral.mkh!=4&&output.peripheral.mkh!=5)||output.peripheral.eiDeferred>1
+       ||static_cast<unsigned>(configuration.anmWritePhase)>2
+       ||static_cast<unsigned>(configuration.accessBoundary)>1) {
+        output.peripheralValid=false;return output;
+    }
+    Cpu cpu(state.control,tables);
+    cpu.adc=&output;cpu.adcInputs=&inputs;cpu.adcConfiguration=&configuration;
+    // Entry is an instruction boundary. Eligible initial pending requests are
+    // accepted before02EC; a carried EI delay is not consumed by entry itself.
+    cpu.interruptBoundary(false);
+    bool passStarted=false;
+    for(unsigned guard=0;guard<16384;++guard) {
+        if(cpu.pc==0x02ec&&!cpu.inInterrupt)passStarted=true;
+        if(cpu.pc>=addressMap.size()||addressMap[cpu.pc]<0){cpu.error=true;break;}
+        const auto& instruction=firmwareTraceDetail::program[static_cast<unsigned>(addressMap[cpu.pc])];
+        const unsigned duration=cpu.skip?instruction.skippedStates:instruction.states;
+        // Peripheral completion is visible to this instruction's completion
+        // effects; exact CR read/ANM write bus substates remain unmodelled.
+        const bool accessAtCompletion=configuration.accessBoundary
+            ==PeripheralAccessBoundary::InstructionCompletion;
+        if(accessAtCompletion||cpu.skip)cpu.advanceAdc(duration);
+        if(cpu.skip) {
+            cpu.result.states+=duration;cpu.pc+=instruction.bytes;cpu.skip=false;
+        } else {
+            cpu.execute(instruction);
+            if(!accessAtCompletion)cpu.advanceAdc(duration);
+            cpu.result.states+=duration;
+        }
+        if(cpu.returnEventPending) {
+            cpu.adcEvent(EventKind::Return,output.peripheral.anm);
+            cpu.returnEventPending=false;
+        }
+        cpu.interruptBoundary();
+        if(cpu.error)break;
+        if(passStarted&&cpu.pc==0x02ec&&!cpu.inInterrupt) {
+            cpu.result.valid=cpu.ordinal==23&&cpu.stackSize==0;break;
+        }
+    }
+    cpu.result.stoppedAt=static_cast<std::uint16_t>(cpu.pc);
+    cpu.result.finalState.adcComplete=output.peripheral.request;
+    output.control=cpu.result;output.peripheralValid=!cpu.error;
+    return output;
 }
 } // namespace youknow

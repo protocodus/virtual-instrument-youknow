@@ -87,6 +87,10 @@ inline constexpr auto vcfFastEarlyMode = "vcfFastEarlyMode";
 // machine setting, like the two above.
 inline constexpr auto vcfSolverMode = "vcfSolverMode";
 inline constexpr auto legacyHq     = "hq";
+// Jack-board switch and the resistance of the connected receiver. These are
+// session settings, outside the JUNO's 18-byte tone memory.
+inline constexpr auto outputSelector = "outputSelector";
+inline constexpr auto outputLoad = "outputLoad";
 } // namespace parameters
 
 namespace panel

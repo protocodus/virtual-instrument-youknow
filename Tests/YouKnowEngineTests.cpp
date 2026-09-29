@@ -10392,7 +10392,13 @@ void testFixedOutputBoundaryCorpus()
         // references, without treating their historical drift as an isolated
         // loading measurement. The other chorus row, overload counts and all
         // 4% guards stay unchanged.
-        Baseline { 0.1561511158, 0.3526028097, 0.3526028097, 0, 0 },
+        // Refresh only the two exceeded peaks after correcting the physical
+        // half-cycle output aperture. The preserved prior library passes the
+        // old guards: its actual peak 0.354486585 becomes 0.334759116 while
+        // RMS changes by -0.104%. All four dry corpus rows and overload counts
+        // are unchanged; chorus noise is zero. The phase change moves this
+        // fixed dry/wet peak, without changing gain or any 4%/headroom gate.
+        Baseline { 0.1561511158, 0.3347591162, 0.3347591162, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -14157,9 +14163,9 @@ void testChorusNoiseProfilesReproduceTheMeasuredModeDelta()
     // is that both profiles do exactly what they claim without moving mode I.
     constexpr double sampleRate = 48000.0;
 
-    // Each line writes one noise sample per bucket edge, so its instantaneous
-    // floor rides the swept clock and the measurement has to cover a whole
-    // number of modulation cycles or the two modes are compared over different
+    // Each line draws one noise sample per new composite output hold, so its
+    // instantaneous floor rides the swept clock. The measurement has to cover
+    // a whole number of modulation cycles or the modes are compared over different
     // parts of their own sweeps. In a diagnostic with both mode factors divided
     // out, a fixed window alone makes mode II read 0.69 dB hot.
     const auto idleFloor = [&](ChorusMode mode, bool rateHypothesis) {

@@ -40,6 +40,7 @@ struct YouKnowTestAccess
     {
         int writeIndex {};
         double clockPhase {};
+        std::uint32_t noiseState {};
     };
 
     struct ProcessingRate
@@ -127,7 +128,8 @@ struct YouKnowTestAccess
         const float limited = chorus.advanceInputSupport(input);
         return chorus.lineA_.process(
             limited, clockHz, sampleRate,
-            chorus.support_.exactOutputConnected, 0.0f);
+            chorus.support_.exactOutputConnected, 0.0f, true,
+            &chorus.inputSupport_.captureInterval);
     }
 
     static constexpr double shippingDecimatorBoundaryDelayHostFrames(
@@ -144,7 +146,8 @@ struct YouKnowTestAccess
 
     static BbdState bbdState(const Chorus& chorus) noexcept
     {
-        return { chorus.lineA_.writeIndex, chorus.lineA_.clockPhase };
+        return { chorus.lineA_.writeIndex, chorus.lineA_.clockPhase,
+                 chorus.lineA_.noiseState };
     }
 
     static ProcessingRate shippingProcessingRate(double hostRate,
@@ -1168,7 +1171,9 @@ struct BbdOracleCase
     double remainingImageTailDb {};
     int writeIndex {};
     double clockPhase {};
-    std::uint64_t edgeCount {};
+    std::uint64_t inputEdgeCount {};
+    std::uint64_t outputEdgeCount {};
+    std::uint32_t noiseState {};
 };
 
 struct BbdOracleCheck
@@ -1239,8 +1244,12 @@ std::complex<double> bbdImagePhasor(
              * std::exp(std::complex<double>(0.0, -omega)));
     const double imageRatio = toneHz / clockHz
                             + static_cast<double>(imageOrder);
-    const auto hold = std::exp(std::complex<double>(
-        0.0, -pi * imageRatio)) * normalizedSinc(imageRatio);
+    // CP2 input capture and the staggered C256/C257 outputs place the
+    // combined full-period aperture symmetrically around 128 clock periods.
+    // Removing the old causal-hold phase is image-dependent: changing only
+    // the fundamental delay by half a period misses every odd image's sign.
+    // No fitted waveform lag is applied.
+    const double hold = normalizedSinc(imageRatio);
     const double imageHz = toneHz
                          + static_cast<double>(imageOrder) * clockHz;
     const std::complex<double> sinePhasor(
@@ -1506,11 +1515,19 @@ BbdOracle buildBbdOracle(double hostRate,
             static_cast<long double>(definition.clockHz)
             * static_cast<long double>(window.hostFrames)
             / static_cast<long double>(hostRate);
-        result.edgeCount = static_cast<std::uint64_t>(std::floor(elapsedEdges));
+        result.inputEdgeCount = static_cast<std::uint64_t>(std::floor(elapsedEdges));
+        result.outputEdgeCount = static_cast<std::uint64_t>(std::floor(elapsedEdges + 0.5L));
         result.writeIndex = static_cast<int>(
-            result.edgeCount % static_cast<std::uint64_t>(Chorus::cellPairs));
+            result.inputEdgeCount % static_cast<std::uint64_t>(Chorus::cellPairs));
         result.clockPhase = static_cast<double>(
             elapsedEdges - std::floor(elapsedEdges));
+        result.noiseState = 0x9e3779b9u;
+        for (std::uint64_t edge = 0; edge < result.outputEdgeCount; ++edge)
+        {
+            result.noiseState ^= result.noiseState << 13;
+            result.noiseState ^= result.noiseState >> 17;
+            result.noiseState ^= result.noiseState << 5;
+        }
 
         const auto capture = std::span<const double>(
             result.output.samples.data() + window.warmupHostFrames,
@@ -1718,8 +1735,9 @@ BbdMetrics auditBbd(double hostRate, int factor, const BbdOracle& oracle,
         const auto state = YouKnowTestAccess::bbdState(production);
         metrics.edgeStateMatches = metrics.edgeStateMatches
             && state.writeIndex == reference.writeIndex
-            && reference.edgeCount % Chorus::cellPairs
-                   == static_cast<std::uint64_t>(state.writeIndex);
+            && reference.inputEdgeCount % Chorus::cellPairs
+                   == static_cast<std::uint64_t>(state.writeIndex)
+            && state.noiseState == reference.noiseState;
         const double phaseError =
             std::abs(state.clockPhase - reference.clockPhase);
         metrics.allFinite = metrics.allFinite
@@ -2158,8 +2176,8 @@ void printReport(const AuditResult& audit)
               << "reference policy: VCF uses one factor-independent fixed-q16 "
                  "oracle per host/case, RK4 with 4/8 substeps (effective "
                  "64x/128x), and an independent 4097-tap host-boundary FIR; "
-                 "BBD uses exact continuous H_in/H_out, a 128-edge delay, "
-                 "edge-rate loss pole and full-period ZOH image phasors, then "
+                 "BBD uses exact continuous H_in/H_out, a 128-period delay, "
+                 "output-edge loss pole and centered full-period aperture image phasors, then "
                  "the same independent fixed-q16 FIR host boundary. 4x is a "
                  "candidate, not truth\n"
               << "VCF gates: RK NRMS <= " << vcfRkRelativeRmsGate
@@ -2315,12 +2333,14 @@ void printReport(const AuditResult& audit)
               << " V after the shipping k=3.8 input compensation. "
               << "The BBD cell owns one deterministic line from its "
                  "five-pole/coupling input support through buckets, transfer, "
-                 "BLEP and output support/coupling. The steady-state BBD "
+                 "output recovery and support/coupling. The steady-state BBD "
                  "capture starts after 8192 host frames (>12 output-coupling "
                  "time constants). Candidates alone use the shipping exact "
                  "continuous output support, rate-selected legacy/exact input "
-                 "support, causal four-point Lagrange input-edge interpolation, "
-                 "polyBLEP, half-bands and the declared no-search "
+                 "support, shared HQ dense input capture (causal four-point "
+                 "Lagrange capture on the legacy low-rate path), "
+                 "HQ direct held-event output integration (polyBLEP/cubic "
+                 "output drive on lower grids), half-bands and the declared no-search "
                  "0/23.5/35.25 host-frame advance. Scan/holds, DCO, VCA, "
                  "LFO trajectory, "
                  "stochastic noise, stereo/IC6 mix, output stages, latency "
@@ -2347,17 +2367,24 @@ void selfTestShippingBbd(
             throw std::runtime_error(
                 std::string(label) + " changed; inspect the shipping matrix");
     };
+    // Qualified HQ dense capture/output-event recovery changes these
+    // snapshots, not physical gates or tolerances. Worst NRMS and the
+    // 12 kHz take remain separate quantities.
     constexpr std::array<double, 10> expectedNrmsDb {
-        -53.442029, -56.101384, -50.700400, -51.863116, -53.481340,
-        -56.078509, -3.511374, -5.263465, -18.390080, -20.050559
+        -56.244210, -64.442774, -52.377992, -52.991698, -61.372276,
+        -64.285376, -3.511374, -5.263465, -18.390080, -20.050559
+    };
+    constexpr std::array<double, 10> expectedHighToneDb {
+        -61.252873, -64.442774, -52.377992, -52.991698, -61.372276,
+        -64.285376, -3.511374, -5.263465, -18.390080, -20.050559
     };
     constexpr std::array<double, 10> expectedBgaDb {
         0.011045, 0.008369, 0.010592, 0.008047, 0.010563,
         0.007985, 4.763869, 3.406139, 0.070754, 0.016355
     };
     constexpr std::array<double, 10> expectedSgaDb {
-        -71.831447, -65.381479, -71.831817, -65.381807, -71.831728,
-        -65.381263, -26.934318, -30.746435, -41.303811, -46.044040
+        -103.983174, -104.159835, -103.984352, -104.159899, -103.986493,
+        -104.157813, -26.934318, -32.807822, -41.303811, -46.044040
     };
     constexpr std::array<double, 10> expectedPhaseError {
         7.833734e-13, 1.651013e-12, 7.833734e-13, 1.651013e-12,
@@ -2438,7 +2465,7 @@ void selfTestShippingBbd(
         requireNear(row.nrmsDb, expectedNrmsDb[index], 0.75,
                     "shipping BBD analytic waveform");
         requireNear(decibels(row.metrics.highToneRelativeRms),
-                    expectedNrmsDb[index], 0.75,
+                    expectedHighToneDb[index], 0.75,
                     "shipping BBD 12 kHz waveform");
         requireNear(row.metrics.worstPhysicalImageErrorDb,
                     expectedBgaDb[index], 0.25,
@@ -2642,16 +2669,17 @@ void selfTest(const AuditResult& audit)
         0.003, 0.003, 0.003, 0.010, 0.007, 0.005
     };
     constexpr std::array<double, 6> expectedBbdAnalyticDb {
-        -3.511, -18.390, -53.429, -5.263, -20.051, -56.108
+        -3.511, -18.390, -56.244, -5.263, -20.051, -64.443
     };
     constexpr std::array<double, 6> expectedBbdHighToneDb {
-        -3.511, -18.390, -53.429, -5.263, -20.051, -56.108
+        -3.511, -18.390, -61.253, -5.263, -20.051, -64.443
     };
     constexpr std::array<double, 6> expectedBbdBgaDb {
         4.764, 0.070, 0.011, 3.406, 0.016, 0.008
     };
     constexpr std::array<double, 6> expectedBbdSgaDb {
-        -26.934, -41.304, -71.831, -30.746, -46.044, -65.381
+        // Same qualified HQ recovery snapshots as the shipping matrix.
+        -26.934, -41.304, -103.983, -32.808, -46.044, -104.160
     };
     constexpr std::array<double, 6> expectedBbdPhaseError {
         5.810e-13, 3.537e-13, 7.834e-13,

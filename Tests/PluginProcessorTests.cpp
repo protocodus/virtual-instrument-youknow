@@ -153,6 +153,8 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::aging,       0.5f,   1.0e-5f },
     { parameters::pitchBend,   0.0f,   1.0e-5f },
     { parameters::modulation,  0.0f,   1.0e-5f },
+    { parameters::outputSelector, 0.0f, 1.0e-5f },
+    { parameters::outputLoad,   0.0f,  1.0e-5f },
 });
 
 float parameterValue (const YouKnowAudioProcessor& processor, const char* id)
@@ -576,6 +578,12 @@ EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& proce
         juce::roundToInt (value (parameters::vcfFastEarlyMode)));
     result.vcfSolverMode = static_cast<VcfSolverMode> (
         juce::roundToInt (value (parameters::vcfSolverMode)));
+    result.outputSelector = static_cast<OutputNetwork::Selector> (
+        juce::roundToInt (value (parameters::outputSelector)));
+    constexpr std::array<float, 5> outputLoads { 0, 10000, 47000, 100000, 1000000 };
+    result.outputLoadOhms = outputLoads[static_cast<std::size_t> (
+        juce::roundToInt (value (parameters::outputLoad)))];
+    result.outputMono = processor.getTotalNumOutputChannels() == 1;
     // The product's own circuit selections, so a new one reaches the
     // reference the moment the processor takes it up.
     youknow::ProductFidelityProfile::applyTo (result);
@@ -603,10 +611,20 @@ void testProductFidelitySurvivesHostLifecycle()
         expect (references[index]->configureModuleInputCouplingResistanceOhms (
                     1.0 / (1.0 / 4700.0 + 1.0 / 25500.0)),
                 "cannot configure the explicit product C56 reference");
+        // C59 follows each card's fixed service input trim in the product.
+        // Select it explicitly here so this independent lifecycle reference
+        // catches a missing profile selection or a reset to the raw 82k path.
+        expect (references[index]->configureServiceDerivedVcaCoupling (true),
+                "cannot configure the explicit product C59 reference");
+        expect (references[index]->configureChorusSupport (
+                    youknow::ChorusSupportProfile::Nominal2SA1015Nonlinear),
+                "cannot configure the explicit product chorus support reference");
         // The chosen oscillator level (Docs/decisions.md, 2026-09-22) is
         // common to all three for the same reason.
         expect (references[index]->configureOscillatorLevelScale (0.738f),
                 "cannot configure the explicit product oscillator level");
+        expect (references[index]->configurePulseLevelScale (0.857f),
+                "cannot configure the explicit product pulse balance");
         references[index]->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }
@@ -718,6 +736,126 @@ void testProductFidelitySurvivesHostLifecycle()
 }
 
 // --------------------------------------------------------------------------
+
+void testOutputConnectionsSurviveStateAndToneChanges()
+{
+    YouKnowAudioProcessor processor;
+    processor.setCurrentProgram (3);
+    setParameterValue (processor, parameters::outputSelector, 1);
+    setParameterValue (processor, parameters::outputLoad, 2);
+    expect (!processor.currentProgramIsEdited(),
+            "output connections marked the tone edited");
+    const auto retained = [&processor] (const char* context)
+    {
+        expect (parameterValue (processor, parameters::outputSelector) == 1
+                    && parameterValue (processor, parameters::outputLoad) == 2,
+                std::string (context) + " changed output connections");
+    };
+    for (int program = 0; program < processor.getNumPrograms(); ++program)
+    {
+        processor.setCurrentProgram (program);
+        retained ("program recall");
+        expect (!processor.currentProgramIsEdited(),
+                "connection settings left a recalled program edited");
+    }
+    processor.randomizeParameters (1);
+    retained ("randomisation");
+    processor.applyPatch (sysex::Patch {});
+    retained ("tone recall");
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    YouKnowAudioProcessor restored;
+    restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    expect (parameterValue (restored, parameters::outputSelector) == 1
+                && parameterValue (restored, parameters::outputLoad) == 2,
+            "output connections did not survive a session round trip");
+
+    auto old = processor.parameters.copyState();
+    for (int i = old.getNumChildren(); --i >= 0;)
+    {
+        const auto id = old.getChild (i).getProperty ("id").toString();
+        if (id == parameters::outputSelector || id == parameters::outputLoad)
+            old.removeChild (i, nullptr);
+    }
+    const auto xml = old.createXml();
+    expect (xml != nullptr, "cannot serialize a pre-connection session");
+    if (xml != nullptr)
+    {
+        juce::MemoryBlock legacy;
+        juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
+        restored.setStateInformation (legacy.getData(), static_cast<int> (legacy.getSize()));
+        expect (parameterValue (restored, parameters::outputSelector) == 0
+                    && parameterValue (restored, parameters::outputLoad) == 0,
+                "an older session inherited live output connections instead of High/Open");
+    }
+    const auto* selector = dynamic_cast<const juce::AudioParameterChoice*> (
+        processor.parameters.getParameter (parameters::outputSelector));
+    const auto* load = dynamic_cast<const juce::AudioParameterChoice*> (
+        processor.parameters.getParameter (parameters::outputLoad));
+    expect (selector != nullptr && selector->choices == juce::StringArray { "High", "Medium", "Low" },
+            "output selector choice ordinals changed");
+    expect (load != nullptr && load->choices == juce::StringArray {
+                "Open", "10 kOhm", "47 kOhm", "100 kOhm", "1 MOhm" },
+            "output load choice ordinals changed");
+}
+
+void testOutputConnectionsReachMonoAndStereoAudio()
+{
+    for (bool mono : { false, true })
+    {
+        YouKnowAudioProcessor processor;
+        auto layout = processor.getBusesLayout();
+        layout.outputBuses.set (0, mono ? juce::AudioChannelSet::mono()
+                                      : juce::AudioChannelSet::stereo());
+        expect (processor.setBusesLayout (layout), "cannot configure output bus for connection test");
+        processor.setCurrentProgram (1);
+        setParameterValue (processor, parameters::quality, 0);
+        processor.prepareToPlay (sampleRate, blockSize);
+        YouKnowEngine reference;
+        ProductFidelityProfile::configureBeforePrepare (reference);
+        reference.selectConverterTimingProfile (
+            YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+        reference.prepare (sampleRate, blockSize, 1);
+        float peak = 0, worst = 0;
+        // All published load choices and selectors are reached while audio
+        // runs. The direct engine must also receive mono loading *before*
+        // the processor folds its returned pair into the one host channel.
+        for (int choice = 0; choice < 5; ++choice)
+        {
+            setParameterValue (processor, parameters::outputSelector, static_cast<float> (choice % 3));
+            setParameterValue (processor, parameters::outputLoad, static_cast<float> (choice));
+            reference.setParameters (fidelityReferenceParameters (processor));
+            for (int block = 0; block < 4; ++block)
+            {
+                juce::MidiBuffer midi;
+                if (choice == 0 && block == 0)
+                    for (int note : { 48, 60, 67 })
+                    {
+                        midi.addEvent (juce::MidiMessage::noteOn (1, note, 1.0f), 0);
+                        reference.noteOn (note, 1.0f);
+                    }
+                juce::AudioBuffer<float> actual (mono ? 1 : 2, blockSize);
+                actual.clear();
+                processor.processBlock (actual, midi);
+                std::array<float, blockSize> left {}, right {};
+                reference.process (left.data(), right.data(), blockSize);
+                expect (bufferIsFinite (actual), "output connection produced nonfinite host audio");
+                peak = std::max (peak, actual.getMagnitude (0, blockSize));
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float expected = mono ? .5f * (left[i] + right[i]) : left[i];
+                    worst = std::max (worst, std::abs (actual.getSample (0, i) - expected));
+                    if (!mono)
+                        worst = std::max (worst, std::abs (actual.getSample (1, i) - right[i]));
+                }
+            }
+        }
+        expect (peak > 1e-4f, "output connection parity fixture was silent");
+        expect (worst < 2e-6f, std::string (mono ? "mono" : "stereo")
+                    + " output connections differ from the direct engine by " + std::to_string (worst));
+        processor.releaseResources();
+    }
+}
 
 // The macOS-only VST3 bundle test locates the standard Bypass and Program
 // parameters immediately after the public ones, so a parameter added to the
@@ -835,7 +973,7 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 7,
+    expect (auParameters.size() == historicalAuOrder.size() + 9,
             "the Audio Unit parameter contract has an unexpected size");
     for (std::size_t index = 0;
          index < historicalAuOrder.size() && index < auParameters.size(); ++index)
@@ -849,8 +987,8 @@ void testParameterContract()
     {
         expect (quality->getVersionHint() == 3,
                 "Quality was not appended after both historical AU layouts");
-        expect (auParameters.size() >= 7
-                    && auParameters[auParameters.size() - 7] == quality,
+        expect (auParameters.size() >= 9
+                    && auParameters[auParameters.size() - 9] == quality,
                 "Quality moved from its appended Audio Unit position");
     }
     if (const auto* vcfTanh = processor.parameters.getParameter (
@@ -858,8 +996,8 @@ void testParameterContract()
     {
         expect (vcfTanh->getVersionHint() == 4,
                 "VCF Tanh was not appended after the quality ladder");
-        expect (auParameters.size() >= 6
-                    && auParameters[auParameters.size() - 6] == vcfTanh,
+        expect (auParameters.size() >= 8
+                    && auParameters[auParameters.size() - 8] == vcfTanh,
                 "VCF Tanh moved from its appended Audio Unit position");
         expect (! vcfTanh->isAutomatable(),
                 "VCF Tanh is offered to the host as automatable");
@@ -885,8 +1023,8 @@ void testParameterContract()
     {
         expect (vcfFastEarly->getVersionHint() == 5,
                 "VCF Fast Early was not appended after VCF Tanh");
-        expect (auParameters.size() >= 5
-                    && auParameters[auParameters.size() - 5] == vcfFastEarly,
+        expect (auParameters.size() >= 7
+                    && auParameters[auParameters.size() - 7] == vcfFastEarly,
                 "VCF Fast Early moved from its appended Audio Unit position");
         expect (! vcfFastEarly->isAutomatable(),
                 "VCF Fast Early is offered to the host as automatable");
@@ -939,8 +1077,8 @@ void testParameterContract()
                     == youknow::VcfSolverMode::MersonHalfSteps,
                 "the engine's own solver default is no longer the reference "
                 "Merson kernel");
-        expect (auParameters.size() >= 4
-                    && auParameters[auParameters.size() - 4] == vcfSolver,
+        expect (auParameters.size() >= 6
+                    && auParameters[auParameters.size() - 6] == vcfSolver,
                 "VCF Solver moved from its appended Audio Unit position");
         expect (! vcfSolver->isAutomatable(),
                 "VCF Solver is offered to the host as automatable");
@@ -960,8 +1098,8 @@ void testParameterContract()
                 "Aging no longer defaults to the midpoint of its actual range");
         expect (aging->getVersionHint() == 7,
                 "Aging was not appended after every shipped AU layout");
-        expect (auParameters.size() >= 3
-                    && auParameters[auParameters.size() - 3] == aging,
+        expect (auParameters.size() >= 5
+                    && auParameters[auParameters.size() - 5] == aging,
                 "Aging moved from its appended Audio Unit position");
     }
     for (const auto* id : { parameters::pitchBend, parameters::modulation })
@@ -969,10 +1107,20 @@ void testParameterContract()
         {
             expect (parameter->getVersionHint() == 8,
                     std::string (id) + " was not appended after Aging in Audio Units");
+            expect (auParameters.size() >= 4
+                        && (auParameters[auParameters.size() - 4] == parameter
+                            || auParameters[auParameters.size() - 3] == parameter),
+                    std::string (id) + " did not retain its historical AU position");
+        }
+    for (const auto* id : { parameters::outputSelector, parameters::outputLoad })
+        if (const auto* parameter = processor.parameters.getParameter (id))
+        {
+            expect (parameter->getVersionHint() == 9 && !parameter->isAutomatable(),
+                    std::string (id) + " has the wrong AU or automation policy");
             expect (auParameters.size() >= 2
                         && (auParameters[auParameters.size() - 2] == parameter
                             || auParameters.back() == parameter),
-                    std::string (id) + " did not retain its final AU position");
+                    std::string (id) + " was not appended after historical AU parameters");
         }
 }
 
@@ -6157,7 +6305,9 @@ void testEditedFlagFollowsTheCompleteProgram()
             // Aging is not part of a preset, so it cannot mark one as edited.
             || std::strcmp (expected.id, parameters::aging) == 0
             || std::strcmp (expected.id, parameters::pitchBend) == 0
-            || std::strcmp (expected.id, parameters::modulation) == 0)
+            || std::strcmp (expected.id, parameters::modulation) == 0
+            || std::strcmp (expected.id, parameters::outputSelector) == 0
+            || std::strcmp (expected.id, parameters::outputLoad) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -6499,7 +6649,9 @@ bool isProgramParameter (const char* id)
         && std::strcmp (id, parameters::legacyHq) != 0
         && std::strcmp (id, parameters::aging) != 0
         && std::strcmp (id, parameters::pitchBend) != 0
-        && std::strcmp (id, parameters::modulation) != 0;
+        && std::strcmp (id, parameters::modulation) != 0
+        && std::strcmp (id, parameters::outputSelector) != 0
+        && std::strcmp (id, parameters::outputLoad) != 0;
 }
 
 void testEveryProductProgramRestoresEveryParameter()
@@ -6543,6 +6695,8 @@ void testEveryProductProgramRestoresEveryParameter()
             parameterValue (processor, parameters::vcfFastEarlyMode);
         const float poisonedVcfSolver =
             parameterValue (processor, parameters::vcfSolverMode);
+        const float poisonedOutputSelector = parameterValue (processor, parameters::outputSelector);
+        const float poisonedOutputLoad = parameterValue (processor, parameters::outputLoad);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -6575,6 +6729,10 @@ void testEveryProductProgramRestoresEveryParameter()
                     retained = poisonedBend;
                 else if (std::strcmp (expected.id, parameters::modulation) == 0)
                     retained = poisonedModulation;
+                else if (std::strcmp (expected.id, parameters::outputSelector) == 0)
+                    retained = poisonedOutputSelector;
+                else if (std::strcmp (expected.id, parameters::outputLoad) == 0)
+                    retained = poisonedOutputLoad;
                 expect (std::abs (parameterValue (processor, expected.id)
                                  - retained)
                             <= expected.tolerance,
@@ -6850,13 +7008,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Seven extension knobs, ten utility buttons plus the QUALITY and VCF
+    // Seven extension knobs, eleven utility buttons plus the QUALITY and VCF
     // SOLVER selectors, six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 7 + 12 + 6 + 21 + 1 + 1;
+        panel::controlCount + 7 + 13 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -7041,7 +7199,7 @@ void testPersistentContextHelpAndValueBubbles()
 
     for (const auto* name : { "FREQ", "Quality", "Patch selector",
                               "Playable keyboard", "Status display",
-                              "Pitch and modulation lever" })
+                              "Pitch and modulation lever", "Output connections" })
     {
         auto* target = findDescendantNamed (*editor, name);
         expect (target != nullptr,
@@ -7567,6 +7725,11 @@ void testEditorRandomizeStrengthsAndReset()
     const float poisonedVcfFastEarly =
         parameterValue (processor, parameters::vcfFastEarlyMode);
 
+    const float poisonedOutputSelector =
+        parameterValue (processor, parameters::outputSelector);
+    const float poisonedOutputLoad =
+        parameterValue (processor, parameters::outputLoad);
+
     auto* reset = findDescendantButtonWithText (*editor, "INIT");
     expect (reset != nullptr, "the editor is missing INIT");
     expect (reset != nullptr && static_cast<bool> (reset->onClick),
@@ -7603,7 +7766,11 @@ void testEditorRandomizeStrengthsAndReset()
             || parameter
                 == processor.parameters.getParameter (parameters::pitchBend)
             || parameter
-                == processor.parameters.getParameter (parameters::modulation))
+                == processor.parameters.getParameter (parameters::modulation)
+            || parameter
+                == processor.parameters.getParameter (parameters::outputSelector)
+            || parameter
+                == processor.parameters.getParameter (parameters::outputLoad))
             continue;
         expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
@@ -7619,6 +7786,11 @@ void testEditorRandomizeStrengthsAndReset()
                          processor, parameters::vcfFastEarlyMode)
                      - poisonedVcfFastEarly) < 1.0e-6f,
             "INIT overruled the player's VCF Fast Early selection");
+    expect (parameterValue (processor, parameters::outputSelector)
+                    == poisonedOutputSelector
+                && parameterValue (processor, parameters::outputLoad)
+                    == poisonedOutputLoad,
+            "INIT overruled the player's output connections");
 
     if (auto* preset = findDescendantComboBox (*editor))
         expect (preset->getSelectedId() == 1,
@@ -8989,6 +9161,18 @@ int main()
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
+    if (std::getenv ("YOUKNOW_OUTPUT_CONNECTION_TEST_ONLY") != nullptr)
+    {
+        testPublicParameterOrderMatchesTheSharedList();
+        testParameterContract();
+        testOutputConnectionsSurviveStateAndToneChanges();
+        testOutputConnectionsReachMonoAndStereoAudio();
+        testEveryProductProgramRestoresEveryParameter();
+        testEditedFlagFollowsTheCompleteProgram();
+        testPersistentContextHelpAndValueBubbles();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     if (std::getenv ("YOUKNOW_HOST_RECALL_TEST_ONLY") != nullptr)
     {
         testMalformedStateCannotReplaceAWorkingPreset();
@@ -9024,6 +9208,8 @@ int main()
     testDisplayedParameterTextIsStableWhenReentered();
     testProcessingProducesSound();
     testProductFidelitySurvivesHostLifecycle();
+    testOutputConnectionsSurviveStateAndToneChanges();
+    testOutputConnectionsReachMonoAndStereoAudio();
     testVariableHostBlockSizesPreserveTheTimeline();
     testAdjacentMidiNotesAreIndependentOfSameSampleInsertionOrder();
     testMidiNoteOrderingPreservesOverlapsAndZeroLengthNotes();

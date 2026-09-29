@@ -37,14 +37,21 @@ std::vector<float> render(EngineParameters parameters, int block)
     return result;
 }
 // The idle chorus floor, where the line hiss is audible on its own.
-std::vector<float> renderIdleChorus(EngineParameters parameters)
+std::vector<float> renderIdleChorus(EngineParameters parameters, int block = 128,
+                                   bool playNote = false)
 {
     YouKnowEngine engine;
     engine.prepare(48000.0, 128, 1);
     parameters.chorus = ChorusMode::One;
     engine.setParameters(parameters);
+    if (playNote) engine.noteOn(60, 1.0f);
     std::vector<float> left(9600), right(left.size());
-    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    for (int frame = 0; frame < static_cast<int>(left.size());)
+    {
+        const int count = std::min(block, static_cast<int>(left.size()) - frame);
+        engine.process(left.data() + frame, right.data() + frame, count);
+        frame += count;
+    }
     for (float value : left) require(std::isfinite(value), "non-finite chorus audio");
     return left;
 }
@@ -74,20 +81,28 @@ int main()
         require(render(coreBand, 128) == render(coreScalar, 128),
                 "the core-band profile is not the chosen x2.281 source scale");
 
-        // Hiss B multiplies Chorus Noise at the chorus, past the panel's 0..1
-        // clamp: 0.25 under the profile is exactly the nominal 0.995.
+        // The corrected A-weighted level acts as a scalar on Chorus Noise:
+        // 0.25 under the profile is exactly the nominal 0.5925.
         EngineParameters hissNominal;
-        hissNominal.chorusNoise = 0.995f;
+        hissNominal.chorusNoise = 0.5925f;
         auto hissProfile = hissNominal;
         hissProfile.chorusNoise = 0.25f;
         hissProfile.chorusNoiseCalibrationProfile = ChorusNoiseCalibrationProfile::IdleFloor439522;
         const auto hiss = renderIdleChorus(hissProfile);
-        require(hiss == renderIdleChorus(hissNominal), "the hiss profile is not x3.98 on Chorus Noise");
+        require(hiss == renderIdleChorus(hissNominal), "the hiss profile is not x2.37 on Chorus Noise");
+        require(hiss == renderIdleChorus(hissProfile, 1), "hiss calibration depends on host block size");
         hissNominal.chorusNoise = 0.25f;
         require(hiss != renderIdleChorus(hissNominal), "the hiss profile was not connected to the chorus");
         require(hissNominal.chorusNoiseCalibrationProfile == ChorusNoiseCalibrationProfile::Nominal
                     && chorusNoiseCalibrationScale(static_cast<ChorusNoiseCalibrationProfile>(255)) == 1,
                 "the hiss default or unknown-profile fallback changed");
+        hissNominal.chorusNoise = hissProfile.chorusNoise = 0;
+        const auto quietChorus = renderIdleChorus(hissNominal, 128, true);
+        require(std::any_of(quietChorus.begin(), quietChorus.end(),
+                            [](float sample) { return std::abs(sample) > 1.0e-4f; }),
+                "hiss-off tone check rendered silence");
+        require(quietChorus == renderIdleChorus(hissProfile, 128, true),
+                "hiss calibration changed a hiss-off chorus tone");
 
         EngineParameters product;
         ProductFidelityProfile::applyTo(product);

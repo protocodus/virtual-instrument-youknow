@@ -2,7 +2,8 @@
 #include <array>
 #include <cstdint>
 namespace youknow::firmwareTraceDetail {
-// Semantic instruction descriptors for the nominal B-2 control pass. This
+// Semantic instruction descriptors for the nominal B-2 control pass and ADC
+// vector/handler. This
 // contains no ROM image or proprietary coefficient tables. Addresses/operands
 // are qualified against the hash-pinned external listing by the audit tool.
 // NEC uPD7810/11 instruction timings, pp17-26 (three clocks per state):
@@ -144,7 +145,8 @@ enum class Op : std::uint8_t {
     SUINB_A_xx,
     SUI_A_xx,
     XRAW_wa,
-    XRI_A_xx
+    XRI_A_xx,
+    EXA, EXX, MOV_A_ANM, XRI_ANM_xx, MOV_A_CR, STAX_Hp, RETI
 };
 struct Instruction {
     std::uint16_t address;
@@ -152,7 +154,28 @@ struct Instruction {
     std::uint16_t argument;
     std::uint8_t second, bytes, states, skippedStates;
 };
-inline constexpr std::array<Instruction, 667> program {{
+inline constexpr std::array<Instruction, 687> program {{
+    {0x0020,Op::JRE,0x0070,0x00,2,10,7},
+    {0x0070,Op::EXA,0x0000,0x00,1,4,4},
+    {0x0071,Op::EXX,0x0000,0x00,1,4,4},
+    {0x0072,Op::MOV_A_ANM,0x0000,0x00,2,10,8},
+    {0x0074,Op::XRI_ANM_xx,0x0008,0x00,3,20,11},
+    {0x0077,Op::LXI_H_w,0xff5c,0x00,3,10,10},
+    {0x007a,Op::STAX_Hp,0x0000,0x00,1,7,4},
+    {0x007b,Op::MOV_A_CR,0x0000,0x00,2,10,8},
+    {0x007d,Op::STAX_Hp,0x0000,0x00,1,7,4},
+    {0x007e,Op::MOV_A_CR,0x0001,0x00,2,10,8},
+    {0x0080,Op::STAX_Hp,0x0000,0x00,1,7,4},
+    {0x0081,Op::MOV_A_CR,0x0002,0x00,2,10,8},
+    {0x0083,Op::STAX_Hp,0x0000,0x00,1,7,4},
+    {0x0084,Op::MOV_A_CR,0x0003,0x00,2,10,8},
+    {0x0086,Op::STAX_H,0x0000,0x00,1,7,4},
+    {0x0087,Op::MVI_MKH_xx,0x0005,0x00,3,14,11},
+    {0x008a,Op::EXA,0x0000,0x00,1,4,4},
+    {0x008b,Op::EXX,0x0000,0x00,1,4,4},
+    {0x008c,Op::EI,0x0000,0x00,1,4,4},
+    {0x008d,Op::RETI,0x0000,0x00,1,13,4},
+
     {0x02ec,Op::LDAW_wa,0x0046,0x00,2,10,7},
     {0x02ee,Op::MOV_w_A,0x3000,0x00,4,17,14},
     {0x02f2,Op::BIT_0_wa,0x001e,0x00,2,10,7},

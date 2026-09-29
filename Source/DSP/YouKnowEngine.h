@@ -7,8 +7,10 @@
 #include "YouKnowHighPassSwitch.h"
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
+#include "YouKnowOutputNetwork.h"
 #include "YouKnowControlDac.h"
 #include "YouKnowFirmwareTrace.h"
+#include "YouKnowFirmwareSerialTrace.h"
 #include "YouKnowDcoTemperature.h"
 #include "YouKnowDcoComponents.h"
 #include "YouKnowEnvelopeHold.h"
@@ -300,14 +302,16 @@ struct EngineParameters
     bool enableNarrowOneTwoChorus { true };
     // On by default: the chorus button reaches the wet-return JFETs through
     // the drawn Tr5/C16/R48/C13/Tr4 drive (see Chorus::muteDrive*), so the
-    // wet return mutes about 84.5 ms after CHORUS goes off and returns about
-    // 113.2 ms after it comes on. False switches at the command, as before.
+    // wet return mutes about 80.2 ms after CHORUS goes off and returns about
+    // 120.6 ms after it comes on (without the optional clock-mute circuit).
+    // False switches at the command, as before.
     bool enableChorusMuteDrive { true };
     // Comparison circuit: include C15's loading of C16 through D3/R41/R47
     // and the delayed Tr23/Tr28 BBD-clock clamps. The existing 0.6 V ideal-
     // junction prior is reused; installed switching thresholds and capacitor
-    // tolerances have not been measured. Retain the established default until
-    // the complete switching model and its processing cost are qualified.
+    // tolerances have not been measured. The product selects this nominal
+    // circuit after the nodal/state and bounded cost audits; raw reference
+    // fixtures retain the two-node drive and free-running clocks.
     bool enableChorusClockMuteCircuit { false };
     // On by default: each MN3009 line carries its own fixed-seed insertion
     // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
@@ -411,6 +415,11 @@ struct EngineParameters
     // exactly like the resistor floors -- the exact-silence endpoint at 0 is
     // product policy, not a statement that the floor is a tolerance.
     bool enableCommonVcaNoise { true };
+    // Product-selected support circuit: IC2b's R16 33k || C5 22p feedback
+    // after the common VCA and before the dry/wet split (p.15). The matched
+    // digital filter approximates its magnitude, not exact analogue phase.
+    // False preserves the frozen raw reference. Not a host/tone parameter.
+    bool enableCommonVcaOutputPole { false };
     // On by default: four independent 68k/560 Johnson sources enter their
     // own OTA differential nodes, after the input-compensation branch. The
     // resistance reads and sqrt(4kTR) law at the live card temperature fix
@@ -428,6 +437,13 @@ struct EngineParameters
     // (+3.5 dB). Voiced, single-unit lineage, qualitative pattern only;
     // OQ-10's population data owns any promotion.
     float aging { 0.0f };
+    // Jack-board setup, outside tone memory. High/open preserves the
+    // historical render; selected/loaded paths solve the complete passive
+    // network in OutputNetwork. A mono bus connects both jack nodes to one
+    // receiver resistance. Zero load means open, not a short circuit.
+    OutputNetwork::Selector outputSelector { OutputNetwork::Selector::High };
+    float outputLoadOhms { 0.0f };
+    bool outputMono { false };
     // Ignored by Exact. The opt-in cubic replaces only the small
     // Character/Early multiplier transfer in the Fast kernel.
     VcfFastEarlyMode vcfFastEarlyMode { VcfFastEarlyMode::Hermite };
@@ -573,6 +589,16 @@ public:
     [[nodiscard]] bool configureModuleInputCouplingResistanceOhms(
         double totalResistanceOhms) noexcept;
     [[nodiscard]] double moduleInputCouplingResistanceOhms() const noexcept;
+    // Before prepare(): derive C59's nominal load from the fixed per-card
+    // service input trim, the hybrid's 4.7k/560-ohm input, and VR30/R112.
+    // Retained across reset/prepare. ProductFidelityProfile selects this;
+    // raw reference fixtures retain the historical R108-only 82k bound.
+    // This changes the unity-passband coupling pole, never the signal gain.
+    [[nodiscard]] bool configureServiceDerivedVcaCoupling(bool enabled) noexcept;
+    // Before prepare(): select the fixed chorus support circuit. The named
+    // nominal transistor model and its source assumptions live in Chorus.cpp.
+    // Reset and host-quality changes retain the selection; no preset changes it.
+    [[nodiscard]] bool configureChorusSupport(ChorusSupportProfile profile) noexcept;
     // Before prepare(): one scale on the saw, pulse and sub legs of every
     // WAVE node, the source-to-filter level OQ-15 leaves voiced; noise has
     // its own TP8 trim and is untouched. process() divides it back out at
@@ -586,6 +612,14 @@ public:
     {
         return oscillatorLevelScale_;
     }
+    // Before prepare(): relative pulse-leg level at the WAVE node, including
+    // its pinned DC and the C56 priming/idle paths. Unlike the common oscillator
+    // drive scale this is not divided out at the output: it changes pulse/saw
+    // balance. Raw reference 1; 0.25..2 is a numerical domain, not a tolerance.
+    // Retained across reset/prepare. A coupled-mixer calibration owns its own
+    // source coordinates and cannot be combined with this scale.
+    [[nodiscard]] bool configurePulseLevelScale(float scale) noexcept;
+    [[nodiscard]] float pulseLevelScale() const noexcept { return pulseLevelScale_; }
     // Comparison only, before prepare(): six IC26 ENV/GATE holds with an
     // explicitly supplied effective resistance and ideal bus. No calibrated
     // installed profile or shipping/preset parameter is implied. All six
@@ -1214,7 +1248,8 @@ public:
         // No serial/ADC ISR entry, wire or pin propagation time is invented.
         // Returning mid-pass parameter changes wait for the next snapshot;
         // Voice On/Off keeps completed RAM writes and starts a new trace.
-        FirmwareControlNoInterrupt
+        FirmwareControlNoInterrupt,
+        FirmwareSerialReplay
     };
     // NormalizedServiceChart is an explicit compatibility/product profile: it
     // preserves the chart's sequential writes across one pass without claiming
@@ -1267,6 +1302,57 @@ public:
     { voiceBoardCommandReplayRequested_ = enabled; }
     [[nodiscard]] bool serviceVoiceBoardNoteOn(int card, int boardPitchByte) noexcept;
     [[nodiscard]] bool serviceVoiceBoardNoteOff(int card) noexcept;
+    // Comparison only. Configure before prepare; caller owns the immutable
+    // schedule through the entire engine lifetime. Times are completed RXB-byte
+    // events in 4 MHz CPU states from reset, not assigner or wire-start times.
+    // Call setParameters before prepare and keep host panel controls static during
+    // replay; normal8E..A2 parameter bytes change actual CPU/bus state. RANGE
+    // applies at the fractional PF completion without resetting capacitor charge.
+    // IC40 commits at the later3000 store; existing saw/HPF/chorus audio solvers
+    // consume that latch at the containing internal endpoint (at most one
+    // interval of grid uncertainty), not at the serial payload or its earlier
+    // FF46 RAM store.
+    // Raw ADC bytes/configuration are static; panel RAM is seeded once on reset.
+    // Host note/sustain assignment is bypassed. Reset replays from time zero;
+    // an oversampling-rate transition preserves CPU time, RAM and pending work.
+    // PIT STAX events commit at completion, seven CPU states after the older
+    // comparison's start anchors; DAC ANI events retain their start convention.
+    struct FirmwareSerialReplayConfiguration {
+        FirmwareAdcTrace::Inputs inputs {{132, 0, 255, 0, 0, 0, 0, 0}};
+        FirmwareSerialTrace::Configuration cpu {};
+        // Phase/ANM/mask/request/IE initialization at time zero. CR contents
+        // are initialized from inputs for that ANM bank, not copied from here.
+        FirmwareAdcTrace::Peripheral initialAdc {};
+        std::span<const FirmwareSerialTrace::ByteReady> schedule {};
+        // Alternative to the caller-owned immutable schedule. Append ready
+        // bytes before rendering the interval that contains them. This is a
+        // bounded comparison input, not a host-MIDI-to-wire timing policy.
+        bool streaming = false;
+    };
+    [[nodiscard]] bool configureFirmwareSerialReplay(
+        const FirmwareSerialReplayConfiguration&) noexcept;
+    static constexpr std::size_t firmwareSerialStreamingCapacity = 1024;
+    // Audio-thread only, after prepare(). The entire append is atomic: wrong
+    // mode, unsorted/late timestamps or insufficient capacity return false.
+    // Bytes at state zero are accepted before the first render; afterwards
+    // they must lie strictly after the CPU's already-completed integer time.
+    // Equal timestamps within/between queued batches retain arrival order.
+    // Reset clears the queue; quality-rate changes retain it and CPU time.
+    // Never retains caller memory or allocates. Configuration.streaming
+    // requires an empty immutable schedule; no two-source merge is inferred.
+    [[nodiscard]] bool appendFirmwareSerialBytes(
+        std::span<const FirmwareSerialTrace::ByteReady>) noexcept;
+    [[nodiscard]] std::size_t pendingFirmwareSerialBytes() const noexcept
+    { return firmwareSerialStreamCount_; }
+    [[nodiscard]] const FirmwareSerialTrace::State& firmwareSerialState() const noexcept
+    { return firmwareSerialState_; }
+    [[nodiscard]] const FirmwareSerialTrace::Events& firmwareSerialEvents() const noexcept
+    { return firmwareSerialEvents_; }
+    [[nodiscard]] FirmwareSerialTrace::Status firmwareSerialStatus() const noexcept
+    { return firmwareSerialStatus_; }
+    [[nodiscard]] double firmwareSerialAudioStates() const noexcept
+    { return firmwareSerialAudioStates_; }
+
     // The selected ADC bank is frozen for this no-interrupt profile. Supply
     // captured raw/previous bytes to explore its exact main-loop branches;
     // the default is lower bank, zero samples, conversion flag clear.
@@ -1388,12 +1474,14 @@ public:
         const float noiseGain = 1.0f + outputSummerFeedbackOhms / parallelInput;
         return outputSummerGainBandwidthHz / noiseGain;
     }
-    // Johnson-Nyquist noise of the five independently identifiable resistor
+    // Johnson-Nyquist noise of the independently identifiable resistor
     // groups downstream of the voice bus: IC6 feedback, dry input, wet input,
     // the R54/R57 output series legs, and the loaded VR1/output network. The
     // first three are referred to IC6's output; the last two reduce to the
-    // passive wiper network's Thevenin resistance. 25 C is the TA75558
-    // datasheet condition used by the adjacent slew/GBW anchors.
+    // passive wiper network's Thevenin resistance. R64/R65 then add 2.2 kOhm
+    // per jack; their noise survives even with the volume wiper grounded.
+    // 25 C is the TA75558 datasheet condition used by the adjacent slew/GBW
+    // anchors.
     // Boltzmann constant (exact SI value):
     // https://physics.nist.gov/cgi-bin/cuu/Value?k
     // Roland resistor designators/values, Service Notes pp. 14-15:
@@ -1402,6 +1490,8 @@ public:
     static constexpr float boltzmannConstant = 1.380649e-23f;
     [[nodiscard]] static float outputSummerResistorNoiseDensity() noexcept;
     [[nodiscard]] static float outputWiperNoiseResistance(
+        float volumePosition) noexcept;
+    [[nodiscard]] static float outputJackNoiseResistance(
         float volumePosition) noexcept;
     [[nodiscard]] static float outputSummerClip(float value) noexcept;
 
@@ -1633,7 +1723,7 @@ public:
     //     are equal is the assumption).
     //   ADJUSTMENT s. 6 VCA GAIN (p. 19; bank 3, hold C4, full sustain) sets
     //     VR27 for 6 Vp-p at TP8 = pin 10 VCA OUT, i.e. 3.0 V peak across
-    //     the load, while the filter output at TP19 carries s. 5's 4.8 Vp-p
+    //     the load, while TP19 (after C59, at VR27's hot end) carries s. 5's 4.8 Vp-p
     //     = 2.4 V peak self-oscillation sine of the same bank and key.
     //   I_out,peak = 3.0 V / R_load;  tanh(u_trim) = I_out,peak / I_tail.
     //
@@ -1750,8 +1840,8 @@ public:
     [[nodiscard]] static float outputCouplingHighGain() noexcept;
     // Loaded transfer at a shaft position. The fixed per-wiper internal load
     // is the 41.3 kOhm selector ladder in parallel with the 101 kOhm headphone
-    // input. External jack loads remain outside this scope; the mono
-    // normaling is the host bus's fold (PluginProcessor.cpp, monoJackFoldGain).
+    // input. These compatibility helpers describe High/open only; other
+    // selector/load/mono transfers belong to OutputNetwork.
     [[nodiscard]] static float outputCouplingCornerHz(
         float volumePosition) noexcept;
     [[nodiscard]] static float outputCouplingHighGain(
@@ -1790,6 +1880,9 @@ public:
     // IC5/uPC1252H2 follows the switched HPF through the manufacturer's
     // application input network: C12 10 uF bipolar and R36 33 kOhm.
     [[nodiscard]] static float commonVcaInputCouplingCornerHz() noexcept;
+    // Ideal IC2b current-to-voltage feedback pole, R16 33k || C5 22p.
+    // This does not identify the M5218L's GBW or IC5's internal bandwidth.
+    [[nodiscard]] static double commonVcaOutputPoleHz() noexcept;
     // C56/C50 10 uF NP, the per-voice coupling from the summed WAVE node into
     // the voice module's pin 1 VCF IN (module board p. 13). The capacitor is a
     // designator-level read; the resistance it works against is not, so the
@@ -1799,8 +1892,9 @@ public:
     [[nodiscard]] static float moduleCouplingCornerHz() noexcept;
     // C59 1 uF/50 V NP, the per-voice coupling from pin 3 VCF OUT into the
     // VR27/R108 network and pin 9 VCA IN (module board p. 13). R108 82 kOhm
-    // fixes a conservative maximum corner for the nominal capacitor. VR27,
-    // module input and source impedances remain unresolved; see the .cpp.
+    // fixes the raw reference's conservative maximum corner. The product's
+    // service-derived per-card load is described beside the .cpp constants;
+    // this static helper continues to report the raw 82k reference.
     [[nodiscard]] static float vcaInputCouplingCornerHz() noexcept;
     // The shared noise generator's own support circuit, module board p. 13:
     // Tr21's emitter-junction avalanche noise crosses C42 1 uF into the
@@ -2731,6 +2825,7 @@ private:
         float outputSummerBandwidthBlend { 1.0f };
         float outputSummerNoiseScale { 0.0f };
         float commonVcaNoiseScale { 0.0f };
+        OutputJackLowPass::Coefficients commonVcaOutputPole {};
     };
     [[nodiscard]] static PwmHoldCoefficients pwmHoldCoefficients(
         double intervalSeconds) noexcept;
@@ -2792,6 +2887,10 @@ private:
         float resonanceError { 0.0f };
         float vcaControlOffset { 0.0f };
         float vcaGainError { 0.0f };
+        // C59's unity-passband TPT coefficient at this card's fixed service
+        // temperature/input trim. Rebuilt on Character/gradient/rate edits,
+        // never from the live warm-up clock; capacitor charge stays in Voice.
+        float vcaInputCouplingG { 0.0001f };
         float subLevelError { 0.0f };
         float noiseLevelError { 0.0f };
         // Per-card cutoff factor of the spatial gradient at the running
@@ -3090,6 +3189,7 @@ private:
     void refreshVoiceCardThermalScales() noexcept;
     void refreshCardJohnsonTemperatureScales() noexcept;
     void refreshVoiceCardServiceTrims() noexcept;
+    void refreshVoiceVcaCoupling() noexcept;
     void refreshVoiceRampCurrentScales() noexcept;
     void refreshAgedUnitState() noexcept;
     // One internal sample of chassis warm-up: the wall-clock timer and the
@@ -3273,7 +3373,8 @@ private:
     [[nodiscard]] static double dcoChargingSlope(
         float heldCode, DcoRange range) noexcept;
     [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
-    void updateDcoHeldCv(Voice& voice, float code) noexcept;
+    void updateDcoHeldCv(Voice& voice, float code, double samplesAgo = 1.0,
+                         bool addCorrections = true) noexcept;
     void refreshDcoResetTrajectory(Voice& voice) noexcept;
     [[nodiscard]] double dcoCorrectionSlope(double slope) const noexcept;
     void addDcoSlope(Voice& voice, double slopeStep, double samplesAgo) noexcept;
@@ -3293,8 +3394,8 @@ private:
                                const EngineParameters& parameters) noexcept;
     [[nodiscard]] static bool pulseMixEnabled(
         bool requested, float duty, bool couplePinnedLevel) noexcept;
-    [[nodiscard]] static float pulseWaveNodeMean(
-        const Voice& voice, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] float pulseWaveNodeMean(
+        const Voice& voice, const EngineParameters& parameters) const noexcept;
     [[nodiscard]] float subWaveNodeMean(
         const Voice& voice, const EngineParameters& parameters) const noexcept;
     void primeVoiceWaveNode(Voice& voice,
@@ -3691,6 +3792,9 @@ private:
     // C12/R36 immediately before the shared uPC1252H2 VCA.
     HighPass commonVcaInputCoupling_ {};
     float commonVcaInputCouplingG_ { 0.0001f };
+    // IC2b's common output, upstream of both dry and wet paths. These are
+    // numerical signal histories; clear them under the live HQ safety fade.
+    OutputJackLowPass commonVcaOutputPole_ {};
 
     // One independent C17/C20 charge state per IC6 output. Its coefficient and
     // observed gain follow the glided pot position and fixed internal wiper
@@ -3704,6 +3808,7 @@ private:
     OutputJackLowPass outputJackLeft_ {};
     OutputJackLowPass outputJackRight_ {};
     OutputJackLowPass::Coefficients outputJackCoefficients_ {};
+    OutputNetwork outputNetwork_ {};
 
     // VCA LEVEL controls the single jack-board VCA after the six voice cards
     // and shared HPF. It is not part of each voice's envelope VCA.
@@ -3772,10 +3877,76 @@ private:
     // Zero selects the existing voiced resistance; no preset selects an
     // override. Keeping this separate also detects incompatible calibration.
     double moduleInputCouplingResistanceOverrideOhms_ { 0.0 };
+    bool serviceDerivedVcaCoupling_ { false };
     float oscillatorLevelScale_ { 1.0f };
+    float pulseLevelScale_ { 1.0f };
 
     float glideLawPortamento_ { -1.0f };
     float glideLawStepPerScan_ { 0.0f };
+    struct SerialDcoEvent {
+        enum class Kind { Control, Lsb, Msb, PitchCv, Range } kind;
+        double position;
+        unsigned value;
+    };
+    struct SerialHoldEvent {
+        bool active=false;
+        ConverterWrite write {ConverterDestination::Resonance, -1};
+        double position=0.0;
+        float previousTarget=0.0f, target=0.0f;
+    };
+    FirmwareSerialReplayConfiguration firmwareSerialConfiguration_ {};
+    FirmwareSerialTrace::State firmwareSerialState_ {};
+    FirmwareSerialTrace::Events firmwareSerialEvents_ {};
+    FirmwareSerialTrace::Status firmwareSerialStatus_ {FirmwareSerialTrace::Status::ReachedTarget};
+    FirmwareControlTrace::Tables firmwareSerialTables_ {};
+    FirmwareSerialTrace::Tables firmwareSerialParameterTables_ {};
+    // CPU bus latches are distinct from the caller's static panel. The HPF,
+    // saw route and chorus consume IC40 at the containing audio endpoint;
+    // this preserves their existing numerical grid, with at most one interval
+    // of timing uncertainty, not a fractional switch-circuit solve.
+    EngineParameters firmwareSerialCircuitParameters_ {};
+    unsigned firmwareSerialIc40_ = 0;
+    std::uint64_t firmwareSerialIc40States_ = 0;
+    DcoRange firmwareSerialRange_ {DcoRange::Eight};
+    DcoRange firmwareSerialIntervalStartRange_ {DcoRange::Eight};
+    DcoRange firmwareSerialWalkRange_ {DcoRange::Eight};
+    struct SerialRangeClock {
+        double falling = 1.0, reload = 0.0;
+        bool pending = false;
+    };
+    SerialRangeClock firmwareSerialClockStart_ {}, firmwareSerialClockEnd_ {};
+    bool firmwareSerialRangeChanged_ = false;
+    [[nodiscard]] DcoRange dcoCircuitRange() const noexcept;
+    [[nodiscard]] const EngineParameters& circuitParameters() const noexcept;
+    [[nodiscard]] double serialRangeClockPhase(const SerialRangeClock&, double,
+                                              DcoRange) const noexcept;
+    void advanceSerialRangeClock(SerialRangeClock&, double, DcoRange) const noexcept;
+    void changeSerialRangeClock(SerialRangeClock&, DcoRange, DcoRange) const noexcept;
+    void applySerialVoiceRange(Voice&, DcoRange, DcoRange, double, double,
+                              double, bool) noexcept;
+    void commitFirmwareSerialClock() noexcept;
+    void applyFirmwareSerialIc40(unsigned, std::uint64_t) noexcept;
+    std::size_t firmwareSerialScheduleCursor_=0;
+    std::array<FirmwareSerialTrace::ByteReady, firmwareSerialStreamingCapacity>
+        firmwareSerialStream_ {};
+    std::size_t firmwareSerialStreamHead_=0, firmwareSerialStreamCount_=0;
+    double firmwareSerialAudioStates_=0.0;
+    long double firmwareSerialTimelineStates_=0.0L, firmwareSerialRateBaseStates_=0.0L;
+    double firmwareSerialTimelineRate_=0.0;
+    std::uint64_t firmwareSerialRateSamples_=0;
+    // At most12 external stores (minimum11states apart) plus one pitch DAC
+    // fit the125-state internal interval; an additional PF event still fits16.
+    std::array<std::array<SerialDcoEvent,16>,hardwareVoices> firmwareSerialDcoEvents_ {};
+    std::array<unsigned,hardwareVoices> firmwareSerialDcoCounts_ {};
+    std::array<unsigned,hardwareVoices> firmwareSerialPitLsb_ {};
+    std::array<bool,hardwareVoices> firmwareSerialPitNeedsMsb_ {};
+    SerialHoldEvent firmwareSerialHoldEvent_ {};
+    void initialiseFirmwareSerialReplay() noexcept;
+    void advanceFirmwareSerialInterval(double seconds) noexcept;
+    void applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event&) noexcept;
+    [[nodiscard]] bool decodeFirmwareSerialDac(unsigned pa, ConverterWrite&) const noexcept;
+    [[nodiscard]] float firmwareSerialDacTarget(const ConverterWrite&,unsigned code) const noexcept;
+
 };
 
 } // namespace youknow

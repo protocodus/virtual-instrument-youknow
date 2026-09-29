@@ -2,6 +2,7 @@
 // Parts/topology are schematic anchored; 0.6 V diode/transistor thresholds are
 // explicit nominal priors, and this is not an original-unit timing measurement.
 #include "../Source/DSP/YouKnowChorus.h"
+#include "../Source/DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -18,6 +19,8 @@ struct YouKnowTestAccess
     static void advance(Chorus& c, bool muted) { c.advanceMuteDrive(muted); }
     static std::array<double, 3> volts(const Chorus& c)
     { return { c.muteDriveNodeVolts_, c.muteDriveHoldVolts_, c.clockMuteVolts_ }; }
+    static void setVolts(Chorus& c, const std::array<double, 3>& v)
+    { c.muteDriveNodeVolts_=v[0]; c.muteDriveHoldVolts_=v[1]; c.clockMuteVolts_=v[2]; }
     static auto buckets(const Chorus& c) { return c.lineA_.cells; }
     static auto rng(const Chorus& c) { return c.lineA_.noiseState; }
     static auto phase(const Chorus& c) { return c.lineA_.clockPhase; }
@@ -30,6 +33,8 @@ struct YouKnowTestAccess
                 s.antiAliasFirst.s1,s.antiAliasFirst.s2,
                 s.antiAliasSecond.s1,s.antiAliasSecond.s2};
     }
+    static auto runningMode(const Chorus& c) { return c.runningMode_; }
+    static auto rate(const Chorus& c) { return c.rateHz_; }
     static auto builds(const Chorus& c) { return c.supportBuildCount_; }
 };
 }
@@ -58,6 +63,18 @@ State equilibrium(bool muted)
 {
     // Collapse the independently transcribed resistor paths only at DC.
     // D3 is reverse biased at both equilibria, so it carries no current.
+    if (muted)
+    {
+        // Each base is clamped to its -15 V emitter plus the nominal 0.6 V.
+        // R42/R131/R145 then draw from that junction; they no longer belong
+        // in series with the capacitors' upper load resistors.
+        const double base=-14.4, wetPath=150000.0+560000.0;
+        const double clockPath=330000.0+330000.0/2.0;
+        const double node=(15.0/10000.0+base/wetPath+base/clockPath)
+                         /(1.0/10000.0+1.0/wetPath+1.0/clockPath);
+        return {node,base+(node-base)*560000.0/wetPath,
+                     base+(node-base)*(330000.0/2.0)/clockPath};
+    }
     const double sink = 1.0 / 749000.0 + 1.0 / 511500.0
                       + (muted ? 0.0 : 1.0 / 330.0);
     const double aboveRail = 30.0 / (1.0 + 10000.0 * sink);
@@ -71,9 +88,17 @@ State currents(const State& v, bool muted)
     const double i47 = (v[2] - v[0]) / 330000.0;
     const double diode = std::max(v[2] - v[0] - 0.6, 0.0) / 10000.0;
     const double sink = muted ? 0.0 : (v[0] + 15.0) / 330.0;
+    // Solve the three actual base nodes, including their resistor-to-emitter
+    // paths and the constant-Vbe junction inequality. This independent current
+    // reference does not select regions or use the prepared matrix equations.
+    const double wetBase=std::min(-15.0+(v[1]+15.0)*39000.0/599000.0,-14.4);
+    const double clockBase=std::min(-15.0+(v[2]+15.0)*33000.0/363000.0,-14.4);
+    const double wetBaseCurrent=(v[1]-wetBase)/560000.0;
+    const double firstClockCurrent=(v[2]-clockBase)/330000.0;
+    const double secondClockCurrent=(v[2]-clockBase)/330000.0;
     return { ((15.0-v[0])/10000.0 - sink - i48 + i47 + diode) / 2.2e-6,
-             (i48 - (v[1]+15.0)/599000.0) / 1.0e-6,
-             (-i47 - diode - 2.0*(v[2]+15.0)/363000.0) / 2.2e-6 };
+             (i48 - wetBaseCurrent) / 1.0e-6,
+             (-i47 - diode - firstClockCurrent - secondClockCurrent) / 2.2e-6 };
 }
 
 State offset(State v, const State& slope, double dt)
@@ -164,6 +189,41 @@ void checkOracle(double rate)
     std::cout << "max node error " << error << " V; step-halving " << convergence << " V\n";
 }
 
+void checkJunctionCorners(double rate)
+{
+    Chorus chorus;
+    chorus.prepare(rate);
+    float l{},r{};
+    process(chorus,0.0f,ChorusMode::Off,l,r);
+    const auto rest=equilibrium(true);
+    for(std::size_t i=0;i<3;++i)
+        require(std::abs(Access::volts(chorus)[i]-rest[i])<2.0e-8,
+                "initial Off did not use both clamped-base DC loads");
+    for(const auto& start : {
+            State{clockThreshold-0.6002,muteThreshold+0.0001,clockThreshold+0.0001},
+            State{clockThreshold-0.6,muteThreshold,clockThreshold},
+            State{clockThreshold-0.5998,muteThreshold-0.0001,clockThreshold-0.0001}})
+        for(const bool muted : {true,false})
+        {
+            Access::setVolts(chorus,start);
+            State oracle=start, finer=start;
+            for(int n=0;n<16;++n)
+            {
+                Access::advance(chorus,muted);
+                oracleStep(oracle,muted,1.0/rate,1.0/2000000.0);
+                oracleStep(finer,muted,1.0/rate,1.0/4000000.0);
+                for(std::size_t i=0;i<3;++i)
+                {
+                    require(std::abs(oracle[i]-finer[i])<1.0e-8,
+                            "junction-corner RK4 reference did not converge");
+                    require(std::abs(Access::volts(chorus)[i]-finer[i])<2.0e-7,
+                            "multiple/simultaneous junction crossings lost charge");
+                }
+            }
+        }
+    std::cout << rate << " Hz simultaneous/multiple junction crossings agree\n";
+}
+
 void checkStoppedMemory()
 {
     Chorus chorus;
@@ -204,6 +264,63 @@ void checkStoppedMemory()
     std::cout << "Stopped buckets/RNG/phase retained; support and resumed clocks advance\n";
 }
 
+// The two IC40 outputs shown on Roland service p.13 control mute and mode
+// separately. Changing I/II while muted must preserve stored charge and mute
+// capacitor trajectories, while the continuously running LFO changes speed.
+void checkHardwareModeSelection()
+{
+    for (const double sampleRate : {44100.0, 48000.0, 192000.0})
+    {
+        Chorus first, second;
+        first.prepare(sampleRate);
+        second.prepare(sampleRate);
+        float al{}, ar{}, bl{}, br{};
+        process(first, 0.15f, ChorusMode::Off, al, ar);
+        process(second, 0.15f, ChorusMode::Off, bl, br);
+        require(first.clocksStopped() && second.clocksStopped(),
+                "fixture did not start with stopped BBD clocks");
+        const auto buckets = Access::buckets(second);
+        const auto rng = Access::rng(second);
+        const auto bucketPhase = Access::phase(second);
+        const auto lfoPhase = second.getLfoPhase();
+        const auto muteVolts = Access::volts(second);
+        second.setHardwareModeSelection(ChorusMode::Two);
+        require(Access::buckets(second) == buckets && Access::rng(second) == rng
+                && Access::phase(second) == bucketPhase
+                && second.getLfoPhase() == lfoPhase && Access::volts(second) == muteVolts,
+                "mode-select pin reset oscillator, BBD charge or mute capacitors");
+        const double expectedPhase = lfoPhase
+            + static_cast<double>(Chorus::settingsFor(ChorusMode::Two).rateHz) / sampleRate;
+        process(first, 0.15f, ChorusMode::Off, al, ar);
+        process(second, 0.15f, ChorusMode::Off, bl, br);
+        require(second.getLfoPhase() == expectedPhase,
+                "muted mode II did not advance the LFO at its selected rate");
+        require(Access::runningMode(second) == ChorusMode::Two
+                && second.muteDriveMuted() && second.clocksStopped(),
+                "mode-select pin incorrectly opened the wet return or BBD clocks");
+        require(Access::volts(first) == Access::volts(second) && al == bl && ar == br,
+                "mode-select pin altered the independent mute circuit or dry audio");
+        require(Access::buckets(second) == buckets && Access::rng(second) == rng
+                && Access::phase(second) == bucketPhase,
+                "muted selector change discarded stopped BBD history");
+        // The command argument now only supplies mute; the physical selector
+        // remains authoritative when the wet return is enabled again.
+        process(second, 0.15f, ChorusMode::One, bl, br);
+        require(Access::runningMode(second) == ChorusMode::Two,
+                "unmute overwrote the separate hardware mode-select pin");
+        second.setHardwareModeSelection(ChorusMode::Off);
+        process(second, 0.15f, ChorusMode::One, bl, br);
+        require(Access::runningMode(second) == ChorusMode::One,
+                "disabling hardware selection did not restore host mode control");
+        second.setHardwareModeSelection(ChorusMode::Two);
+        second.reset();
+        process(second, 0.15f, ChorusMode::One, bl, br);
+        require(Access::runningMode(second) == ChorusMode::One,
+                "reset leaked hardware selection into an ordinary host session");
+    }
+    std::cout << "Independent IC40 mode/mute signals preserve phase and stopped charge\n";
+}
+
 void checkSteadyIsolation()
 {
     for (const auto mode : {ChorusMode::One,ChorusMode::Two,ChorusMode::OneTwo})
@@ -227,8 +344,19 @@ void checkSteadyIsolation()
 
 int main()
 {
+    youknow::EngineParameters parameters;
+    require(!parameters.enableChorusClockMuteCircuit,
+            "raw reference unexpectedly enables the clock-mute circuit");
+    youknow::ProductFidelityProfile::applyTo(parameters);
+    require(parameters.enableChorusMuteDrive && parameters.enableChorusClockMuteCircuit,
+            "product omitted the complete chorus switching circuit");
     std::cout << std::setprecision(10);
-    for(double rate : {8000.0,44100.0,48000.0,192000.0,768000.0}) checkOracle(rate);
+    for(double rate : {8000.0,44100.0,48000.0,192000.0,768000.0})
+    {
+        checkOracle(rate);
+        checkJunctionCorners(rate);
+    }
     checkStoppedMemory();
     checkSteadyIsolation();
+    checkHardwareModeSelection();
 }

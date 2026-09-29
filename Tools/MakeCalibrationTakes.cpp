@@ -1169,8 +1169,8 @@ void selfTest()
     // because their filter calibration and Unit Character also differ.
     // Match the product's shared temperature proxy explicitly so that its
     // changing DCO clock cannot masquerade as a different HPF circuit. Match
-    // C56's adopted resistor reduction and the chosen oscillator level for
-    // the same isolated comparison.
+    // C56's adopted resistor reduction, service-derived C59, chorus support
+    // and chosen oscillator/pulse levels for the same isolated comparison.
     auto expectedEngine = std::make_unique<YouKnowEngine>();
     require(expectedEngine->configureHighPassSwitch(110.0),
             "could not prepare the independent product HPF reference");
@@ -1179,8 +1179,15 @@ void selfTest()
     require(expectedEngine->configureModuleInputCouplingResistanceOhms(
                 1.0 / (1.0 / 4700.0 + 1.0 / 25500.0)),
             "could not match the product HPF reference's C56 coupling");
+    require(expectedEngine->configureServiceDerivedVcaCoupling(true),
+            "could not match the product HPF reference's C59 coupling");
+    require(expectedEngine->configureChorusSupport(
+                ChorusSupportProfile::Nominal2SA1015Nonlinear),
+            "could not match the product HPF reference's chorus support");
     require(expectedEngine->configureOscillatorLevelScale(0.738f),
             "could not match the product HPF reference's oscillator level");
+    require(expectedEngine->configurePulseLevelScale(0.857f),
+            "could not match the product HPF reference's pulse balance");
     expectedEngine->selectConverterTimingProfile(
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     expectedEngine->prepare(renderSampleRate, 256, 4);

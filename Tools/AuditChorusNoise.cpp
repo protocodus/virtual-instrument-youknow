@@ -1,8 +1,10 @@
 // Clock-grid reconstruction of the existing independent BBD noise source.
 // This audit does not infer an MN3009 noise amplitude or PSD from its maximum
 // A-weighted datasheet row. Given the existing iid edge source (variance v),
-// the continuous held source has two-sided PSD v/fcp*sinc(f/fcp)^2. Sample it
-// only after reconstruction; folding the raw staircase on a coarse host grid
+// the continuous held source has two-sided PSD v/fcp*sinc(f/fcp)^2. Its
+// output events occur at half-integer clock phase; input captures remain at
+// integer phase. This time origin changes phase, not that fixed-clock PSD.
+// Sample it only after reconstruction; folding the raw staircase on a coarse host grid
 // creates another, non-physical noise spectrum.
 //
 // --self-test independently integrates the continuous random staircase
@@ -11,7 +13,8 @@
 // preservation. --measure DIR exports same-seed physical output at several
 // rates/clocks for the Python high-rate/PSD audit. --render WAV FACTOR creates
 // a short noise-focused audition through the shipping engine (FACTOR 1 or 4).
-// Compile this exact source against e405d7a for the frozen A baseline.
+// Historical same-edge references are preserved separately with their sources;
+// this oracle uses the physical staggered input/output event convention.
 #include "DSP/YouKnowEngine.h"
 #include "RealismComparisonSupport.h"
 #include <bit>
@@ -28,6 +31,7 @@ struct YouKnowTestAccess
     static float core(Chorus& chorus, float clock, float rate)
     { return chorus.lineA_.processClockedCore(0.0f, clock, rate, 1.0f); }
     static auto noiseState(const Chorus& chorus) { return chorus.lineA_.noiseState; }
+    static int writeIndex(const Chorus& chorus) { return chorus.lineA_.writeIndex; }
     static float held(const Chorus& chorus) { return chorus.lineA_.held; }
     static void seed(Chorus& chorus, std::uint32_t value) { chorus.lineA_.reset(value); }
     static float output(Chorus& chorus, float clock, float rate)
@@ -63,11 +67,11 @@ double oracle(double time, double period, const std::vector<float>& values)
     // point Gauss-Legendre quadrature exactly integrates each cubic segment;
     // neither a production BLEP residual nor its past/future sign is reused.
     std::vector<double> knots {time-2,time-1,time,time+1,time+2};
-    const auto first = static_cast<long long>(std::floor((time-2)/period));
-    const auto last = static_cast<long long>(std::ceil((time+2)/period));
+    const auto first = static_cast<long long>(std::floor((time-2)/period+.5));
+    const auto last = static_cast<long long>(std::ceil((time+2)/period+.5));
     for (auto edge=first; edge<=last; ++edge)
-        if (edge*period > time-2 && edge*period < time+2)
-            knots.push_back(edge*period);
+        if ((edge-.5)*period > time-2 && (edge-.5)*period < time+2)
+            knots.push_back((edge-.5)*period);
     std::sort(knots.begin(),knots.end());
     double result=0;
     constexpr double abscissa=0.774596669241483377;
@@ -75,7 +79,7 @@ double oracle(double time, double period, const std::vector<float>& values)
     {
         const double middle=(knots[i-1]+knots[i])/2;
         const double half=(knots[i]-knots[i-1])/2;
-        const auto index=static_cast<long long>(std::floor(middle/period));
+        const auto index=static_cast<long long>(std::floor(middle/period+.5));
         const double value=index<0 ? 0 : values.at(static_cast<std::size_t>(index));
         result+=value*half*(5.0/9*kernel(time-middle+half*abscissa)
             +8.0/9*kernel(time-middle)+5.0/9*kernel(time-middle-half*abscissa));
@@ -101,10 +105,25 @@ void selfTest()
             const double actual=YouKnowTestAccess::core(chorus,clock,rate);
             const double expected=oracle(sample,period,values);
             maximumError=std::max(maximumError,std::abs(actual-expected));
-            // At non-commensurate floating boundaries, edge count can be one
-            // sample side of an exact rational boundary; neither draw may be
-            // consumed by lookahead. The held value must match the live RNG.
+            // The integer rate/clock fixtures permit an exact rational event
+            // ledger. Allow either side only at a true rational boundary,
+            // where accumulated floating phase can differ by a few ulps.
+            // Outputs, not input writes or BLEP lookahead, consume RNG draws.
+            const auto numerator=static_cast<std::uint64_t>(sample)
+                *static_cast<std::uint64_t>(clock);
+            const auto denominator=static_cast<std::uint64_t>(rate);
+            const auto outputCount=(2*numerator+denominator)/(2*denominator);
+            const bool outputBoundary=(2*numerator+denominator)%(2*denominator)==0;
+            const auto inputCount=numerator/denominator;
+            const bool inputBoundary=numerator%denominator==0;
             const auto live=YouKnowTestAccess::noiseState(chorus);
+            if(live!=states.at(outputCount)
+               && !(outputBoundary&&outputCount>0&&live==states.at(outputCount-1)))
+                throw std::runtime_error("noise RNG did not advance once per half-phase output");
+            const auto cursor=static_cast<std::uint64_t>(YouKnowTestAccess::writeIndex(chorus));
+            if(cursor!=inputCount%Chorus::cellPairs
+               && !(inputBoundary&&inputCount>0&&cursor==(inputCount-1)%Chorus::cellPairs))
+                throw std::runtime_error("input cursor did not advance at integer clock phase");
             if(YouKnowTestAccess::held(chorus)!=sourceValue(live) && live!=seed)
                 throw std::runtime_error("lookahead changed the physical held sample");
         }
