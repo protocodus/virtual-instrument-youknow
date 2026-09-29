@@ -1220,7 +1220,7 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME YouKnow.VST3Bundle
             COMMAND YouKnowVST3BundleSmokeTests
-                    "${youknow_vst3_test_bundle}")
+                    "${youknow_vst3_test_bundle}" "${PROJECT_VERSION}")
         set_tests_properties(YouKnow.VST3Bundle PROPERTIES TIMEOUT 60)
 
         if(APPLE)

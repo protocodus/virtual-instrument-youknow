@@ -44,7 +44,7 @@ std::unique_ptr<juce::AudioPluginInstance> createInstance (
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
-    if (! expect (argc == 2, "expected one VST3 bundle path"))
+    if (! expect (argc == 3, "expected VST3 bundle path and version"))
         return 1;
 
     const juce::File bundle { argv[1] };
@@ -64,7 +64,8 @@ int main (int argc, char** argv)
     passed &= expect (description.name == "YouKnow", "wrong VST3 name");
     passed &= expect (description.manufacturerName == "Protocodus",
                       "wrong VST3 vendor");
-    passed &= expect (description.version == "1.1.0", "wrong VST3 version");
+    passed &= expect (description.version == juce::String (argv[2]),
+                      "wrong VST3 version");
     passed &= expect (description.isInstrument, "VST3 is not an instrument");
     passed &= expect (description.numInputChannels == 0,
                       "VST3 unexpectedly exposes an audio input");
