@@ -29,7 +29,7 @@ plug-in for your music host or a standalone instrument.
   notarized macOS `.pkg`, its `.manifest.txt` and `-SHA256SUMS.txt` on the
   [GitHub Releases page](https://github.com/protocodus/virtual-instrument-youknow/releases);
   Windows and Linux packages come from CI. No tagged release has been
-  published for 1.1.0 yet.
+  published for 1.2.0 yet.
 - **Local builds.** The packaging scripts write the same customer files under
   `build-macos/dist/`, `build-win/dist/` and `build-dsp/dist/` in the
   checkout; plug-in bundles themselves sit in each build directory's
@@ -41,9 +41,9 @@ platform, so customers do not need a separate download for each plug-in format.
 
 | Platform | Artifact in the latest passing build¹ | File to give customers | Included formats |
 | --- | --- | --- | --- |
-| macOS 11+, Apple silicon and Intel | `ci-macos` | `YouKnow-1.1.0-build.<number>-macOS-universal.pkg` | VST3, Audio Unit, CLAP, Standalone |
-| Windows x64 | `ci-windows` | `YouKnow-1.1.0-build.<number>-Windows-x64.zip` | VST3, CLAP, Standalone |
-| Linux x64 (optional) | `ci-linux` | `YouKnow-1.1.0-build.<number>-Linux-x64.tar.gz` | VST3, Standalone |
+| macOS 11+, Apple silicon and Intel | `ci-macos` | `YouKnow-1.2.0-build.<number>-macOS-universal.pkg` | VST3, Audio Unit, CLAP, Standalone |
+| Windows x64 | `ci-windows` | `YouKnow-1.2.0-build.<number>-Windows-x64.zip` | VST3, CLAP, Standalone |
+| Linux x64 (optional) | `ci-linux` | `YouKnow-1.2.0-build.<number>-Linux-x64.tar.gz` | VST3, Standalone |
 
 ¹ Open the **[latest successful package builds](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=is%3Asuccess+-event%3Apull_request)**,
 select the newest passing run for the branch/commit you want, and download
@@ -52,19 +52,19 @@ for all platforms. When retrying a complete download set, rerun all jobs togethe
 so artifacts from different attempts are not mixed. GitHub sign-in is required.
 Extract the downloaded `ci-macos.zip`,
 `ci-windows.zip` or `ci-linux.zip` once to get the customer file listed above.
-The macOS archive also contains `YouKnow-1.1.0-build.<number>-macOS-universal.zip` for optional
+The macOS archive also contains `YouKnow-1.2.0-build.<number>-macOS-universal.zip` for optional
 manual installation; the `.pkg` is the recommended customer download.
 
-Each build has its own version, such as `1.1.0-build.34393416911.1`.
+Each build has its own version, such as `1.2.0-build.42.1`.
 For CI downloads, `<number>` is the GitHub run ID followed by its attempt
 number; rerunning a build increases the attempt. All platforms from the same
 run and attempt share this number. The instrument shows it in its About box.
 
 These are **development builds**. A manually dispatched build can come from
 a feature branch; check the run's branch and source commit before distributing.
-Version 1.1.0 is unreleased; no tagged release has been published. The CI macOS
-installer is unsigned, its bundles are ad-hoc signed and not notarized, and
-Windows binaries are unsigned.
+Version 1.2.0 is distributed as development packages; no tagged production
+release has been published. The CI macOS installer is unsigned, its bundles
+are ad-hoc signed and not notarized, and Windows binaries are unsigned.
 
 macOS and Windows build archives expire 30 days after each build; Linux
 archives expire after seven days. Download the files for permanent shop storage.
@@ -117,7 +117,7 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
-### 1.1.0 — unreleased
+### 1.2.0 — 2026-09-29 (development packages)
 
 - The chorus now includes finite transistor gain and mutual loading in its
   input and reconstruction filters, including signal-dependent transistor
@@ -152,6 +152,21 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 - The 2.2 kΩ output-jack resistors now contribute their circuit-derived
   thermal noise, including the very quiet residual at zero Volume. Unit
   Character zero retains exact digital silence.
+- The chorus switch now follows the shared C13/C15/C16 circuit, including
+  transistor base loading and delayed BBD clock stop/restart. Capacitor and
+  bucket state survive interrupted toggles. The timing uses labelled nominal
+  junction assumptions; preserving this state costs more CPU with chorus off.
+- Original assigner and voice-board firmware can now run together through
+  the serial link in an explicit comparison API, including live controls and
+  block-by-block audio. Normal plug-in MIDI handling remains unchanged; this
+  higher-cost path is not selected for ordinary playback.
+- The nonlinear chorus followers add about 17–20% CPU over the finite-linear
+  version in the local six-voice comparison. Later numerical corrections have
+  separate measurements, not a single cumulative cost figure. Existing
+  sessions retain their controls but use the updated sound model.
+
+### 1.1.0 — development history (no tagged release)
+
 - Four listening decisions of 2026-09-22 (`Docs/decisions.md`) now ship. The
   shared noise source is 7.2 dB louder, reading Roland's TP8 noise trim as
   the trace's dense core. The oscillators drive the filter and VCA 2.6 dB
@@ -159,9 +174,8 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   returned at the output, so noise, resonance and chorus hiss stand 2.6 dB
   higher against them. The chorus hiss rises about 14 dB against the notes
   at the unchanged Chorus Noise position, towards an identified unit's
-  captured level; the mis-measured level is corrected above. Chorus Mode II
-  sweeps Mode I's blended excursion at its
-  own 0.852 Hz. Fifteen factory programs that this carried over the
+  captured level; version 1.2.0 corrects this earlier calibration. Chorus Mode II
+  sweeps Mode I's blended excursion at its own 0.852 Hz. Fifteen factory programs that this carried over the
   bank's gated loudness ceiling get lower VR1 shaft trims; their tone bytes
   are untouched.
 - The PWM slider now stops where the hardware's loaded pot does: full travel
@@ -213,10 +227,6 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   loudness while the shared analog stages receive the corrected voltage.
 - HOLD release and immediate note reassignment now preserve the firmware's
   running-voice snapshot for oscillator reset and vibrato fade-in decisions.
-- The chorus switch now follows the shared C13/C15/C16 circuit, including
-  transistor base loading and delayed BBD clock stop/restart. Capacitor and
-  bucket state survive interrupted toggles. The timing uses labelled nominal
-  junction assumptions; preserving this state costs more CPU with chorus off.
 - DCO charge now follows the held control current causally through pitch and
   range changes. Each card retains one C54 tolerance and three range-resistor
   tolerances; the comparator's service adjustment stays fixed.
@@ -2856,6 +2866,43 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ## Detailed release notes
 
+### Changes in 1.2.0
+
+These changes are relative to the distributed 1.1.0 development source,
+`f6b6138`. Version 1.1.0 had no tagged release. The 1.2.0 downloads are
+unsigned development packages, with ad-hoc signatures on macOS bundles;
+they are not signed and notarized production installers.
+
+- **Chorus circuit and timing:** the product selects the nominal nonlinear
+  2SA1015 follower network, including reciprocal loading. Moving clocks use
+  midpoint integration across triangle corners, and input capture and output
+  updates follow complementary clock phases. At high quality, input-filter
+  evaluation occurs at the capture edge and reconstruction integrates actual
+  output holds. These correct numerical errors without fitting an extra gain
+  or changing the chosen chorus rate/depth. Installed transistor and BBD
+  output-impedance uncertainty remains documented under OQ-04.
+- **Analog coupling and switching:** C59 uses the conditional service-derived
+  load, the common VCA includes its drawn feedback pole, and the chorus mute
+  includes C15 loading and delayed clock clamps. Capacitor and bucket state
+  survive interrupted switching; the component priors remain explicit.
+- **Level and noise:** the pulse leg is 1.34 dB quieter relative to saw, and
+  chorus hiss uses the corrected factor 2.37 instead of 3.98. Output-jack
+  resistors contribute their nominal thermal floor. These change the sound
+  of existing sessions without changing their stored control positions.
+- **Output connections:** the Session area's **OUTPUT...** menu adds
+  High/Medium/Low and finite receiver loads, including mono-jack sharing.
+  High/Open remains the default. Connection settings persist in sessions
+  and are retained when selecting a preset.
+- **Firmware comparison:** original A-5 receive/assignment and B-2 control
+  execution now connect through a resumable UART and pin-decoder path to the
+  audio engine. Its explicit warm state and timing conventions are comparison
+  inputs; normal host MIDI handling and the selected chart timing are unchanged.
+- **CPU tradeoff:** nonlinear chorus followers measured about 17–20% above
+  finite-linear followers in the local six-voice test. Chorus-off clock-mute
+  state also adds work. The later numerical changes were measured separately;
+  there is no accumulated before/after CPU claim. The optional live firmware
+  comparison is substantially more expensive and is not the playback default.
+
 ### Changes in 1.1.0
 
 - The product carries the owner's four listening decisions of 2026-09-22
@@ -2888,7 +2935,7 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
     band. Through a Hann window, `Tools/AnalyzeChorusIdleFloors.py` puts
     3.98's Mode I idle floor against each patch's C4 note 1.33 dB over the
     captures across 20 Hz–20 kHz and 4.48 dB A-weighted (seven patches).
-    The delegated 2026-09-28 correction selects 2.37 and ships above (OQ-03).
+    Version 1.2.0 supersedes this calibration with factor 2.37 (OQ-03).
     Only the level is targeted: the captured hiss is brighter, about 5 dB
     higher in mean PSD per hertz over 2–8 kHz against 0.2–2 kHz (the
     2026-09-29 density audit confirms +4.75 dB; OQ-03).
@@ -3517,12 +3564,13 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `1.1.0-build.1`. To identify a local build, pass
+Local builds default to `1.2.0-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses `GITHUB_RUN_ID.GITHUB_RUN_ATTEMPT`; the configured
-number is saved in the build directory. The release version stays `1.1.0`,
-and release tags remain `youknow-v1.1.0`. Archive names and the About box include
-the build number; macOS bundle and installer build metadata carry it too.
+number is saved in the build directory. The current host version is `1.2.0`,
+and its signed-release tag would be `youknow-v1.2.0`. Archive names and the
+About box include the build number; macOS bundle and installer build metadata
+carry it too.
 
 To export the editor at default, minimum and maximum sizes, plus an edited
 patch with contextual help:
@@ -3553,4 +3601,4 @@ tree, a dated release-history entry and a matching `youknow-v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-1.1.0 remains unreleased until the release steps are completed.
+1.2.0 development packages remain distinct from a signed production release.

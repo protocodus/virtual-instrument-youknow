@@ -95,6 +95,13 @@ and modulation positions. Save your work before replacing a sound.
 
 Hover over a control or reach it with Tab for its description and current value.
 
+**OUTPUT** models the rear-panel output level (**High**, **Medium** or **Low**)
+and the connected receiver's input resistance (**Open**, **10 kOhm**, **47 kOhm**,
+**100 kOhm** or **1 MOhm**). The defaults are **High** and **Open**, which leaves
+the output unloaded. These settings are saved with your host project or host
+preset and stay unchanged when you select a sound, use RELOAD or INIT, or load
+a `.syx` tone.
+
 ## Save and load
 
 Save your **host project or host preset** to retain the full YouKnow setup.
