@@ -306,8 +306,8 @@ void compaction() {
     check(consumed >= 600 && X::head(*live) > 0, "consumption leaves a nonempty displaced queue");
     // Reject an invalid batch that would require compaction: it must not even
     // move the surviving queue before discovering the later timestamp fault.
-    std::vector<S::ByteReady> invalid(std::span(bytes).subspan(1024, consumed).begin(),
-                                      std::span(bytes).subspan(1024, consumed).end());
+    const auto refill = std::span(bytes).subspan(1024, consumed);
+    std::vector<S::ByteReady> invalid(refill.begin(), refill.end());
     invalid.back().states = 0;
     rejectWithoutMutation(*live, invalid);
     countingAllocations = true;
