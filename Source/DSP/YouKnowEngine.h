@@ -429,6 +429,11 @@ struct EngineParameters
     // digital filter approximates its magnitude, not exact analogue phase.
     // False preserves the frozen raw reference. Not a host/tone parameter.
     bool enableCommonVcaOutputPole { false };
+    // Product-selected magnitude realization of IC6's same sourced 3MHz /
+    // noise-gain pole. The exponential compatibility filter loses this
+    // above-Nyquist pole's small in-band roll-off at ordinary rates.
+    // This retains approximate phase, as does OutputJackLowPass itself.
+    bool enableOutputSummerMagnitudePole { false };
     // On by default: four independent 68k/560 Johnson sources enter their
     // own OTA differential nodes, after the input-compensation branch. The
     // resistance reads and sqrt(4kTR) law at the live card temperature fix
@@ -2832,6 +2837,7 @@ private:
         float outputBoundaryGain { 1.0f };
         float outputSlewMaxStep { 0.0f };
         float outputSummerBandwidthBlend { 1.0f };
+        OutputJackLowPass::Coefficients outputSummerMagnitudePole {};
         float outputSummerNoiseScale { 0.0f };
         float commonVcaNoiseScale { 0.0f };
         OutputJackLowPass::Coefficients commonVcaOutputPole {};
@@ -3692,6 +3698,10 @@ private:
     float outputSlewStateRight_ { 0.0f };
     float outputBandwidthStateLeft_ { 0.0f };
     float outputBandwidthStateRight_ { 0.0f };
+    // Actual input/output difference histories, not capacitor voltages.
+    // Retain them on live quality changes; hard reset clears both channels.
+    OutputJackLowPass outputSummerMagnitudeLeft_ {};
+    OutputJackLowPass outputSummerMagnitudeRight_ {};
     std::uint32_t outputNoiseStateLeft_ { 0x91e10da5u };
     std::uint32_t outputNoiseStateRight_ { 0xd1b54a35u };
     std::uint32_t outputWiperNoiseStateLeft_ { 0x94d049bbu };

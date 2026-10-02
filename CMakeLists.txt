@@ -411,7 +411,12 @@ if(YOUKNOW_BUILD_TOOLS)
     add_executable(YouKnowRenderRealismReview Tools/RenderRealismReview.cpp)
     target_link_libraries(YouKnowRenderRealismReview PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderRealismReview PRIVATE cxx_std_20)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismReview.cpp"
+        YOUKNOW_REVIEW_SOURCE_SHA256)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismReview.cpp")
     target_compile_definitions(YouKnowRenderRealismReview PRIVATE
+        "YOUKNOW_REVIEW_SOURCE_SHA256=\"${YOUKNOW_REVIEW_SOURCE_SHA256}\""
         "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
         "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
         "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
@@ -711,6 +716,12 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowSawCouplingTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.SawCoupling COMMAND YouKnowSawCouplingTests)
     set_tests_properties(YouKnow.SawCoupling PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowOutputSummerMagnitudeTests
+        Tests/YouKnowOutputSummerMagnitudeTests.cpp)
+    target_link_libraries(YouKnowOutputSummerMagnitudeTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.OutputSummerMagnitude COMMAND YouKnowOutputSummerMagnitudeTests)
+    set_tests_properties(YouKnow.OutputSummerMagnitude PROPERTIES TIMEOUT 60)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowOutputNetworkTests Tests/YouKnowOutputNetworkTests.cpp)

@@ -6039,6 +6039,8 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     processingCoefficients_.outputSummerBandwidthBlend = 1.0f - std::exp(
         -2.0f * std::numbers::pi_v<float> * outputSummerBandwidthHz()
         / oversampledRate_);
+    processingCoefficients_.outputSummerMagnitudePole =
+        OutputJackLowPass::coefficients(outputSummerBandwidthHz(), oversampledRate_);
     // bipolarFromState() is uniform [-1,1] with RMS 1/sqrt(3). Integrating a
     // one-sided V/sqrt(Hz) density to the host Nyquist frequency therefore
     // needs sqrt(3*Fs/2). Noise is generated after decimation: doing it in
@@ -6312,6 +6314,8 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputSlewStateRight_ = 0.0f;
     outputBandwidthStateLeft_ = 0.0f;
     outputBandwidthStateRight_ = 0.0f;
+    outputSummerMagnitudeLeft_.reset();
+    outputSummerMagnitudeRight_.reset();
     outputJackLeft_.reset();
     outputJackRight_.reset();
     outputNetwork_.reset();
@@ -11762,21 +11766,37 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 outputSlewStateRight_ = wetRight;
             }
 
-            // TA75558S open-loop gain is finite. With both signal legs
-            // connected, the feedback/input resistor network sets the noise
-            // gain and turns the part's 3 MHz typical GBW into the derived
-            // closed-loop pole above. At ordinary rates the exponential is
-            // effectively one (as the real pole is far above Nyquist); at
-            // high-rate/offline operation this state supplies the missing
-            // ultrasonic roll-off without adding another quality domain.
-            outputBandwidthStateLeft_ +=
-                coefficients.outputSummerBandwidthBlend
-                * (wetLeft - outputBandwidthStateLeft_);
-            outputBandwidthStateRight_ +=
-                coefficients.outputSummerBandwidthBlend
-                * (wetRight - outputBandwidthStateRight_);
-            wetLeft = outputBandwidthStateLeft_;
-            wetRight = outputBandwidthStateRight_;
+            // TA75558S IC6's 3MHz typical GBW closes through the existing
+            // 100k/(47k||39k) feedback network at 527kHz. Sampling an
+            // exponential decay aliases away nearly all its audible-band
+            // roll-off at ordinary grids. The matched-magnitude pole uses
+            // that SAME physical corner and the existing Vicanek numerical
+            // realization; no tone constant or additional physical pole.
+            // Its small tilt (about -0.00625dB at 20kHz) remains at every
+            // supported grid. Phase is still approximate. Signal histories
+            // survive a live quality rebuild, and hard reset clears them.
+            if (parameters.enableOutputSummerMagnitudePole)
+            {
+                wetLeft = outputSummerMagnitudeLeft_.process(
+                    wetLeft, coefficients.outputSummerMagnitudePole);
+                wetRight = outputSummerMagnitudeRight_.process(
+                    wetRight, coefficients.outputSummerMagnitudePole);
+                outputBandwidthStateLeft_ = wetLeft;
+                outputBandwidthStateRight_ = wetRight;
+            }
+            else
+            {
+                outputBandwidthStateLeft_ +=
+                    coefficients.outputSummerBandwidthBlend
+                    * (wetLeft - outputBandwidthStateLeft_);
+                outputBandwidthStateRight_ +=
+                    coefficients.outputSummerBandwidthBlend
+                    * (wetRight - outputBandwidthStateRight_);
+                wetLeft = outputBandwidthStateLeft_;
+                wetRight = outputBandwidthStateRight_;
+                outputSummerMagnitudeLeft_ = {wetLeft, 0.0};
+                outputSummerMagnitudeRight_ = {wetRight, 0.0};
+            }
 
             stageLeft[static_cast<std::size_t>(step)] = wetLeft;
             stageRight[static_cast<std::size_t>(step)] = wetRight;

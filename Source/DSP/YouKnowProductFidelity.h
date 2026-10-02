@@ -87,6 +87,9 @@ struct ProductFidelityProfile
         // The centred raw-reference and explicitly calibrated mixer remain
         // available for diagnostics (YouKnowEngine::sawWaveNodeOffset).
         parameters.enableSawUnipolarNodeCoupling = true;
+        // Retain IC6's sourced 3 MHz/noise-gain pole's small audible-band
+        // magnitude loss even when its corner is above the internal Nyquist.
+        parameters.enableOutputSummerMagnitudePole = true;
         // The converter holds' leakage ramp: a hundredth of an LSB per pass
         // at the sheets' typicals. The engine's reference configuration
         // keeps ideal holds for its exactness fingerprints.

@@ -40,6 +40,9 @@
 #ifndef YOUKNOW_COMPARISON_COMPILER_VERSION
 #define YOUKNOW_COMPARISON_COMPILER_VERSION "unknown"
 #endif
+#ifndef YOUKNOW_REVIEW_SOURCE_SHA256
+#define YOUKNOW_REVIEW_SOURCE_SHA256 "unavailable"
+#endif
 
 namespace
 {
@@ -334,13 +337,15 @@ std::string manifestJson(const std::array<StereoBuffer, slugs.size()>& audio,
                          const std::string& label, const std::string& revision,
                          int quality, std::string_view dspFingerprint,
                          std::string_view compiler = YOUKNOW_COMPARISON_COMPILER_ID
-                             " " YOUKNOW_COMPARISON_COMPILER_VERSION)
+                             " " YOUKNOW_COMPARISON_COMPILER_VERSION,
+                         std::string_view rendererFingerprint = YOUKNOW_REVIEW_SOURCE_SHA256)
 {
     std::ostringstream manifest;
     manifest << "{\n\"protocol\":\"" << protocol << "\",\n"
         << "\"label\":\"" << label << "\",\n"
         << "\"git_revision\":\"" << revision << "\",\n"
         << "\"dsp_source_sha256\":\"" << dspFingerprint << "\",\n"
+        << "\"renderer_source_sha256\":\"" << rendererFingerprint << "\",\n"
         << "\"compiler\":\"" << compiler << "\",\n"
         << "\"sample_rate\":" << comparisonSampleRate << ",\n"
         << "\"block_size\":" << comparisonBlockSize << ",\n"
@@ -400,6 +405,8 @@ void validateManifest(const std::string& manifest, const std::string& label,
     require(manifestString(manifest, "label") == label, "raw render label does not match manifest");
     require(isFingerprint(manifestString(manifest, "dsp_source_sha256")),
         "render requires a 64-digit DSP SHA-256 fingerprint");
+    require(isFingerprint(manifestString(manifest, "renderer_source_sha256")),
+        "render requires a 64-digit renderer SHA-256 fingerprint");
     require(!manifestString(manifest, "git_revision").empty(), "missing render revision");
     require(manifestString(manifest, "compiler") != "unknown unknown", "missing compiler identity");
     const std::array<std::string, 13> required {
@@ -432,6 +439,9 @@ void validatePair(const std::string& beforeManifest, const std::string& afterMan
 {
     require(manifestString(beforeManifest, "compiler") == manifestString(afterManifest, "compiler"),
         "before/after compiler identity differs");
+    require(manifestString(beforeManifest, "renderer_source_sha256")
+        == manifestString(afterManifest, "renderer_source_sha256"),
+        "before/after renderer source differs; score identity is not established");
     const auto quality = std::string("\"quality\":");
     const auto beforeQuality = beforeManifest.substr(beforeManifest.find(quality) + quality.size(), 2);
     const auto afterQuality = afterManifest.substr(afterManifest.find(quality) + quality.size(), 2);
@@ -456,6 +466,8 @@ void render(const std::filesystem::path& directory, const std::string& label,
 {
     require(isFingerprint(YOUKNOW_DSP_SOURCE_SHA256),
         "compile the renderer with the CMake DSP source fingerprint");
+    require(isFingerprint(YOUKNOW_REVIEW_SOURCE_SHA256),
+        "compile the renderer with the CMake renderer source fingerprint");
     const auto output = directory / label;
     require(!std::filesystem::exists(output), "render label already exists; use a new immutable label");
     std::array<StereoBuffer, slugs.size()> audio {
@@ -571,7 +583,7 @@ void selfTest()
         section = { { 0.1f, -0.2f, 0.15f }, { -0.05f, 0.2f, -0.1f } };
     const auto makeManifest = [&](std::string_view label, int quality, char fingerprint) {
         return manifestJson(audio, std::string(label), "test-revision", quality,
-            std::string(64, fingerprint), "contract-test-compiler 1.0");
+            std::string(64, fingerprint), "contract-test-compiler 1.0", std::string(64, 'c'));
     };
     const auto before = makeManifest("before", 1, 'a');
     const auto after = makeManifest("after", 1, 'b');
@@ -609,6 +621,10 @@ void selfTest()
     const auto compilerPosition = wrongCompiler.find("\"compiler\":\"") + 12;
     wrongCompiler.insert(compilerPosition, "other-");
     reject([&] { validatePair(before, wrongCompiler); }, "compiler mismatch");
+    auto wrongRenderer = after;
+    wrongRenderer.replace(wrongRenderer.find(std::string(64, 'c')), 64, std::string(64, 'd'));
+    validateManifest(wrongRenderer, "after", audio);
+    reject([&] { validatePair(before, wrongRenderer); }, "renderer source mismatch");
     std::cout << "Realism review manifest contract: valid pair passed; " << rejected
               << " invalid comparisons rejected.\n";
 }

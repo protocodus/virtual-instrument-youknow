@@ -125,6 +125,10 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   startup and idle-card tracking retain the stored charge. Settled saw tone
   is unchanged. The existing mixer scale and ideal-zero off clamp remain
   explicit model assumptions, rather than measured original-unit voltages.
+- The TA75558 output summer retains its component-derived bandwidth loss at
+  ordinary sample rates, where the previous exponential update effectively
+  bypassed it. The nominal loss is only 0.00625 dB at 20 kHz; this is a subtle
+  numerical correction, with approximate phase, rather than a new tone curve.
 
 ### 1.2.0 — 2026-09-29 (development packages)
 
