@@ -2200,16 +2200,19 @@ float YouKnowEngine::outputBoundaryGain() noexcept
          * outputReferenceGain(minus18DbfsAmplitude * fullScaleVolts);
 }
 
-float YouKnowEngine::outputSummerResistorNoiseDensity() noexcept
+float YouKnowEngine::outputSummerResistorNoiseDensity(bool wetConnected) noexcept
 {
     // Each input resistor's own voltage noise is multiplied by its inverting
     // signal gain Rf/Rin. The feedback resistor appears directly at the
     // output. Uncorrelated sources add as powers, never as amplitudes.
+    // With Tr11/12 open, the wet resistor's far end floats: an ideal virtual
+    // ground then sees no current from that resistor's own noise source.
     const float equivalentResistance = outputSummerFeedbackOhms
         + outputSummerFeedbackOhms * outputSummerFeedbackOhms
             / outputSummerDryInputOhms
-        + outputSummerFeedbackOhms * outputSummerFeedbackOhms
-            / outputSummerWetInputOhms;
+        + (wetConnected
+            ? outputSummerFeedbackOhms * outputSummerFeedbackOhms
+                / outputSummerWetInputOhms : 0.0f);
     return std::sqrt(4.0f * boltzmannConstant * outputNoiseTemperatureKelvin
                      * equivalentResistance);
 }
@@ -6041,6 +6044,11 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         / oversampledRate_);
     processingCoefficients_.outputSummerMagnitudePole =
         OutputJackLowPass::coefficients(outputSummerBandwidthHz(), oversampledRate_);
+    processingCoefficients_.outputSummerMutedMagnitudePole =
+        OutputJackLowPass::coefficients(outputSummerBandwidthHz(false), oversampledRate_);
+    processingCoefficients_.outputSummerMutedBandwidthBlend = 1.0f - std::exp(
+        -2.0f * std::numbers::pi_v<float> * outputSummerBandwidthHz(false)
+        / oversampledRate_);
     // bipolarFromState() is uniform [-1,1] with RMS 1/sqrt(3). Integrating a
     // one-sided V/sqrt(Hz) density to the host Nyquist frequency therefore
     // needs sqrt(3*Fs/2). Noise is generated after decimation: doing it in
@@ -6049,6 +6057,9 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         outputSummerResistorNoiseDensity()
         * std::sqrt(1.5f * static_cast<float>(sampleRate_))
         * voltsToSample;
+    processingCoefficients_.outputSummerMutedNoiseScale =
+        outputSummerResistorNoiseDensity(false)
+        * std::sqrt(1.5f * static_cast<float>(sampleRate_)) * voltsToSample;
     // IC5's datasheet floor is a band RMS, folded to a white-equivalent
     // density over NEC's 10 Hz-20 kHz filter. It joins the bus ahead of the
     // chorus split and the decimators, so it is generated at the internal
@@ -11775,23 +11786,30 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // Its small tilt (about -0.00625dB at 20kHz) remains at every
             // supported grid. Phase is still approximate. Signal histories
             // survive a live quality rebuild, and hard reset clears them.
+            // The series Tr11/12 channel opens the 39k leg after its
+            // existing nominal RC drive crosses the mute threshold. An ideal
+            // open channel leaves that resistor floating: noise gain becomes
+            // 1+100k/47k, not 1+100k/(47k||39k). This models the two binary
+            // states; installed channel leakage/capacitance remain unknown.
+            const bool wetInputConnected = !parameters.enableOutputSummerMuteLoading
+                                         || chorus_.isWetInputConnected();
             if (parameters.enableOutputSummerMagnitudePole)
             {
-                wetLeft = outputSummerMagnitudeLeft_.process(
-                    wetLeft, coefficients.outputSummerMagnitudePole);
-                wetRight = outputSummerMagnitudeRight_.process(
-                    wetRight, coefficients.outputSummerMagnitudePole);
+                const auto& pole = wetInputConnected
+                    ? coefficients.outputSummerMagnitudePole
+                    : coefficients.outputSummerMutedMagnitudePole;
+                wetLeft = outputSummerMagnitudeLeft_.process(wetLeft, pole);
+                wetRight = outputSummerMagnitudeRight_.process(wetRight, pole);
                 outputBandwidthStateLeft_ = wetLeft;
                 outputBandwidthStateRight_ = wetRight;
             }
             else
             {
-                outputBandwidthStateLeft_ +=
-                    coefficients.outputSummerBandwidthBlend
-                    * (wetLeft - outputBandwidthStateLeft_);
-                outputBandwidthStateRight_ +=
-                    coefficients.outputSummerBandwidthBlend
-                    * (wetRight - outputBandwidthStateRight_);
+                const float blend = wetInputConnected
+                    ? coefficients.outputSummerBandwidthBlend
+                    : coefficients.outputSummerMutedBandwidthBlend;
+                outputBandwidthStateLeft_ += blend * (wetLeft - outputBandwidthStateLeft_);
+                outputBandwidthStateRight_ += blend * (wetRight - outputBandwidthStateRight_);
                 wetLeft = outputBandwidthStateLeft_;
                 wetRight = outputBandwidthStateRight_;
                 outputSummerMagnitudeLeft_ = {wetLeft, 0.0};
@@ -11888,8 +11906,14 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                     * parameters.calibration;
         const float outputNoiseRight = bipolarFromState(outputNoiseStateRight_)
                                      * parameters.calibration;
-        const float summerNoiseScale =
-            coefficients.outputSummerNoiseScale * jackBoardJohnsonScale_;
+        // An open series wet switch removes the 39k resistor's output
+        // current-noise contribution too. Preserve the same host-rate white
+        // draws and every RNG sequence; only their sourced scale changes.
+        const bool summerWetConnected = !parameters.enableOutputSummerMuteLoading
+                                     || chorus_.isWetInputConnected();
+        const float summerNoiseScale = (summerWetConnected
+            ? coefficients.outputSummerNoiseScale
+            : coefficients.outputSummerMutedNoiseScale) * jackBoardJohnsonScale_;
         outputLeft += outputNoiseLeft * summerNoiseScale;
         outputRight += outputNoiseRight * summerNoiseScale;
         // Feed both realizations continuously, so changing the connection

@@ -434,6 +434,10 @@ struct EngineParameters
     // above-Nyquist pole's small in-band roll-off at ordinary rates.
     // This retains approximate phase, as does OutputJackLowPass itself.
     bool enableOutputSummerMagnitudePole { false };
+    // Product-selected IC6 loading: the delayed Tr11/12 gate opens its
+    // 39k wet input, removing that branch's noise gain and Johnson source.
+    // Raw references retain their always-connected amplifier convention.
+    bool enableOutputSummerMuteLoading { false };
     // On by default: four independent 68k/560 Johnson sources enter their
     // own OTA differential nodes, after the input-compensation branch. The
     // resistance reads and sqrt(4kTR) law at the live card temperature fix
@@ -1471,7 +1475,8 @@ public:
     static constexpr float outputSummerSlewRateVoltsPerSecond = 1.0e6f;
     // The same table gives 3 MHz typical gain-bandwidth. IC6a/b are inverting
     // summers with 100 kOhm feedback and simultaneous 47 kOhm dry / 39 kOhm
-    // wet input legs, hence noise gain 1 + 100k/(47k || 39k). The resulting
+    // wet input legs while Tr11/12 conduct: noise gain 1 + 100k/(47k || 39k).
+    // Their ideal-open series state leaves only 1 + 100k/47k. The resulting
     // closed-loop pole is well above the audio band, but retaining it prevents
     // the otherwise ideal summer from passing unlimited ultrasonic energy
     // into the output coupling network. This is two one-pole updates per
@@ -1480,8 +1485,12 @@ public:
     static constexpr float outputSummerFeedbackOhms = 100000.0f;
     static constexpr float outputSummerDryInputOhms = 47000.0f;
     static constexpr float outputSummerWetInputOhms = 39000.0f;
-    [[nodiscard]] static constexpr float outputSummerBandwidthHz() noexcept
+    [[nodiscard]] static constexpr float outputSummerBandwidthHz(
+        bool wetConnected = true) noexcept
     {
+        if (!wetConnected)
+            return outputSummerGainBandwidthHz
+                 / (1.0f + outputSummerFeedbackOhms / outputSummerDryInputOhms);
         const float parallelInput =
             outputSummerDryInputOhms * outputSummerWetInputOhms
             / (outputSummerDryInputOhms + outputSummerWetInputOhms);
@@ -1502,7 +1511,8 @@ public:
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
     static constexpr float outputNoiseTemperatureKelvin = 298.15f;
     static constexpr float boltzmannConstant = 1.380649e-23f;
-    [[nodiscard]] static float outputSummerResistorNoiseDensity() noexcept;
+    [[nodiscard]] static float outputSummerResistorNoiseDensity(
+        bool wetConnected = true) noexcept;
     [[nodiscard]] static float outputWiperNoiseResistance(
         float volumePosition) noexcept;
     [[nodiscard]] static float outputJackNoiseResistance(
@@ -2838,6 +2848,9 @@ private:
         float outputSlewMaxStep { 0.0f };
         float outputSummerBandwidthBlend { 1.0f };
         OutputJackLowPass::Coefficients outputSummerMagnitudePole {};
+        OutputJackLowPass::Coefficients outputSummerMutedMagnitudePole {};
+        float outputSummerMutedBandwidthBlend { 1.0f };
+        float outputSummerMutedNoiseScale { 0.0f };
         float outputSummerNoiseScale { 0.0f };
         float commonVcaNoiseScale { 0.0f };
         OutputJackLowPass::Coefficients commonVcaOutputPole {};

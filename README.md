@@ -129,6 +129,12 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   ordinary sample rates, where the previous exponential update effectively
   bypassed it. The nominal loss is only 0.00625 dB at 20 kHz; this is a subtle
   numerical correction, with approximate phase, rather than a new tone curve.
+- The output summer's noise and bandwidth now follow the chorus's delayed
+  series mute switch. Opening the wet return removes its 39 kΩ resistor
+  contribution, lowering that resistor-noise layer by 2.60 dB and making the
+  complete dry idle floor 0.19 dB quieter in the 48 kHz test fixture. This
+  follows the existing binary
+  mute model; the installed JFET's leakage and transition shape remain open.
 
 ### 1.2.0 — 2026-09-29 (development packages)
 

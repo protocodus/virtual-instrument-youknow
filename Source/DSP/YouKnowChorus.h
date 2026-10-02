@@ -792,6 +792,14 @@ public:
         [[nodiscard]] double valueAt(double fraction) const noexcept;
     };
 
+    // Tr11/Tr12 are SERIES wet-return switches, p15: C28/C25 and
+    // R103/R81 sit before their channel; R72/R74 sit after it. The driven
+    // binary gate is the existing nominal junction model, not an identified
+    // 2SK30A channel-transition/leakage curve. Read it after process(), so
+    // IC6 follows the delayed drive rather than the button command.
+    // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+    [[nodiscard]] bool isWetInputConnected() const noexcept { return !muteDriveMuted_; }
+
     [[nodiscard]] double getLfoPhase() const noexcept { return lfoPhase_; }
 
 private:
