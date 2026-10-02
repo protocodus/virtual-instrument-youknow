@@ -9260,6 +9260,25 @@ float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
         * (meanVolts / (0.5 * rampAmplitudeVolts) - 1.0));
 }
 
+float YouKnowEngine::sawWaveNodeOffset(
+    const EngineParameters& parameters) const noexcept
+{
+    // Original MC5534A topology, Roland's p.9 wave-generator drawing:
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
+    // The 0..+12 V Miller ramp reaches WAVE through passive resistors; no
+    // active summer subtracts its 6 V midpoint before C56/C50 on p.13.
+    // The renderer's existing -1 saw coordinate is useful for the AC/BLEP
+    // calculation, but restoring its +1 origin at this boundary is necessary
+    // for saw-off/on to move C56's charge. Use the SAME voiced linear mixer
+    // scale for DC and AC, with no new absolute-voltage calibration. Pin17's
+    // shunt diode/Tr24 retains the existing ideal-zero off endpoint; its
+    // installed residual and internal resistance ratios remain unmeasured.
+    // Required coupled-mixer sourceBias/sourceScale already map the centred
+    // source to a measured Thevenin voltage, so never rebase that contract.
+    return parameters.enableSawUnipolarNodeCoupling && !coupledMixerEnabled_
+        ? sawMixVolts : 0.0f;
+}
+
 void YouKnowEngine::primeStartupVoiceWaveNodes(
     const EngineParameters& parameters) noexcept
 {
@@ -9267,7 +9286,8 @@ void YouKnowEngine::primeStartupVoiceWaveNodes(
     // instrument. Prime the WAVE-node coupling capacitor at the periodic
     // source's DC mean so Pulse Off's documented constant-high comparator does
     // not become a fabricated power-on thump on the first note. The saw's
-    // finite charge time can move its mean; sub is a half-wave current whose
+    // finite charge time can move its mean; the selected WAVE origin restores
+    // its unipolar baseline. Sub is a half-wave current whose
     // mean equals its AC amplitude; pulse mean is level * (2*duty - 1), including +level
     // for the pinned-high off state.
     for (auto& voice : voices_)
@@ -9460,7 +9480,9 @@ void YouKnowEngine::primeVoiceWaveNode(
     voice.moduleCoupling.state = static_cast<double>(oscillatorLevelScale_
         * (pulseWaveNodeMean(voice, parameters)
            + subWaveNodeMean(voice, parameters)
-           + (parameters.sawEnabled ? steadyDcoSawMean(voice) : 0.0f)));
+           + (parameters.sawEnabled
+                ? steadyDcoSawMean(voice) + sawWaveNodeOffset(parameters)
+                : 0.0f)));
     if (coupledMixerEnabled_)
     {
         const auto& c = coupledMixerCalibration_;
@@ -10131,16 +10153,17 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
     // comparator into false DC, while the omitted capacitor ripple is bounded
     // to about 45 mV for pulse at the crossover and falls with frequency. Regressions
     // compare both the lowest pitch and the >1-cycle/sample extreme to Exact.
-    // The legacy A/B path (both node couplings off) deliberately retains its
+    // The legacy A/B path (all node couplings off) deliberately retains its
     // former frozen state. The sub's half-wave mean sits on the same node
     // (see subWaveNodeMean); an idle card must keep tracking it, with or
     // without the pulse-off coupling, or the next note-on would replay the
     // SUB level as a C56 step.
     const bool trackPulseNode = activeParameters_.enablePulseOffWaveNodeCoupling;
     const bool trackSubNode = activeParameters_.enableSubHalfWaveNodeCoupling;
+    const bool trackSawCoupling = activeParameters_.enableSawUnipolarNodeCoupling;
     const bool trackSawNode = circuitParameters().sawEnabled
-                           && (trackPulseNode || trackSubNode);
-    if (trackPulseNode || trackSubNode || trackSawNode)
+                           && (trackPulseNode || trackSubNode || trackSawCoupling);
+    if (trackPulseNode || trackSubNode || trackSawCoupling || trackSawNode)
     {
         auto& dco = voice.dco;
         const double totalScale = static_cast<double>(dco.renderScale)
@@ -10171,7 +10194,9 @@ void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
                 : steadyDcoSawMean(voice);
         static_cast<void>(voice.moduleCoupling.process(
             oscillatorLevelScale_
-                * (pulseNode + subWaveNodeMean(voice, activeParameters_) + sawNode),
+                * (pulseNode + subWaveNodeMean(voice, activeParameters_)
+                   + sawNode + (trackSawNode
+                        ? sawWaveNodeOffset(activeParameters_) : 0.0f)),
             moduleCouplingG_, 0.0f, 1.0f));
         if (trackPulseNode)
         {
@@ -10306,7 +10331,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // The absolute source-to-filter budget remains OQ-15.
     float mixed = 0.0f;
     if (parameters.sawEnabled)
-        mixed += sawOut;
+        mixed += sawOut + sawWaveNodeOffset(parameters);
     if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty,
                         parameters.enablePulseOffWaveNodeCoupling))
         mixed += pulseOut;

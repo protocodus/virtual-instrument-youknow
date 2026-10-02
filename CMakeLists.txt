@@ -408,6 +408,14 @@ if(YOUKNOW_BUILD_TOOLS)
         "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
         "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
 
+    add_executable(YouKnowRenderRealismReview Tools/RenderRealismReview.cpp)
+    target_link_libraries(YouKnowRenderRealismReview PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderRealismReview PRIVATE cxx_std_20)
+    target_compile_definitions(YouKnowRenderRealismReview PRIVATE
+        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
+        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
+        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
+
     add_executable(YouKnowRenderPresetScore Tools/RenderPresetScore.cpp)
     target_link_libraries(YouKnowRenderPresetScore
         PRIVATE YouKnowDSP Threads::Threads)
@@ -698,6 +706,11 @@ if(BUILD_TESTING)
     add_executable(YouKnowOutputJackTests Tests/YouKnowOutputJackTests.cpp)
     target_link_libraries(YouKnowOutputJackTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputJack COMMAND YouKnowOutputJackTests)
+
+    add_executable(YouKnowSawCouplingTests Tests/YouKnowSawCouplingTests.cpp)
+    target_link_libraries(YouKnowSawCouplingTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.SawCoupling COMMAND YouKnowSawCouplingTests)
+    set_tests_properties(YouKnow.SawCoupling PROPERTIES TIMEOUT 60)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowOutputNetworkTests Tests/YouKnowOutputNetworkTests.cpp)
@@ -1008,6 +1021,9 @@ if(BUILD_TESTING)
                          --self-test-baseline-contract)
         set_tests_properties(YouKnow.RealismComparisonContract
                              PROPERTIES TIMEOUT 30)
+        add_test(NAME YouKnow.RealismReviewManifest
+                 COMMAND YouKnowRenderRealismReview --self-test)
+        set_tests_properties(YouKnow.RealismReviewManifest PROPERTIES TIMEOUT 10)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity

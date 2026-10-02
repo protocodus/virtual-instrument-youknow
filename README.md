@@ -117,6 +117,15 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-02
+
+- The unipolar saw now keeps its mean voltage at the WAVE node until the
+  voice's C56/C50 coupling capacitor removes it. Switching SAW off or on
+  therefore produces the capacitor's low-frequency transient; powered
+  startup and idle-card tracking retain the stored charge. Settled saw tone
+  is unchanged. The existing mixer scale and ideal-zero off clamp remain
+  explicit model assumptions, rather than measured original-unit voltages.
+
 ### 1.2.0 — 2026-09-29 (development packages)
 
 - The chorus now includes finite transistor gain and mutual loading in its

@@ -247,6 +247,15 @@ struct EngineParameters
     // existing C56/C50 coupling capacitor remove it. False retains the former
     // hard-zero gate solely for controlled A/B renders.
     bool enablePulseOffWaveNodeCoupling { true };
+    // Product-selected WAVE-node origin: the p.9 MC5534A drawing sends its
+    // 0..+12 V ramp through a passive leg, without subtracting the midpoint.
+    // Restore the +sawMixVolts origin ahead of C56 when SAW is on. Settled AC
+    // is unchanged; SAW switching moves the capacitor's stored charge. The
+    // existing ideal-zero SAW-off clamp and voiced mixer scale remain priors;
+    // installed diode residual and WAVE bias are not identified. An explicit
+    // CoupledSubMixer calibration owns its DC mapping and retains its centred
+    // source contract. False preserves the frozen raw reference.
+    bool enableSawUnipolarNodeCoupling { false };
     // On by default: the sub reaches the WAVE node as the half-cycle current
     // its R102/R101/D6 leg passes from the SUB LEVEL rail, so its mean rides
     // on the node and C56/C50 remove it. Its separately selected diode law
@@ -3388,6 +3397,8 @@ private:
     [[nodiscard]] SteadyDcoCycle steadyDcoCycle(const Voice& voice) const noexcept;
     [[nodiscard]] float steadyDcoPulseDuty(const Voice& voice) const noexcept;
     [[nodiscard]] float steadyDcoSawMean(const Voice& voice) const noexcept;
+    [[nodiscard]] float sawWaveNodeOffset(
+        const EngineParameters& parameters) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
     // so it follows the shared held threshold for inactive cards as well.
     void updatePulseComparator(Voice& voice,

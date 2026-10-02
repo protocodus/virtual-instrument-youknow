@@ -82,6 +82,11 @@ struct ProductFidelityProfile
     static void applyTo (EngineParameters& parameters) noexcept
     {
         parameters.useServiced439522VcfCalibration = true;
+        // MC5534A's unipolar saw reaches WAVE through passive resistors;
+        // retain its mean until the drawn C56/C50 input coupling removes it.
+        // The centred raw-reference and explicitly calibrated mixer remain
+        // available for diagnostics (YouKnowEngine::sawWaveNodeOffset).
+        parameters.enableSawUnipolarNodeCoupling = true;
         // The converter holds' leakage ramp: a hundredth of an LSB per pass
         // at the sheets' typicals. The engine's reference configuration
         // keeps ideal holds for its exactness fingerprints.
