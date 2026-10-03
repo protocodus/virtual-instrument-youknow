@@ -6146,6 +6146,8 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         noiseSourceLowPassHz(), static_cast<float>(oversampledRate_) * 0.45f);
     noiseSourceLowPassG_ = std::tan(
         pi * noiseSourceLowPassDesignHz * inverseOversampledRate_);
+    processingCoefficients_.mainNoiseMagnitudePole =
+        NoiseC41LowPass::coefficients(oversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     (void) outputNetwork_.prepare(sampleRate_, { activeParameters_.outputSelector,
@@ -6333,6 +6335,7 @@ void YouKnowEngine::clearRateDependentOutputPath(
         commonVcaInputCoupling_.reset();
         noiseSourceHighPass_.reset();
         noiseSourceLowPass_.reset();
+        noiseSourceMagnitude_.reset();
     }
     latencyPadLeft_.fill(0.0f);
     latencyPadRight_.fill(0.0f);
@@ -6728,6 +6731,18 @@ float YouKnowEngine::processMainNoiseSource(
     // state with the controlled OTA output; no extra pole or reset is added.
     const float coupled = noiseSourceHighPass_.process(
         rawNoise, noiseSourceHighPassG_, 0.0f, 1.0f);
+    if (activeParameters_.enableMainNoiseMagnitudePole)
+    {
+        // One shared C41 voltage, driven by the held NOISE current. The
+        // positive component-derived decay preserves stored charge when
+        // NOISE becomes zero, even on sub-tau grids; no post-cap gain or
+        // alternating-pole fallback is needed. Rate changes replace only
+        // coefficients, and hard reset alone clears its voltage/history.
+        const float shaped = noiseSourceMagnitude_.process(
+            coupled, levelBeforeC41 ? level : 1.0f,
+            processingCoefficients_.mainNoiseMagnitudePole);
+        return shaped * noiseMixVolts * (levelBeforeC41 ? 1.0f : level);
+    }
     // On coarse HQ-off grids below about 19.3 kHz, C41's 33 us memory is
     // shorter than one sample while the established bilinear support pole is
     // negative. Exposing that state would turn a physical monotonic discharge
@@ -11401,11 +11416,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // and C41 against R79 low-passes that controlled output at
             // 4.82 kHz. One state still serves every voice; the passband below
             // that corner stays at unity, so in-band density keeps its
-            // established rate normalisation there. Above it the bilinear
-            // one-pole's zero at Nyquist thins the coarse grids against the
-            // analogue pole -- about -1.2 dB at 10 kHz and -4 dB at 16 kHz
-            // on a 48 kHz/1x grid, -0.5 dB over 0-20 kHz -- a numerical
-            // limitation of the HQ-off rungs, not a modelled mechanism.
+            // established rate normalisation there. The product's matched
+            // magnitude path removes most of the raw TPT reference's extra
+            // Nyquist-zero loss (3.85dB at16k, 8.59dB at20k on48k/1x).
+            // The source calibration and Gaussian draws stay unchanged.
             if (noiseState_ == 0u)
                 noiseState_ = 0x6d2b79f5u;
             const float rawNoise =

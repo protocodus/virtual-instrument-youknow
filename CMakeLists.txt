@@ -117,6 +117,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowReferenceVcf.h
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowNoiseCalibration.h
+    Source/DSP/YouKnowNoiseC41.h
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
@@ -729,6 +730,10 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowOutputSummerMuteTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputSummerMute COMMAND YouKnowOutputSummerMuteTests)
     set_tests_properties(YouKnow.OutputSummerMute PROPERTIES TIMEOUT 60)
+    add_executable(YouKnowMainNoiseMagnitudeTests Tests/YouKnowMainNoiseMagnitudeTests.cpp)
+    target_link_libraries(YouKnowMainNoiseMagnitudeTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.MainNoiseMagnitude COMMAND YouKnowMainNoiseMagnitudeTests)
+    set_tests_properties(YouKnow.MainNoiseMagnitude PROPERTIES TIMEOUT 60)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowOutputNetworkTests Tests/YouKnowOutputNetworkTests.cpp)
