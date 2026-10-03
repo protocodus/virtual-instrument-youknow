@@ -117,6 +117,14 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-03
+
+- Main NOISE keeps more of the real C41/R79 circuit's treble at ordinary
+  quality settings. At 48 kHz/1×, excess loss at 16/20 kHz falls from
+  3.85/8.59 dB to 0.32/0 dB, with the source level and density unchanged.
+  Its stored capacitor voltage still decays with the physical 33 µs time
+  constant when NOISE closes; interpolation and phase remain approximate.
+
 ### Unreleased — 2026-10-02
 
 - The unipolar saw now keeps its mean voltage at the WAVE node until the
