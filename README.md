@@ -119,6 +119,10 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### Unreleased — 2026-10-03
 
+- Low resonance now follows Tr18's gradual exponential junction rather than
+  an abrupt 0.6 V turn-on. Its nominal 2SA1015 current and drawn trimmer are
+  solved against the existing service endpoint; exact RES zero and full
+  self-oscillation calibration stay fixed. Installed junction data remain open.
 - **Original performance timing:** the session TIMING menu can run the original
   A-5 foreground/voice allocator, its module UART and the B-2 processor for
   notes, HOLD, modulation, bend and tone edits. Chord attacks and fast retriggers
@@ -676,6 +680,15 @@ forty-year-old unit will null against the plug-in.
   its junction onset, measured from the anchored +0.26 V VR34/TP7 standoff
   the RES CV hold shares with the voice VCA rail, while the exact onset and
   compensation await OQ-09).
+  The product now uses Tr18's exponential emitter law with the same nominal
+  25 °C 2SA1015 prior as Tr22. The accepted loop endpoint implies 229.6 µA
+  into the reconstructed 68 kΩ summer; emitter KCL then gives R107 plus
+  VR26 ≈42.05 kΩ, inside the drawn 27–47 kΩ range. The small zero-control
+  baseline is removed to retain an exactly open loop, and full travel keeps
+  the existing service calibration. These are conditional circuit coordinates,
+  not installed junction or trimmer measurements. The raw reference keeps
+  its hard 0.6 V onset; the nominal table agrees with an independent current
+  solve within 2.1×10⁻⁶ absolute loop gain.
 - FREQ/WIDTH calibration now stays fixed when RES changes, as the separate
   cutoff and resonance control paths on service-note p. 13 require. The
   cascade retains its own amplitude-dependent frequency droop; the former

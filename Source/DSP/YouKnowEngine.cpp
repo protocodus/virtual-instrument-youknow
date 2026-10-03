@@ -5996,6 +5996,7 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
     (void) VoiceVcaControlLaw::exactGainTable();
     (void) CircuitDerivedNoiseLevelProfile::junctionDriveTable();
+    (void) CircuitDerivedResonanceProfile::junctionLoopGainTable();
     (void) VoiceVcaSignalLaw::serviceGain();
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
@@ -9079,6 +9080,79 @@ float YouKnowEngine::CircuitDerivedResonanceProfile::loopGain(
     return VoicedResonanceCompatibilityProfile::maximumFeedback * active;
 }
 
+double YouKnowEngine::CircuitDerivedResonanceProfile::junctionSeriesOhms() noexcept
+{
+    const double is = junctionReferenceCollectorAmps
+        / std::expm1(junctionReferenceVbe / junctionThermalVolts);
+    const double vbe = junctionThermalVolts * std::log1p(serviceCollectorAmps / is);
+    constexpr double alpha = junctionBeta / (junctionBeta + 1.0);
+    return (static_cast<double>(standoffVolts) + controlFullScaleVolts - vbe)
+         * alpha / serviceCollectorAmps;
+}
+
+double YouKnowEngine::CircuitDerivedResonanceProfile::junctionCollectorCurrent(
+    double holdVolts) noexcept
+{
+    // Original emitter KCL: (Vhold-Ve)/Rs=Is*expm1(Ve/Vt)/alpha.
+    // Put y=(Ic+Is)*Rs/(alpha*Vt); y+ln(y)=ln(Is*Rs/(alpha*Vt))
+    // +(Vhold+Rs*Is/alpha)/Vt. This prepare-only Wright-omega solve
+    // avoids overflow and retains the transistor's low-current exponential.
+    constexpr double alpha = junctionBeta / (junctionBeta + 1.0);
+    const double rs = junctionSeriesOhms();
+    const double is = junctionReferenceCollectorAmps
+        / std::expm1(junctionReferenceVbe / junctionThermalVolts);
+    const double scale = alpha * junctionThermalVolts / rs;
+    const double v = std::log(is / scale) + holdVolts / junctionThermalVolts
+                   + is / scale;
+    double y = v > 1.0 ? v - std::log(v) : std::exp(v);
+    for (int iteration = 0; iteration < 12; ++iteration)
+    {
+        const double delta = (y + std::log(y) - v) * y / (y + 1.0);
+        y -= delta;
+        if (std::abs(delta) <= 1.0e-15 * y) break;
+    }
+    return scale * y - is;
+}
+
+const std::array<float,
+    YouKnowEngine::CircuitDerivedResonanceProfile::junctionTableSteps + 1>&
+YouKnowEngine::CircuitDerivedResonanceProfile::junctionLoopGainTable()
+{
+    static const std::array<float, junctionTableSteps + 1> table = [] {
+        std::array<float, junctionTableSteps + 1> result {};
+        const double off = junctionCollectorCurrent(standoffVolts);
+        const double full = junctionCollectorCurrent(
+            static_cast<double>(standoffVolts) + controlFullScaleVolts);
+        // Preserve the existing exact open-loop zero. The nominal sub-nA
+        // current at the bias standoff is not evidence for a calibrated
+        // original's residual resonance. Subtract only that baseline; the
+        // gradual conducting knee and endpoint current remain intact.
+        for (int i = 1; i < junctionTableSteps; ++i)
+            result[static_cast<std::size_t>(i)] = static_cast<float>(
+                VoicedResonanceCompatibilityProfile::maximumFeedback
+                * (junctionCollectorCurrent(static_cast<double>(standoffVolts)
+                    + static_cast<double>(i) / junctionTableSteps * controlFullScaleVolts)
+                    - off) / (full - off));
+        result.back() = VoicedResonanceCompatibilityProfile::maximumFeedback;
+        return result;
+    }();
+    return table;
+}
+
+float YouKnowEngine::CircuitDerivedResonanceProfile::junctionLoopGain(
+    float panelPosition) noexcept
+{
+    const float position = clamp01(sanitised(panelPosition, 0.0f));
+    if (position <= 0.0f) return 0.0f;
+    if (position >= 1.0f)
+        return VoicedResonanceCompatibilityProfile::maximumFeedback;
+    const auto& table = junctionLoopGainTable();
+    const float at = position * static_cast<float>(junctionTableSteps);
+    const auto index = static_cast<std::size_t>(at);
+    const float fraction = at - static_cast<float>(index);
+    return table[index] + fraction * (table[index + 1] - table[index]);
+}
+
 float YouKnowEngine::CircuitDerivedNoiseLevelProfile::drive(
     float dacFraction) noexcept
 {
@@ -9160,7 +9234,7 @@ void YouKnowEngine::selectConverterTimingProfile(
 
 float YouKnowEngine::resonanceFeedbackFor(
     float resonanceCv, const VoiceCard& card, float calibration,
-    bool circuitDerivedShape) noexcept
+    bool circuitDerivedShape, bool softJunction) noexcept
 {
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
@@ -9174,7 +9248,9 @@ float YouKnowEngine::resonanceFeedbackFor(
     const float resonancePanel = clamp01(resonanceCv
         + card.resonanceError * 0.02f * calibration);
     const float loopGain = circuitDerivedShape
-             ? CircuitDerivedResonanceProfile::loopGain(resonancePanel)
+             ? (softJunction
+                    ? CircuitDerivedResonanceProfile::junctionLoopGain(resonancePanel)
+                    : CircuitDerivedResonanceProfile::loopGain(resonancePanel))
              : VoicedResonanceCompatibilityProfile::loopGain(resonancePanel);
     // The RES adjustment: the trimmer scales this card's whole return, so
     // its settled full-travel limit cycle is the procedure's 4.8 Vp-p
@@ -9293,7 +9369,7 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
 
     voice.feedback = resonanceFeedbackFor(
         resonanceCv_, card, tolerance,
-        parameters.useCircuitDerivedResonanceShape);
+        parameters.useCircuitDerivedResonanceShape, parameters.enableResonanceSoftJunction);
     voice.inputCompensation =
         VoicedResonanceCompatibilityProfile::inputCompensation(
             voice.feedback, parameters.resonanceCompensationShape);
@@ -9316,7 +9392,7 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
         powerSupplyDroop_ - railRippleVolts_);
     const float calibrationFeedback = parameters.useFixedVcfServiceFrequencyTrim
         ? resonanceFeedbackFor(1.0f, card, tolerance,
-            parameters.useCircuitDerivedResonanceShape)
+            parameters.useCircuitDerivedResonanceShape, parameters.enableResonanceSoftJunction)
         : voice.feedback;
     // The chain from counts to the physical omega*dt interval costs an exp2
     // and two double pow calls per card, per internal sample -- and it is a
@@ -10701,13 +10777,13 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
                                          double resonanceCv) {
             const float mappedFeedback = resonanceFeedbackFor(
                 static_cast<float>(resonanceCv), card, parameters.calibration,
-                parameters.useCircuitDerivedResonanceShape);
+                parameters.useCircuitDerivedResonanceShape, parameters.enableResonanceSoftJunction);
             const float mappedAnalogCounts = cutoffAnalogCounts(
                 static_cast<float>(cutoffCounts), card, parameters.calibration,
                 powerSupplyDroop_ - railRippleVolts_);
             const float calibrationFeedback = parameters.useFixedVcfServiceFrequencyTrim
                 ? resonanceFeedbackFor(1.0f, card, parameters.calibration,
-                    parameters.useCircuitDerivedResonanceShape)
+                    parameters.useCircuitDerivedResonanceShape, parameters.enableResonanceSoftJunction)
                 : mappedFeedback;
             const float cutoffHz = vcfEffectiveCutoffHz(
                 mappedAnalogCounts, calibrationFeedback,

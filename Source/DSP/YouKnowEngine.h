@@ -400,6 +400,9 @@ struct EngineParameters
     // family still owns the final calibration; the physical topology is the
     // stronger prior in its absence.
     bool useCircuitDerivedResonanceShape { true };
+    // Product-selected Tr18 exponential junction. The raw reference keeps
+    // its hard 0.6-V onset; both retain exact RES zero and service maximum.
+    bool enableResonanceSoftJunction { false };
     // FREQ/WIDTH are fixed trimmers adjusted at the service self-oscillation
     // amplitude. Keep that pole calibration when RES changes instead of
     // dynamically cancelling the
@@ -1072,6 +1075,36 @@ public:
             (onsetVolts - standoffVolts) / controlFullScaleVolts;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
+        // Tr18, p.13: R107=27k plus VR26=0..20k feeds its emitter; base
+        // is grounded and collector drives the resonance BA662. Reuse the
+        // same named 25 C 2SA1015 prior as Tr22/chorus (beta200, Vbe=.61
+        // at Ic=.65096556mA), not a new fitted turn-on voltage. The existing
+        // return law k*H*tanh(u) corresponds to current into the 68k summer,
+        // so the service endpoint implies Ic=k_max*H/68k. That current and
+        // the exponential junction solve R107+VR26 (about42k, VR26~15k),
+        // inside Roland's drawn trim range. This is a nominal conditional
+        // calibration, not a measurement of an original trimmer or Is.
+        // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13
+        // https://media.digikey.com/PDF/Data%20Sheets/Toshiba%20PDFs/2SA1015.pdf#page=2
+        // Is(T), installed beta and the trimmed current remain unknown;
+        // Vt and Is stay together at the declared reference temperature.
+        static constexpr double junctionThermalVolts =
+            1.380649e-23 * 298.15 / 1.602176634e-19;
+        static constexpr double junctionBeta = 200.0;
+        static constexpr double junctionReferenceVbe = 0.61;
+        static constexpr double junctionReferenceCollectorAmps =
+            0.0006509655627366167;
+        static constexpr double r107Ohms = 27000.0;
+        static constexpr double vr26MaximumOhms = 20000.0;
+        static constexpr double serviceCollectorAmps =
+            VoicedResonanceCompatibilityProfile::maximumFeedback
+            * VoicedResonanceCompatibilityProfile::loopHeadroomVolts / 68000.0;
+        static constexpr int junctionTableSteps = 4096;
+        [[nodiscard]] static double junctionSeriesOhms() noexcept;
+        [[nodiscard]] static double junctionCollectorCurrent(double holdVolts) noexcept;
+        [[nodiscard]] static const std::array<float, junctionTableSteps + 1>&
+            junctionLoopGainTable();
+        [[nodiscard]] static float junctionLoopGain(float panelPosition) noexcept;
         // Compensation and frequency correction operate in the loop-gain
         // coordinate and belong to the mechanism, not the shape, so this
         // profile shares the voiced profile's functions for both.
@@ -3447,7 +3480,7 @@ private:
     // through here rather than risk the two paths drifting apart.
     [[nodiscard]] static float resonanceFeedbackFor(
         float resonanceCv, const VoiceCard& card, float calibration,
-        bool circuitDerivedShape) noexcept;
+        bool circuitDerivedShape, bool softJunction = false) noexcept;
     [[nodiscard]] static float cutoffAnalogCounts(
         float cutoffCounts, const VoiceCard& card, float calibration,
         float powerSupplyDroop) noexcept;

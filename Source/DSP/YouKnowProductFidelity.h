@@ -99,6 +99,9 @@ struct ProductFidelityProfile
         // Tr22's nominal exponential junction replaces the hard knee while
         // preserving the service noise endpoint and declared VR32 setting.
         parameters.enableNoiseLevelSoftJunction = true;
+        // Tr18 uses the same nominal PNP prior, with its own drawn network
+        // and service-endpoint trimmer solve rather than a hard 0.6-V knee.
+        parameters.enableResonanceSoftJunction = true;
         // Prevent the physical BA662 pair's ultrasonic harmonics/control
         // sidebands folding back on coarse output grids; gain is unchanged.
         parameters.enableVoiceVcaAntialias = true;
