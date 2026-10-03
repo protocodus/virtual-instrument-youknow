@@ -2240,19 +2240,23 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
     outputButton.setTitle ("Output connections");
     outputButton.setTooltip (
         "Select the rear-panel High, Medium or Low output level and the input "
-        "resistance of the connected equipment. Open leaves the jack unloaded. "
+        "resistance and cable/input capacitance of the connected equipment. "
+        "Open means no resistive load; 0 pF adds no external capacitance. "
+        "Stereo uses one load per jack; mono uses one shared cable/input. "
         "These settings stay unchanged when you load a preset.");
     outputButton.onClick = [this]
     {
         juce::PopupMenu menu;
-        for (const auto* id : { outputSelector, outputLoad })
+        for (const auto* id : { outputSelector, outputLoad, outputCapacitance })
         {
             auto* choice = dynamic_cast<juce::AudioParameterChoice*> (
                 audioProcessor.parameters.getParameter (id));
             if (choice == nullptr)
                 continue;
-            menu.addSectionHeader (id == outputSelector ? "Output level" : "Receiver input resistance");
-            const int base = id == outputSelector ? 1 : 101;
+            menu.addSectionHeader (id == outputSelector ? "Output level"
+                                  : id == outputLoad ? "Receiver input resistance"
+                                                     : "Cable + input capacitance");
+            const int base = id == outputSelector ? 1 : id == outputLoad ? 101 : 201;
             for (int index = 0; index < choice->choices.size(); ++index)
                 menu.addItem (base + index, choice->choices[index], true,
                               choice->getIndex() == index);
@@ -2262,9 +2266,11 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
             {
                 if (safe == nullptr || result == 0)
                     return;
-                const auto* id = result >= 101 ? youknow::parameters::outputLoad
+                const auto* id = result >= 201 ? youknow::parameters::outputCapacitance
+                               : result >= 101 ? youknow::parameters::outputLoad
                                                : youknow::parameters::outputSelector;
-                const int index = result >= 101 ? result - 101 : result - 1;
+                const int index = result >= 201 ? result - 201
+                                : result >= 101 ? result - 101 : result - 1;
                 if (auto* parameter = safe->audioProcessor.parameters.getParameter (id))
                 {
                     parameter->beginChangeGesture();

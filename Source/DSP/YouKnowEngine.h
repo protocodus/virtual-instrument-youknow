@@ -467,6 +467,10 @@ struct EngineParameters
     // receiver resistance. Zero load means open, not a short circuit.
     OutputNetwork::Selector outputSelector { OutputNetwork::Selector::High };
     float outputLoadOhms { 0.0f };
+    // Added capacitance of each stereo cable/input, or the one mono cable.
+    // 0pF preserves the existing output path. The instrument's internal
+    // C21/C22 1nF remain in both paths and are not part of this setting.
+    float outputCapacitancePf { 0.0f };
     bool outputMono { false };
     // Ignored by Exact. The opt-in cubic replaces only the small
     // Character/Early multiplier transfer in the Fast kernel.

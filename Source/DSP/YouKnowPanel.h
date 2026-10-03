@@ -92,6 +92,7 @@ inline constexpr auto legacyHq     = "hq";
 inline constexpr auto outputSelector = "outputSelector";
 inline constexpr auto outputLoad = "outputLoad";
 inline constexpr auto originalPerformance = "originalPerformance";
+inline constexpr auto outputCapacitance = "outputCapacitance";
 } // namespace parameters
 
 namespace panel

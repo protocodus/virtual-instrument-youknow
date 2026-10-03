@@ -132,6 +132,14 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   3.85/8.59 dB to 0.32/0 dB, with the source level and density unchanged.
   Its stored capacitor voltage still decays with the physical 33 µs time
   constant when NOISE closes; interpolation and phase remain approximate.
+- **OUTPUT...** now offers cable/input capacitance alongside receiver
+  resistance: 0 pF, Canare GS-6 3 m/6 m (480/960 pF), and explicit 2000/5000 pF
+  external loads. This softens treble and shapes the output resistor floor
+  through the original coupled jack network; mono uses one shared cable.
+  The 0 pF default preserves existing audio and older sessions. Connection
+  choices survive preset recalls; the cable values use
+  [Canare's nominal 160 pF/m specification](https://www.canare.com/guitarinstrumentcable),
+  rather than a measurement of the connected equipment.
 
 ### Unreleased — 2026-10-02
 
@@ -821,21 +829,27 @@ forty-year-old unit will null against the plug-in.
   powers are summed at the correct pre- or post-coupling node and generated
   once per host frame, so quality does not multiply either level or cost
   (anchored topology and component values; fundamental thermal-noise law).
-  High/Open retains this historical realization. The other selector positions
-  and finite receiver loads use `YouKnowOutputNetwork.h`: eliminating only
+  High/Open/0 pF retains this historical realization. The other selector positions,
+  finite receiver loads and added capacitance use `YouKnowOutputNetwork.h`: eliminating only
   resistor nodes leaves both coupling and jack capacitors in the source
   transfer and internal-resistor noise spectrum. Medium is about −13.94 dB
   and Low −28.80 dB relative to High in the open-load midband. Their treble
   poles also differ (full-volume H/M/L: 46.15/17.92/43.64 kHz). A 10 kΩ
   receiver on High moves the bass pole from 1.78 to 2.60 Hz; a treble-only
   load adjustment would miss this. A mono connection uses one shared
-  receiver load, rather than two independent loads followed by a fold.
+  receiver load, rather than two independent loads followed by a fold. Cable/input
+  capacitance adds at each stereo jack, or once at the joined mono jack, alongside
+  the instrument's C21/C22 1 nF capacitors. The OUTPUT menu offers GS-6 3 m/6 m
+  nominal loads of 480/960 pF and explicit 2000/5000 pF loads; an unknown receiver
+  input capacitance is not inferred. At High/full Volume/47 kΩ, the nominal
+  3 m/6 m choices add 0.67/1.46 dB of loss at 20 kHz.
   The new path retains the same magnitude-matching policy and approximate
-  high-frequency phase. Its measured worst source/noise magnitude error is
-  0.229 dB on the 8–768 kHz rate grid, with phase error up to 43.8°;
+  high-frequency phase. The prior 0 pF source/noise magnitude check measured
+  0.229 dB on the 8–768 kHz rate grid, with phase error up to 43.8°; the expanded
+  0–5000 pF grid measures 0.485 dB and up to 70.5°, retaining that same approximation.
   selector transients are not a physical charge/contact
-  simulation. Receiver noise, cable capacitance and component mismatch are
-  outside this nominal resistive-load model. The digital output reference is
+  simulation. Receiver noise and component mismatch remain outside this nominal
+  passive-load model. The digital output reference is
   fixed, so selecting Medium/Low or a finite load really lowers the level.
   The densities are stated at 25 °C and scale by √(T / 298.15 K) with the
   jack board's temperature on the chassis warm-up law, exactly as the cards'
@@ -2739,7 +2753,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-20 | Chorus wet-mute switching transient and leakage. The product now solves the complete nominal C16/C13/C15 network: R50 10 kΩ, R46 330 Ω, R48 150 kΩ, R49/R42 560/39 kΩ, D3/R41 10 kΩ, R47 330 kΩ and both 330/33 kΩ clock-base dividers. C16/C15 are 2.2 µF and C13 is 1 µF. Reciprocal loading and conducting base-junction loads are implemented using the existing 0.6 V junction and ideal-rail priors. The independent component-current RK4 reference agrees within 0.35 µV over 8–768 kHz; interrupted commands, simultaneous crossings and rate changes preserve charge. Nominal wet mute/open times are 81.8/116.7 ms and clock stop/restart times are 287.7/12.3 ms after settled commands. Stopped BBD buckets, clock phase and noise-generator state are retained ideally; analog support continues running. These are model predictions, not original-unit measurements. Tr5 saturation, finite collector-drive requirements, local MN3101 rail drops through R99/R108, capacitor leakage and installed junction values remain open, as do the JFET transition waveform and leakage. The 5 ms wet glide remains product policy. [Toshiba, printed p. 562](https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf#page=1), specifies family cutoff −0.4…−5.0 V at VDS=10 V, ID=0.1 µA, 25 °C; Roland's Y/GR alternatives grade IDSS, not individual cutoff. The sheet limits gate leakage to 1 nA at VGS=−30 V, VDS=0, 25 °C, not installed leakage including D4/D5. The static wet-level bound remains −0.184 dB and is left unmodelled | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. The Boost leg now runs as its three real stores (C9, C8, C6) in both configurations, so its departing tail (C8 back through R22‖C9 and R25 while IC4b keeps amplifying node N — the exact undriven pair has a 2.77 ms slow mode, longer than the earlier 940 µs single-pole reading), its re-entry charge redistribution and IC4b's finite swing are derived rather than estimated. The product-selected `configureHighPassSwitch` path now solves C14, all selected and deselected passive legs, and IC4b feedback with finite TC4052 resistance and preserved capacitor charge. Independent component-node MNA and continuous-time switching checks qualify the implementation. The 110/240 Ω audition coordinates are Toshiba’s 10 V/5 V typical table points, not measured bounds for the installed +5 V/Tr3 supply. The product uses the approved 110 Ω candidate B; the raw-DSP reference remains unchanged. Toshiba’s [current table, p. 5](https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP#page=5) supplies conditional leakage and parasitic data: ±100 nA maximum off leakage at 25 °C in its 18 V test, 10 pF typical switch-input capacitance, and 30/0.2 pF typical output/feedthrough capacitance at 10 V. Feedthrough capacitance does not specify switching charge injection. Installed Ron, leakage, charge injection, rail clipping and switch captures remain open | P2 |
 | OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model retains zero inter-voice spread and drift; seeded Unit Character remains voiced sound design. The product enables `useServiced439522VcfCalibration`, which assigns fixed FREQ/WIDTH and effective upper-current coordinates fitted to six card slots from one identified sweep. It is a serviced unit with Borish replacement VCF/VCA cards, and card identity is confounded with sweep direction. The original master-clock identity is now closed as a KMFC1034T1 8 MHz ceramic resonator; its installed warm-up/aging distribution is still unknown. The AS3109’s typical 0.33%/°C frequency-control coefficient is not a bound on original-module compensated cutoff drift. See [voice instability](#voice-instability-and-pitch-drift). Complementary held-out cutoff codes test interpolation within that capture; they do not establish original 80017A population tolerances, independent-unit accuracy, repeatability or thermal drift | P3 |
-| OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law and ideal selector steps are settled. The [p. 15 circuit](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15) also closes the nominal load dependence: at full volume, stereo H/M/L source resistances are 3.4488/8.8824/3.6472 kΩ, with open-jack poles at 46.15/17.92/43.64 kHz. Medium therefore changes treble as well as level. `YouKnowOutputNetwork.h` now implements the complete nominal two-capacitor source and internal-resistor noise transfer for H/M/L and explicit resistive loads, including mono normalling. The default High/open realization remains for compatibility. Independent unreduced nodal source/noise checks qualify the circuit reduction; the host-rate digital realization targets magnitude and retains approximate phase and switching transients. Actual receiver resistance is user-selected; cable capacitance, pot tracking, component spread and driven headphone behaviour remain open | P3 |
+| OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law and ideal selector steps are settled. The [p. 15 circuit](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15) also closes the nominal load dependence: at full volume, stereo H/M/L source resistances are 3.4488/8.8824/3.6472 kΩ, with open-jack poles at 46.15/17.92/43.64 kHz. Medium therefore changes treble as well as level. `YouKnowOutputNetwork.h` now implements the complete nominal two-capacitor source and internal-resistor noise transfer for H/M/L and explicit resistive loads, including mono normalling. The default High/open realization remains for compatibility. Independent unreduced nodal source/noise checks qualify the circuit reduction; the host-rate digital realization targets magnitude and retains approximate phase and switching transients. Receiver resistance and cable/input capacitance are user-selected external loads; unknown installed values, pot tracking, component spread and driven headphone behaviour remain open | P3 |
 
 OQ-08's `T-389`, `T-334` and `T-323` values are proven no-interrupt
 **instruction-start** anchors, not external-pin timestamps. NEC specifies

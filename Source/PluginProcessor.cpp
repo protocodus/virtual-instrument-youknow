@@ -905,6 +905,14 @@ YouKnowAudioProcessor::createParameterLayout()
         juce::ParameterID { outputLoad, 9 }, "Output Load",
         juce::StringArray { "Open", "10 kOhm", "47 kOhm", "100 kOhm", "1 MOhm" }, 0,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+    // Session connection state, appended after every historical AU parameter.
+    // Nominal GS-6 capacitance is 160 pF/m; the generic choices state a load
+    // without assigning an unknown receiver a manufacturer specification.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { outputCapacitance, 10 }, "Output Capacitance",
+        juce::StringArray { "0 pF (no cable)", "480 pF (GS-6 3 m)", "960 pF (GS-6 6 m)",
+                            "2000 pF (external load)", "5000 pF (external load)" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     // A session connection/performance policy, absent from hardware tones.
     // Changing modes clears held notes and tails, so host automation is disabled.
@@ -974,6 +982,7 @@ YouKnowAudioProcessor::YouKnowAudioProcessor()
         { ParameterIndex::outputSelector, outputSelector },
         { ParameterIndex::outputLoad, outputLoad },
         { ParameterIndex::originalPerformance, originalPerformance },
+        { ParameterIndex::outputCapacitance, outputCapacitance },
         { ParameterIndex::pitchBend, pitchBend },
         { ParameterIndex::modulation, modulation }
     });
@@ -1274,6 +1283,8 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
     engineParameters.outputLoadOhms = outputLoadOhmsForChoice (
         choiceOf (P::outputLoad, outputLoadChoiceCount - 1));
     const bool originalTiming = choiceOf (P::originalPerformance, 1) != 0;
+    engineParameters.outputCapacitancePf = outputCapacitancePfForChoice (
+        choiceOf (P::outputCapacitance, outputCapacitanceChoiceCount - 1));
     engineParameters.outputMono = getTotalNumOutputChannels() == 1;
     engineParameters.chorusNoise = valueOf (P::chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (P::polyphony));

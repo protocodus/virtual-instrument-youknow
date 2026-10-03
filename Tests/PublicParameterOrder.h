@@ -28,7 +28,7 @@ struct PublicParameter
     bool automatable = true;
 };
 
-inline constexpr std::array<PublicParameter, 51> publicParameterOrder {{
+inline constexpr std::array<PublicParameter, 52> publicParameterOrder {{
     PublicParameter { "volume", "Volume" },
     PublicParameter { "benderDco", "Bender DCO" },
     PublicParameter { "benderVcf", "Bender VCF" },
@@ -79,6 +79,7 @@ inline constexpr std::array<PublicParameter, 51> publicParameterOrder {{
     PublicParameter { "modulation", "Modulation" },
     PublicParameter { "outputSelector", "Output Level", false },
     PublicParameter { "outputLoad", "Output Load", false },
+    PublicParameter { "outputCapacitance", "Output Capacitance", false },
     PublicParameter { "originalPerformance", "Performance Timing", false },
 }};
 

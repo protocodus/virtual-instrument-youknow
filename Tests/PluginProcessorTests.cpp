@@ -155,6 +155,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::modulation,  0.0f,   1.0e-5f },
     { parameters::outputSelector, 0.0f, 1.0e-5f },
     { parameters::outputLoad,   0.0f,  1.0e-5f },
+    { parameters::outputCapacitance, 0.0f, 1.0e-5f },
     { parameters::originalPerformance, 0.0f, 1.0e-5f },
 });
 
@@ -584,6 +585,9 @@ EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& proce
     constexpr std::array<float, 5> outputLoads { 0, 10000, 47000, 100000, 1000000 };
     result.outputLoadOhms = outputLoads[static_cast<std::size_t> (
         juce::roundToInt (value (parameters::outputLoad)))];
+    constexpr std::array<float, 5> capacitances { 0, 480, 960, 2000, 5000 };
+    result.outputCapacitancePf = capacitances[static_cast<std::size_t> (
+        juce::roundToInt (value (parameters::outputCapacitance)))];
     result.outputMono = processor.getTotalNumOutputChannels() == 1;
     // The product's own circuit selections, so a new one reaches the
     // reference the moment the processor takes it up.
@@ -744,12 +748,14 @@ void testOutputConnectionsSurviveStateAndToneChanges()
     processor.setCurrentProgram (3);
     setParameterValue (processor, parameters::outputSelector, 1);
     setParameterValue (processor, parameters::outputLoad, 2);
+    setParameterValue (processor, parameters::outputCapacitance, 2);
     expect (!processor.currentProgramIsEdited(),
             "output connections marked the tone edited");
     const auto retained = [&processor] (const char* context)
     {
         expect (parameterValue (processor, parameters::outputSelector) == 1
-                    && parameterValue (processor, parameters::outputLoad) == 2,
+                    && parameterValue (processor, parameters::outputLoad) == 2
+                    && parameterValue (processor, parameters::outputCapacitance) == 2,
                 std::string (context) + " changed output connections");
     };
     for (int program = 0; program < processor.getNumPrograms(); ++program)
@@ -768,14 +774,16 @@ void testOutputConnectionsSurviveStateAndToneChanges()
     YouKnowAudioProcessor restored;
     restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
     expect (parameterValue (restored, parameters::outputSelector) == 1
-                && parameterValue (restored, parameters::outputLoad) == 2,
+                && parameterValue (restored, parameters::outputLoad) == 2
+                && parameterValue (restored, parameters::outputCapacitance) == 2,
             "output connections did not survive a session round trip");
 
     auto old = processor.parameters.copyState();
     for (int i = old.getNumChildren(); --i >= 0;)
     {
         const auto id = old.getChild (i).getProperty ("id").toString();
-        if (id == parameters::outputSelector || id == parameters::outputLoad)
+        if (id == parameters::outputSelector || id == parameters::outputLoad
+            || id == parameters::outputCapacitance)
             old.removeChild (i, nullptr);
     }
     const auto xml = old.createXml();
@@ -786,7 +794,8 @@ void testOutputConnectionsSurviveStateAndToneChanges()
         juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
         restored.setStateInformation (legacy.getData(), static_cast<int> (legacy.getSize()));
         expect (parameterValue (restored, parameters::outputSelector) == 0
-                    && parameterValue (restored, parameters::outputLoad) == 0,
+                    && parameterValue (restored, parameters::outputLoad) == 0
+                    && parameterValue (restored, parameters::outputCapacitance) == 0,
                 "an older session inherited live output connections instead of High/Open");
     }
     const auto* selector = dynamic_cast<const juce::AudioParameterChoice*> (
@@ -798,6 +807,52 @@ void testOutputConnectionsSurviveStateAndToneChanges()
     expect (load != nullptr && load->choices == juce::StringArray {
                 "Open", "10 kOhm", "47 kOhm", "100 kOhm", "1 MOhm" },
             "output load choice ordinals changed");
+    const auto* capacitance = dynamic_cast<const juce::AudioParameterChoice*> (
+        processor.parameters.getParameter (parameters::outputCapacitance));
+    expect (capacitance != nullptr && capacitance->choices == juce::StringArray {
+                "0 pF (no cable)", "480 pF (GS-6 3 m)", "960 pF (GS-6 6 m)",
+                "2000 pF (external load)", "5000 pF (external load)" },
+            "output capacitance choices no longer state the added physical load");
+    for (int choice = 0; choice < YouKnowAudioProcessor::outputCapacitanceChoiceCount; ++choice)
+        if (capacitance != nullptr)
+            expect (static_cast<const juce::RangedAudioParameter*>(capacitance)
+                        ->getValueForText (capacitance->choices[choice])
+                        == capacitance->convertTo0to1 (float(choice)),
+                    "output capacitance text does not restore its choice");
+
+    // A session from immediately before capacitance existed must retain its
+    // chosen resistance/selector while restoring 0 pF, rather than inherit a
+    // cable selected on the live instance. Malformed known values reject the
+    // complete state before APVTS can convert a nonfinite choice to an index.
+    auto preCable = processor.parameters.copyState();
+    for (int i = preCable.getNumChildren(); --i >= 0;)
+        if (preCable.getChild(i).getProperty("id").toString() == parameters::outputCapacitance)
+            preCable.removeChild(i, nullptr);
+    const auto restoreTree = [&](const juce::ValueTree& tree)
+    {
+        juce::MemoryBlock data;
+        if (const auto serialised = tree.createXml())
+            juce::AudioProcessor::copyXmlToBinary(*serialised, data);
+        restored.setStateInformation(data.getData(), static_cast<int>(data.getSize()));
+    };
+    setParameterValue(restored, parameters::outputCapacitance, 4);
+    restoreTree(preCable);
+    expect (parameterValue(restored, parameters::outputSelector) == 1
+                && parameterValue(restored, parameters::outputLoad) == 2
+                && parameterValue(restored, parameters::outputCapacitance) == 0,
+            "pre-cable session did not preserve resistance and default to 0 pF");
+    setParameterValue(restored, parameters::outputCapacitance, 2);
+    for (const auto* malformed : { "nan", "inf", "1e100" })
+    {
+        auto poisoned = processor.parameters.copyState();
+        for (auto child : poisoned)
+            if (child.getProperty("id").toString() == parameters::outputCapacitance)
+                child.setProperty("value", malformed, nullptr);
+        restoreTree(poisoned);
+        expect (parameterValue(restored, parameters::outputCapacitance) == 2
+                    && parameterValue(restored, parameters::outputLoad) == 2,
+                "malformed capacitance state partially replaced a working connection");
+    }
 }
 
 void testOutputConnectionsReachMonoAndStereoAudio()
@@ -825,6 +880,7 @@ void testOutputConnectionsReachMonoAndStereoAudio()
         {
             setParameterValue (processor, parameters::outputSelector, static_cast<float> (choice % 3));
             setParameterValue (processor, parameters::outputLoad, static_cast<float> (choice));
+            setParameterValue (processor, parameters::outputCapacitance, static_cast<float> (choice));
             reference.setParameters (fidelityReferenceParameters (processor));
             for (int block = 0; block < 4; ++block)
             {
@@ -974,8 +1030,16 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 10,
+    expect (auParameters.size() == historicalAuOrder.size() + 11,
             "the Audio Unit parameter contract has an unexpected size");
+    if (const auto* capacitance = processor.parameters.getParameter (parameters::outputCapacitance))
+    {
+        expect (capacitance->getVersionHint() == 10 && !capacitance->isAutomatable()
+                    && auParameters.size() > 50 && auParameters[50] == capacitance,
+                "output capacitance did not append after every historical AU parameter");
+        // Earlier AU positions are anchored below; later appends cannot move
+        // this parameter or shorten the prefix that is checked independently.
+    }
     for (std::size_t index = 0;
          index < historicalAuOrder.size() && index < auParameters.size(); ++index)
         expect (auParameters[index]->paramID == historicalAuOrder[index],
@@ -6309,7 +6373,8 @@ void testEditedFlagFollowsTheCompleteProgram()
             || std::strcmp (expected.id, parameters::modulation) == 0
             || std::strcmp (expected.id, parameters::outputSelector) == 0
             || std::strcmp (expected.id, parameters::outputLoad) == 0
-            || std::strcmp (expected.id, parameters::originalPerformance) == 0)
+            || std::strcmp (expected.id, parameters::originalPerformance) == 0
+            || std::strcmp (expected.id, parameters::outputCapacitance) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -6654,7 +6719,8 @@ bool isProgramParameter (const char* id)
         && std::strcmp (id, parameters::modulation) != 0
         && std::strcmp (id, parameters::outputSelector) != 0
         && std::strcmp (id, parameters::outputLoad) != 0
-        && std::strcmp (id, parameters::originalPerformance) != 0;
+        && std::strcmp (id, parameters::originalPerformance) != 0
+        && std::strcmp (id, parameters::outputCapacitance) != 0;
 }
 
 void testEveryProductProgramRestoresEveryParameter()
@@ -6701,6 +6767,7 @@ void testEveryProductProgramRestoresEveryParameter()
         const float poisonedOutputSelector = parameterValue (processor, parameters::outputSelector);
         const float poisonedOutputLoad = parameterValue (processor, parameters::outputLoad);
         const float poisonedOriginalTiming = parameterValue (processor, parameters::originalPerformance);
+        const float poisonedOutputCapacitance = parameterValue (processor, parameters::outputCapacitance);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -6739,6 +6806,8 @@ void testEveryProductProgramRestoresEveryParameter()
                     retained = poisonedOutputLoad;
                 else if (std::strcmp (expected.id, parameters::originalPerformance) == 0)
                     retained = poisonedOriginalTiming;
+                else if (std::strcmp (expected.id, parameters::outputCapacitance) == 0)
+                    retained = poisonedOutputCapacitance;
                 expect (std::abs (parameterValue (processor, expected.id)
                                  - retained)
                             <= expected.tolerance,
@@ -7737,6 +7806,8 @@ void testEditorRandomizeStrengthsAndReset()
         parameterValue (processor, parameters::outputLoad);
     const float poisonedOriginalTiming =
         parameterValue (processor, parameters::originalPerformance);
+    const float poisonedOutputCapacitance =
+        parameterValue (processor, parameters::outputCapacitance);
 
     auto* reset = findDescendantButtonWithText (*editor, "INIT");
     expect (reset != nullptr, "the editor is missing INIT");
@@ -7779,7 +7850,9 @@ void testEditorRandomizeStrengthsAndReset()
                 == processor.parameters.getParameter (parameters::outputSelector)
             || parameter
                 == processor.parameters.getParameter (parameters::outputLoad)
-            || parameter == processor.parameters.getParameter (parameters::originalPerformance))
+            || parameter == processor.parameters.getParameter (parameters::originalPerformance)
+            || parameter
+                == processor.parameters.getParameter (parameters::outputCapacitance))
             continue;
         expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
@@ -7798,7 +7871,9 @@ void testEditorRandomizeStrengthsAndReset()
     expect (parameterValue (processor, parameters::outputSelector)
                     == poisonedOutputSelector
                 && parameterValue (processor, parameters::outputLoad)
-                    == poisonedOutputLoad,
+                    == poisonedOutputLoad
+                && parameterValue (processor, parameters::outputCapacitance)
+                    == poisonedOutputCapacitance,
             "INIT overruled the player's output connections");
     expect (parameterValue (processor, parameters::originalPerformance) == poisonedOriginalTiming,
             "INIT overruled the player's performance timing");
