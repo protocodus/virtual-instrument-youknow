@@ -6151,7 +6151,8 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     (void) outputNetwork_.prepare(sampleRate_, { activeParameters_.outputSelector,
-        activeParameters_.outputLoadOhms, activeParameters_.outputMono });
+        activeParameters_.outputLoadOhms, activeParameters_.outputMono,
+        double(activeParameters_.outputCapacitancePf) * 1e-12 });
     const double deepest = totalLatencySamples(maximumOversampleFactor);
     const double running = totalLatencySamples(oversampling_);
     latencyPadSamples_ = std::clamp(
@@ -6674,6 +6675,8 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     result.outputLoadOhms = std::isfinite(result.outputLoadOhms)
         && result.outputLoadOhms > 0.0f
         ? std::clamp(result.outputLoadOhms, 1.0f, 1.0e9f) : 0.0f;
+    result.outputCapacitancePf = std::isfinite(result.outputCapacitancePf)
+        ? std::clamp(result.outputCapacitancePf, 0.0f, 100000.0f) : 0.0f;
     // Unlike every other 0-1 control, Unit Character extends to 2: 0 is the
     // digital reference, 1 matches real hardware, and the headroom to 2
     // extrapolates every blended mechanism past its physical draw. The old
@@ -11088,10 +11091,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     float outputCouplingCacheGain = 0.0f;
     float outputCouplingCacheNoiseScale = 0.0f;
     (void) outputNetwork_.configure({ parameters.outputSelector,
-        parameters.outputLoadOhms, parameters.outputMono });
+        parameters.outputLoadOhms, parameters.outputMono,
+        double(parameters.outputCapacitancePf) * 1e-12 });
     const bool useSelectedOutput =
         parameters.outputSelector != OutputNetwork::Selector::High
-        || parameters.outputLoadOhms > 0.0f;
+        || parameters.outputLoadOhms > 0.0f
+        || parameters.outputCapacitancePf > 0.0f;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {

@@ -35,7 +35,7 @@ struct Reference
 // R54, both pot segments, R77/78 and R81/84 separately, each of the three
 // ladder resistors and R64/65. Zero-ohm pot endpoints are exact node merges.
 // Solve both physical channels; mono joins their two jack nodes, leaving two
-// 1nF capacitors and a SINGLE external load. Every internal resistor injects
+// 1nF capacitors and a SINGLE external resistance/capacitance. Every internal resistor injects
 // its own uncorrelated Norton current with PSD 4kT/R. No two-port reduction,
 // spectral-factor formula or doubled-load shortcut is used by this oracle.
 Reference reference(Configuration configuration, double volume,
@@ -100,6 +100,9 @@ Reference reference(Configuration configuration, double volume,
         resistor(o + tap, o + J, 2200.0L);
         admittance(o + A, ground, s * 10e-6L);
         admittance(o + J, ground, s * 1e-9L);
+        if (!configuration.mono || side == 0)
+            admittance(o + J, ground, s * static_cast<long double>(
+                configuration.externalCapacitanceFarads));
         if (configuration.loadOhms > 0.0 && (!configuration.mono || side == 0))
             resistor(o + J, ground, configuration.loadOhms, false);
     }
@@ -144,8 +147,9 @@ void testExactReduction()
         for (const double volume : {0.0, 0.01, 0.5, 1.0})
             for (const double load : {0.0, 600.0, 10000.0, 47000.0, 100000.0, 1e6})
                 for (const bool mono : {false, true})
+                for (const double capacitance : {0.0, 480e-12, 960e-12, 2e-9, 5e-9, 100e-9})
                 {
-                    const Configuration c {selector, load, mono};
+                    const Configuration c {selector, load, mono, capacitance};
                     Network network;
                     require(network.prepare(48000, c) && network.setVolume(volume),
                             "valid output-network configuration rejected");
@@ -205,8 +209,9 @@ void testRealizedMagnitude()
             for (const double volume : {0.0, 0.5, 1.0})
                 for (const double load : {0.0, 10000.0})
                     for (const bool mono : {false, true})
+                    for (const double capacitance : {0.0, 480e-12, 960e-12, 2e-9, 5e-9})
                     {
-                        const Configuration config {selector, load, mono};
+                        const Configuration config {selector, load, mono, capacitance};
                         Network network;
                         require(network.prepare(rate, config) && network.setVolume(volume),
                                 "valid realized circuit rejected");
@@ -222,6 +227,12 @@ void testRealizedMagnitude()
                                                limit * .25, limit * .5, limit * .8, limit})
                         {
                             const auto mna = reference(config, volume, f, 298.15);
+                            // Added capacitance can bring the upper pole into
+                            // the audio band. The existing one-pole magnitude
+                            // match is approximate between its anchors; retain
+                            // its original0.24dB bound at0pF and qualify the
+                            // wider0.55dB bound on the expanded capacitance grid.
+                            const double toleranceDb = capacitance == 0.0 ? .24 : .55;
                             const auto actual = transform(signal, f, rate, network.coefficients().lowPoleHz);
                             const auto actualNoise = transform(noise, f, rate, network.coefficients().lowPoleHz);
                             const double wanted = static_cast<double>(std::abs(mna.leftInput + mna.rightInput));
@@ -229,7 +240,7 @@ void testRealizedMagnitude()
                             {
                                 const double error = std::abs(20.0 * std::log10(std::abs(actual) / wanted));
                                 worstSignalDb = std::max(worstSignalDb, error);
-                                require(error < .24, "realized source magnitude exceeds 0.24dB circuit error");
+                                require(error < toleranceDb, "realized source magnitude exceeds qualified circuit error");
                                 const std::complex<double> expected {
                                     static_cast<double>((mna.leftInput + mna.rightInput).real()),
                                     static_cast<double>((mna.leftInput + mna.rightInput).imag())};
@@ -243,7 +254,13 @@ void testRealizedMagnitude()
                             const double noiseError = std::abs(10.0 * std::log10(
                                 measuredPsd / static_cast<double>(mna.noisePsd)));
                             worstNoiseDb = std::max(worstNoiseDb, noiseError);
-                            require(noiseError < .24, "realized noise PSD exceeds 0.24dB circuit error");
+                            if (noiseError >= toleranceDb)
+                                std::cerr << "noise magnitude fixture rate=" << rate
+                                          << " selector=" << static_cast<int>(selector)
+                                          << " volume=" << volume << " load=" << load
+                                          << " mono=" << mono << " Cext=" << capacitance
+                                          << " f=" << f << " error=" << noiseError << "dB\n";
+                            require(noiseError < toleranceDb, "realized noise PSD exceeds qualified circuit error");
                         }
                     }
     std::cout << "Realized worst magnitude error: signal " << worstSignalDb << "dB, noise "
@@ -273,6 +290,12 @@ void testHistoriesAndGuards()
                 && !a.configure({static_cast<Selector>(99), 0, false})
                 && !a.configure({Selector::High, -1, false})
                 && !a.configure({Selector::High, .1, false})
+                && !a.configure({Selector::High, 0, false, -1e-12})
+                && !a.configure({Selector::High, 0, false, 101e-9})
+                && !a.configure({Selector::High, 0, false,
+                                  std::numeric_limits<double>::quiet_NaN()})
+                && !a.configure({Selector::High, 0, false,
+                                  std::numeric_limits<double>::infinity()})
                 && !a.setVolume(std::numeric_limits<double>::quiet_NaN())
                 && !a.setNoise(-1, 1), "malformed configuration accepted");
     for (int i = 1000; i != 1200; ++i)
@@ -288,7 +311,7 @@ void testHistoriesAndGuards()
         require(a.process(input[0], input[1]) == b.process(input[0], input[1]),
                 "reset did not reproduce the prepared network");
     }
-    require(a.prepare(96000, {Selector::Low, 47000, true}) && a.setVolume(.5)
+    require(a.prepare(96000, {Selector::Low, 47000, true, 960e-12}) && a.setVolume(.5)
                 && a.setNoise(313.15, 1), "live reconfiguration failed");
     const auto retained = a.process(0, 0);
     require(std::isfinite(retained[0]) && retained[0] == retained[1]
@@ -300,7 +323,8 @@ void testHistoriesAndGuards()
         if (i % 11 == 0)
         {
             require(a.configure({static_cast<Selector>((i / 11) % 3),
-                                  i % 2 == 0 ? 0.0 : 10000.0, i % 3 == 0})
+                                  i % 2 == 0 ? 0.0 : 10000.0, i % 3 == 0,
+                                  (i % 6) * 1e-9})
                         && a.setVolume((i % 101) / 100.0), "valid switching setup failed");
         }
         const auto output = a.process(input[0], input[1], .25, -.5);
@@ -328,10 +352,11 @@ void testHistoriesAndGuards()
 void testMonoIdentityAndThermalScaling()
 {
     for (const auto selector : {Selector::High, Selector::Medium, Selector::Low})
+    for (const double capacitance : {0.0, 480e-12, 960e-12, 2e-9, 5e-9})
     {
         Network stereo, mono;
-        require(stereo.prepare(48000, {selector, 20000, false})
-                    && mono.prepare(48000, {selector, 10000, true})
+        require(stereo.prepare(48000, {selector, 20000, false, capacitance / 2.0})
+                    && mono.prepare(48000, {selector, 10000, true, capacitance})
                     && stereo.setVolume(.5) && mono.setVolume(.5)
                     && stereo.setNoise(298.15, 1) && mono.setNoise(298.15, 1),
                 "mono identity setup failed");
@@ -364,7 +389,7 @@ void testMonoIdentityAndThermalScaling()
 struct EngineTake { std::vector<float> left, right; };
 
 EngineTake engineNoise(double rate, int quality, bool mono, bool settled,
-                       float character, int block, int frames)
+                       float character, int block, int frames, float capacitancePf = 0)
 {
     youknow::YouKnowEngine engine;
     require(engine.configureThermalStart(settled), "engine thermal setup rejected");
@@ -376,6 +401,7 @@ EngineTake engineNoise(double rate, int quality, bool mono, bool settled,
     p.enableVoiceVcaServiceGain = false;
     p.outputSelector = Selector::Medium;
     p.outputLoadOhms = 10000;
+    p.outputCapacitancePf = capacitancePf;
     p.outputMono = mono;
     p.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
     p.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
@@ -404,10 +430,11 @@ void testEngineRoutingAndNoise()
                           / youknow::YouKnowEngine::internalVoltsPerUnit;
     for (const bool mono : {false, true})
         for (const double rate : {44100.0, 48000.0, 96000.0})
+        for (const float externalPf : {0.0f, 960.0f, 5000.0f})
         {
-            const auto take = engineNoise(rate, 1, mono, true, 1, 256, settle + frames);
+            const auto take = engineNoise(rate, 1, mono, true, 1, 256, settle + frames, externalPf);
             const double rs = sourceResistance / (mono ? 2.0 : 1.0);
-            const double capacitance = 1e-9 * (mono ? 2.0 : 1.0);
+            const double capacitance = 1e-9 * (mono ? 2.0 : 1.0) + externalPf * 1e-12;
             const double cutoff = 1.0 / (2.0 * static_cast<double>(pi)
                 * (rs * load / (rs + load)) * capacitance);
             const double gain = load / (rs + load);
@@ -431,21 +458,56 @@ void testEngineRoutingAndNoise()
                         "engine stereo output-network noises are correlated");
         }
     for (const bool mono : {false, true})
+    for (const float externalPf : {0.0f, 960.0f})
     {
-        const auto singles = engineNoise(48000, 1, mono, false, 1, 1, 4096);
-        const auto blocks = engineNoise(48000, 1, mono, false, 1, 128, 4096);
+        const auto singles = engineNoise(48000, 1, mono, false, 1, 1, 4096, externalPf);
+        const auto blocks = engineNoise(48000, 1, mono, false, 1, 128, 4096, externalPf);
         require(singles.left == blocks.left && singles.right == blocks.right,
                 "warming output-network noise depends on host block boundaries");
-        const auto q1 = engineNoise(48000, 1, mono, true, 1, 128, 4096);
-        const auto q4 = engineNoise(48000, 4, mono, true, 1, 128, 4096);
+        const auto q1 = engineNoise(48000, 1, mono, true, 1, 128, 4096, externalPf);
+        const auto q4 = engineNoise(48000, 4, mono, true, 1, 128, 4096, externalPf);
         require(q1.left == q4.left && q1.right == q4.right,
                 "output-network floor changes with the internal quality rate");
-        const auto zero = engineNoise(48000, 1, mono, false, 0, 128, 4096);
+        const auto zero = engineNoise(48000, 1, mono, false, 0, 128, 4096, externalPf);
         for (std::size_t i = 0; i != zero.left.size(); ++i)
             require(zero.left[i] == 0.0f && zero.right[i] == 0.0f,
                     "output-network floor broke Character-zero silence");
     }
     std::cout << "Engine: loaded Medium mono/stereo PSD, PCM units, warming block invariance, quality and zero-noise passed\n";
+}
+
+void testCableSizingAndEngineGuards()
+{
+    Network reference, shortCable, longCable, mono;
+    require(reference.prepare(48000, {Selector::High, 47000, false})
+                && shortCable.prepare(48000, {Selector::High, 47000, false, 480e-12})
+                && longCable.prepare(48000, {Selector::High, 47000, false, 960e-12})
+                && mono.prepare(48000, {Selector::High, 47000, true, 960e-12}),
+            "nominal cable configuration rejected");
+    // Compare the entire coupled network, not R64*C alone. Each stereo jack
+    // receives its own cable; mono retains both internal 1nF and one cable.
+    const auto magnitude = [](const Network& n) { return std::abs(n.analogResponse(20000)); };
+    require(magnitude(reference) > magnitude(shortCable)
+                && magnitude(shortCable) > magnitude(longCable)
+                && magnitude(mono) > magnitude(longCable),
+            "declared cable length or mono sharing did not alter the physical treble response");
+    std::cout << "GS-6 nominal 3m/6m added 20kHz loss at High/47k/Volume100%: "
+              << -20.0 * std::log10(magnitude(shortCable) / magnitude(reference)) << "/"
+              << -20.0 * std::log10(magnitude(longCable) / magnitude(reference)) << "dB\n";
+
+    const auto base = engineNoise(48000, 1, false, true, 1, 128, 4096);
+    for (const float malformed : {-1.0f, std::numeric_limits<float>::quiet_NaN(),
+                                  std::numeric_limits<float>::infinity()})
+    {
+        const auto take = engineNoise(48000, 1, false, true, 1, 128, 4096, malformed);
+        require(take.left == base.left && take.right == base.right,
+                "malformed engine capacitance did not preserve the zero-load fallback");
+    }
+    const auto maximum = engineNoise(48000, 1, false, true, 1, 128, 4096, 100000);
+    const auto clamped = engineNoise(48000, 1, false, true, 1, 128, 4096,
+                                     std::numeric_limits<float>::max());
+    require(maximum.left == clamped.left && maximum.right == clamped.right,
+            "engine external capacitance exceeded the numerical circuit domain");
 }
 } // namespace
 
@@ -458,6 +520,7 @@ int main()
         testHistoriesAndGuards();
         testMonoIdentityAndThermalScaling();
         testEngineRoutingAndNoise();
+        testCableSizingAndEngineGuards();
         std::cout << "PASS: complete output source/noise/mono circuit, realized magnitude and retained histories\n";
         return 0;
     }

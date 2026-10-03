@@ -271,6 +271,18 @@ public:
         return ohms[static_cast<std::size_t> (
             std::clamp (choice, 0, outputLoadChoiceCount - 1))];
     }
+    static constexpr int outputCapacitanceChoiceCount = 5;
+    static constexpr float outputCapacitancePfForChoice (int choice) noexcept
+    {
+        // GS-6 conductor-to-shield 160 pF/m: the first two nonzero choices
+        // correspond to 3 m/6 m. Larger choices are explicit external loads,
+        // not a claim about an unidentified cable or receiver.
+        // https://www.canare.com/guitarinstrumentcable
+        constexpr std::array<float, outputCapacitanceChoiceCount> picofarads {
+            0, 480, 960, 2000, 5000 };
+        return picofarads[static_cast<std::size_t> (
+            std::clamp (choice, 0, outputCapacitanceChoiceCount - 1))];
+    }
     bool isEngineReady() const noexcept
     {
         return engineReady.load (std::memory_order_acquire);
@@ -415,6 +427,7 @@ private:
         modulation,
         outputSelector,
         outputLoad,
+        outputCapacitance,
         originalPerformance,
         count
     };

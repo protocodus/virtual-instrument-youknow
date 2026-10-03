@@ -24,7 +24,12 @@ namespace youknow
 // internal resistors' exact Norton-current PSD is 4kT*G; the jack PSD factors
 // into a low-frequency shelf followed by that same high-frequency low-pass.
 // One independent white draw per channel therefore reproduces the complete
-// stationary output-noise PSD. The external load is a noiseless termination:
+// stationary output-noise PSD. Cable/input capacitance is a shunt at the
+// physical jack, added to C21/C22 rather than a separate post-output EQ. For
+// example Canare GS-6 specifies 160 pF/m conductor-to-shield, so 3 m/6 m add
+// 480 pF/960 pF; input capacitance, if known, adds to that declared load.
+// https://www.canare.com/guitarinstrumentcable
+// The external load is a noiseless termination:
 // this models noise generated inside the instrument, not the receiver.
 //
 // Digital policy: TPT for the sub-audio pole/shelf, the existing magnitude-
@@ -45,6 +50,9 @@ public:
         // resistance, not a manufacturer-specified JUNO output termination.
         double loadOhms {};
         bool mono {};
+        // Per connected cable/input: one on each stereo jack, or ONE on the
+        // shared mono jack. 0 retains the original 1nF internal capacitors.
+        double externalCapacitanceFarads {};
         bool operator==(const Configuration&) const = default;
     };
 
@@ -177,7 +185,10 @@ private:
         return (c.selector == Selector::High || c.selector == Selector::Medium
                     || c.selector == Selector::Low)
             && std::isfinite(c.loadOhms)
-            && (c.loadOhms == 0.0 || (c.loadOhms >= 1.0 && c.loadOhms <= 1e12));
+            && (c.loadOhms == 0.0 || (c.loadOhms >= 1.0 && c.loadOhms <= 1e12))
+            && std::isfinite(c.externalCapacitanceFarads)
+            && c.externalCapacitanceFarads >= 0.0
+            && c.externalCapacitanceFarads <= 100e-9;
     }
 
     static double finiteOrZero(double value) noexcept
@@ -232,21 +243,25 @@ private:
         }
         // With the jack nodes normalled together, symmetry separates common
         // and differential modes. Common mode is one branch with twice the
-        // external RL and the original 1nF. Averaging the two branch outputs
+        // external RL and half the external capacitance, plus its own 1nF.
+        // Two internal capacitors remain physical; the single external cable
+        // is not doubled by connecting the jack nodes. Averaging branch outputs
         // gives the actual mono voltage and independent-noise power. This is
         // exact for equal pots/components; no physical channel mismatch is claimed.
         const double load = configuration_.loadOhms == 0.0 ? 0.0
             : 1.0 / (configuration_.loadOhms * (configuration_.mono ? 2.0 : 1.0));
+        const double capacitance = jackFarads + configuration_.externalCapacitanceFarads
+            / (configuration_.mono ? 2.0 : 1.0);
         const double determinant = gaa * (gjj + load) - gaj * gaj;
-        const double sum = gaa / couplingFarads + (gjj + load) / jackFarads;
-        const double product = determinant / (couplingFarads * jackFarads);
+        const double sum = gaa / couplingFarads + (gjj + load) / capacitance;
+        const double product = determinant / (couplingFarads * capacitance);
         const double high = 0.5 * (sum + std::sqrt(std::max(0.0, sum * sum - 4.0 * product)));
         const double low = product / high; // avoids subtracting nearly equal roots
         const double noiseZero = std::sqrt(gaa * (gaa * gjj - gaj * gaj) / gjj)
                                / couplingFarads;
-        coefficients_ = { low / twoPi, high / twoPi, -gaj / (jackFarads * high),
+        coefficients_ = { low / twoPi, high / twoPi, -gaj / (capacitance * high),
                           noiseZero / low, std::sqrt(4.0 * boltzmann * gjj)
-                              / (jackFarads * high) };
+                              / (capacitance * high) };
         lowG_ = std::tan(std::numbers::pi * coefficients_.lowPoleHz / sampleRate_);
         jackCoefficients_ = OutputJackLowPass::coefficients(coefficients_.highPoleHz, sampleRate_);
         refreshNoiseScale();
