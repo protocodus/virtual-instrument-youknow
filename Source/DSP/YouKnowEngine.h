@@ -4,6 +4,7 @@
 #include "YouKnowCoupledMixer.h"
 #include "YouKnowSubLevel.h"
 #include "YouKnowNoiseCalibration.h"
+#include "YouKnowNoiseC41.h"
 #include "YouKnowHighPassSwitch.h"
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
@@ -297,6 +298,10 @@ struct EngineParameters
     // Coarse grids that cannot resolve its 33 us memory collapse it safely.
     // False retains the former post-C41 scalar solely for controlled A/Bs.
     bool enableNoiseLevelBeforeC41 { true };
+    // Product-selected magnitude realization of the same C41/R79 source
+    // pole. Its stored voltage retains the positive physical 33us RC decay;
+    // source interpolation/phase is approximate. Raw fixtures retain TPT.
+    bool enableMainNoiseMagnitudePole { false };
     // On by default: the scanned NOISE hold reaches IC14's control pin through
     // Tr22's grounded-base stage (R115 + VR32 in series, R114 2.2 MOhm to
     // -15 V, module board p. 13), so the level is zero below one junction
@@ -2860,6 +2865,7 @@ private:
         float outputSummerMutedBandwidthBlend { 1.0f };
         float outputSummerMutedNoiseScale { 0.0f };
         float outputSummerNoiseScale { 0.0f };
+        NoiseC41LowPass::Coefficients mainNoiseMagnitudePole {};
         float commonVcaNoiseScale { 0.0f };
         OutputJackLowPass::Coefficients commonVcaOutputPole {};
     };
@@ -3699,6 +3705,7 @@ private:
     bool noiseGaussianSpareValid_ { false };
     HighPass noiseSourceHighPass_;
     HighPass noiseSourceLowPass_;
+    NoiseC41LowPass noiseSourceMagnitude_;
     float noiseSourceHighPassG_ { 0.01f };
     float noiseSourceLowPassG_ { 0.1f };
 

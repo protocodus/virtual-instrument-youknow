@@ -127,6 +127,11 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   clears held notes/tails when switching. Direct remains the compatible default.
   Host timestamps explicitly start nominal 31.25-kbaud DIN messages; this is a
   declared input convention, not a measured host-to-hardware latency.
+- Main NOISE keeps more of the real C41/R79 circuit's treble at ordinary
+  quality settings. At 48 kHz/1×, excess loss at 16/20 kHz falls from
+  3.85/8.59 dB to 0.32/0 dB, with the source level and density unchanged.
+  Its stored capacitor voltage still decays with the physical 33 µs time
+  constant when NOISE closes; interpolation and phase remain approximate.
 
 ### Unreleased — 2026-10-02
 
