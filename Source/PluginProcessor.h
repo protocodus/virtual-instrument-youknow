@@ -155,6 +155,8 @@ public:
     {
         return keyModeReassertSequence.load (std::memory_order_relaxed);
     }
+    bool getOriginalPerformanceModeForTest() const noexcept { return engine.originalPerformanceMode(); }
+    bool getOriginalPerformanceHealthyForTest() const noexcept { return engine.originalPerformanceHealthy(); }
     int getActiveVoiceCount() const noexcept
     {
         return activeVoiceCount.load (std::memory_order_relaxed);
@@ -413,6 +415,7 @@ private:
         modulation,
         outputSelector,
         outputLoad,
+        originalPerformance,
         count
     };
     static constexpr std::size_t parameterPointerCount =

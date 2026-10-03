@@ -91,6 +91,7 @@ inline constexpr auto legacyHq     = "hq";
 // session settings, outside the JUNO's 18-byte tone memory.
 inline constexpr auto outputSelector = "outputSelector";
 inline constexpr auto outputLoad = "outputLoad";
+inline constexpr auto originalPerformance = "originalPerformance";
 } // namespace parameters
 
 namespace panel

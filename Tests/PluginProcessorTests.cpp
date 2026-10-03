@@ -155,6 +155,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::modulation,  0.0f,   1.0e-5f },
     { parameters::outputSelector, 0.0f, 1.0e-5f },
     { parameters::outputLoad,   0.0f,  1.0e-5f },
+    { parameters::originalPerformance, 0.0f, 1.0e-5f },
 });
 
 float parameterValue (const YouKnowAudioProcessor& processor, const char* id)
@@ -973,7 +974,7 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 9,
+    expect (auParameters.size() == historicalAuOrder.size() + 10,
             "the Audio Unit parameter contract has an unexpected size");
     for (std::size_t index = 0;
          index < historicalAuOrder.size() && index < auParameters.size(); ++index)
@@ -988,7 +989,7 @@ void testParameterContract()
         expect (quality->getVersionHint() == 3,
                 "Quality was not appended after both historical AU layouts");
         expect (auParameters.size() >= 9
-                    && auParameters[auParameters.size() - 9] == quality,
+                    && auParameters[41] == quality,
                 "Quality moved from its appended Audio Unit position");
     }
     if (const auto* vcfTanh = processor.parameters.getParameter (
@@ -997,7 +998,7 @@ void testParameterContract()
         expect (vcfTanh->getVersionHint() == 4,
                 "VCF Tanh was not appended after the quality ladder");
         expect (auParameters.size() >= 8
-                    && auParameters[auParameters.size() - 8] == vcfTanh,
+                    && auParameters[42] == vcfTanh,
                 "VCF Tanh moved from its appended Audio Unit position");
         expect (! vcfTanh->isAutomatable(),
                 "VCF Tanh is offered to the host as automatable");
@@ -1024,7 +1025,7 @@ void testParameterContract()
         expect (vcfFastEarly->getVersionHint() == 5,
                 "VCF Fast Early was not appended after VCF Tanh");
         expect (auParameters.size() >= 7
-                    && auParameters[auParameters.size() - 7] == vcfFastEarly,
+                    && auParameters[43] == vcfFastEarly,
                 "VCF Fast Early moved from its appended Audio Unit position");
         expect (! vcfFastEarly->isAutomatable(),
                 "VCF Fast Early is offered to the host as automatable");
@@ -1078,7 +1079,7 @@ void testParameterContract()
                 "the engine's own solver default is no longer the reference "
                 "Merson kernel");
         expect (auParameters.size() >= 6
-                    && auParameters[auParameters.size() - 6] == vcfSolver,
+                    && auParameters[44] == vcfSolver,
                 "VCF Solver moved from its appended Audio Unit position");
         expect (! vcfSolver->isAutomatable(),
                 "VCF Solver is offered to the host as automatable");
@@ -1099,7 +1100,7 @@ void testParameterContract()
         expect (aging->getVersionHint() == 7,
                 "Aging was not appended after every shipped AU layout");
         expect (auParameters.size() >= 5
-                    && auParameters[auParameters.size() - 5] == aging,
+                    && auParameters[45] == aging,
                 "Aging moved from its appended Audio Unit position");
     }
     for (const auto* id : { parameters::pitchBend, parameters::modulation })
@@ -1108,8 +1109,8 @@ void testParameterContract()
             expect (parameter->getVersionHint() == 8,
                     std::string (id) + " was not appended after Aging in Audio Units");
             expect (auParameters.size() >= 4
-                        && (auParameters[auParameters.size() - 4] == parameter
-                            || auParameters[auParameters.size() - 3] == parameter),
+                        && (auParameters[46] == parameter
+                            || auParameters[47] == parameter),
                     std::string (id) + " did not retain its historical AU position");
         }
     for (const auto* id : { parameters::outputSelector, parameters::outputLoad })
@@ -1118,8 +1119,8 @@ void testParameterContract()
             expect (parameter->getVersionHint() == 9 && !parameter->isAutomatable(),
                     std::string (id) + " has the wrong AU or automation policy");
             expect (auParameters.size() >= 2
-                        && (auParameters[auParameters.size() - 2] == parameter
-                            || auParameters.back() == parameter),
+                        && (auParameters[48] == parameter
+                            || auParameters[49] == parameter),
                     std::string (id) + " was not appended after historical AU parameters");
         }
 }
@@ -6307,7 +6308,8 @@ void testEditedFlagFollowsTheCompleteProgram()
             || std::strcmp (expected.id, parameters::pitchBend) == 0
             || std::strcmp (expected.id, parameters::modulation) == 0
             || std::strcmp (expected.id, parameters::outputSelector) == 0
-            || std::strcmp (expected.id, parameters::outputLoad) == 0)
+            || std::strcmp (expected.id, parameters::outputLoad) == 0
+            || std::strcmp (expected.id, parameters::originalPerformance) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -6651,7 +6653,8 @@ bool isProgramParameter (const char* id)
         && std::strcmp (id, parameters::pitchBend) != 0
         && std::strcmp (id, parameters::modulation) != 0
         && std::strcmp (id, parameters::outputSelector) != 0
-        && std::strcmp (id, parameters::outputLoad) != 0;
+        && std::strcmp (id, parameters::outputLoad) != 0
+        && std::strcmp (id, parameters::originalPerformance) != 0;
 }
 
 void testEveryProductProgramRestoresEveryParameter()
@@ -6697,6 +6700,7 @@ void testEveryProductProgramRestoresEveryParameter()
             parameterValue (processor, parameters::vcfSolverMode);
         const float poisonedOutputSelector = parameterValue (processor, parameters::outputSelector);
         const float poisonedOutputLoad = parameterValue (processor, parameters::outputLoad);
+        const float poisonedOriginalTiming = parameterValue (processor, parameters::originalPerformance);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -6733,6 +6737,8 @@ void testEveryProductProgramRestoresEveryParameter()
                     retained = poisonedOutputSelector;
                 else if (std::strcmp (expected.id, parameters::outputLoad) == 0)
                     retained = poisonedOutputLoad;
+                else if (std::strcmp (expected.id, parameters::originalPerformance) == 0)
+                    retained = poisonedOriginalTiming;
                 expect (std::abs (parameterValue (processor, expected.id)
                                  - retained)
                             <= expected.tolerance,
@@ -7729,6 +7735,8 @@ void testEditorRandomizeStrengthsAndReset()
         parameterValue (processor, parameters::outputSelector);
     const float poisonedOutputLoad =
         parameterValue (processor, parameters::outputLoad);
+    const float poisonedOriginalTiming =
+        parameterValue (processor, parameters::originalPerformance);
 
     auto* reset = findDescendantButtonWithText (*editor, "INIT");
     expect (reset != nullptr, "the editor is missing INIT");
@@ -7770,7 +7778,8 @@ void testEditorRandomizeStrengthsAndReset()
             || parameter
                 == processor.parameters.getParameter (parameters::outputSelector)
             || parameter
-                == processor.parameters.getParameter (parameters::outputLoad))
+                == processor.parameters.getParameter (parameters::outputLoad)
+            || parameter == processor.parameters.getParameter (parameters::originalPerformance))
             continue;
         expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
@@ -7791,6 +7800,8 @@ void testEditorRandomizeStrengthsAndReset()
                 && parameterValue (processor, parameters::outputLoad)
                     == poisonedOutputLoad,
             "INIT overruled the player's output connections");
+    expect (parameterValue (processor, parameters::originalPerformance) == poisonedOriginalTiming,
+            "INIT overruled the player's performance timing");
 
     if (auto* preset = findDescendantComboBox (*editor))
         expect (preset->getSelectedId() == 1,

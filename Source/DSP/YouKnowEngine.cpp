@@ -446,6 +446,35 @@ std::uint8_t controlAdcByte(float value) noexcept
         std::floor(clamp01(sanitised(value, 0.0f)) * 255.0f + 0.5f));
 }
 
+int originalWirePitch(int note,int transpose) noexcept
+{
+    // Transpose is the existing host extension, upstream of DIN. Keep its
+    // pitch class at the 7-bit wire boundary; A-5 then performs its own
+    // documented 24..108 octave folding, rather than clipping an endpoint.
+    int pitch=note+transpose;
+    while(pitch<0) pitch+=12;
+    while(pitch>127) pitch-=12;
+    return pitch;
+}
+
+FirmwareAdcTrace::Inputs originalPerformanceAdc(const EngineParameters& p) noexcept
+{
+    // B-2 0800..0822: choose the lowest raw code yielding the established
+    // processed byte. This is a code-domain panel adapter, not a voltage fit.
+    const auto rawFor=[](unsigned value) {
+        for(unsigned raw=0;raw<256;++raw) {
+            const unsigned x=raw<=4?0:raw<=238?raw-4:std::min(255u,2*raw-243);
+            if(x>=value) return static_cast<std::uint8_t>(raw);
+        }
+        return std::uint8_t{255};
+    };
+    FirmwareAdcTrace::Inputs input;
+    input.raw={rawFor(static_cast<unsigned>(std::clamp(128+int(YouKnowEngine::masterTunePitchWordOffset(p.masterTuneCents)),0,255))),
+        rawFor(controlAdcByte(p.portamento)),255,rawFor(controlAdcByte(p.benderLfoDepth)),
+        rawFor(controlAdcByte(p.benderVcfDepth)),rawFor(controlAdcByte(p.benderDcoDepth)),255,0};
+    return input;
+}
+
 std::int16_t dcoBendCommand(float normalised) noexcept
 {
     // The assigner left-aligns the fourteen-bit MIDI word and sends its high
@@ -6425,6 +6454,7 @@ void YouKnowEngine::applyLatencyPad(float& left, float& right) noexcept
 
 void YouKnowEngine::reset()
 {
+    if (originalPerformanceEnabled_) firmwareSerialConfiguration_.inputs=originalPerformanceAdc(activeParameters_);
     firmwareSerialStreamHead_ = firmwareSerialStreamCount_ = 0;
     const bool profileChanged = activeConverterTimingProfile_ != converterTimingProfile_;
     activeConverterTimingProfile_ = converterTimingProfile_;
@@ -6558,6 +6588,11 @@ void YouKnowEngine::reset()
         ? 0.0 : converterPassEndPhase_;
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
         initialiseFirmwareSerialReplay();
+    if (originalPerformanceEnabled_) {
+        originalPerformance_.reset(activeParameters_);
+        originalWireNotes_.fill(-1);
+        originalPerformanceHealthy_ = true;
+    }
 }
 
 
@@ -6858,6 +6893,20 @@ bool YouKnowEngine::configureHighPassSwitch(double resistance) noexcept
     return true;
 }
 
+void YouKnowEngine::setOriginalPerformanceMode(bool enabled) noexcept
+{
+    if (enabled == originalPerformanceEnabled_) return;
+    if (enabled) {
+        originalPerformancePreviousProfile_ = converterTimingProfile_;
+        converterTimingProfile_ = ConverterTimingProfile::FirmwareSerialReplay;
+        firmwareSerialConfiguration_ = {};
+        firmwareSerialConfiguration_.streaming = true;
+        firmwareSerialConfiguration_.inputs=originalPerformanceAdc(activeParameters_);
+    } else converterTimingProfile_ = originalPerformancePreviousProfile_;
+    originalPerformanceEnabled_ = enabled;
+    if (prepared_) reset();
+}
+
 void YouKnowEngine::setParameters(const EngineParameters& parameters)
 {
     // Before the first valid prepared audio interval, even an equal snapshot has
@@ -6865,6 +6914,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     // audio time has begun, an equal complete image has no ordered converter
     // write or assignment side effect and can return exactly.
     const bool startupSnapshot = !prepared_ || !panelGlidePrimed_;
+    bool originalParameterOverflow=false;
     if (!startupSnapshot && parameters == activeParameters_
         && parameters == targetParameters_)
         return;
@@ -6874,6 +6924,14 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         && next == targetParameters_)
         return;
 
+    if (originalPerformanceEnabled_ && prepared_) {
+        firmwareSerialConfiguration_.inputs=originalPerformanceAdc(next);
+        if (startupSnapshot && originalPerformance_.pending()==0) originalPerformance_.reset(next);
+        else if (!originalPerformance_.parameters(next,
+                   static_cast<std::uint64_t>(std::floor(firmwareSerialAudioStates_)))) {
+            originalParameterOverflow=true;
+        }
+    }
     const bool assignModeChanged = next.keyMode != activeParameters_.keyMode;
     const bool unisonVoiceCountChanged = next.polyphony != activeParameters_.polyphony
                                       && (next.keyMode == KeyMode::Unison
@@ -7001,7 +7059,11 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     // changes.
     if (prepared_ && !voiceBoardCommandReplayActive_
         && (assignModeChanged || unisonVoiceCountChanged))
-        beginVoiceAssignmentRescan();
+        if (!originalPerformanceEnabled_) beginVoiceAssignmentRescan();
+    if (originalParameterOverflow) {
+        resetForHostStop(); originalPerformanceHealthy_=false;
+    } else if (originalPerformanceEnabled_ && prepared_ && startupSnapshot)
+        initialiseFirmwareSerialReplay();
 }
 
 // Constant rate in pitch: a wider leap takes proportionally longer, rather than
@@ -7450,10 +7512,29 @@ bool YouKnowEngine::serviceVoiceBoardNoteOff(int card) noexcept
 
 void YouKnowEngine::noteOn(int midiNote, float velocity)
 {
-    if (voiceBoardCommandReplayActive_)
+    if (voiceBoardCommandReplayActive_ && !originalPerformanceEnabled_)
         return;
     if (midiNote < 0 || midiNote > 127)
         return;
+    if (originalPerformanceEnabled_) {
+        // A-5 has a MIDI bitmap: every complete On is received, and one Off
+        // clears that bit even after repeated Ons. Keep the host view identical.
+        const int pitch=originalWirePitch(midiNote,activeParameters_.keyTranspose);
+        auto& wire=originalWireNotes_[static_cast<std::size_t>(midiNote)];
+        if(wire>=0 && wire!=pitch) {
+            const std::array<std::uint8_t,3> off{0x80,static_cast<std::uint8_t>(wire),0};
+            if(!originalPerformance_.message(off,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) {
+                allNotesOff(); originalPerformanceHealthy_=false; return;
+            }
+        }
+        wire=velocity>0.f?pitch:-1;
+        heldNoteCounts_[static_cast<std::size_t>(midiNote)]=velocity>0.f?1:0;
+        heldNoteVelocities_[static_cast<std::size_t>(midiNote)]=velocity;
+        const std::array<std::uint8_t,3> message{0x90,static_cast<std::uint8_t>(pitch),
+            static_cast<std::uint8_t>(std::clamp(std::lround(sanitised(velocity,1.f)*127.f),0l,127l))};
+        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        return;
+    }
     noteOnInternal(midiNote, std::clamp(velocity, 0.0f, 1.0f));
 }
 
@@ -7927,15 +8008,27 @@ void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
 
 void YouKnowEngine::noteOff(int midiNote)
 {
-    if (voiceBoardCommandReplayActive_)
+    if (voiceBoardCommandReplayActive_ && !originalPerformanceEnabled_)
         return;
     if (midiNote < 0 || midiNote > 127)
         return;
+    if (originalPerformanceEnabled_) {
+        heldNoteCounts_[static_cast<std::size_t>(midiNote)]=0;
+        auto& wire=originalWireNotes_[static_cast<std::size_t>(midiNote)];
+        const int pitch=wire>=0?wire:originalWirePitch(midiNote,activeParameters_.keyTranspose);
+        wire=-1;
+        const std::array<std::uint8_t,3> message{0x80,static_cast<std::uint8_t>(pitch),0};
+        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        return;
+    }
     noteOffInternal(midiNote);
 }
 
 void YouKnowEngine::reassertKeyMode() noexcept
 {
+    if (originalPerformanceEnabled_) {
+        originalPerformance_.keyMode(static_cast<unsigned>(activeParameters_.keyMode)); return;
+    }
     if (prepared_ && !voiceBoardCommandReplayActive_)
         beginVoiceAssignmentRescan();
 }
@@ -7993,6 +8086,11 @@ void YouKnowEngine::noteOffInternal(int midiNote) noexcept
 
 void YouKnowEngine::releaseAllNotes()
 {
+    if (originalPerformanceEnabled_) {
+        const std::array<std::uint8_t,3> message{0xb0,123,0}; clearHeldNotes();
+        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        return;
+    }
     clearHeldNotes();
     assignmentRescanPending_ = false;
     assignmentRescanPassArmed_ = false;
@@ -8016,6 +8114,7 @@ void YouKnowEngine::releaseAllNotes()
 
 void YouKnowEngine::allNotesOff()
 {
+    if (originalPerformanceEnabled_) { resetForHostStop(); return; }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
         return;
     clearHeldNotes();
@@ -8036,6 +8135,15 @@ void YouKnowEngine::allNotesOff()
 
 void YouKnowEngine::setPitchBend(float normalisedBipolar) noexcept
 {
+    if (originalPerformanceEnabled_) {
+        const float value=std::clamp(sanitised(normalisedBipolar,0.f),-1.f,1.f);
+        if(value==pitchBendTarget_) return;
+        pitchBendTarget_=value;
+        const unsigned bend=static_cast<unsigned>(std::clamp(std::lround(8192.f+8192.f*value),0l,16383l));
+        const std::array<std::uint8_t,3> message{0xe0,static_cast<std::uint8_t>(bend&127),static_cast<std::uint8_t>(bend>>7)};
+        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        return;
+    }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
         return;
     pitchBendTarget_ = std::clamp(sanitised(normalisedBipolar, 0.0f), -1.0f, 1.0f);
@@ -8043,6 +8151,14 @@ void YouKnowEngine::setPitchBend(float normalisedBipolar) noexcept
 
 void YouKnowEngine::setModWheel(float amount) noexcept
 {
+    if (originalPerformanceEnabled_) {
+        const float value=clamp01(sanitised(amount,0.f));
+        if(value==modWheelTarget_) return;
+        modWheelTarget_=value;
+        const std::array<std::uint8_t,3> message{0xb0,1,static_cast<std::uint8_t>(std::lround(value*127.f))};
+        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        return;
+    }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
         return;
     modWheelTarget_ = clamp01(sanitised(amount, 0.0f));
@@ -8050,6 +8166,13 @@ void YouKnowEngine::setModWheel(float amount) noexcept
 
 void YouKnowEngine::setSustainPedal(bool down) noexcept
 {
+    if (originalPerformanceEnabled_) {
+        if (down==sustainPedalDown_) return;
+        sustainPedalDown_=down;
+        const std::array<std::uint8_t,3> message{0xb0,64,static_cast<std::uint8_t>(down?127:0)};
+        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        return;
+    }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
         return;
     if (sustainPedalDown_ == down)
@@ -10839,6 +10962,27 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         return;
     }
 
+    if (originalPerformanceEnabled_ && !originalPerformanceRendering_) {
+        originalPerformanceRendering_=true;
+        while (numSamples>0) {
+            const int piece=std::min(numSamples,64);
+            const auto target=static_cast<std::uint64_t>(std::floor(
+                static_cast<long double>(firmwareSerialAudioStates_)
+                + static_cast<long double>(piece)*voiceCpuStateHz/sampleRate_+1.0e-8L));
+            if (!originalPerformance_.advance(*this,target)) {
+                // Bounded queue/work failure cannot leave a sounding gate.
+                reset(); originalPerformanceHealthy_=false;
+                std::fill_n(left,numSamples,0.f); std::fill_n(right,numSamples,0.f); break;
+            }
+            process(left,right,piece);
+            if (firmwareSerialStatus_!=FirmwareSerialTrace::Status::ReachedTarget) {
+                reset(); originalPerformanceHealthy_=false;
+                std::fill_n(left,numSamples,0.f); std::fill_n(right,numSamples,0.f); break;
+            }
+            left+=piece; right+=piece; numSamples-=piece;
+        }
+        originalPerformanceRendering_=false; return;
+    }
     applyPendingOversamplingIfIdle();
 
     // Complete a fade and rebuild at the exact host-sample boundary even when
@@ -12218,6 +12362,8 @@ void YouKnowEngine::initialiseFirmwareSerialReplay() noexcept
     }
     firmwareSerialParameterTables_.control = firmwareSerialTables_;
     firmwareSerialCircuitParameters_ = activeParameters_;
+    if (originalPerformanceEnabled_ && firmwareSerialCircuitParameters_.chorus==ChorusMode::OneTwo)
+        firmwareSerialCircuitParameters_.chorus=ChorusMode::Two;
     firmwareSerialRange_ = firmwareSerialIntervalStartRange_ = firmwareSerialWalkRange_
         = activeParameters_.range;
     firmwareSerialState_.registers.portf = activeParameters_.range == DcoRange::Four ? 0xc0
@@ -12260,9 +12406,11 @@ void YouKnowEngine::initialiseFirmwareSerialReplay() noexcept
     // A-5 0BFB/0C2B complements the stored switch bytes before sending to
     // B-2. The IC40 rails are active low; PF C0/40/00 means Four/Eight/Sixteen.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt
+    const auto initialChorus=originalPerformanceEnabled_ && p.chorus==ChorusMode::OneTwo
+        ? ChorusMode::Two:p.chorus;
     ram[0x46] = static_cast<std::uint8_t>((p.sawEnabled ? 0 : 0x10)
         | ((3u - static_cast<unsigned>(p.highPass)) << 2)
-        | (p.chorus == ChorusMode::Off ? 1 : 0) | (p.chorus == ChorusMode::Two ? 2 : 0));
+        | (initialChorus == ChorusMode::Off ? 1 : 0) | (initialChorus == ChorusMode::Two ? 2 : 0));
     firmwareSerialIc40_ = ram[0x46];
     firmwareSerialIc40States_ = 0;
     // Pulse is physically disabled by its later PWM converter voltage; do not
@@ -12270,7 +12418,7 @@ void YouKnowEngine::initialiseFirmwareSerialReplay() noexcept
     firmwareSerialCircuitParameters_.pulseEnabled = true;
     updateSharedHighPass(firmwareSerialCircuitParameters_);
     // OneTwo is a product extension with no ordinary stored switch encoding.
-    if (p.chorus == ChorusMode::OneTwo)
+    if (p.chorus == ChorusMode::OneTwo && !originalPerformanceEnabled_)
         firmwareSerialStatus_ = FirmwareSerialTrace::Status::UnsupportedPath;
     const auto processed = [](unsigned raw) {
         return raw <= 4 ? 0u : raw <= 238 ? raw - 4 : std::min(255u, 2 * raw - 243);
