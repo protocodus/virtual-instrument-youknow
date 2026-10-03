@@ -5995,6 +5995,7 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     // never pays for it.
     (void) VoicedResonanceCompatibilityProfile::frequencyTrim(0.0f);
     (void) VoiceVcaControlLaw::exactGainTable();
+    (void) CircuitDerivedNoiseLevelProfile::junctionDriveTable();
     (void) VoiceVcaSignalLaw::serviceGain();
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
@@ -9049,6 +9050,69 @@ float YouKnowEngine::CircuitDerivedNoiseLevelProfile::drive(
     return std::max(0.0f, x - onsetTravel) * spanReciprocal;
 }
 
+double YouKnowEngine::CircuitDerivedNoiseLevelProfile::junctionCollectorCurrent(
+    double holdVolts) noexcept
+{
+    // Eliminate Ve from the drawn emitter-node KCL. With G=1/Rs+1/R114,
+    // B=Vhold/Rs-15/R114+Is/alpha and y=Is*exp(Ve/Vt)/(alpha*G*Vt),
+    // y+log(y)=log(Is/(alpha*G*Vt))+B/(G*Vt). Newton's positive iterate
+    // solves this Wright-omega form without overflowing exp at full CV.
+    // Only prepare/table construction calls it in the engine audio path.
+    constexpr double alpha = junctionBeta / (junctionBeta + 1.0);
+    constexpr double conductance = 1.0 / trimSeriesOhms + 1.0 / r114Ohms;
+    constexpr double currentScale = alpha * conductance * junctionThermalVolts;
+    const double scaleAmps = junctionReferenceCollectorAmps
+        / std::expm1(junctionReferenceVbe / junctionThermalVolts);
+    const double v = std::log(scaleAmps / currentScale)
+        + (holdVolts / trimSeriesOhms - static_cast<double>(negativeRailVolts) / r114Ohms
+           + scaleAmps / alpha) / (conductance * junctionThermalVolts);
+    double y = v > 1.0 ? v - std::log(v) : std::exp(v);
+    for (int iteration = 0; iteration < 12; ++iteration)
+    {
+        const double delta = (y + std::log(y) - v) * y / (y + 1.0);
+        y -= delta;
+        if (std::abs(delta) <= 1.0e-15 * y)
+            break;
+    }
+    return currentScale * y - scaleAmps;
+}
+
+const std::array<float,
+                 YouKnowEngine::CircuitDerivedNoiseLevelProfile::junctionTableSteps + 1>&
+YouKnowEngine::CircuitDerivedNoiseLevelProfile::junctionDriveTable()
+{
+    static const std::array<float, junctionTableSteps + 1> table = [] {
+        std::array<float, junctionTableSteps + 1> result {};
+        const double fullCurrent = junctionCollectorCurrent(
+            static_cast<double>(holdStandoffVolts) + controlFullScaleVolts);
+        for (int i = 1; i < junctionTableSteps; ++i)
+            result[static_cast<std::size_t>(i)] = static_cast<float>(
+                junctionCollectorCurrent(static_cast<double>(holdStandoffVolts)
+                    + static_cast<double>(i) / junctionTableSteps * controlFullScaleVolts)
+                / fullCurrent);
+        // Retain the panel's exact Off and calibrated full-level endpoints.
+        // Nominal current at Off is only -145 dB relative to full; suppressing
+        // that tiny tail is product policy, not measured switch isolation.
+        result.front() = 0.0f;
+        result.back() = 1.0f;
+        return result;
+    }();
+    return table;
+}
+
+float YouKnowEngine::CircuitDerivedNoiseLevelProfile::junctionDrive(
+    float dacFraction) noexcept
+{
+    const float level = clamp01(sanitised(dacFraction, 0.0f));
+    if (level <= 0.0f) return 0.0f;
+    if (level >= 1.0f) return 1.0f;
+    const auto& table = junctionDriveTable();
+    const float position = level * static_cast<float>(junctionTableSteps);
+    const auto at = static_cast<std::size_t>(position);
+    const float fraction = position - static_cast<float>(at);
+    return table[at] + (table[at + 1] - table[at]) * fraction;
+}
+
 void YouKnowEngine::selectConverterTimingProfile(
     ConverterTimingProfile profile) noexcept
 {
@@ -11434,7 +11498,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // current instantaneously, so the onset law is applied after the
             // hold and ahead of both the C41-driven and legacy level paths.
             const float noiseDrive = parameters.useCircuitDerivedNoiseLevelShape
-                ? CircuitDerivedNoiseLevelProfile::drive(noiseCv_)
+                ? (parameters.enableNoiseLevelSoftJunction
+                    ? CircuitDerivedNoiseLevelProfile::junctionDrive(noiseCv_)
+                    : CircuitDerivedNoiseLevelProfile::drive(noiseCv_))
                 : noiseCv_;
             const float noiseSample = processMainNoiseSource(
                 rawNoise, noiseDrive, parameters.enableNoiseLevelBeforeC41);
