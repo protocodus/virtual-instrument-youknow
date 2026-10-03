@@ -169,9 +169,9 @@ inline constexpr float vectorPadWidth = 170.0f;
 // above: global model controls under the cheek, continuous voice controls
 // below VOICE MODE, and pitch controls below the DCO.
 inline constexpr float extensionDeckTop = panelHeight + keyboardHeight + 10.0f;
-inline constexpr float extensionDeckHeight = 128.0f;
-// MODEL holds four controls on one calm row. Stacking the two SESSION actions
-// and three VARIATION amounts gives it the width those controls need.
+inline constexpr float extensionDeckHeight = 160.0f;
+// MODEL holds four controls on one calm row. Four SESSION actions need a
+// full-height stack with the same eight-unit gaps as VARIATION.
 inline constexpr float modelZoneX = 14.0f;
 inline constexpr float extensionZoneGap = 12.0f;
 inline constexpr float modelZoneWidth = 360.0f;
@@ -205,14 +205,20 @@ inline constexpr float editorHeight = extensionDeckTop + extensionDeckHeight
 inline constexpr int keyboardLowestMidiNote = 36;
 inline constexpr int keyboardHighestMidiNote = 96;
 inline constexpr int keyboardWhiteKeyCount = 5 * 7 + 1;
-// Both corners keep the panel's own aspect ratio, which the shorter one-row
-// composition widens from 1.44 to about 1.90.
+// Derive supported heights from the panel aspect ratio. Round up so the
+// window height never shrinks the established width/readability scale.
+[[nodiscard]] constexpr int editorHeightForWidth(int width) noexcept
+{
+    constexpr int heightUnits = static_cast<int>(editorHeight);
+    constexpr int widthUnits = static_cast<int>(editorWidth);
+    return (width * heightUnits + widthUnits - 1) / widthUnits;
+}
 inline constexpr int defaultEditorWidth = 1360;
-inline constexpr int defaultEditorHeight = 718;
+inline constexpr int defaultEditorHeight = editorHeightForWidth(defaultEditorWidth);
 inline constexpr int minimumEditorWidth = 1200;
-inline constexpr int minimumEditorHeight = 633;
+inline constexpr int minimumEditorHeight = editorHeightForWidth(minimumEditorWidth);
 inline constexpr int maximumEditorWidth = 2280;
-inline constexpr int maximumEditorHeight = 1203;
+inline constexpr int maximumEditorHeight = editorHeightForWidth(maximumEditorWidth);
 inline constexpr float controlInset = 5.0f;
 inline constexpr float stackGap = 8.0f;
 

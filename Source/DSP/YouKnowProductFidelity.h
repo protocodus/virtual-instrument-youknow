@@ -99,6 +99,9 @@ struct ProductFidelityProfile
         // Tr22's nominal exponential junction replaces the hard knee while
         // preserving the service noise endpoint and declared VR32 setting.
         parameters.enableNoiseLevelSoftJunction = true;
+        // Prevent the physical BA662 pair's ultrasonic harmonics/control
+        // sidebands folding back on coarse output grids; gain is unchanged.
+        parameters.enableVoiceVcaAntialias = true;
         // The converter holds' leakage ramp: a hundredth of an LSB per pass
         // at the sheets' typicals. The engine's reference configuration
         // keeps ideal holds for its exactness fingerprints.

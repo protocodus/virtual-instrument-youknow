@@ -6149,19 +6149,13 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         pi * noiseSourceLowPassDesignHz * inverseOversampledRate_);
     processingCoefficients_.mainNoiseMagnitudePole =
         NoiseC41LowPass::coefficients(oversampledRate_);
+    voiceVcaAntialiasKernel_ = VoiceVcaAntialias::prepare(oversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     (void) outputNetwork_.prepare(sampleRate_, { activeParameters_.outputSelector,
         activeParameters_.outputLoadOhms, activeParameters_.outputMono,
         double(activeParameters_.outputCapacitancePf) * 1e-12 });
-    const double deepest = totalLatencySamples(maximumOversampleFactor);
-    const double running = totalLatencySamples(oversampling_);
-    latencyPadSamples_ = std::clamp(
-        static_cast<int>(std::floor(deepest - running + 0.5)),
-        0, latencyPadRingSize - 1);
-    latencyPadLeft_.fill(0.0f);
-    latencyPadRight_.fill(0.0f);
-    latencyPadWriteIndex_ = 0;
+    refreshLatencyPad();
     oversamplingQuietSamples_ =
         std::max(1, static_cast<int>(sampleRate_ * outputPathQuietSeconds));
     rateTransitionStep_ = 1.0f / std::max(
@@ -6375,6 +6369,9 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
 {
     for (auto& voice : voices_)
     {
+        // Sample-grid FIR history has no physical capacitor charge. The
+        // existing quality safety fade has reached zero before rebuilding.
+        voice.vcaAntialias.reset();
         const float previousFilterOmegaStep = voice.filterOmegaStep;
         const float previousEffectiveFilterOmegaStep =
             boundedThermalFilterOmegaStep(
@@ -6431,15 +6428,47 @@ double YouKnowEngine::totalLatencySamples(int factor) noexcept
     return latency;
 }
 
+double YouKnowEngine::runningLatencySamples(int factor) const noexcept
+{
+    const double extra = activeParameters_.enableVoiceVcaAntialias
+        && VoiceVcaAntialias::factorForRate(sampleRate_ * factor) > 1
+        ? static_cast<double>(VoiceVcaAntialias::delaySamples) / factor : 0.0;
+    return totalLatencySamples(factor) + extra;
+}
+
+double YouKnowEngine::maximumLatencySamples() const noexcept
+{
+    if (!activeParameters_.enableVoiceVcaAntialias)
+        return totalLatencySamples(maximumOversampleFactor);
+    // One report for all quality rungs. At ordinary rates local FIR delay
+    // is longest on1x; already-high grids need no local oversampling.
+    double result = 0;
+    for (int factor : {1, 2, 4}) result = std::max(result, runningLatencySamples(factor));
+    return result;
+}
+
+void YouKnowEngine::refreshLatencyPad() noexcept
+{
+    latencyPadSamples_ = std::clamp(static_cast<int>(std::floor(
+        maximumLatencySamples() - runningLatencySamples(oversampling_) + 0.5)),
+        0, latencyPadRingSize - 1);
+    latencyPadLeft_.fill(0.0f);
+    latencyPadRight_.fill(0.0f);
+    latencyPadWriteIndex_ = 0;
+}
+
 int YouKnowEngine::getProcessingLatencySamples() const noexcept
 {
-    // Always the deepest configuration's figure, whatever is running. The
+    // Always the longest configuration's figure, whatever is running. The
     // quality setting can change while the host is playing, and a plug-in that
     // renegotiated its latency mid-transport would make the host re-align
-    // everything around it; padding the shallower settings by at most 17 host
-    // samples keeps the number the host was told true.
+    // everything around it; padding the shorter settings keeps the number
+    // the host was told true. With product VCA
+    // antialiasing the coarse rung has the longest numerical FIR delay;
+    // after-prepare product parameters install that report before the host
+    // reads it. The raw reference still reports its established41 samples.
     return static_cast<int>(
-        std::floor(totalLatencySamples(maximumOversampleFactor) + 0.5));
+        std::floor(maximumLatencySamples() + 0.5));
 }
 
 void YouKnowEngine::applyLatencyPad(float& left, float& right) noexcept
@@ -6960,6 +6989,8 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     if (next.enableCommonVcaOutputPole != activeParameters_.enableCommonVcaOutputPole)
         commonVcaOutputPole_.reset();
     const bool rangeChanged = next.range != activeParameters_.range;
+    const bool vcaAntialiasChanged = next.enableVoiceVcaAntialias
+        != activeParameters_.enableVoiceVcaAntialias;
     const bool stageTrimsChanged =
         next.calibration != activeParameters_.calibration
         || next.enableVcfStageOffsets
@@ -7011,6 +7042,13 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
+    if (vcaAntialiasChanged)
+    {
+        // This reference/product selector is fixed by the product profile;
+        // a deliberate diagnostic change installs its new latency/history.
+        for (auto& voice : voices_) voice.vcaAntialias.reset();
+        refreshLatencyPad();
+    }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay && prepared_)
     {
         const auto range = firmwareSerialCircuitParameters_.range;
@@ -7441,6 +7479,7 @@ void YouKnowEngine::initialiseVoice(Voice& voice, int slot, int midiNote,
 
 void YouKnowEngine::silenceVoice(Voice& voice) noexcept
 {
+    voice.vcaAntialias.reset();
     voice.active = false;
     voice.keyDown = false;
     voice.sustained = false;
@@ -10787,16 +10826,26 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     const float trimmed = vcaInput * voice.vcaInputTrim;
     const float drive = trimmed
         * voiceVcaThermalDriveScale(activeParameters_, voice.cardIndex);
-    const float shaped = activeParameters_.enableVoiceVcaSignalSaturation
-        ? VoiceVcaSignalLaw::shape(drive) : drive;
+    const auto shape = [saturate = activeParameters_.enableVoiceVcaSignalSaturation]
+        (float volts) noexcept { return saturate ? VoiceVcaSignalLaw::shape(volts) : volts; };
+    const float controlled = activeParameters_.enableVoiceVcaAntialias
+        ? voice.vcaAntialias.process(drive, voice.vca, voiceVcaAntialiasKernel_, shape)
+        : shape(drive) * voice.vca;
     // This fixed gain was formerly lost when the physical BA662 law was
     // normalized to unity. Apply it in volts before the 2.6-V model-unit
     // conversion, so every downstream circuit receives the service level.
     const float serviceGain = activeParameters_.enableVoiceVcaServiceGain
         ? VoiceVcaSignalLaw::serviceGain() : 1.0f;
-    const float output = shaped * voice.vca * serviceGain * voltsToSample;
+    const float output = controlled * serviceGain * voltsToSample;
 
-    voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
+    // The existing energy-driven rail proxy reads the physical current-time
+    // amplifier output. A numerical reconstruction delay must not insert
+    // extra delay into that shared feedback interaction or alter it with
+    // quality. Only the audible path needs the FIR's delayed/bandlimited law.
+    const float energyOutput = activeParameters_.enableVoiceVcaAntialias
+        && voiceVcaAntialiasKernel_.factor > 1
+        ? shape(drive) * voice.vca * serviceGain * voltsToSample : output;
+    voice.energy += voiceEnergyFollower_ * (std::abs(energyOutput) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
 }
 

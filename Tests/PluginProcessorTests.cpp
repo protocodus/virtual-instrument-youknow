@@ -1772,7 +1772,7 @@ void testReportedDspLatencyIsForwardedForEveryNumericalPath()
     // at. A request is a ceiling, never a floor: the applied factor is the
     // smaller of what was asked for and what the host rate still needs, which
     // is why the 192 kHz row runs at 1x whatever is selected. The reported
-    // latency is the deepest path's for all of them, so no selection makes the
+    // latency is the longest path's for all of them, so no selection makes the
     // host renegotiate its compensation.
     constexpr std::array<Configuration, 12> configurations {{
         { 44100.0, 4, 4 },  { 44100.0, 2, 2 },  { 44100.0, 1, 1 },
@@ -1797,8 +1797,9 @@ void testReportedDspLatencyIsForwardedForEveryNumericalPath()
         expect (processor.getOversamplingFactorForDisplay()
                     == configuration.expectedFactor,
                 "the processor selected the wrong numerical path at " + where);
-        expect (processor.getLatencySamples() == 41,
-                "the processor did not forward the fixed 41-sample DSP latency at "
+        const int expectedLatency = configuration.rate >= 176400.0 ? 41 : 72;
+        expect (processor.getLatencySamples() == expectedLatency,
+                "the processor did not forward the fixed product DSP latency at "
                     + where);
         processor.releaseResources();
     }
@@ -7083,13 +7084,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Seven extension knobs, eleven utility buttons plus the QUALITY and VCF
+    // Seven extension knobs, twelve utility buttons plus the QUALITY and VCF
     // SOLVER selectors, six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 7 + 13 + 6 + 21 + 1 + 1;
+        panel::controlCount + 7 + 14 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -8594,6 +8595,12 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     checkInsideZone ("INIT", panel::operationsBarX,
                      panel::operationsGroupSplitX - panel::operationsBarX,
                      "Session");
+    checkInsideZone ("Output connections", panel::operationsBarX,
+                     panel::operationsGroupSplitX - panel::operationsBarX,
+                     "Session");
+    checkInsideZone ("Performance timing", panel::operationsBarX,
+                     panel::operationsGroupSplitX - panel::operationsBarX,
+                     "Session");
     checkInsideZone ("DRIFT 1%", panel::operationsGroupSplitX,
                      panel::operationsBarX + panel::operationsBarWidth
                          - panel::operationsGroupSplitX,
@@ -8664,6 +8671,8 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     };
     constexpr auto sessionLegends = std::to_array<CompactLegend> ({
         { "PANIC", "PANIC" }, { "INIT", "INIT" },
+        { "Output connections", "OUTPUT..." },
+        { "Performance timing", "TIMING..." },
     });
     constexpr auto variationLegends = std::to_array<CompactLegend> ({
         { "DRIFT 1%", "1%" }, { "VARY 10%", "10%" },

@@ -5,6 +5,28 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-10-03 — Five further realism changes
+
+The owner explicitly requested implementation of all five proposed changes
+and directed us to assume they sound better. Select the supported C41/R79
+magnitude realization, nominal exponential Tr22 noise junction, and local
+voice-VCA antialiasing for the product. Add session-selectable original
+A-5/UART/B-2 performance timing and external cable/input capacitance; retain
+Direct timing and 0 pF as their compatible defaults.
+
+This is delegated engineering selection, not a listening verdict or a new
+original-unit calibration. The shared before/final score is rendered through
+the preserved e75f0bb and final product paths, with whole-file stereo RMS
+matching and only declared processing-latency trimming. Original timing and
+nominal cable loads are enabled in their corresponding excerpts. A separate
+key identifies A/B, and a boosted residual exposes the total change.
+
+Accept the VCA's numerical delay and cost: at ordinary host rates the product
+reports 72 samples across quality settings, versus the previous 41. In the
+six-voice 48 kHz/1× fixture, cost rises from 135.4 to 194.3 ms per audio second.
+High internal rates bypass this stage. Circuit priors, source references and
+remaining approximations are recorded beside the implementation.
+
 ## 2026-09-29 — Nominal nonlinear chorus followers
 
 Select the forward-active exponential-current extension of the existing
