@@ -310,6 +310,10 @@ struct EngineParameters
     // retains the former linear-from-zero law solely for controlled A/B
     // renders.
     bool useCircuitDerivedNoiseLevelShape { true };
+    // Product-selected nominal Tr22 exponential junction, including R114's
+    // loading. The raw reference retains the hard-junction approximation.
+    // Both share the existing full-level calibration and nominal VR32 end.
+    bool enableNoiseLevelSoftJunction { false };
     // On by default: the live I+II extension collapses the two wet returns to
     // their arithmetic mid, matching an original-unit owner's remembered
     // narrow/near-mono result while preserving the ordinary I/II topology.
@@ -1148,6 +1152,38 @@ public:
 
         // Linear above the onset, zero below, unity at full travel.
         [[nodiscard]] static float drive(float dacFraction) noexcept;
+
+        // Roland's module-board legend (p.12) names the PNP 2SA1015-Y/GR;
+        // p.13 draws this grounded-base stage. Use the same manufacturer-
+        // typical prior as the nominal chorus followers: beta=200 and
+        // Vbe=0.61 V at25 C. Their first input follower's independent DC
+        // resistor solve (44k/22k/44k/10k, +15 V, both Vbe=0.61) gives
+        // Ic=0.6509655627366167 mA; that anchors Is here without fitting a
+        // new onset. It is a circuit-derived nominal coordinate, not an
+        // original Tr22 measurement. Toshiba's p.2 forward-junction plot
+        // and hFE curve support the part class, not a Y/GR population mean.
+        // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=12
+        // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13
+        // https://media.digikey.com/PDF/Data%20Sheets/Toshiba%20PDFs/2SA1015.pdf#page=2
+        // Is = Ic_ref/expm1(Vbe_ref/Vt), Ic=Is*expm1(Ve/Vt),
+        // Ie=Ic/alpha, alpha=beta/(beta+1). At the emitter:
+        // (Vhold-Ve)/Rs = (Ve+15)/R114 + Ie.
+        // This exponential law extrapolates the nominal prior down to the
+        // microampere knee. Installed Is, beta, VR32 and Tr21's selected
+        // amplitude remain unidentified. Keep the declared 25 C condition:
+        // varying Vt alone would omit Is(T), whose law is not calibrated.
+        static constexpr double junctionReferenceKelvin = 298.15;
+        static constexpr double junctionThermalVolts =
+            1.380649e-23 * junctionReferenceKelvin / 1.602176634e-19;
+        static constexpr double junctionBeta = 200.0;
+        static constexpr double junctionReferenceVbe = 0.61;
+        static constexpr double junctionReferenceCollectorAmps =
+            0.6509655627366167e-3;
+        static constexpr int junctionTableSteps = 4096;
+        [[nodiscard]] static double junctionCollectorCurrent(double holdVolts) noexcept;
+        [[nodiscard]] static const std::array<float, junctionTableSteps + 1>&
+            junctionDriveTable();
+        [[nodiscard]] static float junctionDrive(float dacFraction) noexcept;
     };
 
     // The two-term generalized algebraic soft clip used by VCF saturation is
