@@ -119,6 +119,11 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### Unreleased — 2026-10-03
 
+- Bright, high notes now produce fewer folded harmonics from the voice
+  amplifier: its existing BA662 saturation and envelope multiply run with
+  local oversampling on coarse grids. The physical gain/headroom stay fixed.
+  At ordinary host rates the reported product latency is 72 samples on every
+  quality rung; already-high grids retain the direct amplifier law.
 - Main NOISE keeps more of the real C41/R79 circuit's treble at ordinary
   quality settings. At 48 kHz/1×, excess loss at 16/20 kHz falls from
   3.85/8.59 dB to 0.32/0 dB, with the source level and density unchanged.
@@ -735,6 +740,12 @@ forty-year-old unit will null against the plug-in.
   tail current scales with control and the input drive does not (derived
   from service trims and corroborated original-module resistors; the
   parallel output capacitor and installed transfer remain OQ-19).
+  On coarse grids the product locally oversamples that unchanged pair and
+  envelope multiply before filtering out ultrasonic harmonics. This keeps
+  real audible distortion while reducing folded lines; the numerical FIR
+  filters lose at most 0.04 dB through 20 kHz at 44.1 kHz. Control and audio
+  reconstruction share a timestamp; their 48-internal-sample delay is
+  included in host compensation. Raw reference fixtures retain the direct law.
 
 **Bus and output**
 
@@ -2453,8 +2464,11 @@ nonlinear kernels. Fresh instances use Poly/Cubic, the CPU-first pair retained
 after a blind comparison found no audible difference; Exact/Hermite preserve
 the reference forms. None of these is part of a patch.
 
-The plug-in reports a fixed 41-host-sample latency covering oscillator
-reconstruction and decimation only. A quality change waits until the
+The plug-in reports a fixed 72-host-sample latency at ordinary host rates,
+covering oscillator reconstruction, decimation and local voice-amplifier
+antialiasing. At 176.4 kHz and above the local stage is unnecessary and the
+report stays at 41 samples; raw reference engines also retain 41. A quality
+change preserves the report for that host rate and waits until the
 instrument is idle. Quality and solver rungs do not move a modelled physical
 quantity; the faster tanh modes additionally enable the documented idle-card
 and settled-chorus work skips, while Exact retains the always-running reference

@@ -96,6 +96,9 @@ struct ProductFidelityProfile
         // C41/R79 retains its analogue-band magnitude on the default 1x
         // grid, with the same source density and positive physical RC decay.
         parameters.enableMainNoiseMagnitudePole = true;
+        // Prevent the physical BA662 pair's ultrasonic harmonics/control
+        // sidebands folding back on coarse output grids; gain is unchanged.
+        parameters.enableVoiceVcaAntialias = true;
         // The converter holds' leakage ramp: a hundredth of an LSB per pass
         // at the sheets' typicals. The engine's reference configuration
         // keeps ideal holds for its exactness fingerprints.
