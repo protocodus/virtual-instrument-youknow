@@ -3521,8 +3521,8 @@ void YouKnowAudioProcessorEditor::resized()
     constexpr float sessionX = 1184.0f;
     constexpr float sessionTop = panel::extensionDeckTop + 32.0f;
     constexpr float sessionWidth = 112.0f;
-    constexpr float sessionHeight = 19.0f;
-    constexpr float sessionGap = 5.0f;
+    constexpr float sessionHeight = 24.0f;
+    constexpr float sessionGap = 8.0f;
     panicButton.setBounds (
         scaled (sessionX, sessionTop, sessionWidth, sessionHeight).toNearestInt());
     resetButton.setBounds (

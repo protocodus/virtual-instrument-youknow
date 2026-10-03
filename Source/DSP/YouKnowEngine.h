@@ -5,6 +5,7 @@
 #include "YouKnowSubLevel.h"
 #include "YouKnowNoiseCalibration.h"
 #include "YouKnowNoiseC41.h"
+#include "YouKnowVoiceVcaAntialias.h"
 #include "YouKnowHighPassSwitch.h"
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
@@ -272,6 +273,10 @@ struct EngineParameters
     // linear signal law solely for controlled A/B renders; the separately
     // selected thermal gain still applies to that linear path.
     bool enableVoiceVcaSignalSaturation { true };
+    // Product-selected local oversampling of the existing BA662 pair and
+    // envelope multiply. Raw reference retains the direct sampled law.
+    // FIR group delay is included in the reported/padded engine latency.
+    bool enableVoiceVcaAntialias { false };
     // On by default: the p.19 VCA GAIN adjustment turns the same bank-3
     // 4.8 Vp-p filter sine into 6 Vp-p at TP8. The pair's unity-normalized
     // shape is not that physical gain. Restore the fixed service gain after
@@ -3188,6 +3193,7 @@ private:
         // duty-asymmetric pulse the cascade only partly removes -- and this is
         // the capacitor that stops the envelope from multiplying it.
         HighPass vcaInputCoupling {};
+        VoiceVcaAntialias vcaAntialias {};
         // The pin 9 node itself, held after each internal sample: the value
         // the voice VCA multiplies, in volts. It is what the service
         // procedure's VR30/R112 null is adjusted against, and the DC
@@ -3529,6 +3535,9 @@ private:
     // that rate still needs to reach the bandlimiting target.
     [[nodiscard]] int effectiveOversampleFactor(int requestedFactor) const noexcept;
     void updateProcessingRate(bool preserveFreeRunningState = false) noexcept;
+    void refreshLatencyPad() noexcept;
+    [[nodiscard]] double runningLatencySamples(int factor) const noexcept;
+    [[nodiscard]] double maximumLatencySamples() const noexcept;
     void rebuildRateDependentVoiceState() noexcept;
     bool applyPendingOversamplingIfIdle() noexcept;
     // Padding that keeps the reported latency constant. Reporting a different
@@ -3746,6 +3755,7 @@ private:
     HighPass noiseSourceHighPass_;
     HighPass noiseSourceLowPass_;
     NoiseC41LowPass noiseSourceMagnitude_;
+    VoiceVcaAntialias::Kernel voiceVcaAntialiasKernel_ {};
     float noiseSourceHighPassG_ { 0.01f };
     float noiseSourceLowPassG_ { 0.1f };
 

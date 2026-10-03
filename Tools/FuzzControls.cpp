@@ -247,7 +247,11 @@ bool changesCostConfiguration (const juce::RangedAudioParameter& parameter)
     const auto& id = parameter.paramID;
     return id == parameters::quality || id == parameters::legacyHq
         || id == parameters::polyphony || id == parameters::vcfTanhMode
-        || id == parameters::vcfFastEarlyMode || id == parameters::vcfSolverMode;
+        || id == parameters::vcfFastEarlyMode || id == parameters::vcfSolverMode
+        // Session timing selects a different execution/voice policy and
+        // intentionally clears held notes. Hold it fixed for matched load
+        // comparisons; parameterList(all=true) still fuzzes both modes.
+        || id == parameters::originalPerformance;
 }
 
 std::vector<juce::RangedAudioParameter*> parameterList (YouKnowAudioProcessor& p,
@@ -337,6 +341,11 @@ FuzzResult sequential (const Options& options, std::string name, double rate,
     const bool broad = result.name == "legal_parameter_midi_fuzz";
     const bool changing = result.name == "controls_six_voice";
     const bool matched = changing || result.name == "baseline_six_voice";
+    // These scenarios promise a fixed six-voice load or the Direct
+    // 16-voice extension. Broad parameter/MIDI and concurrent editor stress
+    // retain session-mode switching, including its documented note clearing.
+    if (matched || corner)
+        set (p, parameters::originalPerformance, 0.0f);
     if (corner)
     {
         set (p, parameters::polyphony, 16.0f);

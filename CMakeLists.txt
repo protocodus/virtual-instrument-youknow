@@ -118,6 +118,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowNoiseCalibration.h
     Source/DSP/YouKnowNoiseC41.h
+    Source/DSP/YouKnowVoiceVcaAntialias.h
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
@@ -424,6 +425,38 @@ if(YOUKNOW_BUILD_TOOLS)
         "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
         "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
 
+    # The same round-two score can be compiled against archived headers/lib.
+    # Capabilities are explicit build metadata: baseline omits unavailable
+    # APIs; final renders request the new physical connections/performance.
+    add_executable(YouKnowRenderRealismRound2 Tools/RenderRealismRound2.cpp)
+    target_link_libraries(YouKnowRenderRealismRound2 PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderRealismRound2 PRIVATE cxx_std_20)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismRound2.cpp"
+        YOUKNOW_ROUND2_SOURCE_SHA256)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/Source/DSP/YouKnowEngine.h" YOUKNOW_ROUND2_ENGINE_HEADER)
+    foreach(feature CABLE ORIGINAL VCA)
+        set(YOUKNOW_ROUND2_HAVE_${feature} 0)
+    endforeach()
+    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "outputCapacitancePf")
+        set(YOUKNOW_ROUND2_HAVE_CABLE 1)
+    endif()
+    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "setOriginalPerformanceMode")
+        set(YOUKNOW_ROUND2_HAVE_ORIGINAL 1)
+    endif()
+    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "enableVoiceVcaAntialias")
+        set(YOUKNOW_ROUND2_HAVE_VCA 1)
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismRound2.cpp")
+    target_compile_definitions(YouKnowRenderRealismRound2 PRIVATE
+        "YOUKNOW_ROUND2_SOURCE_SHA256=\"${YOUKNOW_ROUND2_SOURCE_SHA256}\""
+        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
+        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
+        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\""
+        YOUKNOW_ROUND2_HAVE_CABLE=${YOUKNOW_ROUND2_HAVE_CABLE}
+        YOUKNOW_ROUND2_HAVE_ORIGINAL=${YOUKNOW_ROUND2_HAVE_ORIGINAL}
+        YOUKNOW_ROUND2_HAVE_VCA=${YOUKNOW_ROUND2_HAVE_VCA})
+
     add_executable(YouKnowRenderPresetScore Tools/RenderPresetScore.cpp)
     target_link_libraries(YouKnowRenderPresetScore
         PRIVATE YouKnowDSP Threads::Threads)
@@ -469,10 +502,7 @@ if(YOUKNOW_BUILD_TOOLS)
     target_compile_features(YouKnowOversamplingAudit PRIVATE cxx_std_20)
 
     add_library(YouKnowDSPWorkAudit STATIC
-        Source/DSP/YouKnowEngine.cpp
-        Source/DSP/YouKnowFirmwareTrace.cpp
-        Source/DSP/YouKnowFirmwareSerialTrace.cpp
-        Source/DSP/YouKnowChorus.cpp
+        ${YOUKNOW_DSP_SOURCES}
         Source/DSP/YouKnowEngine.h
         Source/DSP/YouKnowChorus.h
         Tools/OversamplingAuditSupport.h)
@@ -739,6 +769,10 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowNoiseJunctionTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.NoiseJunction COMMAND YouKnowNoiseJunctionTests)
     set_tests_properties(YouKnow.NoiseJunction PROPERTIES TIMEOUT 60)
+    add_executable(YouKnowVoiceVcaAntialiasTests Tests/YouKnowVoiceVcaAntialiasTests.cpp)
+    target_link_libraries(YouKnowVoiceVcaAntialiasTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VoiceVcaAntialias COMMAND YouKnowVoiceVcaAntialiasTests)
+    set_tests_properties(YouKnow.VoiceVcaAntialias PROPERTIES TIMEOUT 180)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowOutputNetworkTests Tests/YouKnowOutputNetworkTests.cpp)
@@ -1056,6 +1090,9 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.RealismReviewManifest
                  COMMAND YouKnowRenderRealismReview --self-test)
         set_tests_properties(YouKnow.RealismReviewManifest PROPERTIES TIMEOUT 10)
+        add_test(NAME YouKnow.RealismRound2Manifest
+                 COMMAND YouKnowRenderRealismRound2 --self-test)
+        set_tests_properties(YouKnow.RealismRound2Manifest PROPERTIES TIMEOUT 10)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity
