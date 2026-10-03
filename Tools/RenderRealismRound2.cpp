@@ -261,7 +261,7 @@ StereoBuffer vcaHighNotes(int quality)
     Performance take(p, quality);
     take.run(.12);
     take.chord({84, 91, 96}, .9, .14);
-    for (const int note : {96, 103, 108, 103, 96, 91}) take.hit(note, .15, .07);
+    for (const int note : {96, 108, 117, 123, 103, 91}) take.hit(note, .15, .07);
     take.chord({84, 91, 96, 103}, 1.0, .3);
     return take.take(2); //3.78s; bright nonlinear VCA drive and gate edges
 }
@@ -636,7 +636,7 @@ The 19.99 s montage starts noise bytes at 0.00 s, high-note VCA at 4.52 s, origi
 
 - 01 main noise bytes, 4.22 s: note/gate starts at 0.12 s; byte 0 at 0.12, 1 at 0.62, 4 at 1.12, 6 at 1.62, 16 at 2.42, 32 at 2.92, and 127 at 3.42 s; gate off at 3.92 s. Byte 6 exposes the soft-junction onset.
 - 02 bright noise, 3.32 s: byte 16, open filter, saw/pulse/sub off; note from 0.12 to 2.92 s.
-- 03 high-note VCA, 3.78 s: saw/pulse/sub, open filter; MIDI chord 84/91/96 at 0.12 s; six fast gate strokes 96/103/108/103/96/91 from 1.16 s; chord 84/91/96/103 at 2.48 s.
+- 03 high-note VCA, 3.78 s: saw/pulse/sub, open filter; MIDI chord 84/91/96 at 0.12 s; six fast gate strokes 96/108/117/123/103/91 from 1.16 s; chord 84/91/96/103 at 2.48 s. The MIDI 123 stroke exposes the stronger third-harmonic VCA fold; the chord passages retain the musical body.
 - 04 original chords, 4.15 s: chords at 0.12/1.13/2.14/3.15 s, in identical ascending host insertion order.
 - 05 retriggers, 3.636 s: repeated MIDI 60/67/64 notes from 0.12 s; six 1 ms notes from 2.10 s; long MIDI 72 at 2.436 s.
 - 06 unison, 3.17 s: MIDI 48/55/60/55/48 starts at 0.12/0.62/1.12/1.62/2.12 s, held for 0.38 s each.
