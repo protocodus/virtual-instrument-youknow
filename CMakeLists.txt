@@ -727,6 +727,11 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowOutputSummerMuteTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputSummerMute COMMAND YouKnowOutputSummerMuteTests)
     set_tests_properties(YouKnow.OutputSummerMute PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowNoiseJunctionTests Tests/YouKnowNoiseJunctionTests.cpp)
+    target_link_libraries(YouKnowNoiseJunctionTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.NoiseJunction COMMAND YouKnowNoiseJunctionTests)
+    set_tests_properties(YouKnow.NoiseJunction PROPERTIES TIMEOUT 60)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowOutputNetworkTests Tests/YouKnowOutputNetworkTests.cpp)
