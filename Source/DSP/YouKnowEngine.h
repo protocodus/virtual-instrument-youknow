@@ -15,6 +15,7 @@
 #include "YouKnowDcoComponents.h"
 #include "YouKnowEnvelopeHold.h"
 #include "YouKnowDcoReset.h"
+#include "YouKnowOriginalPerformance.h"
 
 #include <array>
 #include <bit>
@@ -593,6 +594,13 @@ public:
     // for ten minutes is still warm when the transport stops.
     void resetForHostStop();
     void setParameters(const EngineParameters& parameters);
+    // Session-only optional original A-5 -> module UART -> B-2 execution.
+    // Switching clears the performance and output tails. This installs a
+    // coherent time-zero warm panel; it does not synthesize a cold boot.
+    void setOriginalPerformanceMode(bool enabled) noexcept;
+    [[nodiscard]] bool originalPerformanceMode() const noexcept { return originalPerformanceEnabled_; }
+    [[nodiscard]] bool originalPerformanceHealthy() const noexcept { return originalPerformanceHealthy_; }
+    [[nodiscard]] const OriginalPerformance& originalPerformance() const noexcept { return originalPerformance_; }
     // Comparison-only circuit calibration. Call before prepare(); an invalid
     // calibration or a prepared engine is rejected without changing state.
     // No public plug-in parameter, preset byte or shipping default selects it.
@@ -3964,6 +3972,11 @@ private:
     std::array<FirmwareSerialTrace::ByteReady, firmwareSerialStreamingCapacity>
         firmwareSerialStream_ {};
     std::size_t firmwareSerialStreamHead_=0, firmwareSerialStreamCount_=0;
+    OriginalPerformance originalPerformance_ {};
+    std::array<int,128> originalWireNotes_ {};
+    bool originalPerformanceEnabled_ = false, originalPerformanceRendering_ = false;
+    bool originalPerformanceHealthy_ = true;
+    ConverterTimingProfile originalPerformancePreviousProfile_ = ConverterTimingProfile::NormalizedServiceChart;
     double firmwareSerialAudioStates_=0.0;
     long double firmwareSerialTimelineStates_=0.0L, firmwareSerialRateBaseStates_=0.0L;
     double firmwareSerialTimelineRate_=0.0;

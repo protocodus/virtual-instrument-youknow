@@ -82,6 +82,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowFirmwareSerialTrace.cpp
     Source/DSP/YouKnowFirmwareAssignerTrace.cpp
     Source/DSP/YouKnowFirmwareAssignerScheduler.cpp
+    Source/DSP/YouKnowOriginalPerformance.cpp
     Source/DSP/YouKnowFirmwareAssignerAudioBridge.cpp
     Source/DSP/YouKnowFirmwareUartTrace.cpp
     Source/DSP/YouKnowFirmwareSerialPinDecoder.cpp
@@ -98,6 +99,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowFirmwareAssignerTrace.h
     Source/DSP/YouKnowFirmwareAssignerProgram.h
     Source/DSP/YouKnowFirmwareAssignerScheduler.h
+    Source/DSP/YouKnowOriginalPerformance.h
     Source/DSP/YouKnowFirmwareAssignerAudioBridge.h
     Source/DSP/YouKnowFirmwareAssignerSchedulerProgram.h
     Source/DSP/YouKnowFirmwareAssignerIo.h
@@ -816,6 +818,10 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.FirmwareAssignerAudioBridge COMMAND YouKnowFirmwareAssignerAudioBridgeTests)
     set_tests_properties(YouKnow.FirmwareAssignerAudioBridge PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowOriginalPerformanceTests Tests/YouKnowOriginalPerformanceTests.cpp)
+    target_link_libraries(YouKnowOriginalPerformanceTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowOriginalPerformanceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.OriginalPerformance COMMAND YouKnowOriginalPerformanceTests)
     add_executable(YouKnowFirmwareLiveAssignerAudioTests Tests/YouKnowFirmwareLiveAssignerAudioTests.cpp)
     target_link_libraries(YouKnowFirmwareLiveAssignerAudioTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowFirmwareLiveAssignerAudioTests PRIVATE cxx_std_20)
@@ -1169,6 +1175,14 @@ if(BUILD_TESTING)
     set_tests_properties(YouKnow.VcfIntegrator PROPERTIES TIMEOUT 180)
 
     if(YOUKNOW_BUILD_PLUGIN)
+        add_executable(YouKnowOriginalPerformancePluginTests Tests/YouKnowOriginalPerformancePluginTests.cpp)
+        target_link_libraries(YouKnowOriginalPerformancePluginTests PRIVATE YouKnow)
+        target_include_directories(YouKnowOriginalPerformancePluginTests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source"
+            "$<TARGET_PROPERTY:YouKnow,JUCE_GENERATED_SOURCES_DIRECTORY>"
+            "$<TARGET_PROPERTY:YouKnow,INCLUDE_DIRECTORIES>")
+        target_compile_features(YouKnowOriginalPerformancePluginTests PRIVATE cxx_std_20)
+        add_test(NAME YouKnow.OriginalPerformancePlugin COMMAND YouKnowOriginalPerformancePluginTests)
         add_executable(YouKnowPluginProcessorTests Tests/PluginProcessorTests.cpp)
         target_link_libraries(YouKnowPluginProcessorTests PRIVATE YouKnow)
         target_include_directories(YouKnowPluginProcessorTests PRIVATE

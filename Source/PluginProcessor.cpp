@@ -482,6 +482,17 @@ void dispatchMidiNoteRun (YouKnowEngine& engine,
                          juce::MidiBufferIterator begin,
                          juce::MidiBufferIterator end) noexcept
 {
+    if (engine.originalPerformanceMode())
+    {
+        // DIN serialization preserves the host's complete-message arrival
+        // order. Let original A-5 bitmaps and foreground decide chord priority.
+        for (auto event = begin; event != end; ++event) {
+            const auto message = (*event).getMessage();
+            if (message.isNoteOn()) engine.noteOn (message.getNoteNumber(), message.getFloatVelocity());
+            else engine.noteOff (message.getNoteNumber());
+        }
+        return;
+    }
     // Hosts can put the next note before the old note's release at the same
     // sample. Close existing presses first: otherwise equal pitches swallow
     // the new attack, and a full assigner drops a different incoming pitch.
@@ -895,6 +906,12 @@ YouKnowAudioProcessor::createParameterLayout()
         juce::StringArray { "Open", "10 kOhm", "47 kOhm", "100 kOhm", "1 MOhm" }, 0,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
+    // A session connection/performance policy, absent from hardware tones.
+    // Changing modes clears held notes and tails, so host automation is disabled.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { originalPerformance, 11 }, "Performance Timing",
+        juce::StringArray { "Direct", "Original" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
     return layout;
 }
 
@@ -956,6 +973,7 @@ YouKnowAudioProcessor::YouKnowAudioProcessor()
         { ParameterIndex::aging, aging },
         { ParameterIndex::outputSelector, outputSelector },
         { ParameterIndex::outputLoad, outputLoad },
+        { ParameterIndex::originalPerformance, originalPerformance },
         { ParameterIndex::pitchBend, pitchBend },
         { ParameterIndex::modulation, modulation }
     });
@@ -1052,6 +1070,7 @@ void YouKnowAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     // converter's writes land on the pixel-measured p. 8 chart geometry. The
     // engine's own default stays the normalised reference grid for its
     // fingerprints, and a selection is consumed by prepare().
+    engine.setOriginalPerformanceMode (false);
     engine.selectConverterTimingProfile (
         youknow::YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine.prepare (sampleRate, samplesPerBlock,
@@ -1254,6 +1273,7 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
         choiceOf (P::outputSelector, 2));
     engineParameters.outputLoadOhms = outputLoadOhmsForChoice (
         choiceOf (P::outputLoad, outputLoadChoiceCount - 1));
+    const bool originalTiming = choiceOf (P::originalPerformance, 1) != 0;
     engineParameters.outputMono = getTotalNumOutputChannels() == 1;
     engineParameters.chorusNoise = valueOf (P::chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (P::polyphony));
@@ -1331,12 +1351,13 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
                                           pendingMidiToneShadow);
     }
     engine.setParameters (engineParameters);
+    engine.setOriginalPerformanceMode (originalTiming);
 
     // The editor draws one lamp per available voice, so it needs the count the
     // engine actually settled on rather than the raw parameter.
     displayVoiceLimit.store (
         juce::jlimit (1, youknow::YouKnowEngine::maxVoices,
-                      engineParameters.polyphony),
+                      originalTiming ? 6 : engineParameters.polyphony),
         std::memory_order_relaxed);
     return true;
 }

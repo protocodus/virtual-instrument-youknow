@@ -2203,12 +2203,39 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
     // Service actions are momentary utilities, not synth modes. Give them the
     // compact key treatment so they do not carry misleading unlit lamps or
     // compete with the controls above the keyboard.
-    for (auto* button : { &panicButton, &resetButton, &outputButton, &randomize1Button,
+    for (auto* button : { &panicButton, &resetButton, &outputButton, &performanceButton, &randomize1Button,
                           &randomize10Button, &randomize50Button })
         button->getProperties().set (compactStyleProperty, true);
     panicButton.getProperties().set (actionIconProperty, "stop");
     resetButton.getProperties().set (actionIconProperty, "reset");
 
+    performanceButton.setName ("Performance timing");
+    performanceButton.setTitle ("Performance timing");
+    performanceButton.setTooltip (
+        "Original runs the hardware's MIDI input, voice allocation and module "
+        "serial timing. Chords and retriggers follow its scan phase. Uses six "
+        "voices, hardware tone resolution and the stored chorus modes; requires "
+        "more CPU. Switching clears held notes and tails. Presets retain this setting.");
+    performanceButton.onClick = [this]
+    {
+        auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
+            audioProcessor.parameters.getParameter (youknow::parameters::originalPerformance));
+        if (parameter == nullptr) return;
+        juce::PopupMenu menu;
+        for (int i = 0; i < parameter->choices.size(); ++i)
+            menu.addItem (i + 1, parameter->choices[i], true, parameter->getIndex() == i);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&performanceButton),
+            [safe = juce::Component::SafePointer<YouKnowAudioProcessorEditor> (this)] (int result)
+            {
+                if (safe == nullptr || result <= 0) return;
+                if (auto* p = safe->audioProcessor.parameters.getParameter (youknow::parameters::originalPerformance)) {
+                    p->beginChangeGesture();
+                    p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (result - 1)));
+                    p->endChangeGesture();
+                }
+            });
+    };
+    addAndMakeVisible (performanceButton);
     outputButton.setName ("Output connections");
     outputButton.setTitle ("Output connections");
     outputButton.setTooltip (
@@ -3488,8 +3515,8 @@ void YouKnowAudioProcessorEditor::resized()
     constexpr float sessionX = 1184.0f;
     constexpr float sessionTop = panel::extensionDeckTop + 32.0f;
     constexpr float sessionWidth = 112.0f;
-    constexpr float sessionHeight = 24.0f;
-    constexpr float sessionGap = 8.0f;
+    constexpr float sessionHeight = 19.0f;
+    constexpr float sessionGap = 5.0f;
     panicButton.setBounds (
         scaled (sessionX, sessionTop, sessionWidth, sessionHeight).toNearestInt());
     resetButton.setBounds (
@@ -3499,6 +3526,9 @@ void YouKnowAudioProcessorEditor::resized()
         scaled (sessionX, sessionTop + 2.0f * (sessionHeight + sessionGap),
                 sessionWidth, sessionHeight).toNearestInt());
 
+    performanceButton.setBounds (
+        scaled (sessionX, sessionTop + 3.0f * (sessionHeight + sessionGap),
+                sessionWidth, sessionHeight).toNearestInt());
     constexpr float variationX = 1350.0f;
     constexpr float variationTop = panel::extensionDeckTop + 32.0f;
     constexpr float variationWidth = sessionWidth;

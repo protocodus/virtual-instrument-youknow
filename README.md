@@ -117,6 +117,17 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-03
+
+- **Original performance timing:** the session TIMING menu can run the original
+  A-5 foreground/voice allocator, its module UART and the B-2 processor for
+  notes, HOLD, modulation, bend and tone edits. Chord attacks and fast retriggers
+  follow the firmware's actual scan phase. Original uses six voices and the
+  hardware's tone/velocity resolution (I+II stores as II), costs more CPU and
+  clears held notes/tails when switching. Direct remains the compatible default.
+  Host timestamps explicitly start nominal 31.25-kbaud DIN messages; this is a
+  declared input convention, not a measured host-to-hardware latency.
+
 ### Unreleased — 2026-10-02
 
 - The unipolar saw now keeps its mean voltage at the WAVE node until the
