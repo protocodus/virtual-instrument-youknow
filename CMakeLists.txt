@@ -457,6 +457,34 @@ if(YOUKNOW_BUILD_TOOLS)
         YOUKNOW_ROUND2_HAVE_ORIGINAL=${YOUKNOW_ROUND2_HAVE_ORIGINAL}
         YOUKNOW_ROUND2_HAVE_VCA=${YOUKNOW_ROUND2_HAVE_VCA})
 
+    add_executable(YouKnowRenderElectronics Tools/RenderElectronics.cpp)
+    target_link_libraries(YouKnowRenderElectronics PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderElectronics PRIVATE cxx_std_20)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderElectronics.cpp"
+        YOUKNOW_ELECTRONICS_SOURCE_SHA256)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderElectronics.cpp")
+    foreach(feature RESONANCE OTA PHONES)
+        set(YOUKNOW_ELECTRONICS_HAVE_${feature} 0)
+    endforeach()
+    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "enableResonanceSoftJunction")
+        set(YOUKNOW_ELECTRONICS_HAVE_RESONANCE 1)
+    endif()
+    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "enableOtaShotNoise")
+        set(YOUKNOW_ELECTRONICS_HAVE_OTA 1)
+    endif()
+    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "headphoneLoadOhms")
+        set(YOUKNOW_ELECTRONICS_HAVE_PHONES 1)
+    endif()
+    target_compile_definitions(YouKnowRenderElectronics PRIVATE
+        "YOUKNOW_ELECTRONICS_SOURCE_SHA256=\"${YOUKNOW_ELECTRONICS_SOURCE_SHA256}\""
+        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
+        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
+        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\""
+        YOUKNOW_ELECTRONICS_HAVE_RESONANCE=${YOUKNOW_ELECTRONICS_HAVE_RESONANCE}
+        YOUKNOW_ELECTRONICS_HAVE_OTA=${YOUKNOW_ELECTRONICS_HAVE_OTA}
+        YOUKNOW_ELECTRONICS_HAVE_PHONES=${YOUKNOW_ELECTRONICS_HAVE_PHONES})
+
     add_executable(YouKnowRenderPresetScore Tools/RenderPresetScore.cpp)
     target_link_libraries(YouKnowRenderPresetScore
         PRIVATE YouKnowDSP Threads::Threads)
@@ -1093,6 +1121,9 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.RealismRound2Manifest
                  COMMAND YouKnowRenderRealismRound2 --self-test)
         set_tests_properties(YouKnow.RealismRound2Manifest PROPERTIES TIMEOUT 10)
+        add_test(NAME YouKnow.ElectronicsManifest
+                 COMMAND YouKnowRenderElectronics --self-test)
+        set_tests_properties(YouKnow.ElectronicsManifest PROPERTIES TIMEOUT 10)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity
