@@ -1875,9 +1875,10 @@ public:
     //     (p. 18 s. 3; the coordinate VoiceVcaControlLaw::turnOn is in);
     //     R106 10k + R105 22k into grounded-base Tr20 (p. 13); nominal
     //     2SA1015-class V_be 0.62 V at about 0.3 mA; the BA662's pin-1
-    //     control current mirrored 1:1 onto the tail (Open Music Labs
-    //     measured about 500 ohm on the mirror's emitters; that both sides
-    //     are equal is the assumption).
+    //     control current mirrored 1:1 onto the tail. The equal 500 ohm
+    //     mirror-emitter values are an inherited nominal prior; a surviving
+    //     original-BA662 measurement has not been verified. AS662's diagram
+    //     corroborates the topology with 400 ohm parts, not that value.
     //   ADJUSTMENT s. 6 VCA GAIN (p. 19; bank 3, hold C4, full sustain) sets
     //     VR27 for 6 Vp-p at TP8 = pin 10 VCA OUT, i.e. 3.0 V peak across
     //     the load, while TP19 (after C59, at VR27's hot end) carries s. 5's 4.8 Vp-p

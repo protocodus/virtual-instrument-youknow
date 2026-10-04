@@ -35,9 +35,9 @@ namespace youknow {
 struct Ba662Noise {
     static constexpr double electronCharge=1.602176634e-19;
     static constexpr double boltzmann=1.380649e-23;
-    // Reuse VoiceVcaSignalLaw's nominal500ohm mirror-emitter prior, attributed
-    // there to Open Music Labs' original-BA662 measurement. This inherited
-    // value is not a new component measurement; equal sides are an assumption.
+    // Reuse VoiceVcaSignalLaw's nominal500ohm mirror-emitter prior. A surviving
+    // original-BA662 measurement has not been verified; equal sides and this
+    // inherited value remain assumptions rather than measured component data.
     // AS662 p3 corroborates degenerating resistors but publishes400ohm(+/-20%),
     // not an original500ohm measurement.
     static constexpr double tailEmitterOhms=500.0;
