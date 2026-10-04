@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -180,15 +181,16 @@ class ScoreRenderer
 public:
     ScoreRenderer (const Preset& preset, bool muteChorusNoise,
                    bool shippingDefaults = false)
+        : engine (std::make_unique<YouKnowEngine>())
     {
-        youknow::ProductFidelityProfile::configureBeforePrepare (engine);
+        youknow::ProductFidelityProfile::configureBeforePrepare (*engine);
         // Original presets exercise a fresh plug-in; the immutable factory
         // corpus retains its established 4x numerical reference settings.
         // Both use the product's approved physical fidelity profile.
         if (shippingDefaults)
-            engine.selectConverterTimingProfile (
+            engine->selectConverterTimingProfile (
                 YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
-        engine.prepare (sampleRate, renderBlockSize,
+        engine->prepare (sampleRate, renderBlockSize,
                         shippingDefaults ? productOversampleFactor : auditOversampleFactor);
         auto parameters = parametersFor (preset, muteChorusNoise);
         if (shippingDefaults)
@@ -198,16 +200,16 @@ public:
             parameters.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
             parameters.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
         }
-        engine.setParameters (parameters);
+        engine->setParameters (parameters);
     }
 
     int oversamplingFactor() const noexcept
     {
-        return engine.getOversamplingFactor();
+        return engine->getOversamplingFactor();
     }
 
-    void noteOn (int note) { engine.noteOn (note, 1.0f); }
-    void noteOff (int note) { engine.noteOff (note); }
+    void noteOn (int note) { engine->noteOn (note, 1.0f); }
+    void noteOff (int note) { engine->noteOff (note); }
 
     void renderSeconds (double seconds)
     {
@@ -225,14 +227,16 @@ private:
         {
             const int count = static_cast<int> (
                 std::min<std::int64_t> (renderBlockSize, remaining));
-            engine.process (left.data(), right.data(), count);
+            engine->process (left.data(), right.data(), count);
             audio.left.insert (audio.left.end(), left.begin(), left.begin() + count);
             audio.right.insert (audio.right.end(), right.begin(), right.begin() + count);
             remaining -= count;
         }
     }
 
-    YouKnowEngine engine;
+    // Audit workers have small native thread stacks. Keep the circuit engine
+    // on the heap so prepare() has room for its temporary lookup tables.
+    std::unique_ptr<YouKnowEngine> engine;
     Audio audio;
 };
 
