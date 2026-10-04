@@ -123,6 +123,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
+    Source/DSP/YouKnowHeadphoneOutput.h
     Source/DSP/YouKnowOutputNetwork.h
     Source/DSP/YouKnowPanel.h
     Source/DSP/YouKnowPresets.h
@@ -812,6 +813,12 @@ if(BUILD_TESTING)
     set_tests_properties(YouKnow.VoiceVcaAntialias PROPERTIES TIMEOUT 180)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowHeadphoneOutputTests Tests/YouKnowHeadphoneOutputTests.cpp)
+    target_link_libraries(YouKnowHeadphoneOutputTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowHeadphoneOutputTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.HeadphoneOutput COMMAND YouKnowHeadphoneOutputTests)
+    set_tests_properties(YouKnow.HeadphoneOutput PROPERTIES TIMEOUT 60)
+
     add_executable(YouKnowOutputNetworkTests Tests/YouKnowOutputNetworkTests.cpp)
     target_link_libraries(YouKnowOutputNetworkTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowOutputNetworkTests PRIVATE cxx_std_20)
@@ -1043,7 +1050,7 @@ if(BUILD_TESTING)
 
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
                    YouKnowChorusInputLoadingTests YouKnowOutputJackTests
-                   YouKnowOutputNetworkTests YouKnowPulseBalanceTests YouKnowCommonVcaOutputTests
+                   YouKnowHeadphoneOutputTests YouKnowOutputNetworkTests YouKnowPulseBalanceTests YouKnowCommonVcaOutputTests
                    YouKnowVcfIntegratorTests YouKnowVcfNoiseTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)

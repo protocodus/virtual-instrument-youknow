@@ -157,6 +157,8 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::outputLoad,   0.0f,  1.0e-5f },
     { parameters::outputCapacitance, 0.0f, 1.0e-5f },
     { parameters::originalPerformance, 0.0f, 1.0e-5f },
+    { parameters::outputRoute, 0.0f, 1.0e-5f },
+    { parameters::headphoneLoad, 0.0f, 1.0e-5f },
 });
 
 float parameterValue (const YouKnowAudioProcessor& processor, const char* id)
@@ -588,6 +590,8 @@ EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& proce
     constexpr std::array<float, 5> capacitances { 0, 480, 960, 2000, 5000 };
     result.outputCapacitancePf = capacitances[static_cast<std::size_t> (
         juce::roundToInt (value (parameters::outputCapacitance)))];
+    result.outputRoute = static_cast<HeadphoneOutput::Route> (juce::roundToInt(value(parameters::outputRoute)));
+    result.headphoneLoadOhms = YouKnowAudioProcessor::headphoneLoadOhmsForChoice(juce::roundToInt(value(parameters::headphoneLoad)));
     result.outputMono = processor.getTotalNumOutputChannels() == 1;
     // The product's own circuit selections, so a new one reaches the
     // reference the moment the processor takes it up.
@@ -749,13 +753,17 @@ void testOutputConnectionsSurviveStateAndToneChanges()
     setParameterValue (processor, parameters::outputSelector, 1);
     setParameterValue (processor, parameters::outputLoad, 2);
     setParameterValue (processor, parameters::outputCapacitance, 2);
+    setParameterValue (processor, parameters::outputRoute, 1);
+    setParameterValue (processor, parameters::headphoneLoad, 3);
     expect (!processor.currentProgramIsEdited(),
             "output connections marked the tone edited");
     const auto retained = [&processor] (const char* context)
     {
         expect (parameterValue (processor, parameters::outputSelector) == 1
                     && parameterValue (processor, parameters::outputLoad) == 2
-                    && parameterValue (processor, parameters::outputCapacitance) == 2,
+                    && parameterValue (processor, parameters::outputCapacitance) == 2
+                    && parameterValue (processor, parameters::outputRoute) == 1
+                    && parameterValue (processor, parameters::headphoneLoad) == 3,
                 std::string (context) + " changed output connections");
     };
     for (int program = 0; program < processor.getNumPrograms(); ++program)
@@ -775,7 +783,9 @@ void testOutputConnectionsSurviveStateAndToneChanges()
     restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
     expect (parameterValue (restored, parameters::outputSelector) == 1
                 && parameterValue (restored, parameters::outputLoad) == 2
-                && parameterValue (restored, parameters::outputCapacitance) == 2,
+                && parameterValue (restored, parameters::outputCapacitance) == 2
+                && parameterValue (restored, parameters::outputRoute) == 1
+                && parameterValue (restored, parameters::headphoneLoad) == 3,
             "output connections did not survive a session round trip");
 
     auto old = processor.parameters.copyState();
@@ -783,7 +793,8 @@ void testOutputConnectionsSurviveStateAndToneChanges()
     {
         const auto id = old.getChild (i).getProperty ("id").toString();
         if (id == parameters::outputSelector || id == parameters::outputLoad
-            || id == parameters::outputCapacitance)
+            || id == parameters::outputCapacitance || id == parameters::outputRoute
+            || id == parameters::headphoneLoad)
             old.removeChild (i, nullptr);
     }
     const auto xml = old.createXml();
@@ -795,7 +806,9 @@ void testOutputConnectionsSurviveStateAndToneChanges()
         restored.setStateInformation (legacy.getData(), static_cast<int> (legacy.getSize()));
         expect (parameterValue (restored, parameters::outputSelector) == 0
                     && parameterValue (restored, parameters::outputLoad) == 0
-                    && parameterValue (restored, parameters::outputCapacitance) == 0,
+                    && parameterValue (restored, parameters::outputCapacitance) == 0
+                    && parameterValue (restored, parameters::outputRoute) == 0
+                    && parameterValue (restored, parameters::headphoneLoad) == 0,
                 "an older session inherited live output connections instead of High/Open");
     }
     const auto* selector = dynamic_cast<const juce::AudioParameterChoice*> (
@@ -853,6 +866,40 @@ void testOutputConnectionsSurviveStateAndToneChanges()
                     && parameterValue(restored, parameters::outputLoad) == 2,
                 "malformed capacitance state partially replaced a working connection");
     }
+    for (const auto* id : { parameters::outputRoute, parameters::headphoneLoad })
+    {
+        const auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (
+            processor.parameters.getParameter(id));
+        expect(choice != nullptr && choice->getVersionHint() == 12 && !choice->isAutomatable(),
+               "PHONES parameter did not append with the session policy");
+        if (choice != nullptr)
+            for (int i=0;i<choice->choices.size();++i)
+                expect(static_cast<const juce::RangedAudioParameter*>(choice)->getValueForText(choice->choices[i]) == choice->convertTo0to1(float(i)),
+                       "PHONES route/load text failed to roundtrip");
+        for (const auto* malformed : { "nan", "inf", "1e100" })
+        {
+            auto bad=processor.parameters.copyState();
+            for (auto child : bad)
+                if(child.getProperty("id").toString()==id) child.setProperty("value",malformed,nullptr);
+            setParameterValue(restored, parameters::outputRoute, 1);
+            setParameterValue(restored, parameters::headphoneLoad, 2);
+            restoreTree(bad);
+            expect(parameterValue(restored,parameters::outputRoute)==1
+                   && parameterValue(restored,parameters::headphoneLoad)==2,
+                   "malformed PHONES state partially replaced a working connection");
+        }
+    }
+    auto prePhones=processor.parameters.copyState();
+    for(int i=prePhones.getNumChildren();--i>=0;)
+    {
+        const auto id=prePhones.getChild(i).getProperty("id").toString();
+        if(id==parameters::outputRoute || id==parameters::headphoneLoad) prePhones.removeChild(i,nullptr);
+    }
+    restoreTree(prePhones);
+    expect(parameterValue(restored,parameters::outputRoute)==0
+           && parameterValue(restored,parameters::headphoneLoad)==0
+           && parameterValue(restored,parameters::outputLoad)==2,
+           "pre-PHONES session did not retain LINE connection and default load");
 }
 
 void testOutputConnectionsReachMonoAndStereoAudio()
@@ -876,11 +923,13 @@ void testOutputConnectionsReachMonoAndStereoAudio()
         // All published load choices and selectors are reached while audio
         // runs. The direct engine must also receive mono loading *before*
         // the processor folds its returned pair into the one host channel.
-        for (int choice = 0; choice < 5; ++choice)
+        for (int choice = 0; choice < 9; ++choice)
         {
             setParameterValue (processor, parameters::outputSelector, static_cast<float> (choice % 3));
-            setParameterValue (processor, parameters::outputLoad, static_cast<float> (choice));
-            setParameterValue (processor, parameters::outputCapacitance, static_cast<float> (choice));
+            setParameterValue (processor, parameters::outputLoad, static_cast<float> (choice % 5));
+            setParameterValue (processor, parameters::outputRoute, choice >= 5 ? 1.0f : 0.0f);
+            setParameterValue (processor, parameters::headphoneLoad, float(std::max(0,choice-5)));
+            setParameterValue (processor, parameters::outputCapacitance, static_cast<float> (choice % 5));
             reference.setParameters (fidelityReferenceParameters (processor));
             for (int block = 0; block < 4; ++block)
             {
@@ -1030,7 +1079,7 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 11,
+    expect (auParameters.size() == historicalAuOrder.size() + 13,
             "the Audio Unit parameter contract has an unexpected size");
     if (const auto* capacitance = processor.parameters.getParameter (parameters::outputCapacitance))
     {
@@ -6375,7 +6424,9 @@ void testEditedFlagFollowsTheCompleteProgram()
             || std::strcmp (expected.id, parameters::outputSelector) == 0
             || std::strcmp (expected.id, parameters::outputLoad) == 0
             || std::strcmp (expected.id, parameters::originalPerformance) == 0
-            || std::strcmp (expected.id, parameters::outputCapacitance) == 0)
+            || std::strcmp (expected.id, parameters::outputCapacitance) == 0
+            || std::strcmp (expected.id, parameters::outputRoute) == 0
+            || std::strcmp (expected.id, parameters::headphoneLoad) == 0)
             continue;
 
         processor.setCurrentProgram (0);
@@ -6721,7 +6772,9 @@ bool isProgramParameter (const char* id)
         && std::strcmp (id, parameters::outputSelector) != 0
         && std::strcmp (id, parameters::outputLoad) != 0
         && std::strcmp (id, parameters::originalPerformance) != 0
-        && std::strcmp (id, parameters::outputCapacitance) != 0;
+        && std::strcmp (id, parameters::outputCapacitance) != 0
+        && std::strcmp (id, parameters::outputRoute) != 0
+        && std::strcmp (id, parameters::headphoneLoad) != 0;
 }
 
 void testEveryProductProgramRestoresEveryParameter()
@@ -6769,6 +6822,8 @@ void testEveryProductProgramRestoresEveryParameter()
         const float poisonedOutputLoad = parameterValue (processor, parameters::outputLoad);
         const float poisonedOriginalTiming = parameterValue (processor, parameters::originalPerformance);
         const float poisonedOutputCapacitance = parameterValue (processor, parameters::outputCapacitance);
+        const float poisonedOutputRoute = parameterValue (processor, parameters::outputRoute);
+        const float poisonedHeadphoneLoad = parameterValue (processor, parameters::headphoneLoad);
 
         expect (processor.currentProgramIsEdited(),
                 std::string ("program ") + std::to_string (program)
@@ -6809,6 +6864,10 @@ void testEveryProductProgramRestoresEveryParameter()
                     retained = poisonedOriginalTiming;
                 else if (std::strcmp (expected.id, parameters::outputCapacitance) == 0)
                     retained = poisonedOutputCapacitance;
+                else if (std::strcmp (expected.id, parameters::outputRoute) == 0)
+                    retained = poisonedOutputRoute;
+                else if (std::strcmp (expected.id, parameters::headphoneLoad) == 0)
+                    retained = poisonedHeadphoneLoad;
                 expect (std::abs (parameterValue (processor, expected.id)
                                  - retained)
                             <= expected.tolerance,
@@ -7809,6 +7868,8 @@ void testEditorRandomizeStrengthsAndReset()
         parameterValue (processor, parameters::originalPerformance);
     const float poisonedOutputCapacitance =
         parameterValue (processor, parameters::outputCapacitance);
+    const float poisonedOutputRoute = parameterValue (processor, parameters::outputRoute);
+    const float poisonedHeadphoneLoad = parameterValue (processor, parameters::headphoneLoad);
 
     auto* reset = findDescendantButtonWithText (*editor, "INIT");
     expect (reset != nullptr, "the editor is missing INIT");
@@ -7853,7 +7914,9 @@ void testEditorRandomizeStrengthsAndReset()
                 == processor.parameters.getParameter (parameters::outputLoad)
             || parameter == processor.parameters.getParameter (parameters::originalPerformance)
             || parameter
-                == processor.parameters.getParameter (parameters::outputCapacitance))
+                == processor.parameters.getParameter (parameters::outputCapacitance)
+            || parameter == processor.parameters.getParameter (parameters::outputRoute)
+            || parameter == processor.parameters.getParameter (parameters::headphoneLoad))
             continue;
         expect (std::abs (parameter->getValue()
                          - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
@@ -7874,7 +7937,9 @@ void testEditorRandomizeStrengthsAndReset()
                 && parameterValue (processor, parameters::outputLoad)
                     == poisonedOutputLoad
                 && parameterValue (processor, parameters::outputCapacitance)
-                    == poisonedOutputCapacitance,
+                    == poisonedOutputCapacitance
+                && parameterValue (processor, parameters::outputRoute) == poisonedOutputRoute
+                && parameterValue (processor, parameters::headphoneLoad) == poisonedHeadphoneLoad,
             "INIT overruled the player's output connections");
     expect (parameterValue (processor, parameters::originalPerformance) == poisonedOriginalTiming,
             "INIT overruled the player's performance timing");

@@ -10,6 +10,7 @@
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
 #include "YouKnowOutputNetwork.h"
+#include "YouKnowHeadphoneOutput.h"
 #include "YouKnowControlDac.h"
 #include "YouKnowFirmwareTrace.h"
 #include "YouKnowFirmwareSerialTrace.h"
@@ -482,6 +483,10 @@ struct EngineParameters
     // historical render; selected/loaded paths solve the complete passive
     // network in OutputNetwork. A mono bus connects both jack nodes to one
     // receiver resistance. Zero load means open, not a short circuit.
+    // PHONES is the separate stereo IC7 route, with LINE jacks unplugged.
+    // A mono host averages its two channels; it never shorts the headphone jack.
+    HeadphoneOutput::Route outputRoute { HeadphoneOutput::Route::Line };
+    float headphoneLoadOhms { 32.0f }; // explicit electrical load per channel
     OutputNetwork::Selector outputSelector { OutputNetwork::Selector::High };
     float outputLoadOhms { 0.0f };
     // Added capacitance of each stereo cable/input, or the one mono cable.
@@ -3825,6 +3830,8 @@ private:
     std::uint32_t outputNoiseStateRight_ { 0xd1b54a35u };
     std::uint32_t outputWiperNoiseStateLeft_ { 0x94d049bbu };
     std::uint32_t outputWiperNoiseStateRight_ { 0x8538ecadu };
+    std::uint32_t headphoneNoiseStateLeft_ { 0x7c159e37u };
+    std::uint32_t headphoneNoiseStateRight_ { 0xe1a6b82du };
     std::uint32_t commonVcaNoiseState_ { 0x7f4a7c15u };
 
     float displayEnvelope_ { 0.0f };
@@ -3949,6 +3956,7 @@ private:
     OutputJackLowPass outputJackRight_ {};
     OutputJackLowPass::Coefficients outputJackCoefficients_ {};
     OutputNetwork outputNetwork_ {};
+    HeadphoneOutput headphoneOutput_ {};
 
     // VCA LEVEL controls the single jack-board VCA after the six voice cards
     // and shared HPF. It is not part of each voice's envelope VCA.

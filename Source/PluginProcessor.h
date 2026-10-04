@@ -271,6 +271,12 @@ public:
         return ohms[static_cast<std::size_t> (
             std::clamp (choice, 0, outputLoadChoiceCount - 1))];
     }
+    static constexpr int headphoneLoadChoiceCount = 4;
+    static constexpr float headphoneLoadOhmsForChoice (int choice) noexcept
+    {
+        constexpr std::array<float, headphoneLoadChoiceCount> ohms { 32, 80, 300, 600 };
+        return ohms[static_cast<std::size_t> (std::clamp (choice, 0, headphoneLoadChoiceCount - 1))];
+    }
     static constexpr int outputCapacitanceChoiceCount = 5;
     static constexpr float outputCapacitancePfForChoice (int choice) noexcept
     {
@@ -429,6 +435,8 @@ private:
         outputLoad,
         outputCapacitance,
         originalPerformance,
+        outputRoute,
+        headphoneLoad,
         count
     };
     static constexpr std::size_t parameterPointerCount =

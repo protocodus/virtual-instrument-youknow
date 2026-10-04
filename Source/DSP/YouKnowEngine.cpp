@@ -6157,6 +6157,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     (void) outputNetwork_.prepare(sampleRate_, { activeParameters_.outputSelector,
         activeParameters_.outputLoadOhms, activeParameters_.outputMono,
         double(activeParameters_.outputCapacitancePf) * 1e-12 });
+    (void) headphoneOutput_.prepare(sampleRate_, activeParameters_.headphoneLoadOhms);
     refreshLatencyPad();
     oversamplingQuietSamples_ =
         std::max(1, static_cast<int>(sampleRate_ * outputPathQuietSeconds));
@@ -6360,6 +6361,9 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputJackLeft_.reset();
     outputJackRight_.reset();
     outputNetwork_.reset();
+    headphoneOutput_.reset();
+    headphoneNoiseStateLeft_ = 0x7c159e37u;
+    headphoneNoiseStateRight_ = 0xe1a6b82du;
     outputNoiseStateLeft_ = 0x91e10da5u;
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
@@ -6702,6 +6706,11 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
     fix01(result.aging, 0.0f);
+    if (static_cast<unsigned>(result.outputRoute) > 1u)
+        result.outputRoute = HeadphoneOutput::Route::Line;
+    result.headphoneLoadOhms = std::isfinite(result.headphoneLoadOhms)
+        && result.headphoneLoadOhms > 0.0f
+        ? std::clamp(result.headphoneLoadOhms, 1.0f, 1.0e9f) : 32.0f;
     if (static_cast<unsigned>(result.outputSelector) > 2u)
         result.outputSelector = OutputNetwork::Selector::High;
     result.outputLoadOhms = std::isfinite(result.outputLoadOhms)
@@ -11283,6 +11292,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     (void) outputNetwork_.configure({ parameters.outputSelector,
         parameters.outputLoadOhms, parameters.outputMono,
         double(parameters.outputCapacitancePf) * 1e-12 });
+    (void) headphoneOutput_.setLoad(parameters.headphoneLoadOhms);
+    const bool useHeadphones = parameters.outputRoute == HeadphoneOutput::Route::Headphones;
     const bool useSelectedOutput =
         parameters.outputSelector != OutputNetwork::Selector::High
         || parameters.outputLoadOhms > 0.0f
@@ -12321,6 +12332,17 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             networkInputRight * internalVoltsPerUnit,
             std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateLeft_),
             std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateRight_));
+        // Advance the independent PHONES route even while LINE is selected:
+        // returning to it cannot resurrect stale capacitor/noise history. Its
+        // RNGs are separate, preserving every historical LINE random sequence.
+        headphoneNoiseStateLeft_ = xorshift32(headphoneNoiseStateLeft_);
+        headphoneNoiseStateRight_ = xorshift32(headphoneNoiseStateRight_);
+        (void) headphoneOutput_.setVolume(glidedVolume_);
+        (void) headphoneOutput_.setNoise(jackBoardCelsius_ + 273.15, parameters.calibration);
+        const auto headphoneOutput = headphoneOutput_.process(
+            networkInputLeft * internalVoltsPerUnit, networkInputRight * internalVoltsPerUnit,
+            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateLeft_),
+            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateRight_));
         const float passiveNoiseScale =
             outputPassiveNoiseScale * jackBoardJohnsonScale_;
         outputLeft += bipolarFromState(outputWiperNoiseStateLeft_)
@@ -12337,6 +12359,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         {
             outputLeft = static_cast<float>(selectedOutput[0] * voltsToSample);
             outputRight = static_cast<float>(selectedOutput[1] * voltsToSample);
+        }
+
+        if (useHeadphones)
+        {
+            outputLeft = static_cast<float>(headphoneOutput[0] * voltsToSample);
+            outputRight = static_cast<float>(headphoneOutput[1] * voltsToSample);
         }
 
         // How long the voices have been gone, which is what a pending quality
