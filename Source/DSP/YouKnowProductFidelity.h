@@ -91,8 +91,10 @@ struct ProductFidelityProfile
         // magnitude loss even when its corner is above the internal Nyquist.
         parameters.enableOutputSummerMagnitudePole = true;
         // The delayed series wet switch also opens IC6's 39k input leg.
-        // Follow its existing binary gate for resistor noise and noise gain.
+        // Follow its physical gate for resistor noise and noise gain.
         parameters.enableOutputSummerMuteLoading = true;
+        // Named typical same-listed-part Tr4/JFET drive, not installed timing.
+        parameters.enableChorusFiniteMuteDrive = true;
         // C41/R79 retains its analogue-band magnitude on the default 1x
         // grid, with the same source density and positive physical RC decay.
         parameters.enableMainNoiseMagnitudePole = true;

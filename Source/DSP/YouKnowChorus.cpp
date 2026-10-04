@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 #if defined(YOUKNOW_WORK_AUDIT)
 #include "../../Tools/OversamplingAuditSupport.h"
@@ -469,7 +470,7 @@ struct FiniteSupportCircuit
 };
 
 FiniteSupportCircuit finiteSupportCircuit(
-    bool input, bool wetConnected, double inputWarpRate = 0.0) noexcept
+    bool input, double wetConnected, double inputWarpRate = 0.0) noexcept
 {
     // Physical capacitor voltages, not integrator carries:
     // pre:  j1-e1, b1, j2-e2, b2, e2-coupled, BBDinput
@@ -572,7 +573,7 @@ FiniteSupportCircuit finiteSupportCircuit(
         resistor(3, -1, 10000.0);
         resistor(6, -1, 10000.0);
         resistor(7, -1, 22000.0);
-        if (wetConnected) resistor(7, -1, 39000.0);
+        if (wetConnected > 0.0) resistor(7, -1, 39000.0 / wetConnected);
         capacitor(0, 0, -1, 2.2e-9);
         capacitor(1, 1, 3, 820e-12);
         capacitor(2, 2, -1, 680e-12 + followerCmuFarads);
@@ -977,7 +978,7 @@ AnalogDrive inputSupportDrive() noexcept
     return drive;
 }
 
-AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
+AnalogMatrix outputSupportMatrix(double wetConnected) noexcept
 {
     const double source = outputTapEffectiveDriveOhms;
     const double tapReturn = outputTapReturnOhms;
@@ -987,8 +988,10 @@ AnalogMatrix outputSupportMatrix(bool wetConnected) noexcept
     const double firstShunt = antiAliasFirstShuntF;
     const double secondFeedback = antiAliasSecondFeedbackF;
     const double secondShunt = antiAliasSecondShuntF;
-    const double wc = 2.0 * pi
-        * Chorus::wetOutputCouplingCornerHz(wetConnected);
+    const double wc = wetConnected == 0.0 || wetConnected == 1.0
+        ? 2.0 * pi * Chorus::wetOutputCouplingCornerHz(wetConnected != 0.0)
+        : (1.0 / wetOutputBleedOhms + wetConnected / wetMixerInputOhms)
+            / wetOutputCouplingCapacitanceF;
     AnalogMatrix matrix {};
     // Physical node coordinates: tap, first R-R junction/follower, second
     // R-R junction/follower, then the C28/C25 coupling-capacitor lowpass
@@ -1732,6 +1735,26 @@ Chorus::SupportChain Chorus::supportChainFor(
             outputSupportMatrix(true), outputSupportDrive(), sampleRate,
             chain.exactOutputConnected, outputEquilibrium);
     }
+    chain.wetConductance.front() = chain.exactOutputMuted;
+    chain.wetConductance.back() = chain.exactOutputConnected;
+    for (std::size_t i = 1; i < SupportChain::wetConductanceIntervals; ++i)
+    {
+        const double ratio = static_cast<double>(i) / SupportChain::wetConductanceIntervals;
+        if (profile == ChorusSupportProfile::Nominal2SA1015
+            || profile == ChorusSupportProfile::Nominal2SA1015Nonlinear)
+            chain.wetConductance[i] = finiteExactTransition(
+                finiteSupportCircuit(false, ratio), sampleRate,
+                profile == ChorusSupportProfile::Nominal2SA1015Nonlinear);
+        else
+        {
+            const auto matrix = outputSupportMatrix(ratio);
+            chain.wetConductance[i] = exactTransition(
+                matrix, outputSupportDrive(), outputEquilibrium, sampleRate);
+            chain.wetConductance[i].heldOutputMap = heldOutputMap(
+                matrix, outputSupportDrive(), sampleRate,
+                chain.wetConductance[i], outputEquilibrium);
+        }
+    }
     // Tr5 open: C16 and C13 are two physical coordinates joined by R48,
     // not cascaded independent RCs. Prepare exp(A / fs) once; the audio path
     // only advances the two voltages relative to their loaded DC rest.
@@ -2383,6 +2406,7 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
         support_ = supportChainFor(sampleRate_, supportProfile_);
         ++supportBuildCount_;
     }
+    wetTransitionRatio_ = -1.0;
     if (preserveState)
     {
         lineA_.resetAudioRateSupport();
@@ -2423,6 +2447,10 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     muteDriveHoldVolts_ = muteDriveHoldRestVolts(muteDriveNodeVolts_);
     muteDriveMuted_ = true;
     muteDriveEnabled_ = false;
+    finiteMuteDriveEnabled_ = false;
+    muteGateVolts_ = -14.4;
+    wetInputConductanceRatio_ = 0.0;
+    wetTransitionRatio_ = -1.0;
     clockMuteVolts_ = -muteDriveRailVolts;
     clockMuteEnabled_ = false;
     clocksStopped_ = false;
@@ -2495,7 +2523,64 @@ void Chorus::advanceMuteDrive(bool commandMute) noexcept
     const double hold = muteDriveHoldVolts_ - holdRest;
     muteDriveNodeVolts_ = nodeRest + transition[0][0] * node + transition[0][1] * hold;
     muteDriveHoldVolts_ = holdRest + transition[1][0] * node + transition[1][1] * hold;
-    muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
+    updateWetGate();
+}
+
+void Chorus::updateWetGate() noexcept
+{
+    if (finiteMuteDriveEnabled_)
+    {
+        muteGateVolts_ = ChorusMuteDrive::gateVolts(muteDriveHoldVolts_);
+        wetInputConductanceRatio_ = ChorusMuteDrive::conductanceRatio(muteGateVolts_);
+        muteDriveMuted_ = wetInputConductanceRatio_ == 0.0;
+    }
+    else
+        muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
+}
+
+namespace
+{
+template<class T> void blendWetArray(T& result, const T& a, const T& b, double t)
+{
+    if constexpr (std::is_floating_point_v<T>) result = a + t * (b - a);
+    else for (std::size_t i=0; i<result.size(); ++i) blendWetArray(result[i], a[i], b[i], t);
+}
+}
+const Chorus::SupportChain::ExactTransition& Chorus::finiteWetTransition() noexcept
+{
+    if (wetInputConductanceRatio_ == 0.0) return support_.wetConductance.front();
+    if (wetInputConductanceRatio_ == 1.0) return support_.wetConductance.back();
+    if (wetTransitionRatio_ == wetInputConductanceRatio_) return wetTransition_;
+    const double index = wetInputConductanceRatio_ * SupportChain::wetConductanceIntervals;
+    const auto lower = static_cast<std::size_t>(index);
+    const double blend = index - lower;
+    const auto& a = support_.wetConductance[lower];
+    const auto& b = support_.wetConductance[lower+1];
+    wetTransition_ = a;
+    auto& r=wetTransition_;
+    blendWetArray(r.stateByColumn,a.stateByColumn,b.stateByColumn,blend);
+    blendWetArray(r.driveBySample,a.driveBySample,b.driveBySample,blend);
+    blendWetArray(r.outputByState,a.outputByState,b.outputByState,blend);
+    r.outputDirect=a.outputDirect+blend*(b.outputDirect-a.outputDirect);
+    blendWetArray(r.heldOutputMap.byPower,a.heldOutputMap.byPower,b.heldOutputMap.byPower,blend);
+    blendWetArray(r.heldOutputMap.fullIntervalDrive,a.heldOutputMap.fullIntervalDrive,b.heldOutputMap.fullIntervalDrive,blend);
+    blendWetArray(r.heldOutputMap.endpointCorrection,a.heldOutputMap.endpointCorrection,b.heldOutputMap.endpointCorrection,blend);
+    auto& n=r.nonlinear;
+    const auto& na=a.nonlinear; const auto& nb=b.nonlinear;
+    blendWetArray(n.junctionByState,na.junctionByState,nb.junctionByState,blend);
+    blendWetArray(n.junctionByInput,na.junctionByInput,nb.junctionByInput,blend);
+    blendWetArray(n.junctionByCurrent,na.junctionByCurrent,nb.junctionByCurrent,blend);
+    blendWetArray(n.endpointJunctionByCurrent,na.endpointJunctionByCurrent,nb.endpointJunctionByCurrent,blend);
+    blendWetArray(n.stateByPreviousCurrent,na.stateByPreviousCurrent,nb.stateByPreviousCurrent,blend);
+    blendWetArray(n.stateByCurrent,na.stateByCurrent,nb.stateByCurrent,blend);
+    blendWetArray(n.outputByCurrent,na.outputByCurrent,nb.outputByCurrent,blend);
+    blendWetArray(n.cubicStateByCurrentSample,na.cubicStateByCurrentSample,nb.cubicStateByCurrentSample,blend);
+    blendWetArray(n.cubicEndpointJunctionByCurrent,na.cubicEndpointJunctionByCurrent,nb.cubicEndpointJunctionByCurrent,blend);
+    // Positive channel conductance is always the same connected topology;
+    // crossing an interpolation grid must not reset capacitor/current history.
+    n.topology=3;
+    wetTransitionRatio_=wetInputConductanceRatio_;
+    return r;
 }
 
 void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
@@ -2602,7 +2687,7 @@ void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
     muteDriveNodeVolts_ = state[0];
     muteDriveHoldVolts_ = state[1];
     clockMuteVolts_ = state[2];
-    muteDriveMuted_ = muteDriveHoldVolts_ >= muteDriveThresholdVolts;
+    updateWetGate();
     clocksStopped_ = clockMuteVolts_ >= clockMuteThresholdVolts;
 }
 
@@ -2616,7 +2701,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableMuteDrive,
                      bool enableLineGainSpread,
                      ChorusTimingProfile timingProfile,
-                     bool enableClockMuteCircuit) noexcept
+                     bool enableClockMuteCircuit,
+                     bool enableFiniteMuteDrive) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -2641,7 +2727,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                            ? settingsFor(hardwareModeSelection_, timingProfile) : target;
 
     const bool commandMute = mode == ChorusMode::Off;
-    const bool nextClockMuteEnabled = enableClockMuteCircuit && enableMuteDrive;
+    // Finite collector current requires the clamped-base KCL of the complete
+    // three-capacitor circuit; the passive raw two-node comparison omits it.
+    const bool nextClockMuteEnabled = (enableClockMuteCircuit || enableFiniteMuteDrive) && enableMuteDrive;
+    finiteMuteDriveEnabled_ = enableFiniteMuteDrive && enableMuteDrive;
     if (!primed_)
     {
         rateHz_ = clockTarget.rateHz;
@@ -2681,13 +2770,17 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     if (enableMuteDrive)
     {
         advanceMuteDrive(commandMute);
-        wetTarget = muteDriveMuted_ ? 0.0f : settingsFor(runningMode_).wetGain;
+        wetTarget = settingsFor(runningMode_).wetGain * (finiteMuteDriveEnabled_
+            ? static_cast<float>(wetInputConductanceRatio_) : (muteDriveMuted_ ? 0.0f : 1.0f));
     }
     else
     {
         muteDriveMuted_ = commandMute;
     }
-    wetGain_ += (wetTarget - wetGain_) * wetMuteGlide_;
+    if (finiteMuteDriveEnabled_)
+        wetGain_ = wetTarget; // physical channel trajectory already continuous
+    else
+        wetGain_ += (wetTarget - wetGain_) * wetMuteGlide_;
     // The glide is geometric and never reaches zero by itself: below about
     // 1.4e-42 the product underflows and wetGain_ parks on a denormal, so the
     // exact-zero test in processBypassedWhenSettled only ever passed under
@@ -2697,16 +2790,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // FLT_MIN is already zero in the mix.
     if (std::abs(wetGain_) < std::numeric_limits<float>::min())
         wetGain_ = 0.0f;
-    // TR11/TR12 add no modelled distortion or switching artefact of their own.
-    // Conducting, a 2SK30A's few hundred ohms sit against IC6's 39 kOhm wet
-    // input, so it drops about 1% of the signal and sees some 30 mV across
-    // itself at full level. Ohmic-region channel resistance moves by roughly
-    // V_ds / 2|V_p - V_gs| -- about 0.7% -- and that reaches the output only
-    // through the same 1% divider, so the distortion is on the order of
-    // 0.007%, or -83 dBc. A revision modelled 1.1% (-39 dBc) instead, which is
-    // some 44 dB too much, applied to every wet sample. Their switching
-    // transient and leakage remain OQ-20 and are deliberately not invented;
-    // the 5 ms wet-mute glide above is declared plug-in declick policy.
+    // The finite drive uses the named same-part incremental JFET channel
+    // law, rather than a binary threshold followed by the legacy 5 ms glide.
+    // All downstream signal, C25/C28 loading and IC6 Norton noise use that
+    // one continuous conductance. Signal-dependent channel distortion, gate
+    // capacitance and charge injection remain unmeasured; no transient is
+    // invented. Raw/reference processing retains its declared declick glide.
 
     const double intervalStartPhase = lfoPhase_;
     const double phaseIncrement = static_cast<double>(rateHz_)
@@ -2803,11 +2892,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const double clockB = clocksStopped_ ? 0.0 : clock[1];
 
     // C28/C25 see the 39 kOhm mixer legs through Tr11/Tr12, so their
-    // loading follows the RC-delayed gate state. The button command can
-    // precede that switch by roughly 80 ms off or 121 ms on.
-    const auto& wetOutputTransition = muteDriveMuted_
-        ? support_.exactOutputMuted
-        : support_.exactOutputConnected;
+    // loading follows the RC-delayed gate, including continuous finite
+    // channel conductance when selected. Physical capacitor charge is never
+    // reset at a command, a conductance-grid boundary or an open channel.
+    const auto& wetOutputTransition = finiteMuteDriveEnabled_
+        ? finiteWetTransition()
+        : (muteDriveMuted_ ? support_.exactOutputMuted : support_.exactOutputConnected);
     // The relative real-instrument calibration and its alternative causal
     // hypothesis act on the lines' random floor only. Neither is a claim that
     // a standalone mode-II MN3009 exceeds its datasheet row: the observation

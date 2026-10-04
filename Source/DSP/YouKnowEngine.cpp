@@ -6073,6 +6073,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     processingCoefficients_.outputSummerBandwidthBlend = 1.0f - std::exp(
         -2.0f * std::numbers::pi_v<float> * outputSummerBandwidthHz()
         / oversampledRate_);
+    outputFiniteWetRatio_ = -1.0;
     processingCoefficients_.outputSummerMagnitudePole =
         OutputJackLowPass::coefficients(outputSummerBandwidthHz(), oversampledRate_);
     processingCoefficients_.outputSummerMutedMagnitudePole =
@@ -12076,6 +12077,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             if (serialChorus || parameters.chorus != ChorusMode::Off
                 || parameters.vcfTanhMode == VcfTanhMode::Exact
                 || parameters.enableChorusClockMuteCircuit
+                || parameters.enableChorusFiniteMuteDrive
                 || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
                                                        wetRight))
                 chorus_.process(levelled, parameters.chorus,
@@ -12089,7 +12091,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 parameters.enableChorusMuteDrive,
                                 parameters.enableChorusLineGainSpread,
                                 parameters.chorusTimingProfile,
-                                parameters.enableChorusClockMuteCircuit);
+                                parameters.enableChorusClockMuteCircuit,
+                                parameters.enableChorusFiniteMuteDrive);
 
             // TA75558S IC6 has finite loaded output swing inside its +/-15 V
             // supplies. The modelled 13.5 V asymptote and knee are provisional
@@ -12144,14 +12147,33 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // existing nominal RC drive crosses the mute threshold. An ideal
             // open channel leaves that resistor floating: noise gain becomes
             // 1+100k/47k, not 1+100k/(47k||39k). This models the two binary
-            // states; installed channel leakage/capacitance remain unknown.
+            // states in the raw comparison. The selected finite-drive path
+            // substitutes 1/(39k+Ron) continuously in the same noise gain.
+            // Installed leakage/capacitance remain unknown.
             const bool wetInputConnected = !parameters.enableOutputSummerMuteLoading
                                          || chorus_.isWetInputConnected();
+            const bool continuousWet = parameters.enableOutputSummerMuteLoading
+                                    && parameters.enableChorusFiniteMuteDrive
+                                    && parameters.enableChorusMuteDrive;
+            if (continuousWet)
+            {
+                const double ratio = chorus_.wetInputConductanceRatio();
+                if (ratio != outputFiniteWetRatio_)
+                {
+                    const double corner = outputSummerGainBandwidthHz
+                        / (1.0 + outputSummerFeedbackOhms / outputSummerDryInputOhms
+                               + ratio * outputSummerFeedbackOhms / outputSummerWetInputOhms);
+                    outputFiniteWetPole_ = OutputJackLowPass::coefficients(corner, oversampledRate_);
+                    outputFiniteWetBandwidthBlend_ = static_cast<float>(1.0 - std::exp(
+                        -2.0 * std::numbers::pi * corner / oversampledRate_));
+                    outputFiniteWetRatio_ = ratio;
+                }
+            }
             if (parameters.enableOutputSummerMagnitudePole)
             {
-                const auto& pole = wetInputConnected
+                const auto& pole = continuousWet ? outputFiniteWetPole_ : (wetInputConnected
                     ? coefficients.outputSummerMagnitudePole
-                    : coefficients.outputSummerMutedMagnitudePole;
+                    : coefficients.outputSummerMutedMagnitudePole);
                 wetLeft = outputSummerMagnitudeLeft_.process(wetLeft, pole);
                 wetRight = outputSummerMagnitudeRight_.process(wetRight, pole);
                 outputBandwidthStateLeft_ = wetLeft;
@@ -12159,9 +12181,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             }
             else
             {
-                const float blend = wetInputConnected
+                const float blend = continuousWet ? outputFiniteWetBandwidthBlend_ : (wetInputConnected
                     ? coefficients.outputSummerBandwidthBlend
-                    : coefficients.outputSummerMutedBandwidthBlend;
+                    : coefficients.outputSummerMutedBandwidthBlend);
                 outputBandwidthStateLeft_ += blend * (wetLeft - outputBandwidthStateLeft_);
                 outputBandwidthStateRight_ += blend * (wetRight - outputBandwidthStateRight_);
                 wetLeft = outputBandwidthStateLeft_;
@@ -12265,9 +12287,18 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         // draws and every RNG sequence; only their sourced scale changes.
         const bool summerWetConnected = !parameters.enableOutputSummerMuteLoading
                                      || chorus_.isWetInputConnected();
-        const float summerNoiseScale = (summerWetConnected
-            ? coefficients.outputSummerNoiseScale
-            : coefficients.outputSummerMutedNoiseScale) * jackBoardJohnsonScale_;
+        const bool continuousWetNoise = parameters.enableOutputSummerMuteLoading
+                                     && parameters.enableChorusFiniteMuteDrive
+                                     && parameters.enableChorusMuteDrive;
+        // R72 plus the incremental channel Ron have Norton PSD4kT/(R72+Ron).
+        // Interpolate POWER with the same conductance, never noise amplitude.
+        // Draws, source temperature and output-history chronology stay intact.
+        const float openScale = coefficients.outputSummerMutedNoiseScale;
+        const float closedScale = coefficients.outputSummerNoiseScale;
+        const float summerNoiseScale = (continuousWetNoise
+            ? static_cast<float>(std::sqrt(openScale*openScale
+                + chorus_.wetInputConductanceRatio()*(closedScale*closedScale-openScale*openScale)))
+            : (summerWetConnected ? closedScale : openScale)) * jackBoardJohnsonScale_;
         outputLeft += outputNoiseLeft * summerNoiseScale;
         outputRight += outputNoiseRight * summerNoiseScale;
         // Feed both realizations continuously, so changing the connection

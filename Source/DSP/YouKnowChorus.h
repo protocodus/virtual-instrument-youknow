@@ -1,5 +1,7 @@
 #pragma once
 
+#include "YouKnowChorusMuteDrive.h"
+
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -337,7 +339,8 @@ public:
                  bool enableMuteDrive = false,
                  bool enableLineGainSpread = false,
                  ChorusTimingProfile timingProfile = ChorusTimingProfile::Shipping,
-                 bool enableClockMuteCircuit = false) noexcept;
+                 bool enableClockMuteCircuit = false,
+                 bool enableFiniteMuteDrive = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -356,9 +359,9 @@ public:
     //   - chorus ON: Tr5 conducts through R46 330 Ohm. Both capacitor
     //     voltages remain continuous; C16 approaches about -14.04 V and C13
     //     about -14.23 V, un-muting about 121 ms after a settled OFF.
-    // Both are derived from the drawn parts with the same 0.6 V junction
-    // prior the resonance and NOISE onsets use; the JFET transition itself
-    // keeps the declared 5 ms glide policy. Toshiba specifies family pinch-off
+    // Both are legacy binary comparisons using the drawn parts and the 0.6 V
+    // junction prior. The product finite collector/channel law below replaces
+    // the software 5 ms glide; raw comparisons retain that declick policy. Toshiba specifies family pinch-off
     // -0.4...-5.0 V at VDS=10 V, ID=0.1 uA, 25C; Y/GR are IDSS grades,
     // not individual cutoff or installed switching-time measurements (OQ-20).
     // https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf#page=1
@@ -756,6 +759,11 @@ public:
         ExactTransition bilinearInput {};
         ExactTransition exactOutputMuted {};
         ExactTransition exactOutputConnected {};
+        // Numerical conductance grid, not extra physical components. Linear
+        // interpolation retains continuous cap/current coordinates as the
+        // series JFET moves between open and 39k loading.
+        static constexpr std::size_t wetConductanceIntervals = 16;
+        std::array<ExactTransition, wetConductanceIntervals + 1> wetConductance {};
         // Prepared with the audio support at every cached numerical rate, so
         // live quality changes also avoid building the control transition.
         std::array<std::array<double, 2>, 2> muteDriveOpenTransition {};
@@ -794,11 +802,15 @@ public:
 
     // Tr11/Tr12 are SERIES wet-return switches, p15: C28/C25 and
     // R103/R81 sit before their channel; R72/R74 sit after it. The driven
-    // binary gate is the existing nominal junction model, not an identified
-    // 2SK30A channel-transition/leakage curve. Read it after process(), so
+    // raw binary gate is the existing nominal junction model. Product finite
+    // drive reports its named approximate incremental channel conductance.
+    // Neither is an identified installed transient/leakage curve. Read after process(), so
     // IC6 follows the delayed drive rather than the button command.
     // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
     [[nodiscard]] bool isWetInputConnected() const noexcept { return !muteDriveMuted_; }
+    [[nodiscard]] double wetInputConductanceRatio() const noexcept
+    { return finiteMuteDriveEnabled_ ? wetInputConductanceRatio_ : (muteDriveMuted_ ? 0.0 : 1.0); }
+    [[nodiscard]] double muteGateVolts() const noexcept { return muteGateVolts_; }
 
     [[nodiscard]] double getLfoPhase() const noexcept { return lfoPhase_; }
 
@@ -806,6 +818,8 @@ private:
     friend struct YouKnowTestAccess;
     void advanceMuteDrive(bool commandMute) noexcept;
     void advanceClockMuteDrive(bool commandMute) noexcept;
+    void updateWetGate() noexcept;
+    [[nodiscard]] const SupportChain::ExactTransition& finiteWetTransition() noexcept;
 
     // OQ-03 keeps the compatibility hiss and the still-unknown mechanisms as
     // distinct components.  Every number in this profile is voiced/unknown,
@@ -1018,6 +1032,11 @@ private:
     double muteDriveHoldVolts_ { 0.0 };
     bool muteDriveMuted_ { true };
     bool muteDriveEnabled_ { false };
+    bool finiteMuteDriveEnabled_ { false };
+    double muteGateVolts_ { -14.4 };
+    double wetInputConductanceRatio_ { 0.0 };
+    double wetTransitionRatio_ { -1.0 };
+    SupportChain::ExactTransition wetTransition_ {};
     double clockMuteVolts_ { -15.0 };
     bool clockMuteEnabled_ { false };
     bool clocksStopped_ { false };

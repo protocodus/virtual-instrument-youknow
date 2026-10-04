@@ -337,6 +337,11 @@ struct EngineParameters
     // circuit after the nodal/state and bounded cost audits; raw reference
     // fixtures retain the two-node drive and free-running clocks.
     bool enableChorusClockMuteCircuit { false };
+    // Named same-listed-part finite Tr4/JFET priors; raw keeps the binary
+    // junction comparison. Product selects continuous wet conductance.
+    // Selecting this also requires the complete clock-mute circuit KCL;
+    // the legacy passive two-node drive has no base-clamp current balance.
+    bool enableChorusFiniteMuteDrive { false };
     // On by default: each MN3009 line carries its own fixed-seed insertion
     // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
     // keeps the two returns identical for controlled A/B renders.
@@ -2924,6 +2929,9 @@ private:
     // Keeping the original expression types here lets process() consume the
     // exact same values without repeating exponentials and divisions for every
     // host block.
+    double outputFiniteWetRatio_ { -1.0 };
+    OutputJackLowPass::Coefficients outputFiniteWetPole_ {};
+    float outputFiniteWetBandwidthBlend_ { 1.0f };
     struct ProcessingCoefficients
     {
         float vcfSlew { 0.0f };
