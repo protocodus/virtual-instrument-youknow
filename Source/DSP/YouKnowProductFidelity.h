@@ -113,6 +113,9 @@ struct ProductFidelityProfile
         // The delayed series wet switch also opens IC6's 39k input leg.
         // Follow its physical gate for resistor noise and noise gain.
         parameters.enableOutputSummerMuteLoading = true;
+        // Original M5218L's nominal7MHz/3.6 response and2.2V/us slew on
+        // PHONES only. The current/load-dependent installed limits remain unknown.
+        parameters.enableHeadphoneAmplifierDynamics = true;
         // Named typical same-listed-part Tr4/JFET drive, not installed timing.
         parameters.enableChorusFiniteMuteDrive = true;
         parameters.enableChorusCorrelatedNoise = true;

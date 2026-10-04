@@ -505,6 +505,9 @@ struct EngineParameters
     // A mono host averages its two channels; it never shorts the headphone jack.
     HeadphoneOutput::Route outputRoute { HeadphoneOutput::Route::Line };
     float headphoneLoadOhms { 32.0f }; // explicit electrical load per channel
+    // IC7's original M5218L7MHz/2.2V/us typical component prior. Product on,
+    // raw diagnostic off; not a stored tone/session parameter. LINE is independent.
+    bool enableHeadphoneAmplifierDynamics { false };
     OutputNetwork::Selector outputSelector { OutputNetwork::Selector::High };
     float outputLoadOhms { 0.0f };
     // Added capacitance of each stereo cable/input, or the one mono cable.
@@ -3856,6 +3859,8 @@ private:
     std::uint32_t outputWiperNoiseStateRight_ { 0x8538ecadu };
     std::uint32_t headphoneNoiseStateLeft_ { 0x7c159e37u };
     std::uint32_t headphoneNoiseStateRight_ { 0xe1a6b82du };
+    std::uint32_t headphoneOutputNoiseStateLeft_ { 0x3b71c92du };
+    std::uint32_t headphoneOutputNoiseStateRight_ { 0x8d4e6a13u };
     std::uint32_t commonVcaNoiseState_ { 0x7f4a7c15u };
 
     float displayEnvelope_ { 0.0f };

@@ -1,5 +1,8 @@
 #include "DSP/YouKnowHeadphoneOutput.h"
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowProductFidelity.h"
+
+#include <chrono>
 
 #include <array>
 #include <bit>
@@ -26,7 +29,7 @@ struct Reference { C signal {}, impedance {}; long double noise {}; };
 // current into O, rather than the production's precomputed gain. Every
 // resistor injects an independent4kT/R Norton source. No Thevenin reduction,
 // shelf factor or production coefficient appears in this oracle.
-Reference reference(double volume,double load,double frequency,bool impedance=false)
+Reference reference(double volume,double load,double frequency,bool impedance=false,bool finiteAmplifier=false)
 {
     enum { A,T,W,M,L,H,F,O,K,J,Ground,Count=10 };
     std::array<int,Count+1> parent {};
@@ -63,6 +66,8 @@ Reference reference(double volume,double load,double frequency,bool impedance=fa
     if(!impedance)r(J,Ground,load,false);
     matrix[nodes[O]][supply]=1;
     matrix[supply][nodes[H]]=1;matrix[supply][nodes[F]]=-1;
+    // Independent dominant-pole open-loop device constraint O=(2pi*7MHz/s)*(H-F).
+    if(finiteAmplifier)matrix[supply][nodes[O]]-=s/(2*pi*7e6L);
     for(int row=0;row<count;++row)matrix[row][count+row]=1;
     for(int col=0;col<count;++col)
     {
@@ -177,6 +182,80 @@ void testDigital()
     std::cout<<"PHONES realized errors signal="<<worstDb<<"dB noise="<<worstNoiseDb<<"dB phase="<<worstPhase<<"deg\n";
 }
 
+void testFiniteAmplifier()
+{
+    double worstMagnitude=0,worstPhase=0,worstNoise=0;
+    for(double rate:{8000.,44100.,48000.,96000.,192000.,768000.})
+        for(double load:{32.,80.,300.,600.})
+            for(double volume:{0.,.25,1.})
+            {
+                Phones p;require(p.prepare(rate,load)&&p.setVolume(volume),"finite amplifier setup rejected");
+                p.setAmplifierDynamics(true);
+                require(p.setNoise(298.15,1),"finite amplifier noise setup rejected");
+                std::vector<double> signal(2048),inputNoise(2048),outputNoise(2048);
+                for(std::size_t i=0;i<signal.size();++i)
+                    signal[i]=p.process(i==0?.001:0,0)[0]*1000;
+                p.reset();
+                for(std::size_t i=0;i<inputNoise.size();++i)
+                    inputNoise[i]=p.process(0,0,i==0?1:0,0)[0];
+                p.reset();
+                for(std::size_t i=0;i<outputNoise.size();++i)
+                    outputNoise[i]=p.process(0,0,0,0,i==0?1:0,0)[0];
+                const auto co=p.coefficients();
+                const double g=std::tan(std::numbers::pi*co.inputPoleHz/rate);
+                const double h=std::tan(std::numbers::pi*co.headphonePoleHz/rate);
+                const double a=(1-g)/(1+g),b=(1-h)/(1+h);
+                for(double f:{.2,1.,5.,20.,100.,1000.,std::min(20000.,rate*.45)})
+                {
+                    const auto expected=reference(volume,load,f,false,true);
+                    const auto analog=p.analogResponse(f);
+                    require(std::abs(C{analog.real(),analog.imag()}-expected.signal)
+                        <2e-9L*std::max(1e-16L,std::abs(expected.signal)),
+                        "finite amplifier response differs from independent open-loop nodal constraint");
+                    require(std::abs(p.analogNoisePsd(f,298.15)/double(expected.noise)-1)<2e-9,
+                        "finite amplifier noise differs from each independent resistor source");
+                    if(std::abs(expected.signal)>1e-15L)
+                    {
+                        const auto actual=transform(signal,f,rate,a,b);
+                        const double db=std::abs(20*std::log10(std::abs(actual)/double(std::abs(expected.signal))));
+                        const double phase=std::abs(std::arg(actual/std::complex<double>{double(expected.signal.real()),double(expected.signal.imag())}))*180/std::numbers::pi;
+                        worstMagnitude=std::max(worstMagnitude,db);worstPhase=std::max(worstPhase,phase);
+                        require(db<.02&&phase<.7,"matched amplifier exceeds qualified audio-band magnitude/phase screen");
+                    }
+                    const auto ni=transform(inputNoise,f,rate,a,b),no=transform(outputNoise,f,rate,a,b);
+                    const double db=std::abs(10*std::log10(2/rate*(std::norm(ni)+std::norm(no))/double(expected.noise)));
+                    worstNoise=std::max(worstNoise,db);
+                    require(db<.02,"finite amplifier resistor-noise source routing differs from nodal PSD");
+                }
+            }
+    // Physically independent amplifier output node: slew precedes C26 and
+    // attenuation, so changing the declared load cannot change this trajectory.
+    for(double rate:{8000.,44100.,48000.,96000.,192000.,768000.})
+    {
+        Phones p,q;require(p.prepare(rate,32)&&q.prepare(rate,600),"slew setup failed");
+        p.setAmplifierDynamics(true);q.setAmplifierDynamics(true);
+        double previous=0;bool limited=false;
+        for(int i=0;i<400;++i)
+        {
+            const double input=(i/50)%2?100:-100;
+            (void)p.process(input,0);(void)q.process(input,0);
+            const double voltage=p.amplifierVoltages()[0];
+            const double step=std::abs(voltage-previous),limit=2.2e6/rate;
+            require(step<=limit*(1+2e-14),"IC7 sampled slew exceeded original2.2V/us prior");
+            require(std::abs(voltage-q.amplifierVoltages()[0])<1e-10,"headphone load incorrectly scaled amplifier slew");
+            limited|=step>limit*.999;previous=voltage;
+        }
+        require(limited,"strong diagnostic steps never engaged slew");
+        auto copy=p;require(p.prepare(rate,32),"repeat prepare failed");
+        require(p.process(.5,0)==copy.process(.5,0),"prepare lost retained response/slew state");
+        copy=p;p.setAmplifierDynamics(false);p.setAmplifierDynamics(true);
+        require(p.process(.5,0)==copy.process(.5,0),"option toggles reset capacitor or amplifier history");
+        p.reset();require(p.process(0,0)==std::array<double,2>{0,0},"finite amplifier reset retained a tail");
+    }
+    std::cout<<"finite PHONES response screen max="<<worstMagnitude<<"dB phase="<<worstPhase
+             <<"deg independent resistor PSD="<<worstNoise<<"dB\n";
+}
+
 void testGuardsAndState()
 {
     Phones p;
@@ -196,10 +275,11 @@ void testGuardsAndState()
     require(hostile==std::array<double,2>{0,0},"PHONES failed to sanitize source");
 }
 
-std::vector<float> engineTake(Phones::Route route,double load,bool changedLine=false,bool original=false)
+std::vector<float> engineTake(Phones::Route route,double load,bool changedLine=false,bool original=false,bool dynamics=false)
 {
     auto engine=std::make_unique<youknow::YouKnowEngine>();
     youknow::EngineParameters p;p.outputRoute=route;p.headphoneLoadOhms=float(load);
+    p.enableHeadphoneAmplifierDynamics=dynamics;
     p.calibration=0;p.chorus=youknow::ChorusMode::Off;p.highPass=youknow::HighPassMode::One;
     p.vcfTanhMode=youknow::VcfTanhMode::PolyZoned;p.vcfSolverMode=youknow::VcfSolverMode::Rk4Single;
     if(changedLine){p.outputSelector=youknow::OutputNetwork::Selector::Low;p.outputLoadOhms=10000;p.outputCapacitancePf=5000;p.outputMono=true;}
@@ -210,9 +290,55 @@ std::vector<float> engineTake(Phones::Route route,double load,bool changedLine=f
     require(engine->originalPerformanceHealthy(),"PHONES render lost Original firmware support");
     return out;
 }
+std::vector<float> detailedTake(bool dynamics,Phones::Route route,int block,int quality,bool switchRoute=false)
+{
+    auto e=std::make_unique<youknow::YouKnowEngine>();
+    youknow::EngineParameters p;youknow::ProductFidelityProfile::applyTo(p);
+    p.enableHeadphoneAmplifierDynamics=dynamics;p.outputRoute=route;
+    p.volume=.9f;p.calibration=.7f;p.cutoff=.9f;p.resonance=.1f;
+    p.chorus=youknow::ChorusMode::Off;p.highPass=youknow::HighPassMode::One;
+    p.vcfTanhMode=youknow::VcfTanhMode::PolyZoned;p.vcfSolverMode=youknow::VcfSolverMode::Rk4Single;
+    youknow::ProductFidelityProfile::configureBeforePrepare(*e);
+    require(e->configureThermalStart(true),"cannot settle test board temperature");
+    e->setParameters(p);e->prepare(48000,256,quality);e->noteOn(108,1);
+    std::array<float,256> l{},r{};std::vector<float> result;
+    for(int i=0;i<3072;)
+    {
+        if(switchRoute&&i==1024){p.outputRoute=Phones::Route::Headphones;e->setParameters(p);}
+        const int next=i<1024?1024:3072;
+        const int count=std::min({block,3072-i,next-i});
+        e->process(l.data(),r.data(),count);
+        for(int j=0;j<count;++j){result.push_back(l[j]);result.push_back(r[j]);}
+        i+=count;
+    }
+    return result;
+}
+void testContinuousRouteAndBlocks()
+{
+    for(int quality:{1,4})
+    {
+        const auto before=detailedTake(false,Phones::Route::Line,128,quality);
+        require(before==detailedTake(true,Phones::Route::Line,128,quality),
+            "IC7 dynamics/RNG changed product LINE including upstream noise");
+        const auto phones=detailedTake(true,Phones::Route::Headphones,128,quality);
+        require(phones==detailedTake(true,Phones::Route::Headphones,47,quality),
+            "PHONES response/noise chronology depends on host block size");
+        require(phones==detailedTake(true,Phones::Route::Headphones,128,quality),
+            "reset PHONES sequence is nondeterministic");
+        const auto switched=detailedTake(true,Phones::Route::Line,128,quality,true);
+        require(std::equal(phones.begin()+2048,phones.end(),switched.begin()+2048),
+            "LINE-to-PHONES route switch resurrected stale amplifier/capacitor/RNG history");
+        require(phones!=detailedTake(false,Phones::Route::Headphones,128,quality),
+            "selected dynamics did not reach PHONES product audio");
+    }
+}
+
 void testEngine()
 {
+    youknow::EngineParameters product;youknow::ProductFidelityProfile::applyTo(product);
+    require(product.enableHeadphoneAmplifierDynamics,"product omitted IC7 dynamics");
     const auto line=engineTake(Phones::Route::Line,32);
+    require(line==engineTake(Phones::Route::Line,32,false,false,true),"IC7 dynamics changed LINE audio");
     require(line==engineTake(Phones::Route::Line,600),"unused headphone load altered LINE");
     require(line==engineTake(static_cast<Phones::Route>(99),32),"bad route did not fall back to LINE");
     const auto phones=engineTake(Phones::Route::Headphones,32);
@@ -230,6 +356,6 @@ void testEngine()
 }
 int main()
 {
-    try {testAnalog();testDigital();testGuardsAndState();testEngine();std::cout<<"PHONES output checks passed\n";}
+    try {testAnalog();testDigital();testFiniteAmplifier();testGuardsAndState();testEngine();testContinuousRouteAndBlocks();std::cout<<"PHONES output checks passed\n";}
     catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

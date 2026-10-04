@@ -6365,6 +6365,8 @@ void YouKnowEngine::clearOutputPath() noexcept
     headphoneOutput_.reset();
     headphoneNoiseStateLeft_ = 0x7c159e37u;
     headphoneNoiseStateRight_ = 0xe1a6b82du;
+    headphoneOutputNoiseStateLeft_ = 0x3b71c92du;
+    headphoneOutputNoiseStateRight_ = 0x8d4e6a13u;
     outputNoiseStateLeft_ = 0x91e10da5u;
     outputNoiseStateRight_ = 0xd1b54a35u;
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
@@ -11460,6 +11462,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         parameters.outputLoadOhms, parameters.outputMono,
         double(parameters.outputCapacitancePf) * 1e-12 });
     (void) headphoneOutput_.setLoad(parameters.headphoneLoadOhms);
+    headphoneOutput_.setAmplifierDynamics(parameters.enableHeadphoneAmplifierDynamics);
     const bool useHeadphones = parameters.outputRoute == HeadphoneOutput::Route::Headphones;
     const bool useSelectedOutput =
         parameters.outputSelector != OutputNetwork::Selector::High
@@ -12507,12 +12510,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         // RNGs are separate, preserving every historical LINE random sequence.
         headphoneNoiseStateLeft_ = xorshift32(headphoneNoiseStateLeft_);
         headphoneNoiseStateRight_ = xorshift32(headphoneNoiseStateRight_);
+        headphoneOutputNoiseStateLeft_ = xorshift32(headphoneOutputNoiseStateLeft_);
+        headphoneOutputNoiseStateRight_ = xorshift32(headphoneOutputNoiseStateRight_);
         (void) headphoneOutput_.setVolume(glidedVolume_);
         (void) headphoneOutput_.setNoise(jackBoardCelsius_ + 273.15, parameters.calibration);
         const auto headphoneOutput = headphoneOutput_.process(
             networkInputLeft * internalVoltsPerUnit, networkInputRight * internalVoltsPerUnit,
             std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateRight_));
+            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateRight_),
+            std::sqrt(3.0) * bipolarFromState(headphoneOutputNoiseStateLeft_),
+            std::sqrt(3.0) * bipolarFromState(headphoneOutputNoiseStateRight_));
         const float passiveNoiseScale =
             outputPassiveNoiseScale * jackBoardJohnsonScale_;
         outputLeft += bipolarFromState(outputWiperNoiseStateLeft_)
