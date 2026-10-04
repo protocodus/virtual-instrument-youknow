@@ -93,6 +93,8 @@ inline constexpr auto outputSelector = "outputSelector";
 inline constexpr auto outputLoad = "outputLoad";
 inline constexpr auto originalPerformance = "originalPerformance";
 inline constexpr auto outputCapacitance = "outputCapacitance";
+inline constexpr auto outputRoute = "outputRoute";
+inline constexpr auto headphoneLoad = "headphoneLoad";
 } // namespace parameters
 
 namespace panel

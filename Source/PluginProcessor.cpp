@@ -920,6 +920,16 @@ YouKnowAudioProcessor::createParameterLayout()
         juce::ParameterID { originalPerformance, 11 }, "Performance Timing",
         juce::StringArray { "Direct", "Original" }, 0,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+    // Append after every shipped host/AU index. These describe a connection,
+    // never a tone, and are deliberately not host-automatable.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { outputRoute, 12 }, "Output Route",
+        juce::StringArray { "LINE", "PHONES" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { headphoneLoad, 12 }, "Headphone Load",
+        juce::StringArray { "32 Ohm", "80 Ohm", "300 Ohm", "600 Ohm" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
     return layout;
 }
 
@@ -983,6 +993,8 @@ YouKnowAudioProcessor::YouKnowAudioProcessor()
         { ParameterIndex::outputLoad, outputLoad },
         { ParameterIndex::originalPerformance, originalPerformance },
         { ParameterIndex::outputCapacitance, outputCapacitance },
+        { ParameterIndex::outputRoute, outputRoute },
+        { ParameterIndex::headphoneLoad, headphoneLoad },
         { ParameterIndex::pitchBend, pitchBend },
         { ParameterIndex::modulation, modulation }
     });
@@ -1278,6 +1290,10 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
     engineParameters.velocityDepth = valueOf (P::velocity);
     engineParameters.calibration = valueOf (P::calibration);
     engineParameters.aging = valueOf (P::aging);
+    engineParameters.outputRoute = static_cast<youknow::HeadphoneOutput::Route> (
+        choiceOf (P::outputRoute, 1));
+    engineParameters.headphoneLoadOhms = headphoneLoadOhmsForChoice (
+        choiceOf (P::headphoneLoad, headphoneLoadChoiceCount - 1));
     engineParameters.outputSelector = static_cast<youknow::OutputNetwork::Selector> (
         choiceOf (P::outputSelector, 2));
     engineParameters.outputLoadOhms = outputLoadOhmsForChoice (

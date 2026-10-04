@@ -2239,42 +2239,56 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
     outputButton.setName ("Output connections");
     outputButton.setTitle ("Output connections");
     outputButton.setTooltip (
-        "Select the rear-panel High, Medium or Low output level and the input "
-        "resistance and cable/input capacitance of the connected equipment. "
-        "Open means no resistive load; 0 pF adds no external capacitance. "
-        "Stereo uses one load per jack; mono uses one shared cable/input. "
-        "These settings stay unchanged when you load a preset.");
+        "Select LINE jacks or the PHONES amplifier. LINE uses the rear-panel "
+        "High/Medium/Low selector and declared receiver resistance/capacitance. "
+        "PHONES uses a declared 32/80/300/600 Ohm electrical load per channel, "
+        "with LINE unplugged; its bass and level follow the headphone circuit. "
+        "A mono host averages PHONES channels without joining the physical outputs. "
+        "Connection settings stay unchanged when you load a preset.");
     outputButton.onClick = [this]
     {
         juce::PopupMenu menu;
-        for (const auto* id : { outputSelector, outputLoad, outputCapacitance })
+        const auto* route = dynamic_cast<juce::AudioParameterChoice*> (
+            audioProcessor.parameters.getParameter (outputRoute));
+        const bool phones = route != nullptr && route->getIndex() == 1;
+        menu.addSectionHeader ("Output route");
+        if (route != nullptr)
+            for (int index = 0; index < route->choices.size(); ++index)
+                menu.addItem (301 + index, route->choices[index], true,
+                              route->getIndex() == index);
+        for (const auto* id : { outputSelector, outputLoad, outputCapacitance, headphoneLoad })
         {
             auto* choice = dynamic_cast<juce::AudioParameterChoice*> (
                 audioProcessor.parameters.getParameter (id));
-            if (choice == nullptr)
-                continue;
-            menu.addSectionHeader (id == outputSelector ? "Output level"
-                                  : id == outputLoad ? "Receiver input resistance"
-                                                     : "Cable + input capacitance");
-            const int base = id == outputSelector ? 1 : id == outputLoad ? 101 : 201;
+            if (choice == nullptr) continue;
+            const int base = id == outputSelector ? 1 : id == outputLoad ? 101
+                           : id == outputCapacitance ? 201 : 401;
+            const auto title = id == outputSelector ? "LINE level"
+                             : id == outputLoad ? "LINE receiver resistance"
+                             : id == outputCapacitance ? "LINE cable + input capacitance"
+                                                      : "PHONES load";
+            juce::PopupMenu submenu;
             for (int index = 0; index < choice->choices.size(); ++index)
-                menu.addItem (base + index, choice->choices[index], true,
-                              choice->getIndex() == index);
+                submenu.addItem (base + index, choice->choices[index], true,
+                                 choice->getIndex() == index);
+            menu.addSubMenu (juce::String (title) + ": " + choice->choices[choice->getIndex()],
+                             submenu, id == headphoneLoad ? phones : !phones);
         }
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&outputButton),
             [safe = juce::Component::SafePointer<YouKnowAudioProcessorEditor> (this)] (int result)
             {
-                if (safe == nullptr || result == 0)
-                    return;
-                const auto* id = result >= 201 ? youknow::parameters::outputCapacitance
+                if (safe == nullptr || result == 0) return;
+                const auto* id = result >= 401 ? youknow::parameters::headphoneLoad
+                               : result >= 301 ? youknow::parameters::outputRoute
+                               : result >= 201 ? youknow::parameters::outputCapacitance
                                : result >= 101 ? youknow::parameters::outputLoad
                                                : youknow::parameters::outputSelector;
-                const int index = result >= 201 ? result - 201
-                                : result >= 101 ? result - 101 : result - 1;
+                const int base = result >= 401 ? 401 : result >= 301 ? 301
+                               : result >= 201 ? 201 : result >= 101 ? 101 : 1;
                 if (auto* parameter = safe->audioProcessor.parameters.getParameter (id))
                 {
                     parameter->beginChangeGesture();
-                    parameter->setValueNotifyingHost (parameter->convertTo0to1 (static_cast<float> (index)));
+                    parameter->setValueNotifyingHost (parameter->convertTo0to1 (static_cast<float> (result - base)));
                     parameter->endChangeGesture();
                 }
             });
