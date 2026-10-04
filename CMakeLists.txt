@@ -110,6 +110,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowDcoReset.h
     Source/DSP/YouKnowControlDac.h
     Source/DSP/YouKnowEnvelopeHold.h
+    Source/DSP/YouKnowChorusBucketNoise.h
     Source/DSP/YouKnowChorusMuteDrive.h
     Source/DSP/YouKnowProductFidelity.h
     Source/DSP/YouKnowVcaControl.h
@@ -790,6 +791,10 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowOutputSummerMuteTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputSummerMute COMMAND YouKnowOutputSummerMuteTests)
     set_tests_properties(YouKnow.OutputSummerMute PROPERTIES TIMEOUT 60)
+    add_executable(YouKnowChorusBucketNoiseTests Tests/YouKnowChorusBucketNoiseTests.cpp)
+    target_link_libraries(YouKnowChorusBucketNoiseTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusBucketNoise COMMAND YouKnowChorusBucketNoiseTests)
+    set_tests_properties(YouKnow.ChorusBucketNoise PROPERTIES TIMEOUT 180)
     add_executable(YouKnowChorusFiniteMuteTests Tests/YouKnowChorusFiniteMuteTests.cpp)
     target_link_libraries(YouKnowChorusFiniteMuteTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.ChorusFiniteMute COMMAND YouKnowChorusFiniteMuteTests)

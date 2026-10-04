@@ -6733,6 +6733,8 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     result.calibration = std::isfinite(result.calibration)
         ? std::clamp(result.calibration, 0.0f, EngineParameters::calibrationCeiling) : 1.0f;
     fix01(result.chorusNoise, Chorus::defaultNoiseScale);
+    fix01(result.chorusNoiseTransferFraction, 0.0f);
+    fix01(result.chorusNoiseTransferCorrelation, 1.0f);
 
     result.masterTuneCents = std::isfinite(result.masterTuneCents)
                            ? std::clamp(result.masterTuneCents, -50.0f, 50.0f)
@@ -12254,7 +12256,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 parameters.enableChorusLineGainSpread,
                                 parameters.chorusTimingProfile,
                                 parameters.enableChorusClockMuteCircuit,
-                                parameters.enableChorusFiniteMuteDrive);
+                                parameters.enableChorusFiniteMuteDrive,
+                                parameters.enableChorusCorrelatedNoise,
+                                parameters.chorusNoiseTransferFraction,
+                                parameters.chorusNoiseTransferCorrelation);
 
             // TA75558S IC6 has finite loaded output swing inside its +/-15 V
             // supplies. The modelled 13.5 V asymptote and knee are provisional

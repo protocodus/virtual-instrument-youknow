@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <limits>
 #include <type_traits>
 
@@ -2045,6 +2046,9 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     exactOutputPrevious3 = 0.0f;
     transferState = 0.0f;
     noiseState = seed | 1u;
+    transferNoiseState = (seed ^ 0xd1b54a35u) | 1u;
+    previousTransferNoise = 0.0f;
+    bucketNoise = {};
     pastBlepEvents.fill({});
     pastBlepEventCount = 0;
 }
@@ -2146,6 +2150,8 @@ double Chorus::Line::deterministicBlepCorrection(
     float predictedTransferState = transferState;
     float predictedHeld = held;
     std::uint32_t predictedNoiseState = noiseState;
+    std::uint32_t predictedTransferNoiseState = transferNoiseState;
+    float predictedPreviousTransferNoise = previousTransferNoise;
     int futureIndex = writeIndex;
     if (!outputPendingThisPeriod)
         futureIndex = futureIndex + 1 < cellPairs ? futureIndex + 1 : 0;
@@ -2163,7 +2169,12 @@ double Chorus::Line::deterministicBlepCorrection(
             predictedTransferState,
             cells[static_cast<std::size_t>(futureIndex)]);
         predictedNoiseState = nextNoiseState(predictedNoiseState);
-        predictedHeld = predictedTransferState + noiseFromState(predictedNoiseState)
+        predictedTransferNoiseState = nextNoiseState(predictedTransferNoiseState);
+        const float transferDraw = noiseFromState(predictedTransferNoiseState);
+        const float draw = ChorusBucketNoise::step(noiseFromState(predictedNoiseState),
+            transferDraw,predictedPreviousTransferNoise,bucketNoise);
+        predictedPreviousTransferNoise = transferDraw;
+        predictedHeld = predictedTransferState + draw
             * Chorus::independentLineRandomAmplitude * noiseScale;
         const float jump = predictedHeld - before;
 
@@ -2255,12 +2266,19 @@ float Chorus::Line::processClockedCore(float limitedInput, double clockHz,
         // noise with a sin^2(pi*f/fcp) shape and distributed transfer loss.
         // https://www.imagesensors.org/Past%20Workshops/Marvin%20White%20Collection/1977%20Short%20Course/1977%203%20Weckler.pdf
         // A unit-variance first difference reproduces the ideal shape, but
-        // alone overstates the captured high/low density contrast. Storage
-        // and output noise proportions are unknown; replacing or adding it
-        // at this calibrated amplitude would invent that mixture (OQ-03).
+        // alone overstates the captured high/low density contrast. The optional
+        // effective covariance family splits the existing source budget and
+        // normalizes A-weighted output, with explicit fraction/correlation.
+        // These do not identify microscopic storage/transfer strengths(OQ-03).
+        // Both extra state and the legacy draw advance ONLY at physical output
+        // events; the BLEP predictor uses copies of these SAME histories.
         noiseState = nextNoiseState(noiseState);
-        held = transferState
-             + noiseFromState(noiseState)
+        transferNoiseState = nextNoiseState(transferNoiseState);
+        const float transferDraw = noiseFromState(transferNoiseState);
+        const float draw = ChorusBucketNoise::step(noiseFromState(noiseState),
+            transferDraw,previousTransferNoise,bucketNoise);
+        previousTransferNoise = transferDraw;
+        held = transferState + draw
                * Chorus::independentLineRandomAmplitude * noiseScale;
         rememberBlepEvent(held - heldBefore, ageInSamples);
         if (recoverHeldOutput && outputEventCount < maximumHalfCycleEventsPerSample)
@@ -2386,9 +2404,80 @@ void Chorus::prepareSupportRates(double hostSampleRate) noexcept
     supportRatesPrepared_ = true;
 }
 
+namespace
+{
+using NoiseMomentTable=std::array<double,Chorus::noiseMomentIntervals+1>;
+NoiseMomentTable makeNoiseMoments(ChorusSupportProfile profile) noexcept
+{
+    // Analogue small-signal transfer of the SAME connected post circuit,
+    // including the selected finite followers and nominal JFET Ron. Noise
+    // voltage is small relative to Vt; the nonlinear profile has this same
+    // idle tangent. This normalization is independent of numerical rate.
+    // The budget is defined at the nominal SETTLED conducting product gate.
+    // Keep that source reference during a mute transition: recalibrating to
+    // the departing load would counteract physical attenuation. Diagnostics
+    // with finite drive disabled retain this nominal reference rather than
+    // claiming an exact budget for their ideal-switch loading.
+    const double ratio=ChorusMuteDrive::conductanceRatio(0.0);
+    AnalogMatrix a; AnalogDrive b,readout{{0,0,0,0,1,-1}}; double direct=0;
+    if(profile==ChorusSupportProfile::IdealFollowers)
+    {a=outputSupportMatrix(ratio);b=outputSupportDrive();}
+    else
+    {const auto circuit=finiteSupportCircuit(false,ratio);a=circuit.generator;b=circuit.drive;readout=circuit.outputByState;direct=circuit.outputDirect;}
+    constexpr int quadrature=2048;
+    std::array<double,quadrature> weightedPower{},frequency{};
+    for(int k=0;k<quadrature;++k)
+    {
+        const double f=20.0+(k+.5)*(20000.0-20.0)/quadrature;
+        frequency[k]=f;
+        std::array<std::array<std::complex<double>,7>,6> matrix{};
+        for(int i=0;i<6;++i){for(int j=0;j<6;++j)matrix[i][j]=-a[i][j];matrix[i][i]+=std::complex<double>(0,2*pi*f);matrix[i][6]=b[i];}
+        for(int j=0;j<6;++j)
+        {
+            int pivot=j;for(int i=j+1;i<6;++i)if(std::norm(matrix[i][j])>std::norm(matrix[pivot][j]))pivot=i;
+            std::swap(matrix[j],matrix[pivot]);const auto divisor=matrix[j][j];
+            for(int k2=j;k2<7;++k2)matrix[j][k2]/=divisor;
+            for(int i=0;i<6;++i)if(i!=j){const auto scale=matrix[i][j];for(int k2=j;k2<7;++k2)matrix[i][k2]-=scale*matrix[j][k2];}
+        }
+        std::complex<double> output=direct;for(int i=0;i<6;++i)output+=readout[i]*matrix[i][6];
+        const double f2=f*f;
+        const double ra=12194.0*12194.0*f2*f2/((f2+20.6*20.6)*std::sqrt((f2+107.7*107.7)*(f2+737.9*737.9))*(f2+12194.0*12194.0));
+        weightedPower[k]=std::norm(output)*std::pow(ra/.79434639,2);
+    }
+    NoiseMomentTable result{};
+    for(std::size_t i=0;i<result.size();++i)
+    {
+        const double clock=10000.0+190000.0*i/Chorus::noiseMomentIntervals;
+        double power=0,moment=0;
+        for(int k=0;k<quadrature;++k)
+        {const double x=pi*frequency[k]/clock;const double w=weightedPower[k]*std::pow(std::sin(x)/x,2);power+=w;moment+=w*std::cos(2*x);}
+        result[i]=moment/power;
+    }
+    return result;
+}
+const NoiseMomentTable& noiseMomentsFor(ChorusSupportProfile profile) noexcept
+{
+    // Warmed by prepare(), never lazily initialized on an audio callback.
+    if(profile==ChorusSupportProfile::IdealFollowers)
+    {static const auto ideal=makeNoiseMoments(profile);return ideal;}
+    static const auto finite=makeNoiseMoments(ChorusSupportProfile::Nominal2SA1015);
+    return finite;
+}
+}
+double Chorus::bucketNoiseCosineMoment(double clockHz) const noexcept
+{
+    if(noiseCosineMoments_==nullptr||!std::isfinite(clockHz))return 0.0;
+    const double index=(std::clamp(clockHz,10000.0,200000.0)-10000.0)
+                       *noiseMomentIntervals/190000.0;
+    const auto i=std::min(static_cast<std::size_t>(index),noiseMomentIntervals-1);
+    const double t=index-i;
+    return (*noiseCosineMoments_)[i]+t*((*noiseCosineMoments_)[i+1]-(*noiseCosineMoments_)[i]);
+}
+
 void Chorus::prepare(double sampleRate, bool preserveState) noexcept
 {
     supportProfilePrepared_ = true;
+    noiseCosineMoments_ = &noiseMomentsFor(supportProfile_);
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
     wetMuteGlide_ = 1.0f - std::exp(-inverseSampleRate_ / wetMuteTimeConstantSeconds);
@@ -2702,7 +2791,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableLineGainSpread,
                      ChorusTimingProfile timingProfile,
                      bool enableClockMuteCircuit,
-                     bool enableFiniteMuteDrive) noexcept
+                     bool enableFiniteMuteDrive,
+                     bool enableCorrelatedNoise,
+                     float noiseTransferFraction,
+                     float noiseTransferCorrelation) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -2890,6 +2982,17 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // Line callers keep their exact former behavior, including RNG advances.
     const double clockA = clocksStopped_ ? 0.0 : clock[0];
     const double clockB = clocksStopped_ ? 0.0 : clock[1];
+    if(enableCorrelatedNoise)
+    {
+        auto mix=ChorusBucketNoise::coefficients(noiseTransferFraction,noiseTransferCorrelation);
+        lineA_.bucketNoise=mix;lineB_.bucketNoise=mix;
+        if(mix.eta!=0.0)
+        {
+            ChorusBucketNoise::normalize(lineA_.bucketNoise,bucketNoiseCosineMoment(clock[0]));
+            ChorusBucketNoise::normalize(lineB_.bucketNoise,bucketNoiseCosineMoment(clock[1]));
+        }
+    }
+    else {lineA_.bucketNoise={};lineB_.bucketNoise={};}
 
     // C28/C25 see the 39 kOhm mixer legs through Tr11/Tr12, so their
     // loading follows the RC-delayed gate, including continuous finite

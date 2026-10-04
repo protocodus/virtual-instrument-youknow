@@ -1,6 +1,7 @@
 #pragma once
 
 #include "YouKnowChorusMuteDrive.h"
+#include "YouKnowChorusBucketNoise.h"
 
 #include <array>
 #include <cmath>
@@ -297,8 +298,9 @@ public:
 
     // Advances one sample. `noiseScale` is the single master for every
     // declared chorus-noise component; 1.0 preserves the compatibility hiss
-    // and 0.0 removes all of them. A calibrated hardware noise reference has
-    // not yet been located, so the optional common/hum/spur amplitudes are zero.
+    // and 0.0 removes all of them. A calibrated hardware noise reference
+    // exists for one original chorus board; the optional common/hum/spur
+    // source strengths remain unidentified, so their amplitudes are zero.
     //
     // There is deliberately no separate storage-capacitance term. The MN3009's
     // C_gs is voltage dependent, but what that produces is distortion and a
@@ -340,7 +342,10 @@ public:
                  bool enableLineGainSpread = false,
                  ChorusTimingProfile timingProfile = ChorusTimingProfile::Shipping,
                  bool enableClockMuteCircuit = false,
-                 bool enableFiniteMuteDrive = false) noexcept;
+                 bool enableFiniteMuteDrive = false,
+                 bool enableCorrelatedNoise = false,
+                 float noiseTransferFraction = 0.0f,
+                 float noiseTransferCorrelation = 1.0f) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -812,6 +817,11 @@ public:
     { return finiteMuteDriveEnabled_ ? wetInputConductanceRatio_ : (muteDriveMuted_ ? 0.0 : 1.0); }
     [[nodiscard]] double muteGateVolts() const noexcept { return muteGateVolts_; }
 
+    // Prepare-only physical support quadrature is cached independently of
+    // host rate. The interpolation changes no noise draw or packet history.
+    static constexpr std::size_t noiseMomentIntervals = 1024;
+    [[nodiscard]] double bucketNoiseCosineMoment(double clockHz) const noexcept;
+
     [[nodiscard]] double getLfoPhase() const noexcept { return lfoPhase_; }
 
 private:
@@ -921,6 +931,9 @@ private:
         double exactOutputPrevious3 { 0.0 };
         float transferState { 0.0f };
         std::uint32_t noiseState { 0x9e3779b9u };
+        std::uint32_t transferNoiseState { 0xd1b54a35u };
+        float previousTransferNoise { 0.0f };
+        ChorusBucketNoise::Coefficients bucketNoise {};
         std::array<BlepEvent, maximumBlepEvents> pastBlepEvents {};
         int pastBlepEventCount { 0 };
 
@@ -1008,6 +1021,7 @@ private:
     // Set while the settled-bypass path skips the muted lines; the next
     // engaged process() rebuilds the wet path from silence before use.
     bool wetPathFlushPending_ { false };
+    const std::array<double, noiseMomentIntervals + 1>* noiseCosineMoments_ { nullptr };
     OptionalNoiseComponents optionalNoise_ {};
     std::uint32_t commonNoiseState_ { 0xd1b54a35u };
     std::uint32_t orthogonalNoiseState_ { 0x94d049bbu };

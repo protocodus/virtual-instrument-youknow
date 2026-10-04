@@ -44,6 +44,26 @@ struct ProductFidelityProfile
     // This changes the pulse leg's relative level, with no output compensation.
     static constexpr float pulseLevelScale = 0.857f;
 
+    // One-unit EFFECTIVE output-packet covariance calibration, 2026-10-04.
+    // Thornber transfer/storage theory motivates PSD 1-eta*cos(w). The
+    // original chorus board of #439522 supplies seven qualified Mode-I idle
+    // patches in four hash-pinned April AIFF banks. FitChorusBucketNoise.py
+    // fixes the current finite-followers/Tr4 support and OwnerBlend shared
+    // opposite-phase LFO; it fits eta on A1/A2 even bands only. B3/B4 odd-band
+    // RMSE improves 4.288 -> 0.988 dB (two locked-eta Mode-II patches:
+    // 4.146 -> 1.068 dB). Phase/gain nuisances use even bands only. Doubling
+    // integration/phase resolution changes eta by0.000013; omitting one
+    // training patch gives0.911864..0.925042. This is not a population bound.
+    // Product r=eta,c=1 is a REPRESENTATIVE algebraic convention: PSD only
+    // identifies eta=2*r*c/(1+c*c), not separate microscopic strengths or
+    // transfer efficiency. Recording response and geometry remain conditional.
+    // A-weighted normalization preserves the existing2.37 source scalar.
+    // Capture/protocol hashes and the reproducible split are enforced by:
+    // Tools/FitChorusBucketNoise.py, Tools/AnalyzeChorusIdleFloors.py.
+    // https://www.lewisfrancis.com/nwio/Juno-10-test-audio-96K.zip
+    // https://vtda.org/pubs/BSTJ/vol53-1974/articles/bstj53-7-1211.pdf
+    static constexpr float chorusNoiseEffectiveCovariance = 0.9171323f;
+
     // Configure a newly constructed engine exactly once. Circuit configuration
     // persists across prepare()/reset(), but changing it live is unsupported.
     // A full coupled-mixer comparison replaces the independent C56 pole and,
@@ -95,6 +115,9 @@ struct ProductFidelityProfile
         parameters.enableOutputSummerMuteLoading = true;
         // Named typical same-listed-part Tr4/JFET drive, not installed timing.
         parameters.enableChorusFiniteMuteDrive = true;
+        parameters.enableChorusCorrelatedNoise = true;
+        parameters.chorusNoiseTransferFraction = chorusNoiseEffectiveCovariance;
+        parameters.chorusNoiseTransferCorrelation = 1.0f;
         // C41/R79 retains its analogue-band magnitude on the default 1x
         // grid, with the same source density and positive physical RC decay.
         parameters.enableMainNoiseMagnitudePole = true;

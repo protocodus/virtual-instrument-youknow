@@ -371,6 +371,13 @@ struct EngineParameters
     // 4.21 dB causal hypothesis for controlled comparisons; it does not
     // multiply the two profiles. OQ-03 still owns absolute level and causality.
     bool useChorusRateNoiseHypothesis { false };
+    // Effective output-packet transfer/storage covariance family. Source
+    // strengths and weakened correlation are explicit internal research
+    // inputs, not host parameters or inferred microscopic BBD constants.
+    // One existing A-weighted noise budget is redistributed, never added.
+    bool enableChorusCorrelatedNoise { false };
+    float chorusNoiseTransferFraction { 0.0f };
+    float chorusNoiseTransferCorrelation { 1.0f };
     // Comparison-only. The former default used an unmeasured 0.15 voltage
     // coefficient, driven from the bus rather than the voltage across C14.
     // Current aluminum-electrolytic manufacturer guidance says voltage bias
