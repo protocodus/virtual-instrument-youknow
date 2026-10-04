@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <numbers>
@@ -59,12 +60,12 @@ struct OtaShotNoise {
     };
     [[nodiscard]] static Matrix multiply(const Matrix&a,const Matrix&b) noexcept {
         Matrix c{};
-        for(int i=0;i<4;++i)for(int j=0;j<4;++j)
-            for(int k=0;k<4;++k)c[i][j]+=a[i][k]*b[k][j];
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)
+            for(std::size_t k=0;k<4;++k)c[i][j]+=a[i][k]*b[k][j];
         return c;
     }
     [[nodiscard]] static Matrix transpose(const Matrix&a) noexcept {
-        Matrix b{};for(int i=0;i<4;++i)for(int j=0;j<4;++j)b[i][j]=a[j][i];return b;
+        Matrix b{};for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)b[i][j]=a[j][i];return b;
     }
     // Locally frozen linear SDE dV=J*Vdt+B*dW. Single-sided current PSD S
     // gives BB'=S/(2*C*C); thus dW has variance dt, NOT fs/2 or one fresh
@@ -82,16 +83,16 @@ struct OtaShotNoise {
         const double scale=std::ldexp(1.0,-squares);
         for(auto&row:a)for(double&x:row)x*=scale;
         Matrix f{},term{},q{};
-        for(int i=0;i<4;++i){f[i][i]=term[i][i]=1;q[i][i]=intervalDiffusion[i]*scale;}
+        for(std::size_t i=0;i<4;++i){f[i][i]=term[i][i]=1;q[i][i]=intervalDiffusion[i]*scale;}
         for(int order=1;order<=8;++order){term=multiply(a,term);for(auto&row:term)for(double&x:row)x/=order;
-            for(int i=0;i<4;++i)for(int j=0;j<4;++j)f[i][j]+=term[i][j];}
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)f[i][j]+=term[i][j];}
         term=q;const auto at=transpose(a);
         for(int order=1;order<=8;++order){const auto left=multiply(a,term),right=multiply(term,at);
-            for(int i=0;i<4;++i)for(int j=0;j<4;++j){term[i][j]=(left[i][j]+right[i][j])/(order+1);q[i][j]+=term[i][j];}}
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j){term[i][j]=(left[i][j]+right[i][j])/(order+1);q[i][j]+=term[i][j];}}
         for(int square=0;square<squares;++square){const auto propagated=multiply(multiply(f,q),transpose(f));
-            for(int i=0;i<4;++i)for(int j=0;j<4;++j)q[i][j]+=propagated[i][j];f=multiply(f,f);}
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];f=multiply(f,f);}
         // Remove roundoff asymmetry before Cholesky, without changing energy.
-        for(int i=0;i<4;++i)for(int j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
         return q;
     }
     // The four-stage ring has only its diagonal, three lower neighbours
@@ -108,7 +109,7 @@ struct OtaShotNoise {
         if(*minimum<.01 * *maximum)return positiveCovariance(a,intervalDiffusion);
         Vector diagonal{},neighbour{};
         double norm=0;
-        for(int i=0;i<4;++i) {
+        for(std::size_t i=0;i<4;++i) {
             diagonal[i]=a[i][i];neighbour[i]=a[i][(i+3)&3];
             norm=std::max(norm,std::abs(diagonal[i])+std::abs(neighbour[i]));
         }
@@ -119,13 +120,13 @@ struct OtaShotNoise {
         // independent continuous ODE oracle. The physical model does not
         // warrant doing eight terms for every very small interval.
         const int terms=norm<=.125?4:6;
-        for(int i=0;i<4;++i) {
+        for(std::size_t i=0;i<4;++i) {
             diagonal[i]*=scale;neighbour[i]*=scale;
             q[i][i]=term[i][i]=intervalDiffusion[i]*scale;
         }
         for(int order=1;order<=terms;++order) {
             Matrix next{};
-            for(int i=0;i<4;++i)for(int j=0;j<=i;++j) {
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
                 const double value=((diagonal[i]+diagonal[j])*term[i][j]
                     +neighbour[i]*term[(i+3)&3][j]
                     +neighbour[j]*term[i][(j+3)&3])/(order+1);
@@ -136,10 +137,10 @@ struct OtaShotNoise {
         }
         if(squares>0) {
             Matrix f{};term={};
-            for(int i=0;i<4;++i)f[i][i]=term[i][i]=1;
+            for(std::size_t i=0;i<4;++i)f[i][i]=term[i][i]=1;
             for(int order=1;order<=terms;++order) {
                 Matrix next{};
-                for(int i=0;i<4;++i)for(int j=0;j<4;++j) {
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j) {
                     next[i][j]=(diagonal[i]*term[i][j]
                         +neighbour[i]*term[(i+3)&3][j])/order;
                     f[i][j]+=next[i][j];
@@ -148,10 +149,10 @@ struct OtaShotNoise {
             }
             for(int square=0;square<squares;++square) {
                 const auto propagated=multiply(multiply(f,q),transpose(f));
-                for(int i=0;i<4;++i)for(int j=0;j<4;++j)q[i][j]+=propagated[i][j];
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];
                 f=multiply(f,f);
             }
-            for(int i=0;i<4;++i)for(int j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
         }
         return q;
     }
@@ -164,9 +165,9 @@ struct OtaShotNoise {
         constexpr Vector nodes{.06943184420297371,.33000947820757187,.6699905217924281,.9305681557970262};
         constexpr Vector weights{.1739274225687269,.3260725774312731,.3260725774312731,.1739274225687269};
         const auto exponential=[&](double position,int terms) {
-            Matrix f{},term{};for(int i=0;i<4;++i)f[i][i]=term[i][i]=1;
+            Matrix f{},term{};for(std::size_t i=0;i<4;++i)f[i][i]=term[i][i]=1;
             for(int order=1;order<=terms;++order){Matrix next{};
-                for(int i=0;i<4;++i)for(int j=0;j<4;++j) {
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j) {
                     next[i][j]=(a[i][i]*term[i][j]+a[i][(i+3)&3]*term[(i+3)&3][j])*position/order;
                     f[i][j]+=next[i][j];
                 }
@@ -178,25 +179,25 @@ struct OtaShotNoise {
         // source. exp Taylor8 is used on this <=.25 scaled interval;
         // projected node variances are screened independently, not only norm.
         Matrix q{};
-        for(int node=0;node<4;++node) {
+        for(std::size_t node=0;node<4;++node) {
             const auto f=exponential(nodes[node],8);
-            for(int i=0;i<4;++i)for(int j=0;j<=i;++j) {
-                double value=0;for(int k=0;k<4;++k)value+=f[i][k]*d[k]*f[j][k];
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
+                double value=0;for(std::size_t k=0;k<4;++k)value+=f[i][k]*d[k]*f[j][k];
                 q[i][j]+=weights[node]*value;
             }
         }
-        for(int i=0;i<4;++i)for(int j=0;j<i;++j)q[j][i]=q[i][j];
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[j][i]=q[i][j];
         if(squares>0){auto f=exponential(1,8);
             for(int square=0;square<squares;++square){const auto propagated=multiply(multiply(f,q),transpose(f));
-                for(int i=0;i<4;++i)for(int j=0;j<4;++j)q[i][j]+=propagated[i][j];f=multiply(f,f);}
-            for(int i=0;i<4;++i)for(int j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];f=multiply(f,f);}
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
         }return q;
     }
     [[nodiscard]] static Matrix factor(const Matrix&q,bool*valid=nullptr) noexcept {
         if(valid)*valid=true;
         Matrix l{};
-        for(int i=0;i<4;++i){for(int j=0;j<=i;++j){double value=q[i][j];
-            for(int k=0;k<j;++k)value-=l[i][k]*l[j][k];
+        for(std::size_t i=0;i<4;++i){for(std::size_t j=0;j<=i;++j){double value=q[i][j];
+            for(std::size_t k=0;k<j;++k)value-=l[i][k]*l[j][k];
             // Only roundoff-scale negative pivots may be floored. Cache
             // retries a non-roundoff failure through positive quadrature.
             if(i==j&&value < -256*std::numeric_limits<double>::epsilon()*std::abs(q[i][i])) {
@@ -208,7 +209,7 @@ struct OtaShotNoise {
     }
     [[nodiscard]] static Vector applyFactor(const Matrix&l,const Vector&normal) noexcept {
         Vector result{};
-        for(int i=0;i<4;++i)for(int j=0;j<=i;++j)result[i]+=l[i][j]*normal[j];
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j)result[i]+=l[i][j]*normal[j];
         return result;
     }
     [[nodiscard]] static Vector innovation(const Matrix&q,const Vector&normal) noexcept {
@@ -225,9 +226,9 @@ struct OtaShotNoise {
         static constexpr double diffusionTolerance=.001;
         [[nodiscard]] Vector next(const Matrix&currentA,const Vector&currentD,const Vector&normal) noexcept {
             bool rebuild=!primed;
-            for(int i=0;i<4&&!rebuild;++i) {
+            for(std::size_t i=0;i<4&&!rebuild;++i) {
                 double difference=0;
-                for(int j=0;j<4;++j)difference+=std::abs(currentA[i][j]-a[i][j]);
+                for(std::size_t j=0;j<4;++j)difference+=std::abs(currentA[i][j]-a[i][j]);
                 rebuild=difference>jacobianTolerance
                     ||std::abs(currentD[i]-d[i])>diffusionTolerance*std::max(currentD[i],d[i]);
             }
