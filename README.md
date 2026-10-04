@@ -117,6 +117,19 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-04
+
+- Loud LINE chords produce fewer folded digital harmonics from the shared
+  output amplifier. Local oversampling evaluates its existing clipping curve
+  before the existing slew and bandwidth response. Product latency rises
+  from 72 to 120 host samples at ordinary rates (one additional millisecond
+  at 48 kHz); 176.4 kHz and higher retain 41 samples.
+- The shared VCA control resistors now add their derived thermal noise as
+  tiny signal-dependent gain fluctuations before the dry/chorus split.
+  The nominal 25 °C model gives about 2.39 ppm RMS modulation over
+  10 Hz–20 kHz. This subtle component follows signal and temperature;
+  it does not increase the zero-input floor.
+
 ### Unreleased — 2026-10-03
 
 - Quiet filter output and voice-amplifier tails now include the bipolar
@@ -159,7 +172,7 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 - Bright, high notes now produce fewer folded harmonics from the voice
   amplifier: its existing BA662 saturation and envelope multiply run with
   local oversampling on coarse grids. The physical gain/headroom stay fixed.
-  At ordinary host rates the reported product latency is 72 samples on every
+  This initially made product latency 72 samples at ordinary host rates on every
   quality rung; already-high grids retain the direct amplifier law.
 - Main NOISE keeps more of the real C41/R79 circuit's treble at ordinary
   quality settings. At 48 kHz/1×, excess loss at 16/20 kHz falls from
@@ -881,6 +894,22 @@ forty-year-old unit will null against the plug-in.
   not published and is not modelled, so the floor is output-referred and
   independent of VCA LEVEL (anchored typical value, likely slightly high below
   0 dB).
+- The external GC1 control network also contributes resistor thermal noise.
+  [Roland's p. 15 drawing](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15)
+  gives R30 2.2 kΩ, R32 1.5 kΩ, R31 47 Ω, R165 15 kΩ and C7 10 µF.
+  Eliminating the quiet source nodes gives a white component plus a
+  9.082 ms correlated component, derived from the network's driving-point
+  impedance and the Johnson–Nyquist law. NEC's typical −5.9 mV/dB control
+  slope converts that voltage into shared signal-gain fluctuations before
+  R16/C5 and the dry/wet split. The 25 °C prediction is about 2.39 ppm RMS
+  over 10 Hz–20 kHz, with current temperature scaling and an independent
+  Gaussian stream. Character zero retains exact deterministic audio;
+  zero signal contributes no floor. NEC's −94 dBV intrinsic-noise test
+  grounds GC1, so these external resistors are not counted twice.
+  Ideal IC28/supply sources, negligible GC1 input current and the existing
+  chassis-temperature proxy remain assumptions. The correlated state is
+  equivalent to the stationary resistor-network spectrum; it does not
+  identify an installed control-noise or flicker spectrum.
 - The common VCA's current output reaches IC2b through its transimpedance
   amplifier. [Roland's jack-board drawing, p. 15](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15),
   specifies R16 33 kΩ in parallel with C5 22 pF: the ideal-amplifier signal
@@ -897,7 +926,23 @@ forty-year-old unit will null against the plug-in.
 - The final TA75558 summer mixes dry 100/47 and wet 100/39. Its 3 MHz typical
   gain-bandwidth is reduced by the two connected input legs' derived 5.692
   noise gain to a 527 kHz closed-loop pole, evaluated as one state per channel
-  at the existing internal rate (anchored/derived). Its provisional
+  at the existing internal rate (anchored/derived). Local 4×/2× reconstruction
+  now evaluates its existing clipping curve below 88.2/176.4 kHz internal
+  rates and filters new ultrasonic harmonics before they can fold into audio.
+  Higher internal rates keep the direct law. This is numerical antialiasing,
+  supported by [nonlinear audio DSP research](https://www.dafx.de/paper-archive/2016/dafxpapers/20-DAFx-16_paper_41-PN.pdf),
+  with no revised knee, swing or physical pole. Slew still constrains sampled
+  voltage differences; antialiasing the static clip does not establish a
+  continuous-time model of every amplifier nonlinearity.
+  Independent loud-sine checks reduce selected folded-harmonic energy by at
+  least 63.47 dB across 44.1/48/96 kHz, with wanted-harmonic magnitude error
+  at most 0.00272 dB. A serial six-voice 48 kHz/1× screen measures about 4%
+  more CPU than the preserved product; this is a workload observation,
+  not a callback-deadline bound.
+  Independent stereo histories and delayed wet-switch context keep bandwidth
+  and resistor-noise power aligned with the signal. Fractional host context
+  delays interpolate conductance power; the diagnostic binary gate takes
+  the nearest timestamp. Its provisional
   ±13.5 V loaded-swing asymptote sits inside the ±15 V supplies; output AC
   coupling and the nominal-linear dual 10K volume law with its real internal
   loading follow (anchored/derived). A mono host bus receives what the L/MONO
@@ -2643,9 +2688,11 @@ nonlinear kernels. Fresh instances use Poly/Cubic, the CPU-first pair retained
 after a blind comparison found no audible difference; Exact/Hermite preserve
 the reference forms. None of these is part of a patch.
 
-The plug-in reports a fixed 72-host-sample latency at ordinary host rates,
+The plug-in reports a fixed 120-host-sample latency at ordinary host rates,
 covering oscillator reconstruction, decimation and local voice-amplifier
-antialiasing. At 176.4 kHz and above the local stage is unnecessary and the
+and output-summer antialiasing. This is 48 samples more than the previous
+72-sample product report, or one millisecond at 48 kHz.
+At 176.4 kHz and above the local stages are unnecessary and the
 report stays at 41 samples; raw reference engines also retain 41. A quality
 change preserves the report for that host rate and waits until the
 instrument is idle. Quality and solver rungs do not move a modelled physical
@@ -3111,6 +3158,12 @@ they are not signed and notarized production installers.
   original M5218L's nominal bandwidth, sampled slew bound and a declared
   white-equivalent intrinsic floor. These are documented component estimates,
   selected under the owner's engineering authorization.
+- **Main output:** the shared summer's existing clip runs with local
+  antialiasing at coarse internal rates, reducing folded digital harmonics
+  during loud chords. GC1 resistor noise adds tiny shared gain fluctuations.
+  The complete product reports 120 samples at ordinary host rates;
+  already-high host rates retain 41. These changes leave circuit calibration
+  and output connection choices intact.
 - **Level and noise:** the pulse leg is 1.34 dB quieter relative to saw, and
   chorus hiss uses the corrected factor 2.37 instead of 3.98. Output-jack
   resistors contribute their nominal thermal floor. These change the sound

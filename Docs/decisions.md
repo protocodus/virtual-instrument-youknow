@@ -5,6 +5,71 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-10-04 — Prioritize the main output
+
+The owner directed further realism work toward LINE rather than PHONES,
+retaining authorization to implement supported changes without a listening
+vote. Select local antialiasing of the existing IC6 output-summer clip and
+external GC1 control-resistor noise for the product. Each is committed
+separately. This is delegated engineering selection, not a new listening
+verdict or a capture of an original instrument.
+
+IC6 keeps its existing provisional ±13.5 V swing/knee, sourced TA75558
+slew and gain-bandwidth response. Reconstruction removes folded numerical
+harmonics at coarse internal rates, without adding a physical pole or
+changing amplifier calibration. Independent sine/harmonic checks separate
+this benefit from the full instrument's noise and timing changes. Stereo
+histories and wet-switch conductance context travel with the delayed signal;
+host noise uses fractional conductance-power interpolation rather than
+claiming an exact nonstationary noise-filter covariance.
+
+GC1 uses the original jack board's R30/R32/R31/R165/C7 values and NEC's
+typical control slope. Its stationary driving-point noise is represented
+by independent white and correlated voltage sources, producing about
+2.39 ppm RMS signal-gain modulation over 10 Hz–20 kHz at 25 °C. NEC's
+intrinsic-noise test grounds GC1, so the external network is additional to
+the retained intrinsic output floor. Ideal quiet IC28/supply sources,
+negligible GC1 loading and the existing chassis-temperature proxy are
+explicit priors; no device control noise or flicker spectrum is fitted.
+
+Accept the output antialiasing delay: ordinary host rates report 120 samples
+across quality selections, compared with the previous 72; the increment is
+one millisecond at 48 kHz. Hosts at 176.4 kHz and above retain 41 samples.
+The raw engine keeps both new features off for preserved references.
+
+The output-stage oracle reduces selected folded-harmonic energy by at least
+63.47 dB across 44.1/48/96 kHz, with wanted-harmonic magnitude error at most
+0.00272 dB. The actual zero-noise hot LINE fixture reaches 11.43 V peak at
+IC6 and has a −74.15 dBc aligned full-engine residual. Serial six-voice
+48 kHz/1× cost rises about 4% over f18690f; disabled-path cost differs by
+about 0.2%, with all nine reference hashes exact. These are local workload
+measurements, not universal cost or real-time bounds. GC1's smaller paired
+cost screens vary with order and concurrent load, including a 9.6% outlier;
+they do not establish a separate cost bound.
+
+The new review renders every passage through LINE against frozen f18690f,
+including chorus switches, a loaded bright passage and hot six-voice chords.
+Both builds use the identical score/compiler, settled thermal state, fixed
+reset seeds and declared-latency compensation. Whole-file stereo RMS
+matching removes a loudness advantage. The signed residual also contains
+downstream stochastic noise retimed by the latency change; it is not an
+isolated measurement of alias removal.
+
+The final LINE montage has a −70.07 dBc matched signed residual, with
+40.42 dB diagnostic boost. The hot-chord excerpt is −69.78 dBc with the
+same boost; B starts at 4.5 seconds in its short A/B player. These are small
+normal-level changes. The full montage's B starts at 23 seconds. Frozen
+review files and source/build fingerprints remain under
+`out/main-output-2026-10-04/review-v2`.
+
+Validation: all 101 combined native Release CTests passed, including plug-in
+processor and AU/VST3/CLAP bundle checks. Independent resistor-network and
+harmonic oracles, actual decimator impulse timing, reference byte equality,
+rate/quality changes, reset/RNG histories and allocation checks qualify the
+two additions. The frozen comparison binds both committed DSP fingerprints
+to one renderer/compiler and verifies the stereo 48 kHz PCM24 audio, exact
+frame counts, RMS matching and unclipped playback.
+
 ## 2026-10-04 — Further mirror noise and amplifier circuitry
 
 The owner requested further improvements and retained the earlier direction
