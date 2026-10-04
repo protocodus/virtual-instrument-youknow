@@ -34,35 +34,42 @@ struct YouKnowTestAccess {
 namespace {
 using namespace youknow;
 void require(bool ok,const char*msg){if(!ok)throw std::runtime_error(msg);}
-// Independent transistor nodal oracle. Three Wilson mirrors have six free
-// input/base nodes. Their nine BJT collector sources are stamped individually
-// into KCL. The IN- branch's first PNP mirror drives the lower NPN mirror;
-// IN+ uses only the other PNP mirror. Supplies and final output are AC-ground.
+// Independent transistor nodal oracle. Three Wilson mirrors plus AS662 p3's
+// series level-shift diode D2 have seven free input/base/collector nodes.
+// All ten collector/diode sources are stamped individually into KCL. IN-
+// first drives a PNP mirror, then the lower NPN mirror through D2; IN+ uses
+// the other PNP mirror. Supplies and final output are AC-ground. D2's own
+// source changes a free collector voltage, not output current in this limit.
+// This additional AS662 node is a topology cross-check, not an identification
+// of a separate original-BA662 shot-noise amplitude.
 // No closed-form mirror source weights or production PSD helper is used.
-using M=std::array<std::array<long double,6>,6>;using V=std::array<long double,6>;
-V solve(M a,V b){for(std::size_t i=0;i<6;++i){std::size_t pivot=i;for(std::size_t j=i+1;j<6;++j)if(std::abs(a[j][i])>std::abs(a[pivot][i]))pivot=j;
+constexpr std::size_t nodeCount=7;
+using M=std::array<std::array<long double,nodeCount>,nodeCount>;using V=std::array<long double,nodeCount>;
+V solve(M a,V b){for(std::size_t i=0;i<nodeCount;++i){std::size_t pivot=i;for(std::size_t j=i+1;j<nodeCount;++j)if(std::abs(a[j][i])>std::abs(a[pivot][i]))pivot=j;
     require(std::abs(a[pivot][i])>1e-40L,"singular nodal oracle");std::swap(a[i],a[pivot]);std::swap(b[i],b[pivot]);const auto d=a[i][i];
-    for(std::size_t j=i;j<6;++j)a[i][j]/=d;b[i]/=d;
-    for(std::size_t k=0;k<6;++k)if(k!=i){const auto f=a[k][i];for(std::size_t j=i;j<6;++j)a[k][j]-=f*a[i][j];b[k]-=f*b[i];}}
+    for(std::size_t j=i;j<nodeCount;++j)a[i][j]/=d;b[i]/=d;
+    for(std::size_t k=0;k<nodeCount;++k)if(k!=i){const auto f=a[k][i];for(std::size_t j=i;j<nodeCount;++j)a[k][j]-=f*a[i][j];b[k]-=f*b[i];}}
     return b;}
 struct Bjt{int collector,emitter,base;long double gm,current;};
 double nodal(double current,double y){const long double ip=current*(1+y)/2,im=current*(1-y)/2,vt=.02569257912108585L;
-    std::array<Bjt,9> devices{};M matrix{};
+    std::array<Bjt,10> devices{};M matrix{};
     for(int mirror=0;mirror<3;++mirror){const int a=mirror*2,b=a+1;const long double i=mirror==0?ip:im;
-        devices[mirror*3]={a,-1,b,i/vt,i};devices[mirror*3+1]={b,-1,b,i/vt,i};devices[mirror*3+2]={mirror==1?4:-1,b,a,i/vt,i};}
+        devices[mirror*3]={mirror==2?6:a,-1,b,i/vt,i};devices[mirror*3+1]={b,-1,b,i/vt,i};devices[mirror*3+2]={mirror==1?4:-1,b,a,i/vt,i};}
+    devices[9]={4,6,4,im/vt,im}; // D2: upper mirror output -> sense collector.
     const auto stamp=[&](int row,int col,long double x){if(row>=0&&col>=0)matrix[static_cast<std::size_t>(row)][static_cast<std::size_t>(col)]+=x;};
     for(const auto&t:devices){stamp(t.collector,t.base,t.gm);stamp(t.collector,t.emitter,-t.gm);stamp(t.emitter,t.base,-t.gm);stamp(t.emitter,t.emitter,t.gm);}
     long double psd=0;
     for(std::size_t source=0;source<devices.size();++source){V forcing{};const auto&t=devices[source];
         if(t.collector>=0)forcing[t.collector]-=1;if(t.emitter>=0)forcing[t.emitter]+=1;const auto v=solve(matrix,forcing);
         long double out=0;for(std::size_t index:{std::size_t{2},std::size_t{8}}){const auto&o=devices[index];out-=o.gm*(v[o.base]-v[o.emitter])+(index==source?1:0);}
+        if(source==9)require(std::abs(out)<1e-14L,"D2 level-shift source escaped ideal mirror feedback");
         psd+=out*out*2*1.602176634e-19L*t.current;}
     return psd;}
 void transistorOracle(){double worst=0;for(double tail:{1e-9,1e-6,.000302079})for(double y:{-.999,-.8,-.2,0.,.2,.8,.999}){
     const double reference=nodal(tail,y),actual=Ba662Noise::outputMirrorCurrentPsd(tail,y);worst=std::max(worst,std::abs(actual/reference-1));require(std::abs(actual/reference-1)<1e-12,"mirror PSD disagrees with individual transistor KCL");}
     require(Ba662Noise::outputMirrorCurrentPsd(0,.5)==0,"zero tail has mirror noise");
     require(Ba662Noise::outputMirrorCurrentPsd(1,-1)==2*Ba662Noise::outputMirrorCurrentPsd(1,1),"branch polarity routing lost");
-    std::cout<<"nine-source transistor KCL relative error="<<worst<<"; quiet input +6.0206dB combined collector PSD\n";}
+    std::cout<<"ten-source transistor/level-shift KCL relative error="<<worst<<"; quiet input +6.0206dB combined collector PSD\n";}
 std::unique_ptr<YouKnowEngine> make(bool mirrors,double fs=48000,int quality=1,bool aa=false){auto e=std::make_unique<YouKnowEngine>();EngineParameters p;
     p.enableOtaShotNoise=true;p.enableBa662OutputMirrorNoise=mirrors;p.enableVoiceVcaAntialias=aa;p.enableVoiceVcaTemperature=false;p.calibration=1;
     p.enableVcfEarlyEffect=false;p.enableCardJohnsonFloor=false;p.chorus=ChorusMode::Off;p.chorusNoise=p.noiseLevel=0;

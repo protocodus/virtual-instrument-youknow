@@ -492,6 +492,9 @@ struct EngineParameters
     // three output Wilson mirrors. Requires enableOtaShotNoise; raw remains
     // the former bare-pair floor. Does not infer the IR3109 mirror network.
     bool enableBa662OutputMirrorNoise { false };
+    // Degenerated two-transistor BA662 tail mirror's collector/Johnson
+    // contribution, steered by the pair drive. Requires enableOtaShotNoise.
+    bool enableBa662TailMirrorNoise { false };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one

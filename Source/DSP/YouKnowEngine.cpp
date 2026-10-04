@@ -11001,7 +11001,10 @@ float YouKnowEngine::applyVoiceFilterShotNoise(
     // independent state-node floor or an inferred IR3109 mirror term.
     const double resPsd=OtaShotNoise::currentPsd(resTail,resY)
         +(activeParameters_.enableBa662OutputMirrorNoise
-            ? Ba662Noise::outputMirrorCurrentPsd(resTail,-resY) : 0.0);
+            ? Ba662Noise::outputMirrorCurrentPsd(resTail,-resY) : 0.0)
+        +(activeParameters_.enableBa662TailMirrorNoise
+            ? Ba662Noise::tailMirrorCurrentPsd(resTail,-resY,voiceCardCelsius(
+                activeParameters_,voice.cardIndex,thermalWarmupFraction_)+273.15) : 0.0);
     diffusion[0]+=resPsd
         *noiseGainPerAmp*noiseGainPerAmp*inverseOversampledRate_/2;
     for(double& value:diffusion)value*=character*character;
@@ -11062,7 +11065,11 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     // conversion, so every downstream circuit receives the service level.
     const float serviceGain = activeParameters_.enableVoiceVcaServiceGain
         ? VoiceVcaSignalLaw::serviceGain() : 1.0f;
-    const auto noise=[&](double pairDrive,double currentFraction) noexcept {
+    const float actualKelvin=voiceCardCelsius(
+        activeParameters_,voice.cardIndex,thermalWarmupFraction_)+273.15f;
+    if(activeParameters_.enableVoiceVcaAntialias)
+        voice.vcaAntialias.storeTemperatureContext(actualKelvin);
+    const auto temperatureNoise=[&](double pairDrive,double currentFraction,double kelvin) noexcept {
         // voice.vca is normalized at4095; 302uA is the SERVICE sustain
         // code4064 current. Output-current noise scales with sqrt(I), and
         // is added after the signal/gain law. It is already physical TP8
@@ -11076,16 +11083,23 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
             ? voiceVcaAntialiasKernel_.factor : 1;
         const double psd=OtaShotNoise::currentPsd(tail,pairOutput)
             +(activeParameters_.enableBa662OutputMirrorNoise
-                ? Ba662Noise::outputMirrorCurrentPsd(tail,pairOutput) : 0.0);
+                ? Ba662Noise::outputMirrorCurrentPsd(tail,pairOutput) : 0.0)
+            +(activeParameters_.enableBa662TailMirrorNoise
+                ? Ba662Noise::tailMirrorCurrentPsd(tail,pairOutput,kelvin) : 0.0);
         // Independent internal sources can share one Gaussian innovation
         // after their physical PSDs are summed. Keep all existing stream
         // draws and the local FIR's delayed control/drive timestamp.
         return normal*activeParameters_.calibration*VoiceVcaSignalLaw::loadOhms/serviceGain
             *std::sqrt(psd*oversampledRate_*factor/2);
     };
+    const auto noise=[&](double pairDrive,double currentFraction) noexcept {
+        return temperatureNoise(pairDrive,currentFraction,actualKelvin);
+    };
     const float controlled=activeParameters_.enableOtaShotNoise
         ? (activeParameters_.enableVoiceVcaAntialias
-            ? voice.vcaAntialias.processWithOutputNoise(drive,voice.vca,voiceVcaAntialiasKernel_,shape,noise)
+            ? (activeParameters_.enableBa662TailMirrorNoise
+                ? voice.vcaAntialias.processWithTemperatureNoise(drive,voice.vca,actualKelvin,voiceVcaAntialiasKernel_,shape,temperatureNoise)
+                : voice.vcaAntialias.processWithOutputNoise(drive,voice.vca,voiceVcaAntialiasKernel_,shape,noise))
             : static_cast<float>(shape(drive)*voice.vca+noise(drive,voice.vca)))
         : (activeParameters_.enableVoiceVcaAntialias
             ? voice.vcaAntialias.process(drive,voice.vca,voiceVcaAntialiasKernel_,shape)

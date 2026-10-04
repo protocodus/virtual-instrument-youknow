@@ -109,13 +109,17 @@ struct VoiceVcaAntialias
     }
 
     void reset() noexcept { *this = {}; }
+    // Keep context warm when a live diagnostic noise selection is disabled;
+    // process/processWithOutputNoise still advance this same input cursor.
+    void storeTemperatureContext(float kelvin) noexcept
+    { temperatures[static_cast<std::size_t>(inputWrite)]=kelvin; }
 
     template <class Shape>
     [[nodiscard]] float process(float input, float gain, const Kernel& k,
                                 Shape&& shape) noexcept
     {
         return processCore<false>(input, gain, k, shape,
-            [](double, double) noexcept { return 0.0; });
+            [](double, double) noexcept { return 0.0; }, 0.0f);
     }
     // Additional output current/signal AFTER shape*gain, in the same output
     // coordinate. The callback receives the same reconstructed drive/gain
@@ -124,25 +128,44 @@ struct VoiceVcaAntialias
     [[nodiscard]] float processWithOutputNoise(float input, float gain,
         const Kernel& k, Shape&& shape, OutputNoise&& noise) noexcept
     {
-        return processCore<true>(input, gain, k, shape, noise);
+        return processCore<true>(input, gain, k, shape, noise, 0.0f);
     }
-    template <bool addNoise, class Shape, class OutputNoise>
+    // Slow temperature context uses the SAME history timestamp as the held
+    // gain. This is numerical alignment for a T-dependent current source;
+    // it adds neither a physical thermal pole nor a different FIR delay.
+    template <class Shape, class OutputNoise>
+    [[nodiscard]] float processWithTemperatureNoise(float input,float gain,float kelvin,
+        const Kernel& k,Shape&& shape,OutputNoise&& noise) noexcept
+    {
+        return processCore<true,true>(input,gain,k,shape,noise,kelvin);
+    }
+    template <bool addNoise, bool withTemperature=false, class Shape, class OutputNoise>
     [[nodiscard]] float processCore(float input, float gain, const Kernel& k,
-        Shape&& shape, OutputNoise&& noise) noexcept
+        Shape&& shape, OutputNoise&& noise,float kelvin) noexcept
     {
         if (k.factor == 1) {
+            if constexpr (withTemperature)
+                return static_cast<float>(shape(input)*gain+noise(input,gain,kelvin));
             if constexpr (addNoise)
-                return static_cast<float>(shape(input) * gain + noise(input, gain));
+                if constexpr (!withTemperature)
+                    return static_cast<float>(shape(input) * gain + noise(input, gain));
             return shape(input) * gain;
         }
         inputs[static_cast<std::size_t>(inputWrite)] = input;
         gains[static_cast<std::size_t>(inputWrite)] = gain;
+        if constexpr (withTemperature)
+            temperatures[static_cast<std::size_t>(inputWrite)] = kelvin;
         float result = 0;
         constexpr int lookBack = delaySamples / 2;
         const double g0 = gains[static_cast<std::size_t>(
             (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
         const double g1 = gains[static_cast<std::size_t>(
             (inputWrite - lookBack + 1 + inputRingSize) & (inputRingSize - 1))];
+        double t0=0,t1=0;
+        if constexpr (withTemperature) {
+            t0=temperatures[static_cast<std::size_t>((inputWrite-lookBack+inputRingSize)&(inputRingSize-1))];
+            t1=temperatures[static_cast<std::size_t>((inputWrite-lookBack+1+inputRingSize)&(inputRingSize-1))];
+        }
         for (int phase = 0; phase < k.factor; ++phase)
         {
             double drive = 0;
@@ -162,7 +185,10 @@ struct VoiceVcaAntialias
             // envelope or add a new circuit time constant.
             const double fraction = static_cast<double>(phase) / k.factor;
             const double g = g0 + fraction * (g1 - g0);
-            if constexpr (addNoise)
+            if constexpr (withTemperature)
+                outputs[static_cast<std::size_t>(outputWrite)]=static_cast<float>(
+                    shape(static_cast<float>(drive))*g+noise(drive,g,t0+fraction*(t1-t0)));
+            else if constexpr (addNoise)
                 outputs[static_cast<std::size_t>(outputWrite)] = static_cast<float>(
                     shape(static_cast<float>(drive)) * g + noise(drive, g));
             else
@@ -192,6 +218,7 @@ struct VoiceVcaAntialias
         return result;
     }
     std::array<float, inputRingSize> inputs {}, gains {};
+    std::array<float, inputRingSize> temperatures {};
     std::array<float, outputRingSize> outputs {};
     int inputWrite {}, outputWrite {};
 };
