@@ -346,6 +346,11 @@ struct EngineParameters
     // Selecting this also requires the complete clock-mute circuit KCL;
     // the legacy passive two-node drive has no base-clamp current balance.
     bool enableChorusFiniteMuteDrive { false };
+    // Finite R45/R44 base current also bounds Tr5's initial C16 sink. Uses
+    // the same listed 2SC1815 beta=150/0.6 V priors as the finite Tr4 model;
+    // raw comparison retains its ideal collector drive. This selects the
+    // complete three-capacitor circuit whenever enableChorusMuteDrive is on.
+    bool enableChorusFiniteTr5Drive { false };
     // On by default: each MN3009 line carries its own fixed-seed insertion
     // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
     // keeps the two returns identical for controlled A/B renders.

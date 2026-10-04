@@ -1784,13 +1784,22 @@ Chorus::SupportChain Chorus::supportChainFor(
 
     for (std::size_t index = 0; index < chain.clockMuteTransitions.size(); ++index)
     {
-        const bool tr5Conducting = (index & 8u) != 0;
+        const bool tr5Conducting = index >= 16u || (index & 8u) != 0;
         const bool clockBaseClamped = (index & 4u) != 0;
         const bool wetBaseClamped = (index & 2u) != 0;
         const bool diodeConducting = (index & 1u) != 0;
         auto& circuit = chain.clockMuteTransitions[index];
         auto& a = circuit.generator;
-        const double sink = tr5Conducting ? 1.0 / muteDriveSinkOhms : 0.0;
+        const bool tr5CurrentLimited = index >= 16u;
+        // In Tr5's forward-active region the available base current bounds
+        // Ic. R46 still carries that current; the collector is Vnode-R46*Ic,
+        // rather than a stiff -15 V. At Vnode=-15+R46*Ic it reaches the
+        // retained ideal saturation coordinate and becomes the legacy R46
+        // conductance. Sink current and capacitor slopes agree at that
+        // boundary. No extra switching delay or slew constant is introduced.
+        const double sink = tr5Conducting && !tr5CurrentLimited
+                          ? 1.0 / muteDriveSinkOhms : 0.0;
+        const double sinkCurrent = tr5CurrentLimited ? tr5CollectorCurrentLimit : 0.0;
         const double diode = diodeConducting ? 1.0 / clockMuteDiodeSeriesOhms : 0.0;
         const double branch = 1.0 / clockMuteBypassOhms + diode;
         const double wetDown = wetBaseClamped ? 1.0 / muteDriveBaseOhms : lower;
@@ -1811,7 +1820,7 @@ Chorus::SupportChain Chorus::supportChainFor(
         // and the ODE's first derivative stay continuous there.
         a[0] = {{ -(pullUp + series + sink + branch) / muteDriveNodeFarads,
                     series / muteDriveNodeFarads, branch / muteDriveNodeFarads,
-                    (muteDriveRailVolts * (pullUp - sink) - junctionCurrent)
+                    (muteDriveRailVolts * (pullUp - sink) - sinkCurrent - junctionCurrent)
                         / muteDriveNodeFarads }};
         a[1] = {{ series / muteDriveHoldFarads, -(series + wetDown) / muteDriveHoldFarads,
                     0.0, wetRail * wetDown / muteDriveHoldFarads }};
@@ -2537,6 +2546,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     muteDriveMuted_ = true;
     muteDriveEnabled_ = false;
     finiteMuteDriveEnabled_ = false;
+    finiteTr5DriveEnabled_ = false;
     muteGateVolts_ = -14.4;
     wetInputConductanceRatio_ = 0.0;
     wetTransitionRatio_ = -1.0;
@@ -2683,7 +2693,8 @@ void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
                 result[row] += matrix[row][column] * input[column];
         return result;
     };
-    // Fractional intervals are needed only at a D3 conduction crossing.
+    // Fractional intervals are needed at the three junction crossings and
+    // optionally where Tr5 leaves its base-current-limited active region.
     // A 12-term exponential action is converged on the supported >=8 kHz
     // grid (fastest RC ~0.7 ms), without constructing matrices on the callback.
     const auto fractional = [&](const FixedMatrix<4>& generator,
@@ -2702,35 +2713,44 @@ void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
         return result;
     };
     const auto junctionVoltages = [](const State& value) {
-        return std::array<double, 3> {{
+        return std::array<double, 4> {{
             value[2] - value[0] - muteDriveJunctionVolts,
             value[1] - muteDriveThresholdVolts,
-            value[2] - clockMuteThresholdVolts
+            value[2] - clockMuteThresholdVolts,
+            value[0] - tr5CurrentLimitNodeVolts
         }};
     };
     const auto initial = junctionVoltages(state);
     std::size_t region = (initial[0] > 0.0 ? 1u : 0u)
                        | (initial[1] > 0.0 ? 2u : 0u)
-                       | (initial[2] > 0.0 ? 4u : 0u);
+                       | (initial[2] > 0.0 ? 4u : 0u)
+                       | (finiteTr5DriveEnabled_ && !commandMute && initial[3] > 0.0
+                              ? 16u : 0u);
     const std::size_t command = commandMute ? 0u : 8u;
+    const auto circuitIndex = [&](std::size_t junctionRegion) {
+        return (junctionRegion & 16u) != 0
+             ? 16u + (junctionRegion & 7u) : command | junctionRegion;
+    };
     double remaining = 1.0;
     // A sample can cross more than one junction, especially immediately after
     // an interrupted command. Process the earliest crossing and then all the
     // remaining charge evolution. Eight segments bound callback work even for
     // a degenerate state exactly on several boundaries; three independent
-    // junctions are ample margin on the supported >=8 kHz passive RC grid.
+    // junctions plus the optional Tr5 current-limit boundary are ample margin
+    // on the supported >=8 kHz passive RC grid.
     for (int segment = 0; segment < 8 && remaining > 0.0; ++segment)
     {
-        const auto& circuit = support_.clockMuteTransitions[command | region];
+        const auto& circuit = support_.clockMuteTransitions[circuitIndex(region)];
         const State candidate = remaining == 1.0
             ? apply(circuit.transition, state)
             : fractional(circuit.generator, state, remaining);
         const auto candidateVoltages = junctionVoltages(candidate);
         double firstCrossing = remaining;
         std::size_t firstBit = 0;
-        for (std::size_t junction = 0; junction < 3; ++junction)
+        const std::size_t boundaries = finiteTr5DriveEnabled_ && !commandMute ? 4u : 3u;
+        for (std::size_t junction = 0; junction < boundaries; ++junction)
         {
-            const std::size_t bit = std::size_t { 1 } << junction;
+            const std::size_t bit = junction == 3 ? 16u : std::size_t { 1 } << junction;
             const bool conducting = (region & bit) != 0;
             // Suppress roundoff-sized excursions at simultaneous crossings;
             // the omitted current is <1e-16 A, not a physical hysteresis model.
@@ -2771,7 +2791,7 @@ void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
     // region rather than losing elapsed time or resetting capacitor charge.
     // The component-node reference includes simultaneous/multiple crossings.
     if (remaining > 0.0)
-        state = fractional(support_.clockMuteTransitions[command | region].generator,
+        state = fractional(support_.clockMuteTransitions[circuitIndex(region)].generator,
                            state, remaining);
     muteDriveNodeVolts_ = state[0];
     muteDriveHoldVolts_ = state[1];
@@ -2794,7 +2814,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableFiniteMuteDrive,
                      bool enableCorrelatedNoise,
                      float noiseTransferFraction,
-                     float noiseTransferCorrelation) noexcept
+                     float noiseTransferCorrelation,
+                     bool enableFiniteTr5Drive) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -2821,8 +2842,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const bool commandMute = mode == ChorusMode::Off;
     // Finite collector current requires the clamped-base KCL of the complete
     // three-capacitor circuit; the passive raw two-node comparison omits it.
-    const bool nextClockMuteEnabled = (enableClockMuteCircuit || enableFiniteMuteDrive) && enableMuteDrive;
+    const bool nextClockMuteEnabled =
+        (enableClockMuteCircuit || enableFiniteMuteDrive || enableFiniteTr5Drive) && enableMuteDrive;
     finiteMuteDriveEnabled_ = enableFiniteMuteDrive && enableMuteDrive;
+    finiteTr5DriveEnabled_ = enableFiniteTr5Drive && enableMuteDrive;
     if (!primed_)
     {
         rateHz_ = clockTarget.rateHz;

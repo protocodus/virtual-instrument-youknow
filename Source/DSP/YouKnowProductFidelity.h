@@ -118,6 +118,7 @@ struct ProductFidelityProfile
         parameters.enableHeadphoneAmplifierDynamics = true;
         // Named typical same-listed-part Tr4/JFET drive, not installed timing.
         parameters.enableChorusFiniteMuteDrive = true;
+        parameters.enableChorusFiniteTr5Drive = true;
         parameters.enableChorusCorrelatedNoise = true;
         parameters.chorusNoiseTransferFraction = chorusNoiseEffectiveCovariance;
         parameters.chorusNoiseTransferCorrelation = 1.0f;
