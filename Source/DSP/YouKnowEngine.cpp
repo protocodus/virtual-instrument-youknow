@@ -12242,6 +12242,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 || parameters.vcfTanhMode == VcfTanhMode::Exact
                 || parameters.enableChorusClockMuteCircuit
                 || parameters.enableChorusFiniteMuteDrive
+                || parameters.enableChorusFiniteTr5Drive
                 || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
                                                        wetRight))
                 chorus_.process(levelled, parameters.chorus,
@@ -12259,7 +12260,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 parameters.enableChorusFiniteMuteDrive,
                                 parameters.enableChorusCorrelatedNoise,
                                 parameters.chorusNoiseTransferFraction,
-                                parameters.chorusNoiseTransferCorrelation);
+                                parameters.chorusNoiseTransferCorrelation,
+                                parameters.enableChorusFiniteTr5Drive);
 
             // TA75558S IC6 has finite loaded output swing inside its +/-15 V
             // supplies. The modelled 13.5 V asymptote and knee are provisional

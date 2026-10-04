@@ -345,7 +345,8 @@ public:
                  bool enableFiniteMuteDrive = false,
                  bool enableCorrelatedNoise = false,
                  float noiseTransferFraction = 0.0f,
-                 float noiseTransferCorrelation = 1.0f) noexcept;
+                 float noiseTransferCorrelation = 1.0f,
+                 bool enableFiniteTr5Drive = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -374,7 +375,9 @@ public:
     // engine enables it. The passive two-node comparison includes R48's
     // loading back into C16 and R46's finite sink. The product also selects
     // the three-node clock-mute circuit below, including base-junction loads.
-    // Tr5 saturation and installed junction voltages remain idealised. These
+    // Tr5 saturation and installed junction voltages remain idealised. An
+    // optional finite Tr5 base drive retains that saturation coordinate while
+    // limiting the initial C16 sink current to the drawn R45/R44 drive. These
     // two-node timings are circuit priors, not original-unit measurements.
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
     static constexpr float muteDrivePullUpOhms = 10.0e3f;        // R50
@@ -386,6 +389,34 @@ public:
     static constexpr float muteDriveEmitterOhms = 39.0e3f;       // R42
     static constexpr float muteDriveRailVolts = 15.0f;
     static constexpr float muteDriveJunctionVolts = 0.6f;
+    // Roland jack-board p.15: Tr6's conducting collector supplies R45 100k,
+    // Tr5's base; R44 47k bleeds that base to its -15 V emitter. With the
+    // established ideal Tr6 saturation and 0.6 V Vbe priors, its available
+    // Ib is (30-.6)/100k - .6/47k = 281.234 uA. It cannot support the ~88 mA
+    // initial R46 demand from the loaded Off equilibrium at beta=150.
+    // Beta=150 reuses the SAME listed 2SC1815 typical specimen used for Tr4,
+    // not an identified installed transistor (Y=120..240, GR=200..400 at
+    // 6 V/2 mA; current gain falls at high Ic). The source curves therefore
+    // qualify a nominal switching prior; beta 120/200 sensitivity is tested.
+    // Tr6 needs only the R45 current (~294 uA); its driver, finite VCEsat,
+    // temperature dependence and high-current beta rolloff remain idealised.
+    // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=15
+    // https://media.digikey.com/pdf/Data%20Sheets/Toshiba%20PDFs/2SC1815.pdf#page=2
+    static constexpr double tr5BaseFeedOhms = 100000.0; // R45
+    static constexpr double tr5BaseBleedOhms = 47000.0; // R44
+    static constexpr double tr5NominalCurrentGain = 150.0;
+    static constexpr double tr5BaseCurrentAmps =
+        (30.0 - 0.6) / tr5BaseFeedOhms - 0.6 / tr5BaseBleedOhms;
+    [[nodiscard]] static constexpr double tr5AvailableBaseCurrent() noexcept
+    {
+        // Use exact decimal component/junction coordinates here; the legacy
+        // float threshold constants retain their existing raw chronology.
+        return tr5BaseCurrentAmps;
+    }
+    static constexpr double tr5CollectorCurrentLimit =
+        tr5NominalCurrentGain * tr5BaseCurrentAmps;
+    static constexpr double tr5CurrentLimitNodeVolts =
+        -15.0 + 330.0 * tr5CollectorCurrentLimit;
     // Tr4 conducts once C13 stands one junction drop, scaled by the R49/R42
     // divider, above the negative rail: -15 + 0.6 * 599/39 = -5.785 V.
     static constexpr float muteDriveThresholdVolts =
@@ -780,10 +811,13 @@ public:
             std::array<std::array<double, 4>, 4> transition {};
             std::array<double, 3> equilibrium {};
         };
-        // Bit 3: Tr5 conducting; bit 2: both clock bases clamped;
-        // bit 1: Tr4 base clamped; bit 0: D3 conducting. Prepared here so a
-        // live quality change never constructs a matrix exponential.
-        std::array<ClockMuteTransition, 16> clockMuteTransitions {};
+        // Indices 0..15 retain the raw region bits (bit 3: Tr5 conducting;
+        // bit 2: both clock bases clamped; bit 1: Tr4 base clamped; bit 0:
+        // D3 conducting). 16..23 are the eight additional Tr5 current-limited
+        // regions with the same lower three bits. Tr5-open duplicates are
+        // unnecessary. The limit is an affine current source, not a slew time.
+        // Prepared here so a live quality change constructs no exponential.
+        std::array<ClockMuteTransition, 24> clockMuteTransitions {};
     };
     [[nodiscard]] static SupportChain supportChainFor(
         float sampleRate,
@@ -1047,6 +1081,7 @@ private:
     bool muteDriveMuted_ { true };
     bool muteDriveEnabled_ { false };
     bool finiteMuteDriveEnabled_ { false };
+    bool finiteTr5DriveEnabled_ { false };
     double muteGateVolts_ { -14.4 };
     double wetInputConductanceRatio_ { 0.0 };
     double wetTransitionRatio_ { -1.0 };
