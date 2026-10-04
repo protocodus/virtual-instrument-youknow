@@ -21,7 +21,7 @@ using Phones=youknow::HeadphoneOutput;
 using C=std::complex<long double>;
 constexpr long double pi=std::numbers::pi_v<long double>;
 void require(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
-struct Reference { C signal {}, impedance {}; long double noise {}; };
+struct Reference { C signal {}, impedance {}, intrinsicTransfer {}; long double noise {}; };
 
 // Independent full component-node MNA: keep R54, both pot legs, all three
 // LINE ladder legs, IC7's two input and two feedback resistors, C17, C26 and
@@ -88,6 +88,7 @@ Reference reference(double volume,double load,double frequency,bool impedance=fa
     Reference result;
     result.signal=matrix[output][count+nodes[A]]*s*10e-6L;
     result.impedance=matrix[output][count+nodes[J]];
+    result.intrinsicTransfer=-matrix[output][count+supply];
     for(const auto& resistor:resistors)
     {
         const auto transfer=(resistor.p>=0?matrix[output][count+resistor.p]:C{})
@@ -256,6 +257,64 @@ void testFiniteAmplifier()
              <<"deg independent resistor PSD="<<worstNoise<<"dB\n";
 }
 
+void testIntrinsicNoise()
+{
+    // Independent manufacturer-band/source deembedding, deliberately not the
+    // production constant. The test1k contributes0.703uVrms in29990Hz; the
+    // remaining integrated device-equivalent RMS is1.872uV.
+    constexpr long double bandwidth=30000.L-10.L;
+    constexpr long double devicePsd=(2e-6L*2e-6L-4*1.380649e-23L*298.15L*1000*bandwidth)/bandwidth;
+    require(std::abs(Phones::intrinsicInputNoisePsd/double(devicePsd)-1)<1e-14,
+        "M5218 noise density does not conserve manufacturer-band variance after conservativeRs deembedding");
+    double worstDb=0;
+    for(bool dynamics:{false,true})
+        for(double rate:{8000.,44100.,48000.,96000.,192000.,768000.})
+            for(double load:{32.,80.,300.,600.})
+            {
+                Phones p;require(p.prepare(rate,load)&&p.setNoise(298.15,1)&&p.setVolume(0),"device noise setup failed");
+                p.setAmplifierDynamics(dynamics);p.setIntrinsicNoise(true);
+                std::vector<double> impulse(2048);
+                for(std::size_t i=0;i<impulse.size();++i)
+                {
+                    const auto out=p.process(0,0,0,0,0,0,i==0?1:0,0);
+                    impulse[i]=out[0];require(out[1]==0,"intrinsic source leaked into opposite PHONES channel");
+                }
+                const auto co=p.coefficients();
+                const double g=std::tan(std::numbers::pi*co.inputPoleHz/rate),h=std::tan(std::numbers::pi*co.headphonePoleHz/rate);
+                for(double f:{1.,5.,20.,100.,1000.,std::min(20000.,rate*.45)})
+                {
+                    const auto expected=reference(0,load,f,false,dynamics);
+                    const double device=double(devicePsd*std::norm(expected.intrinsicTransfer));
+                    require(std::abs(p.analogNoisePsd(f,298.15)/(double(expected.noise)+device)-1)<2e-9,
+                        "PHONES total device+resistor PSD differs from nodal equivalentinput source");
+                    const auto actual=transform(impulse,f,rate,(1-g)/(1+g),(1-h)/(1+h));
+                    const double db=std::abs(10*std::log10(2/rate*std::norm(actual)/device));
+                    worstDb=std::max(worstDb,db);
+                    require(db<.02,"intrinsic equivalentinput source took wrong gain/filter/coupling route");
+                }
+                p.reset();require(p.setNoise(298.15,0),"Characterzero setup failed");
+                for(int i=0;i<100;++i)
+                    require(p.process(0,0,1,-1,1,-1,1,-1)==std::array<double,2>{0,0},
+                        "Characterzero did not retain exact fresh-noise silence");
+                p.reset();require(p.setNoise(0,1),"zeroK diagnostic rejected");
+                require(p.process(0,0,1,-1,1,-1,1,-1)==std::array<double,2>{0,0},"zeroK diagnostic generated device noise");
+            }
+    Phones cold,warm,turned;
+    require(cold.prepare(48000,32)&&warm.prepare(48000,32)&&turned.prepare(48000,32),"source dependency setup failed");
+    require(cold.setNoise(298.15,1)&&warm.setNoise(323.15,1)&&turned.setNoise(298.15,1),"temperature setup failed");
+    require(cold.setVolume(0)&&turned.setVolume(1)&&warm.setVolume(0),"volume setup failed");
+    cold.setIntrinsicNoise(true);warm.setIntrinsicNoise(true);turned.setIntrinsicNoise(true);
+    for(int i=0;i<128;++i)
+    {
+        const double unit=i%2?1:-1;
+        const auto a=cold.process(0,0,0,0,0,0,unit,-unit);
+        require(a==warm.process(0,0,0,0,0,0,unit,-unit),"invented device temperature coefficient changed fixed25C prior");
+        require(a==turned.process(0,0,0,0,0,0,unit,-unit),"volume attenuated IC7's downstream intrinsic noise");
+    }
+    std::cout<<"M5218 white-equivalent input="<<std::sqrt(double(devicePsd))*1e9
+             <<"nV/sqrtHz; nodal realized device PSD maxerror="<<worstDb<<"dB\n";
+}
+
 void testGuardsAndState()
 {
     Phones p;
@@ -290,11 +349,11 @@ std::vector<float> engineTake(Phones::Route route,double load,bool changedLine=f
     require(engine->originalPerformanceHealthy(),"PHONES render lost Original firmware support");
     return out;
 }
-std::vector<float> detailedTake(bool dynamics,Phones::Route route,int block,int quality,bool switchRoute=false)
+std::vector<float> detailedTake(bool dynamics,Phones::Route route,int block,int quality,bool switchRoute=false,bool intrinsic=false)
 {
     auto e=std::make_unique<youknow::YouKnowEngine>();
     youknow::EngineParameters p;youknow::ProductFidelityProfile::applyTo(p);
-    p.enableHeadphoneAmplifierDynamics=dynamics;p.outputRoute=route;
+    p.enableHeadphoneAmplifierDynamics=dynamics;p.enableHeadphoneIntrinsicNoise=intrinsic;p.outputRoute=route;
     p.volume=.9f;p.calibration=.7f;p.cutoff=.9f;p.resonance=.1f;
     p.chorus=youknow::ChorusMode::Off;p.highPass=youknow::HighPassMode::One;
     p.vcfTanhMode=youknow::VcfTanhMode::PolyZoned;p.vcfSolverMode=youknow::VcfSolverMode::Rk4Single;
@@ -318,14 +377,14 @@ void testContinuousRouteAndBlocks()
     for(int quality:{1,4})
     {
         const auto before=detailedTake(false,Phones::Route::Line,128,quality);
-        require(before==detailedTake(true,Phones::Route::Line,128,quality),
+        require(before==detailedTake(true,Phones::Route::Line,128,quality,false,true),
             "IC7 dynamics/RNG changed product LINE including upstream noise");
-        const auto phones=detailedTake(true,Phones::Route::Headphones,128,quality);
-        require(phones==detailedTake(true,Phones::Route::Headphones,47,quality),
+        const auto phones=detailedTake(true,Phones::Route::Headphones,128,quality,false,true);
+        require(phones==detailedTake(true,Phones::Route::Headphones,47,quality,false,true),
             "PHONES response/noise chronology depends on host block size");
-        require(phones==detailedTake(true,Phones::Route::Headphones,128,quality),
+        require(phones==detailedTake(true,Phones::Route::Headphones,128,quality,false,true),
             "reset PHONES sequence is nondeterministic");
-        const auto switched=detailedTake(true,Phones::Route::Line,128,quality,true);
+        const auto switched=detailedTake(true,Phones::Route::Line,128,quality,true,true);
         require(std::equal(phones.begin()+2048,phones.end(),switched.begin()+2048),
             "LINE-to-PHONES route switch resurrected stale amplifier/capacitor/RNG history");
         require(phones!=detailedTake(false,Phones::Route::Headphones,128,quality),
@@ -333,10 +392,61 @@ void testContinuousRouteAndBlocks()
     }
 }
 
+std::array<std::vector<float>,2> noiseEngineTake(bool intrinsic,float character)
+{
+    auto e=std::make_unique<youknow::YouKnowEngine>();
+    youknow::EngineParameters p;youknow::ProductFidelityProfile::applyTo(p);
+    p.enableHeadphoneIntrinsicNoise=intrinsic;p.outputRoute=Phones::Route::Headphones;
+    p.volume=0;p.calibration=character;p.chorus=youknow::ChorusMode::Off;
+    youknow::ProductFidelityProfile::configureBeforePrepare(*e);
+    require(e->configureThermalStart(true),"noise thermal setup failed");
+    e->setParameters(p);e->prepare(48000,128,1);
+    std::array<float,128> l{},r{};
+    std::array<std::vector<float>,2> result;
+    for(int b=0;b<1040;++b)
+    {
+        e->process(l.data(),r.data(),128);
+        if(b>=16){result[0].insert(result[0].end(),l.begin(),l.end());result[1].insert(result[1].end(),r.begin(),r.end());}
+    }
+    return result;
+}
+void testEngineIntrinsicFloor()
+{
+    const auto old=noiseEngineTake(false,1),now=noiseEngineTake(true,1);
+    require(now==noiseEngineTake(true,1),"intrinsic engine RNG/reset not reproducible");
+    const auto zero=noiseEngineTake(true,0);
+    for(const auto& channel:zero)for(float x:channel)require(x==0,"intrinsic noise broke pristine exactsilence");
+    std::array<long double,2> power{},oldPower{},nowPower{},mean{};
+    long double cross=0;
+    for(std::size_t i=0;i<now[0].size();++i)
+    {
+        const double l=double(now[0][i])-old[0][i],r=double(now[1][i])-old[1][i];
+        power[0]+=l*l;power[1]+=r*r;cross+=l*r;mean[0]+=l;mean[1]+=r;
+        for(int c=0;c<2;++c){oldPower[c]+=old[c][i]*old[c][i];nowPower[c]+=now[c][i]*now[c][i];}
+    }
+    const double boundary=youknow::YouKnowEngine::outputBoundaryGain()
+        /youknow::YouKnowEngine::VoiceVcaSignalLaw::serviceGain()/youknow::ProductFidelityProfile::oscillatorLevelScale
+        /youknow::YouKnowEngine::internalVoltsPerUnit;
+    const double divider=32./252.;
+    const double corner=1/(2*std::numbers::pi*47e-6*252);
+    const double h=std::tan(std::numbers::pi*corner/48000.);
+    const double expected=Phones::intrinsicInputNoisePsd*3.6*3.6*divider*divider*24000*boundary*boundary/(1+h);
+    for(int c=0;c<2;++c)
+    {
+        const double observed=double(power[c]/now[c].size());
+        require(std::abs(observed/expected-1)<.03,"actual product intrinsic floor has wrong units/density/gain");
+        require(std::abs(double(mean[c]/now[c].size()))<std::sqrt(expected)*.02,"intrinsic engine source developed aDC bias");
+        std::cout<<"engine intrinsic channel="<<c<<" expectedRMS="<<std::sqrt(expected)
+                 <<" observedRMS="<<std::sqrt(observed)<<" passive+device floor change="
+                 <<10*std::log10(double(nowPower[c]/oldPower[c]))<<"dB\n";
+    }
+    require(std::abs(double(cross/std::sqrt(power[0]*power[1])))<.02,"intrinsic stereo streams developed correlation");
+}
+
 void testEngine()
 {
     youknow::EngineParameters product;youknow::ProductFidelityProfile::applyTo(product);
-    require(product.enableHeadphoneAmplifierDynamics,"product omitted IC7 dynamics");
+    require(product.enableHeadphoneAmplifierDynamics&&product.enableHeadphoneIntrinsicNoise,"product omitted IC7 dynamics/intrinsic noise");
     const auto line=engineTake(Phones::Route::Line,32);
     require(line==engineTake(Phones::Route::Line,32,false,false,true),"IC7 dynamics changed LINE audio");
     require(line==engineTake(Phones::Route::Line,600),"unused headphone load altered LINE");
@@ -356,6 +466,6 @@ void testEngine()
 }
 int main()
 {
-    try {testAnalog();testDigital();testFiniteAmplifier();testGuardsAndState();testEngine();testContinuousRouteAndBlocks();std::cout<<"PHONES output checks passed\n";}
+    try {testAnalog();testDigital();testFiniteAmplifier();testIntrinsicNoise();testGuardsAndState();testEngine();testContinuousRouteAndBlocks();testEngineIntrinsicFloor();std::cout<<"PHONES output checks passed\n";}
     catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

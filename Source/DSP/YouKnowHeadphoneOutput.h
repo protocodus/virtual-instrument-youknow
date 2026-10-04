@@ -29,6 +29,16 @@ namespace youknow
 // https://www.bitsavers.org/components/mitsubishi/_dataBooks/1984_Mitsubishi_General_Purpose_ICs.pdf
 // Archival mirror of the same manufacturer scan:
 // https://archive.decromancer.ca/bitsavers.org/components/mitsubishi/_dataBooks/1984_Mitsubishi_General_Purpose_ICs.pdf#page=87
+// Optional IC7 intrinsic noise uses that ORIGINAL sheet's integrated input-referred
+//2uVrms at Rs=1k,10Hz..30kHz. This one integrated reading does not identify
+// white/flicker/current noise separately or its installed source dependence.
+// Choose a flat equivalent PSD over29990Hz, conservatively subtracting the
+// test1k resistor's4kTR at25C so it is not counted again in the drawn network.
+// The sheet does not explicitly say whether VNI has already deembedded Rs:
+// this subtraction is a qualified conservative convention, not a claim.
+// The resulting10.813nV/sqrt(Hz) is fixed at the datasheet25C coordinate;
+// no unknown device temperature coefficient is assigned. Character scales
+// it once; zero Character/zero temperature retain diagnostic exact silence.
 //
 // The passive input's Thevenin resistance has one pole from C17. Its real
 // part is Zhf+(Zdc-Zhf)/(1+(f/fc)^2), so one white draw through the matching
@@ -45,6 +55,8 @@ public:
     static constexpr double amplifierGainBandwidthHz = 7.0e6;
     static constexpr double amplifierCornerHz = amplifierGainBandwidthHz/amplifierGain;
     static constexpr double amplifierSlewVoltsPerSecond = 2.2e6;
+    static constexpr double intrinsicInputNoisePsd = 4e-12/29990.0
+        -4*1.380649e-23*298.15*1000.0;
     enum class Route { Line, Headphones };
     struct Coefficients
     {
@@ -61,6 +73,7 @@ public:
         sampleRate_ = sampleRate;
         loadOhms_ = loadOhms;
         amplifierPole_ = OutputJackLowPass::coefficients(amplifierCornerHz,sampleRate_);
+        intrinsicNoiseRateScale_ = std::sqrt(intrinsicInputNoisePsd*0.5*sampleRate_)*amplifierGain;
         rebuild();
         return true;
     }
@@ -96,16 +109,18 @@ public:
     // path primes response/slew history, and the engine advances this route
     // even while LINE is selected. Not a stored tone/session parameter.
     void setAmplifierDynamics(bool enabled) noexcept { amplifierDynamics_ = enabled; }
+    void setIntrinsicNoise(bool enabled) noexcept { intrinsicNoise_ = enabled; }
     [[nodiscard]] bool amplifierDynamics() const noexcept { return amplifierDynamics_; }
     [[nodiscard]] std::array<double,2> amplifierVoltages() const noexcept
     { return {channels_[0].amplifierOutput,channels_[1].amplifierOutput}; }
     void reset() noexcept { channels_ = {}; }
     [[nodiscard]] std::array<double,2> process(double leftVolts, double rightVolts,
         double leftUnitNoise = 0.0, double rightUnitNoise = 0.0,
-        double leftOutputUnitNoise = 0.0, double rightOutputUnitNoise = 0.0) noexcept
+        double leftOutputUnitNoise = 0.0, double rightOutputUnitNoise = 0.0,
+        double leftIntrinsicUnitNoise = 0.0, double rightIntrinsicUnitNoise = 0.0) noexcept
     {
-        return { step(channels_[0], leftVolts, leftUnitNoise,leftOutputUnitNoise),
-                 step(channels_[1], rightVolts, rightUnitNoise,rightOutputUnitNoise) };
+        return { step(channels_[0], leftVolts, leftUnitNoise,leftOutputUnitNoise,leftIntrinsicUnitNoise),
+                 step(channels_[1], rightVolts, rightUnitNoise,rightOutputUnitNoise,rightIntrinsicUnitNoise) };
     }
     [[nodiscard]] const Coefficients& coefficients() const noexcept { return coefficients_; }
     [[nodiscard]] double loadOhms() const noexcept { return loadOhms_; }
@@ -125,12 +140,14 @@ public:
         const double z = p * coefficients_.noiseLowGain;
         const double legacy = temperatureKelvin * std::pow(coefficients_.noiseDensityPerRootKelvin,2)
                             * (w*w + z*z)/(w*w + p*p);
-        if (!amplifierDynamics_) return legacy*w*w/(w*w+q*q);
+        const double device = intrinsicNoise_ && temperatureKelvin>0
+            ? intrinsicInputNoisePsd*amplifierGain*amplifierGain*outputDivider_*outputDivider_ : 0;
+        if (!amplifierDynamics_) return (legacy+device)*w*w/(w*w+q*q);
         // Only IC7 input/feedback noise traverses its response. R79/R80's
         // independent220-ohm Johnson source is after the amplifier.
         const double series = 4*1.380649e-23*temperatureKelvin*220*outputDivider_*outputDivider_;
         const double ratio = frequencyHz/amplifierCornerHz;
-        return ((legacy-series)/(1+ratio*ratio)+series)*w*w/(w*w+q*q);
+        return ((legacy-series+device)/(1+ratio*ratio)+series)*w*w/(w*w+q*q);
     }
     // Looking back into the PHONES jack with the ideal IC7 source grounded.
     // This excludes the declared headphone itself and never shorts L to R.
@@ -151,9 +168,10 @@ private:
     Coefficients coefficients_ {};
     double sampleRate_ {48000}, loadOhms_ {32}, volume_ {1};
     double inputG_ {}, headphoneG_ {}, temperature_ {}, noiseAmount_ {}, noiseScale_ {};
-    bool amplifierDynamics_ {};
+    bool amplifierDynamics_ {}, intrinsicNoise_ {};
     OutputJackLowPass::Coefficients amplifierPole_ {};
     double outputDivider_ {}, amplifierNoiseLowGain_ {}, amplifierNoiseScale_ {}, outputNoiseScale_ {};
+    double intrinsicNoiseScale_ {}, intrinsicNoiseRateScale_ {};
     static bool validLoad(double load) noexcept
     { return std::isfinite(load) && load >= 1 && load <= 1e9; }
     static double parallel(double a, double b) noexcept { return a*b/(a+b); }
@@ -195,22 +213,28 @@ private:
         outputNoiseScale_ = std::sqrt(4*1.380649e-23*220)*scale;
         const double total = coefficients_.noiseDensityPerRootKelvin/outputDivider_;
         amplifierNoiseScale_ = std::sqrt(std::max(0.0,total*total-4*1.380649e-23*220))*scale;
+        // Device density stays at its measured25C coordinate, unlike Johnson
+        // noise. Zero-K suppression is only an exact-silence diagnostic policy.
+        intrinsicNoiseScale_ = temperature_>0
+            ? intrinsicNoiseRateScale_*noiseAmount_ : 0;
     }
-    double step(Channel& state, double input, double unitNoise,double outputUnitNoise) noexcept
+    double step(Channel& state, double input, double unitNoise,double outputUnitNoise,double intrinsicUnitNoise) noexcept
     {
         if (!std::isfinite(input)) input = 0;
         if (!std::isfinite(unitNoise)) unitNoise = 0;
         if (!std::isfinite(outputUnitNoise)) outputUnitNoise = 0;
+        if (!std::isfinite(intrinsicUnitNoise)) intrinsicUnitNoise = 0;
         const double coupled = (input-lowPass(input,state.inputLow,inputG_))
                              * coefficients_.passbandGain;
         const double white = unitNoise*noiseScale_;
         const double noise = white+(coefficients_.noiseLowGain-1)
                            * lowPass(white,state.noiseLow,inputG_);
-        double mixed = coupled+noise;
+        const double deviceNoise = intrinsicNoise_ ? intrinsicUnitNoise*intrinsicNoiseScale_ : 0;
+        double mixed = coupled+noise+deviceNoise*outputDivider_;
         const double amplifierWhite = unitNoise*amplifierNoiseScale_;
         const double amplifierNoise = amplifierWhite+(amplifierNoiseLowGain_-1)
             *lowPass(amplifierWhite,state.amplifierNoiseLow,inputG_);
-        const double idealAmplifier = coupled/outputDivider_+amplifierNoise;
+        const double idealAmplifier = coupled/outputDivider_+amplifierNoise+deviceNoise;
         if (amplifierDynamics_)
         {
             // The corner is above host Nyquist. The existing matched one-pole
