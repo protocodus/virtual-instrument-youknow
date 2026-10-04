@@ -10992,7 +10992,15 @@ float YouKnowEngine::applyVoiceFilterShotNoise(
         ? resonanceHeadroomFor(otaHeadroomVolts*serviceKelvin/298.15) : loopH;
     const double resTail=frame.shotNoiseFeedback*serviceLoopH/68000.0;
     const double noiseGainPerAmp=firstSlope*oversampledRate_*68000.0;
-    diffusion[0]+=OtaShotNoise::currentPsd(resTail,resY)
+    // The physical BA662 has IN+ from VCF IN and IN- from VCF OUT.
+    // resY is the opposite differential: the loop subtracts its return.
+    // Mirror routing must therefore read -resY; its noise is still an
+    // output-current source BEFORE the first IR3109 pair, not a second
+    // independent state-node floor or an inferred IR3109 mirror term.
+    const double resPsd=OtaShotNoise::currentPsd(resTail,resY)
+        +(activeParameters_.enableBa662OutputMirrorNoise
+            ? Ba662Noise::outputMirrorCurrentPsd(resTail,-resY) : 0.0);
+    diffusion[0]+=resPsd
         *noiseGainPerAmp*noiseGainPerAmp*inverseOversampledRate_/2;
     for(double& value:diffusion)value*=character*character;
     const auto innovation=voice.filterShotCache.next(jacobian,diffusion,normal);
@@ -11064,8 +11072,14 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
         const double pairOutput=polyZonedTanhImpl(pairDrive/VoiceVcaSignalLaw::headroomVolts);
         const int factor=activeParameters_.enableVoiceVcaAntialias
             ? voiceVcaAntialiasKernel_.factor : 1;
+        const double psd=OtaShotNoise::currentPsd(tail,pairOutput)
+            +(activeParameters_.enableBa662OutputMirrorNoise
+                ? Ba662Noise::outputMirrorCurrentPsd(tail,pairOutput) : 0.0);
+        // Independent internal sources can share one Gaussian innovation
+        // after their physical PSDs are summed. Keep all existing stream
+        // draws and the local FIR's delayed control/drive timestamp.
         return normal*activeParameters_.calibration*VoiceVcaSignalLaw::loadOhms/serviceGain
-            *std::sqrt(OtaShotNoise::currentPsd(tail,pairOutput)*oversampledRate_*factor/2);
+            *std::sqrt(psd*oversampledRate_*factor/2);
     };
     const float controlled=activeParameters_.enableOtaShotNoise
         ? (activeParameters_.enableVoiceVcaAntialias

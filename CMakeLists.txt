@@ -91,6 +91,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowPresets.cpp
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
+    Source/DSP/YouKnowBa662Noise.h
     Source/DSP/YouKnowEngine.h
     Source/DSP/YouKnowFirmwareTrace.h
     Source/DSP/YouKnowFirmwareProgram.h
@@ -817,6 +818,11 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowOtaShotNoiseTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OtaShotNoise COMMAND YouKnowOtaShotNoiseTests)
     set_tests_properties(YouKnow.OtaShotNoise PROPERTIES TIMEOUT 180)
+
+    add_executable(YouKnowBa662MirrorNoiseTests Tests/YouKnowBa662MirrorNoiseTests.cpp)
+    target_link_libraries(YouKnowBa662MirrorNoiseTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.Ba662MirrorNoise COMMAND YouKnowBa662MirrorNoiseTests)
+    set_tests_properties(YouKnow.Ba662MirrorNoise PROPERTIES TIMEOUT 180)
     add_executable(YouKnowVoiceVcaAntialiasTests Tests/YouKnowVoiceVcaAntialiasTests.cpp)
     target_link_libraries(YouKnowVoiceVcaAntialiasTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VoiceVcaAntialias COMMAND YouKnowVoiceVcaAntialiasTests)

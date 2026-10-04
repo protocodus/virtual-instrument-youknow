@@ -130,6 +130,7 @@ struct ProductFidelityProfile
         // Physical collector component of the voice OTA pairs, with current
         // and covariance normalization; installed excess spectra stay open.
         parameters.enableOtaShotNoise = true;
+        parameters.enableBa662OutputMirrorNoise = true;
         // Prevent the physical BA662 pair's ultrasonic harmonics/control
         // sidebands folding back on coarse output grids; gain is unchanged.
         parameters.enableVoiceVcaAntialias = true;

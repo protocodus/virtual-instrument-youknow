@@ -1,6 +1,7 @@
 #pragma once
 
 #include "YouKnowOtaShotNoise.h"
+#include "YouKnowBa662Noise.h"
 
 #include "YouKnowChorus.h"
 #include "YouKnowCoupledMixer.h"
@@ -482,6 +483,10 @@ struct EngineParameters
     // four VCF stages, resonance return and voice VCA. Independent device
     // streams; no invented mirror/base/flicker excess or full-IC noise fit.
     bool enableOtaShotNoise { false };
+    // Product-selected collector contribution of the identified BA662's
+    // three output Wilson mirrors. Requires enableOtaShotNoise; raw remains
+    // the former bare-pair floor. Does not infer the IR3109 mirror network.
+    bool enableBa662OutputMirrorNoise { false };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
