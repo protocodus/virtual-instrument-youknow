@@ -10,6 +10,7 @@
 #include "YouKnowNoiseCalibration.h"
 #include "YouKnowNoiseC41.h"
 #include "YouKnowVoiceVcaAntialias.h"
+#include "YouKnowOutputSummerAntialias.h"
 #include "YouKnowHighPassSwitch.h"
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
@@ -477,6 +478,9 @@ struct EngineParameters
     // above-Nyquist pole's small in-band roll-off at ordinary rates.
     // This retains approximate phase, as does OutputJackLowPass itself.
     bool enableOutputSummerMagnitudePole { false };
+    // Local numerical reconstruction of IC6's existing clipping curve.
+    // Product on/raw off; no revised swing, knee, SR or analogue pole.
+    bool enableOutputSummerAntialias { false };
     // Product-selected IC6 loading: the delayed Tr11/12 gate opens its
     // 39k wet input, removing that branch's noise gain and Johnson source.
     // Raw references retain their always-connected amplifier convention.
@@ -2077,7 +2081,7 @@ private:
     static constexpr double minimumHqProcessingRate = 176400.0;
     static constexpr int halfbandTaps = 95;
     static constexpr int halfbandRingSize = 128;
-    static constexpr int latencyPadRingSize = 64;
+    static constexpr int latencyPadRingSize = 128;
 
     // --- Modelled hardware constants ---------------------------------------
 
@@ -3637,6 +3641,9 @@ private:
     // its compensation mid-transport, so the shallower configurations are
     // padded out to the deepest one's group delay instead.
     void applyLatencyPad(float& left, float& right) noexcept;
+    [[nodiscard]] OutputSummerAntialias::Context outputSummerHostNoiseContext() noexcept;
+    void processOutputSummer(float& left, float& right,
+                             const EngineParameters& parameters) noexcept;
     // Group delay of the whole chain for an oversampling factor, in output
     // samples: the bandlimiting tracks' own delay, which runs at the internal
     // rate, plus each decimation stage's.
@@ -3872,6 +3879,10 @@ private:
     // Retain them on live quality changes; hard reset clears both channels.
     OutputJackLowPass outputSummerMagnitudeLeft_ {};
     OutputJackLowPass outputSummerMagnitudeRight_ {};
+    OutputSummerAntialias outputSummerAntialias_ {};
+    OutputSummerAntialias::Context outputSummerDelayedContext_ {};
+    std::array<OutputSummerAntialias::Context, latencyPadRingSize> outputSummerHostContexts_ {};
+    int outputSummerHostContextWrite_ {};
     std::uint32_t outputNoiseStateLeft_ { 0x91e10da5u };
     std::uint32_t outputNoiseStateRight_ { 0xd1b54a35u };
     std::uint32_t outputWiperNoiseStateLeft_ { 0x94d049bbu };

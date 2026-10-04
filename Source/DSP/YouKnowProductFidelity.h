@@ -110,6 +110,7 @@ struct ProductFidelityProfile
         // Retain IC6's sourced 3 MHz/noise-gain pole's small audible-band
         // magnitude loss even when its corner is above the internal Nyquist.
         parameters.enableOutputSummerMagnitudePole = true;
+        parameters.enableOutputSummerAntialias = true;
         // The delayed series wet switch also opens IC6's 39k input leg.
         // Follow its physical gate for resistor noise and noise gain.
         parameters.enableOutputSummerMuteLoading = true;

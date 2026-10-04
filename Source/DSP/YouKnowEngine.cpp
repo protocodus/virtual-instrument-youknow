@@ -6318,6 +6318,10 @@ void YouKnowEngine::clearRateDependentOutputPath(
 {
     firstDecimator_.reset();
     secondDecimator_.reset();
+    outputSummerAntialias_.reset();
+    outputSummerDelayedContext_ = {};
+    outputSummerHostContexts_.fill({});
+    outputSummerHostContextWrite_ = 0;
     commonVcaOutputPole_.reset();
     // updateProcessingRate() has already replaced the chorus transitions,
     // retained its BBD buckets/free-running phases, and reinitialised the
@@ -6448,12 +6452,16 @@ double YouKnowEngine::runningLatencySamples(int factor) const noexcept
     const double extra = activeParameters_.enableVoiceVcaAntialias
         && VoiceVcaAntialias::factorForRate(sampleRate_ * factor) > 1
         ? static_cast<double>(VoiceVcaAntialias::delaySamples) / factor : 0.0;
-    return totalLatencySamples(factor) + extra;
+    const double summer = activeParameters_.enableOutputSummerAntialias
+        && VoiceVcaAntialias::factorForRate(sampleRate_ * factor) > 1
+        ? static_cast<double>(VoiceVcaAntialias::delaySamples) / factor : 0.0;
+    return totalLatencySamples(factor) + extra + summer;
 }
 
 double YouKnowEngine::maximumLatencySamples() const noexcept
 {
-    if (!activeParameters_.enableVoiceVcaAntialias)
+    if (!activeParameters_.enableVoiceVcaAntialias
+        && !activeParameters_.enableOutputSummerAntialias)
         return totalLatencySamples(maximumOversampleFactor);
     // One report for all quality rungs. At ordinary rates local FIR delay
     // is longest on1x; already-high grids need no local oversampling.
@@ -6481,7 +6489,8 @@ int YouKnowEngine::getProcessingLatencySamples() const noexcept
     // the host was told true. With product VCA
     // antialiasing the coarse rung has the longest numerical FIR delay;
     // after-prepare product parameters install that report before the host
-    // reads it. The raw reference still reports its established41 samples.
+    // reads it. The second local IC6 FIR adds the same48 internal samples:
+    // the full ordinary-rate product report is120, raw remains41.
     return static_cast<int>(
         std::floor(maximumLatencySamples() + 0.5));
 }
@@ -7017,6 +7026,8 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     const bool rangeChanged = next.range != activeParameters_.range;
     const bool vcaAntialiasChanged = next.enableVoiceVcaAntialias
         != activeParameters_.enableVoiceVcaAntialias;
+    const bool summerAntialiasChanged = next.enableOutputSummerAntialias
+        != activeParameters_.enableOutputSummerAntialias;
     const bool stageTrimsChanged =
         next.calibration != activeParameters_.calibration
         || next.enableVcfStageOffsets
@@ -7073,6 +7084,17 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         // This reference/product selector is fixed by the product profile;
         // a deliberate diagnostic change installs its new latency/history.
         for (auto& voice : voices_) voice.vcaAntialias.reset();
+        refreshLatencyPad();
+    }
+    if (summerAntialiasChanged)
+    {
+        // This numerical product/reference selector is not a host parameter.
+        // Match the VCA selector: install coherent empty FIR/context/pad state
+        // on an explicit diagnostic latency change, without changing circuits.
+        outputSummerAntialias_.reset();
+        outputSummerDelayedContext_ = {};
+        outputSummerHostContexts_.fill({});
+        outputSummerHostContextWrite_ = 0;
         refreshLatencyPad();
     }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay && prepared_)
@@ -11376,6 +11398,154 @@ void YouKnowEngine::downsamplePair(HalfbandDecimator& decimator,
 // Block processing
 // ---------------------------------------------------------------------------
 
+OutputSummerAntialias::Context YouKnowEngine::outputSummerHostNoiseContext() noexcept
+{
+    // Resistor white draws are installed at the host rate AFTER decimation
+    // and numerical padding. Retain the same circuit-power timestamp as the
+    // delayed IC6 audio: the local FIR context has already travelled48
+    // internal samples, then follows the remaining known downstream delay.
+    // This is sampled slow variance context, not an antialias filter for a
+    // noise voltage. Fractional host delay interpolates conductance POWER;
+    // the diagnostic ideal binary state uses the nearest context timestamp.
+    // The history records the LAST internal substep, whereas totalLatency
+    // anchors the first: add (M-1)/M. The physical95tap centres give
+    // 23.5host samples at2x and35.25 at4x relative to this last substep.
+    // Raw selection retains its historical immediate host-noise timing.
+    if (!activeParameters_.enableOutputSummerAntialias)
+        return outputSummerDelayedContext_;
+    const int w = outputSummerHostContextWrite_;
+    outputSummerHostContexts_[static_cast<std::size_t>(w)] = outputSummerDelayedContext_;
+    const double downstream = totalLatencySamples(oversampling_)
+        - static_cast<double>(correctionHalfWidth)/oversampling_
+        + static_cast<double>(oversampling_-1)/oversampling_ + latencyPadSamples_;
+    const int whole = static_cast<int>(std::floor(downstream));
+    const double fraction = downstream-whole;
+    const auto a = outputSummerHostContexts_[static_cast<std::size_t>(
+        (w-whole+latencyPadRingSize)&(latencyPadRingSize-1))];
+    const auto b = outputSummerHostContexts_[static_cast<std::size_t>(
+        (w-whole-1+latencyPadRingSize)&(latencyPadRingSize-1))];
+    outputSummerHostContextWrite_ = (w+1)&(latencyPadRingSize-1);
+    return {a.wetRatio+fraction*(b.wetRatio-a.wetRatio),
+            fraction < 0.5 ? a.wetConnected : b.wetConnected};
+}
+
+void YouKnowEngine::processOutputSummer(float& wetLeft,float& wetRight,
+                                      const EngineParameters& parameters) noexcept
+{
+    const auto& coefficients=processingCoefficients_;
+    // TA75558S IC6 has finite loaded output swing inside its +/-15 V
+    // supplies. The modelled 13.5 V asymptote and knee are provisional
+    // OQ-05 policy, not per-card tolerances, so Unit Character does not
+    // scale them.
+    const OutputSummerAntialias::Context currentContext {
+        chorus_.wetInputConductanceRatio(), chorus_.isWetInputConnected() };
+    if (parameters.enableOutputSummerAntialias)
+    {
+        const auto corrected = outputSummerAntialias_.process(wetLeft,wetRight,
+            currentContext,voiceVcaAntialiasKernel_,[](float x) { return outputSummerClip(x); });
+        outputSummerDelayedContext_ = corrected.context;
+        wetLeft=corrected.left; wetRight=corrected.right;
+    }
+    else
+    {
+        outputSummerDelayedContext_ = currentContext;
+        const auto wetLeftKey = std::bit_cast<std::uint32_t>(wetLeft);
+        const auto wetRightKey = std::bit_cast<std::uint32_t>(wetRight);
+        wetLeft = outputSummerClip(wetLeft);
+        // outputSummerClip's asymptote and exponent are fixed. Reuse only
+        // for an identical float representation, preserving signed zero
+        // and NaN payload distinctions as well as unequal stereo samples.
+        wetRight = wetLeftKey == wetRightKey
+                 ? wetLeft : outputSummerClip(wetRight);
+    }
+
+    // TA75558S IC6 output slew limit. The datasheet's 1.0 V/us is a
+    // typical value at unity gain and 2 kOhm, not a guaranteed limit
+    // at the installed load. As a part policy -- like the shared swing
+    // above -- it is not scaled by Unit Character: a previous revision
+    // divided it by calibration, granting the pristine reference a
+    // 10x faster op-amp and a full-character unit one slower than the
+    // part's own datasheet.
+    if (parameters.enableOpAmpSlewLimiting)
+    {
+        const float deltaL = wetLeft - outputSlewStateLeft_;
+        outputSlewStateLeft_ += std::clamp(
+            deltaL, -coefficients.outputSlewMaxStep,
+            coefficients.outputSlewMaxStep);
+        wetLeft = outputSlewStateLeft_;
+
+        const float deltaR = wetRight - outputSlewStateRight_;
+        outputSlewStateRight_ += std::clamp(
+            deltaR, -coefficients.outputSlewMaxStep,
+            coefficients.outputSlewMaxStep);
+        wetRight = outputSlewStateRight_;
+    }
+    else
+    {
+        outputSlewStateLeft_ = wetLeft;
+        outputSlewStateRight_ = wetRight;
+    }
+
+    // TA75558S IC6's 3MHz typical GBW closes through the existing
+    // 100k/(47k||39k) feedback network at 527kHz. Sampling an
+    // exponential decay aliases away nearly all its audible-band
+    // roll-off at ordinary grids. The matched-magnitude pole uses
+    // that SAME physical corner and the existing Vicanek numerical
+    // realization; no tone constant or additional physical pole.
+    // Its small tilt (about -0.00625dB at 20kHz) remains at every
+    // supported grid. Phase is still approximate. Signal histories
+    // survive a live quality rebuild, and hard reset clears them.
+    // The series Tr11/12 channel opens the 39k leg after its
+    // existing nominal RC drive crosses the mute threshold. An ideal
+    // open channel leaves that resistor floating: noise gain becomes
+    // 1+100k/47k, not 1+100k/(47k||39k). This models the two binary
+    // states in the raw comparison. The selected finite-drive path
+    // substitutes 1/(39k+Ron) continuously in the same noise gain.
+    // Installed leakage/capacitance remain unknown.
+    const bool wetInputConnected = !parameters.enableOutputSummerMuteLoading
+                                 || outputSummerDelayedContext_.wetConnected;
+    const bool continuousWet = parameters.enableOutputSummerMuteLoading
+                            && parameters.enableChorusFiniteMuteDrive
+                            && parameters.enableChorusMuteDrive;
+    if (continuousWet)
+    {
+        const double ratio = outputSummerDelayedContext_.wetRatio;
+        if (ratio != outputFiniteWetRatio_)
+        {
+            const double corner = outputSummerGainBandwidthHz
+                / (1.0 + outputSummerFeedbackOhms / outputSummerDryInputOhms
+                       + ratio * outputSummerFeedbackOhms / outputSummerWetInputOhms);
+            outputFiniteWetPole_ = OutputJackLowPass::coefficients(corner, oversampledRate_);
+            outputFiniteWetBandwidthBlend_ = static_cast<float>(1.0 - std::exp(
+                -2.0 * std::numbers::pi * corner / oversampledRate_));
+            outputFiniteWetRatio_ = ratio;
+        }
+    }
+    if (parameters.enableOutputSummerMagnitudePole)
+    {
+        const auto& pole = continuousWet ? outputFiniteWetPole_ : (wetInputConnected
+            ? coefficients.outputSummerMagnitudePole
+            : coefficients.outputSummerMutedMagnitudePole);
+        wetLeft = outputSummerMagnitudeLeft_.process(wetLeft, pole);
+        wetRight = outputSummerMagnitudeRight_.process(wetRight, pole);
+        outputBandwidthStateLeft_ = wetLeft;
+        outputBandwidthStateRight_ = wetRight;
+    }
+    else
+    {
+        const float blend = continuousWet ? outputFiniteWetBandwidthBlend_ : (wetInputConnected
+            ? coefficients.outputSummerBandwidthBlend
+            : coefficients.outputSummerMutedBandwidthBlend);
+        outputBandwidthStateLeft_ += blend * (wetLeft - outputBandwidthStateLeft_);
+        outputBandwidthStateRight_ += blend * (wetRight - outputBandwidthStateRight_);
+        wetLeft = outputBandwidthStateLeft_;
+        wetRight = outputBandwidthStateRight_;
+        outputSummerMagnitudeLeft_ = {wetLeft, 0.0};
+        outputSummerMagnitudeRight_ = {wetRight, 0.0};
+    }
+
+}
+
 void YouKnowEngine::process(float* left, float* right, int numSamples)
 {
     if (left == nullptr || right == nullptr || numSamples <= 0)
@@ -12323,103 +12493,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 parameters.chorusNoiseTransferCorrelation,
                                 parameters.enableChorusFiniteTr5Drive);
 
-            // TA75558S IC6 has finite loaded output swing inside its +/-15 V
-            // supplies. The modelled 13.5 V asymptote and knee are provisional
-            // OQ-05 policy, not per-card tolerances, so Unit Character does not
-            // scale them.
-            const auto wetLeftKey = std::bit_cast<std::uint32_t>(wetLeft);
-            const auto wetRightKey = std::bit_cast<std::uint32_t>(wetRight);
-            wetLeft = outputSummerClip(wetLeft);
-            // outputSummerClip's asymptote and exponent are fixed. Reuse only
-            // for an identical float representation, preserving signed zero
-            // and NaN payload distinctions as well as unequal stereo samples.
-            wetRight = wetLeftKey == wetRightKey
-                     ? wetLeft : outputSummerClip(wetRight);
-
-            // TA75558S IC6 output slew limit. The datasheet's 1.0 V/us is a
-            // typical value at unity gain and 2 kOhm, not a guaranteed limit
-            // at the installed load. As a part policy -- like the shared swing
-            // above -- it is not scaled by Unit Character: a previous revision
-            // divided it by calibration, granting the pristine reference a
-            // 10x faster op-amp and a full-character unit one slower than the
-            // part's own datasheet.
-            if (parameters.enableOpAmpSlewLimiting)
-            {
-                const float deltaL = wetLeft - outputSlewStateLeft_;
-                outputSlewStateLeft_ += std::clamp(
-                    deltaL, -coefficients.outputSlewMaxStep,
-                    coefficients.outputSlewMaxStep);
-                wetLeft = outputSlewStateLeft_;
-
-                const float deltaR = wetRight - outputSlewStateRight_;
-                outputSlewStateRight_ += std::clamp(
-                    deltaR, -coefficients.outputSlewMaxStep,
-                    coefficients.outputSlewMaxStep);
-                wetRight = outputSlewStateRight_;
-            }
-            else
-            {
-                outputSlewStateLeft_ = wetLeft;
-                outputSlewStateRight_ = wetRight;
-            }
-
-            // TA75558S IC6's 3MHz typical GBW closes through the existing
-            // 100k/(47k||39k) feedback network at 527kHz. Sampling an
-            // exponential decay aliases away nearly all its audible-band
-            // roll-off at ordinary grids. The matched-magnitude pole uses
-            // that SAME physical corner and the existing Vicanek numerical
-            // realization; no tone constant or additional physical pole.
-            // Its small tilt (about -0.00625dB at 20kHz) remains at every
-            // supported grid. Phase is still approximate. Signal histories
-            // survive a live quality rebuild, and hard reset clears them.
-            // The series Tr11/12 channel opens the 39k leg after its
-            // existing nominal RC drive crosses the mute threshold. An ideal
-            // open channel leaves that resistor floating: noise gain becomes
-            // 1+100k/47k, not 1+100k/(47k||39k). This models the two binary
-            // states in the raw comparison. The selected finite-drive path
-            // substitutes 1/(39k+Ron) continuously in the same noise gain.
-            // Installed leakage/capacitance remain unknown.
-            const bool wetInputConnected = !parameters.enableOutputSummerMuteLoading
-                                         || chorus_.isWetInputConnected();
-            const bool continuousWet = parameters.enableOutputSummerMuteLoading
-                                    && parameters.enableChorusFiniteMuteDrive
-                                    && parameters.enableChorusMuteDrive;
-            if (continuousWet)
-            {
-                const double ratio = chorus_.wetInputConductanceRatio();
-                if (ratio != outputFiniteWetRatio_)
-                {
-                    const double corner = outputSummerGainBandwidthHz
-                        / (1.0 + outputSummerFeedbackOhms / outputSummerDryInputOhms
-                               + ratio * outputSummerFeedbackOhms / outputSummerWetInputOhms);
-                    outputFiniteWetPole_ = OutputJackLowPass::coefficients(corner, oversampledRate_);
-                    outputFiniteWetBandwidthBlend_ = static_cast<float>(1.0 - std::exp(
-                        -2.0 * std::numbers::pi * corner / oversampledRate_));
-                    outputFiniteWetRatio_ = ratio;
-                }
-            }
-            if (parameters.enableOutputSummerMagnitudePole)
-            {
-                const auto& pole = continuousWet ? outputFiniteWetPole_ : (wetInputConnected
-                    ? coefficients.outputSummerMagnitudePole
-                    : coefficients.outputSummerMutedMagnitudePole);
-                wetLeft = outputSummerMagnitudeLeft_.process(wetLeft, pole);
-                wetRight = outputSummerMagnitudeRight_.process(wetRight, pole);
-                outputBandwidthStateLeft_ = wetLeft;
-                outputBandwidthStateRight_ = wetRight;
-            }
-            else
-            {
-                const float blend = continuousWet ? outputFiniteWetBandwidthBlend_ : (wetInputConnected
-                    ? coefficients.outputSummerBandwidthBlend
-                    : coefficients.outputSummerMutedBandwidthBlend);
-                outputBandwidthStateLeft_ += blend * (wetLeft - outputBandwidthStateLeft_);
-                outputBandwidthStateRight_ += blend * (wetRight - outputBandwidthStateRight_);
-                wetLeft = outputBandwidthStateLeft_;
-                wetRight = outputBandwidthStateRight_;
-                outputSummerMagnitudeLeft_ = {wetLeft, 0.0};
-                outputSummerMagnitudeRight_ = {wetRight, 0.0};
-            }
+            processOutputSummer(wetLeft,wetRight,parameters);
 
             stageLeft[static_cast<std::size_t>(step)] = wetLeft;
             stageRight[static_cast<std::size_t>(step)] = wetRight;
@@ -12514,8 +12588,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         // An open series wet switch removes the 39k resistor's output
         // current-noise contribution too. Preserve the same host-rate white
         // draws and every RNG sequence; only their sourced scale changes.
+        const auto summerHostContext = outputSummerHostNoiseContext();
         const bool summerWetConnected = !parameters.enableOutputSummerMuteLoading
-                                     || chorus_.isWetInputConnected();
+                                     || summerHostContext.wetConnected;
         const bool continuousWetNoise = parameters.enableOutputSummerMuteLoading
                                      && parameters.enableChorusFiniteMuteDrive
                                      && parameters.enableChorusMuteDrive;
@@ -12526,7 +12601,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const float closedScale = coefficients.outputSummerNoiseScale;
         const float summerNoiseScale = (continuousWetNoise
             ? static_cast<float>(std::sqrt(openScale*openScale
-                + chorus_.wetInputConductanceRatio()*(closedScale*closedScale-openScale*openScale)))
+                + summerHostContext.wetRatio*(closedScale*closedScale-openScale*openScale)))
             : (summerWetConnected ? closedScale : openScale)) * jackBoardJohnsonScale_;
         outputLeft += outputNoiseLeft * summerNoiseScale;
         outputRight += outputNoiseRight * summerNoiseScale;

@@ -124,6 +124,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowNoiseC41.h
     Source/DSP/YouKnowOtaShotNoise.h
     Source/DSP/YouKnowVoiceVcaAntialias.h
+    Source/DSP/YouKnowOutputSummerAntialias.h
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
@@ -838,6 +839,10 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowVoiceVcaAntialiasTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VoiceVcaAntialias COMMAND YouKnowVoiceVcaAntialiasTests)
     set_tests_properties(YouKnow.VoiceVcaAntialias PROPERTIES TIMEOUT 180)
+    add_executable(YouKnowOutputSummerAntialiasTests Tests/YouKnowOutputSummerAntialiasTests.cpp)
+    target_link_libraries(YouKnowOutputSummerAntialiasTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.OutputSummerAntialias COMMAND YouKnowOutputSummerAntialiasTests)
+    set_tests_properties(YouKnow.OutputSummerAntialias PROPERTIES TIMEOUT 180)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowHeadphoneOutputTests Tests/YouKnowHeadphoneOutputTests.cpp)

@@ -1846,7 +1846,7 @@ void testReportedDspLatencyIsForwardedForEveryNumericalPath()
         expect (processor.getOversamplingFactorForDisplay()
                     == configuration.expectedFactor,
                 "the processor selected the wrong numerical path at " + where);
-        const int expectedLatency = configuration.rate >= 176400.0 ? 41 : 72;
+        const int expectedLatency = configuration.rate >= 176400.0 ? 41 : 120;
         expect (processor.getLatencySamples() == expectedLatency,
                 "the processor did not forward the fixed product DSP latency at "
                     + where);
