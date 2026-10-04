@@ -5,6 +5,53 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-10-04 — Further mirror noise and amplifier circuitry
+
+The owner requested further improvements and retained the earlier direction
+to implement supported electronics changes without a listening vote. Select
+five additions: BA662 Wilson output-mirror noise, degenerated tail-mirror
+noise, finite Tr5 base-current drive, M5218L headphone-amplifier response and
+sampled slew limiting, and its white-equivalent intrinsic noise floor.
+
+The two BA662 additions use matched high-beta, quiet-control-current models
+and the existing equal 500 ohm tail-resistor prior. The original-BA662 account
+identifies Wilson mirrors; the OTA analysis and ALFA diagram corroborate
+output routing. ALFA's 400 ohm resistors do not measure the original module's
+parts, and no surviving original measurement of the inherited 500 ohm prior
+has been verified. These additions apply to the
+identified BA662s; no IR3109 mirror network is inferred. Tr5 uses the already
+selected beta=150/0.6 V junction priors and retains the ideal saturated
+endpoint. Original-unit beta, saturation and excess-noise spectra remain open.
+
+PHONES uses the original 1984 M5218L data, rather than the later M5218A:
+7 MHz, 2.2 V/us and 2 microvolts RMS over 10 Hz–30 kHz with a 1 kilohm source.
+Its intrinsic white-equivalent power subtracts that source resistor's Johnson
+noise to avoid counting it again. This is a deembedding convention, not an
+identified flicker/current-noise spectrum. The finite pole is magnitude
+matched with approximate phase; the slew bound only constrains sampled
+voltage differences. There is no new clipping/current-limit estimate.
+
+The new comparison uses identical MIDI, controls, reset seeds, settled thermal
+state and declared-latency compensation against e752eff (DSP identical to
+8f7c8a1). Both versions use the existing 32-ohm PHONES route. Whole-file RMS
+matching and a separately boosted signed residual support review; the
+grounded-volume floor passage also retains raw level metrics. This is an
+engineering selection, not a blind listening verdict or new hardware capture.
+
+The final continuation montage's matched signed residual is −47.66 dBc;
+its diagnostic playback boosts that residual by 14.68 dB. The grounded-volume
+PHONES floor rises 1.96 dB in the combined raw render. A separate floor audition
+uses one shared gain, preserving that level change. Musical and bright-PHONES
+passages change much less, as expected for these small circuit terms. Review
+files remain frozen under `out/electronics-next-2026-10-04/review-v2`.
+
+Validation: all 99 combined native Release CTests and 26 CI-packaging Python
+checks passed; AU, VST3 and CLAP bundles built and passed host smoke checks.
+Independent transistor/resistor nodal oracles, delayed temperature/RNG histories,
+rate/quality and lifecycle checks qualify the five reductions. Tail-mirror
+incremental CPU screens measured roughly 0.6–5.8%, with repeat-order timing
+drift; this is not a universal cost bound.
+
 ## 2026-10-04 — Five electronic realism changes
 
 The owner requested all five electronic changes and authorized engineering

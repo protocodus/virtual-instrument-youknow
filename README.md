@@ -830,10 +830,29 @@ forty-year-old unit will null against the plug-in.
   All new sources have independent deterministic streams; physical-card idle
   draws and hard-reset behavior are preserved. RMS follows Unit Character,
   retaining exact zero there, and raw-reference engines leave the feature off.
-  Original BA662/IR3109 mirror, base-resistance, tail excess and flicker noise
-  remain unmeasured; no extra factor is fitted. A paired 48 kHz six/16-voice
+  For the identified BA662 resonance and voice-VCA circuits, the product now
+  includes output-mirror and tail-mirror noise as separate physical sources.
+  Three Wilson mirrors route IN+ once and IN− twice. In the matched high-beta
+  limit they add `2qItail(3−y)`, where `y=(Iplus−Iminus)/Itail`; together with
+  the pair they quadruple its zero-drive noise power (+6.02 dB). The equal
+  500 Ω emitter-resistor prior in the existing BA662 tail mirror gives
+  `S_tail=4qItail(1+2r)/(1+r)²`, `r=Itail·R/Vt`. It reaches the output as
+  `y²·S_tail`, vanishing at balance and growing with signal drive. These are
+  conditional high-beta, quiet-control-current reductions, not fitted excess
+  factors. [Open Music Labs' original-BA662 account](https://synthcube.com/open-music-labs-ba662-ota-clone/)
+  identifies Wilson mirrors; its [OTA analysis](https://www.openmusiclabs.com/files/otadist.pdf)
+  and the [ALFA manufacturer diagram](https://www.ericasynths.lv/media/AS662D.pdf#page=3)
+  corroborate the routing. ALFA draws 400 Ω emitter parts; no surviving
+  original-BA662 measurement has been verified for the inherited 500 Ω prior.
+  No mirror topology is inferred
+  for the IR3109 stages. Installed beta, base resistance, current-source noise
+  and flicker spectra remain unmeasured. Before these mirror additions, a
+  paired 48 kHz six/16-voice
   patch benchmark measured about 33–45% more CPU at 4× and 52–55% at 1×;
-  this is a tested workload, not a universal performance bound.
+  this is a tested workload, not a universal performance bound. Further
+  incremental screens measured less than 1% for output mirrors and roughly
+  0.6–5.8% for tail mirrors. Repeated tail timings varied with order and
+  scheduling; these are cost observations rather than a precision bound.
 
 **Bus and output**
 
@@ -946,8 +965,21 @@ forty-year-old unit will null against the plug-in.
   settings remain stored and inactive while PHONES is selected. The circuit
   includes the input network, feedback and series resistors' independent
   thermal-noise powers, with the original Character-zero silence contract.
-  IC7 is ideal: installed bandwidth, op-amp noise, current limiting, overload,
-  headphone acoustic response and reactive impedance remain open. The two
+  The product adds IC7's nominal amplifier response using the original
+  [Mitsubishi M5218L data book](https://archive.decromancer.ca/bitsavers.org/components/mitsubishi/_dataBooks/1984_Mitsubishi_General_Purpose_ICs.pdf#page=87):
+  7 MHz gain-bandwidth gives a 1.944 MHz closed-loop pole, and 2.2 V/µs bounds
+  sampled voltage slopes before C26/C27 and the 220 Ω output resistors.
+  Its 20 kHz analog magnitude loss is only 0.00046 dB; this is a subtle
+  component completion. The numerical pole preserves magnitude with approximate
+  phase, and a sampled slope bound does not resolve intra-frame slew distortion.
+  Independent amplifier noise uses the sheet's 2 µVrms, 10 Hz–30 kHz,
+  1 kΩ-source measurement as an explicitly white-equivalent prior. Subtracting
+  that source resistor's Johnson power gives about 10.81 nV/√Hz; existing
+  circuit-resistor noise remains separate. The integrated row does not identify
+  current noise or a flicker spectrum at other source impedances. This floor
+  remains when the volume wiper is grounded. Installed bandwidth, noise,
+  current limiting, overload, headphone acoustic response and reactive
+  impedance remain open. The two
   host-rate TPT stages preserve numerical histories, with approximate phase
   and pot/load switching trajectories. Independent full nodal source/noise
   and current-injection impedance checks qualify the reduction.
@@ -1176,7 +1208,13 @@ forty-year-old unit will null against the plug-in.
   R42 39 kΩ into Tr4, whose collector pulls the Tr11/Tr12 JFET gates down
   through D4/D5. The product solves these stores together with C15 2.2 µF,
   connected through D3/R41/R47 to both Tr23/Tr28 clock clamps. R48 loads C16
-  in both directions and R46 330 Ω limits Tr5's discharge current. Once a
+  in both directions and R46 330 Ω limits Tr5's discharge current. The product
+  also limits Tr5 through its R45 100 kΩ/R44 47 kΩ base drive and the same
+  nominal β=150 prior: about 42.2 mA instead of the approximately 90 mA
+  demanded immediately after engaging from Off. Its current-limited and
+  saturated regions meet continuously, retaining the existing ideal saturated
+  endpoint. The nominal clock restart and first wet conduction move later by
+  about 0.26/0.21 ms; installed beta and saturation voltage remain unknown. Once a
   base junction conducts, the appropriate capacitor sees its base resistor
   into the clamped base voltage instead of an unloaded divider. All three
   capacitor voltages stay continuous through commands and junction crossings.
@@ -3067,6 +3105,12 @@ they are not signed and notarized production installers.
   load, the common VCA includes its drawn feedback pole, and the chorus mute
   includes C15 loading and delayed clock clamps. Capacitor and bucket state
   survive interrupted switching; the component priors remain explicit.
+- **Further electronics:** BA662 output and tail mirrors add topology-derived
+  noise to the resonance and voice-VCA paths. Tr5's finite base drive slightly
+  delays chorus clock restart and wet admission. PHONES now includes the
+  original M5218L's nominal bandwidth, sampled slew bound and a declared
+  white-equivalent intrinsic floor. These are documented component estimates,
+  selected under the owner's engineering authorization.
 - **Level and noise:** the pulse leg is 1.34 dB quieter relative to saw, and
   chorus hiss uses the corrected factor 2.37 instead of 3.98. Output-jack
   resistors contribute their nominal thermal floor. These change the sound
