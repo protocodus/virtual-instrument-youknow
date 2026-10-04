@@ -1,4 +1,6 @@
 // Deterministic electronics review: render dir label revision [1|4], compare dir A B.
+// render-next/compare-next select the 2026-10-04 continuation score; both
+// builds use the existing Phones route. Never overwrite a previous review.
 // Compile this IDENTICAL score against the archived baseline and final DSP.
 // Feature guards omit APIs absent at baseline; the only changed connection is
 // the explicitly requested headphone route (Line at baseline, Phones at final).
@@ -46,11 +48,20 @@ namespace
 {
 using namespace youknow;
 using namespace youknow::tools::realism;
-constexpr std::array<std::string_view, 7> slugs {
+constexpr std::size_t sectionCount = 7;
+std::array<std::string_view, sectionCount> slugs {
     "01-resonance", "02-ota-breath", "03-chorus-switch",
     "04-phones-32ohm", "05-bbd-hiss", "06-musical", "montage"
 };
-constexpr std::string_view protocol = "youknow-electronics-v1";
+std::string_view protocol = "youknow-electronics-v1";
+bool continuationScore = false;
+void selectContinuationScore()
+{
+    continuationScore = true;
+    protocol = "youknow-electronics-continuation-v1";
+    slugs = { "01-resonance", "02-voice-tail", "03-chorus-switch",
+              "04-phones-bright", "05-phones-floor", "06-musical", "montage" };
+}
 std::array<int, slugs.size()> reportedLatency {};
 std::string capabilities()
 {
@@ -246,7 +257,13 @@ StereoBuffer phones(int quality)
     Performance take(p, quality);
     // The extended MIDI adapter reaches 20.6 Hz; the second note is within
     // the original keyboard range, so both deep coupling and normal bass are heard.
-    take.hit(16, 1.4, .15); take.hit(36, 1.4, .25);
+    if (continuationScore) {
+        // Same 32-ohm electrical route in both builds. Upper-register pulse
+        // harmonics expose finite amplifier bandwidth without changing loads.
+        take.hit(60, 1.4, .15); take.hit(84, 1.4, .25);
+    } else {
+        take.hit(16, 1.4, .15); take.hit(36, 1.4, .25);
+    }
     return take.take(3);
 }
 
@@ -254,9 +271,17 @@ StereoBuffer bbdHiss(int quality)
 {
     auto p = panel();
     p.sawEnabled = p.pulseEnabled = false; p.subLevel = p.noiseLevel = 0;
-    p.chorus = ChorusMode::One; p.chorusNoise = .75f;
+    p.chorus = continuationScore ? ChorusMode::Off : ChorusMode::One;
+    p.chorusNoise = continuationScore ? 0.f : .75f;
+#if YOUKNOW_ELECTRONICS_HAVE_PHONES
+    if (continuationScore) {
+        p.outputRoute = HeadphoneOutput::Route::Headphones;
+        p.headphoneLoadOhms = 32.f;
+        p.volume = 0.f; // IC7's intrinsic floor remains after VR1 is grounded.
+    }
+#endif
     Performance take(p, quality);
-    take.run(1.5, false); // settled wet admission and several complete sweeps in the retained take
+    take.run(1.5, false); // settle the physical output/chorus stores
     take.run(4.0);
     return take.take(4);
 }
@@ -534,12 +559,18 @@ void render(const std::filesystem::path& directory, const std::string& label,
         writeAudio(output / (std::string(slugs[index]) + "-raw.wav"), audio[index]);
     std::string error;
     require(writeText(output / "manifest.json", manifest, error), error);
-    require(writeText(output / "score.md", R"score(All passages use the product path, 48 kHz /128 frames, fixed reset seeds, settled warm-up and declared-latency compensation. Both builds use the same score and compiler. The baseline is724aaac; final enables the new supported electronic component models. Phones explicitly selects the new32ohm physical route on final; baseline uses Line. Individual sections include all product changes, so they are revealing passages rather than single-flag causal experiments.
+    const std::string_view score = continuationScore ? R"score(All passages use the product path, 48 kHz /128 frames, fixed reset seeds, settled warm-up and declared-latency compensation. Both builds use the same score and compiler. The baseline is e752eff (DSP identical to 8f7c8a1); final enables the additional supported electronics models. Both builds select the existing 32-ohm Phones route in the two Phones passages. Individual sections include all product changes, so they are revealing passages rather than single-flag causal experiments.
+
+Montage order: resonance 3.2s, voice tail 3.6s, chorus switching 3.6s, bright Phones 3.2s, grounded-volume Phones floor 4s, musical chords 3.65s; .25s silence between sections. Exact frame counts are in the manifest. Normal playing seldom reaches the Phones amplifier's nominal slew limit; its bandwidth change is expected to be subtle. The floor passage exposes noise after the volume control.
+
+The comparison provides immutable raw float32 audio, PCM24 A/B with whole-file stereo RMS matching, signed B-A, and an explicitly boosted residual. RMS matching removes absolute level differences; consult raw metrics for noise-level changes. These are model renders, not new hardware recordings.
+)score" : R"score(All passages use the product path, 48 kHz /128 frames, fixed reset seeds, settled warm-up and declared-latency compensation. Both builds use the same score and compiler. The baseline is724aaac; final enables the new supported electronic component models. Phones explicitly selects the new32ohm physical route on final; baseline uses Line. Individual sections include all product changes, so they are revealing passages rather than single-flag causal experiments.
 
 Montage order: resonance3.2s, OTA breath3.6s, chorus switching3.6s, phones3.2s, chorus hiss4s, musical chords3.65s; .25s silence between sections. Exact frame counts are in the manifest.
 
 The comparison provides immutable raw float32 audio, PCM24 A/B with whole-file stereo RMS matching, signed B-A, and an explicitly boosted residual. RMS matching removes absolute level differences; consult raw metrics for noise-level and route-gain changes. These are model renders, not new hardware recordings.
-)score", error), error);
+)score";
+    require(writeText(output / "score.md", std::string(score), error), error);
     std::cout << "Frozen " << label << ": " << audio[montageIndex].left.size()
               << " montage frames (" << audio[montageIndex].left.size() / 48000.0 << " s)\n";
 }
@@ -732,10 +763,16 @@ int main(int argc, char** argv)
         if (argc == 2 && std::string_view(argv[1]) == "--self-test")
         {
             selfTest();
+            selectContinuationScore();
+            selfTest();
             return 0;
         }
         require(argc >= 5, "usage: YouKnowRenderElectronics render dir label git-revision [1|4] | compare dir before-label after-label");
-        const std::string_view command(argv[1]);
+        std::string_view command(argv[1]);
+        if (command == "render-next" || command == "compare-next") {
+            selectContinuationScore();
+            command = command == "render-next" ? "render" : "compare";
+        }
         const auto firstLabel = safeLabel(argv[3]);
         if (command == "render")
         {
