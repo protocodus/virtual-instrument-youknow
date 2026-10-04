@@ -5,6 +5,42 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-10-04 — Five electronic realism changes
+
+The owner requested all five electronic changes and authorized engineering
+selection without a listening vote. Select the nominal exponential Tr18
+resonance junction, finite Tr4/JFET wet-switch drive, and bipolar-pair collector
+shot noise for the product. Add the separate drawn PHONES circuit with explicit
+32/80/300/600 ohm loads; LINE remains the session default. Transistor operating
+priors are conditional estimates, and the collector term does not establish
+unknown mirror, base-resistance or flicker noise inside the original hybrids.
+
+Select the effective BBD output-packet covariance eta=0.9171323 from the
+hash-checked #439522 recordings. One shared opposite-phase LFO and one global
+covariance coefficient are used; locked held-out patches and frequency bands
+improve spectral RMS error from 4.288 to 0.988 dB. Mode II, outside the fit,
+improves from 4.146 to 1.068 dB. Validation remains conditional on fixed
+observed-spectrum narrow-peak masking and phase/common-gain estimates from
+even bands; the locked model is evaluated on odd residual bands. These are
+one-unit spectral-fit results, not identification of microscopic storage/transfer proportions or proof of every
+unit's noise spectrum. The existing A-weighted budget is redistributed through
+the connected nominal reconstruction circuit.
+
+Accept the OTA cost: native 48 kHz six/16-voice patch measurements increased
+CPU by 33–45% at 4× and 52–55% at 1×. The Gaussian streams, local covariance
+integration and its bounded reuse preserve the current-derived densities;
+no amplitude or noise-bandwidth reduction is fitted to save work. Latency is
+unchanged. PHONES background processing and BBD covariance each added less
+than 1% in their separate paired fixtures. These are workload measurements,
+not audio-deadline guarantees.
+
+The review compares the preserved 724aaac source tree (identical in Source/ to
+rebased b6c3544) with the final product using the same six-section score, compiler,
+reset seeds and declared-latency compensation. The PHONES passage explicitly
+selects 32 ohms. Whole-file stereo RMS matching removes absolute level changes;
+raw manifests retain them. The signed and boosted differences contain all five
+changes together. This is delegated selection, not a new listening verdict.
+
 ## 2026-10-03 — Five further realism changes
 
 The owner explicitly requested implementation of all five proposed changes
