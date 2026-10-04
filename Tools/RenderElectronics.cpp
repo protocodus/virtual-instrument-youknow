@@ -1,6 +1,8 @@
 // Deterministic electronics review: render dir label revision [1|4], compare dir A B.
 // render-next/compare-next select the 2026-10-04 continuation score; both
 // builds use the existing Phones route. Never overwrite a previous review.
+// render-line/compare-line select the main-output score: every passage uses
+// LINE, with bright loaded output and hot shared-stage chords replacing Phones.
 // Compile this IDENTICAL score against the archived baseline and final DSP.
 // Feature guards omit APIs absent at the original baseline. The original
 // score changes Line to Phones; the continuation uses Phones in both builds.
@@ -55,12 +57,23 @@ std::array<std::string_view, sectionCount> slugs {
 };
 std::string_view protocol = "youknow-electronics-v1";
 bool continuationScore = false;
+bool mainScore = false;
+constexpr std::string_view mainSettings =
+    "\"output_route\":\"LINE\",\n\"scene_settings\":[{\"scene\":\"04-line-bright\",\"selector\":\"Medium\",\"receiver_ohms\":47000,\"cable_pf\":960},{\"scene\":\"05-line-hot\",\"volume_override\":0.35,\"vca_level_override\":1,\"high_pass\":\"Boost\"}],\n";
 void selectContinuationScore()
 {
     continuationScore = true;
     protocol = "youknow-electronics-continuation-v1";
     slugs = { "01-resonance", "02-voice-tail", "03-chorus-switch",
               "04-phones-bright", "05-phones-floor", "06-musical", "montage" };
+}
+void selectMainScore()
+{
+    selectContinuationScore();
+    mainScore = true;
+    protocol = "youknow-main-output-v1";
+    slugs = { "01-resonance", "02-voice-tail", "03-chorus-switch",
+              "04-line-bright", "05-line-hot", "06-musical", "montage" };
 }
 std::array<int, slugs.size()> reportedLatency {};
 std::string capabilities()
@@ -248,8 +261,15 @@ StereoBuffer phones(int quality)
 {
     auto p = panel();
 #if YOUKNOW_ELECTRONICS_HAVE_PHONES
-    p.outputRoute = HeadphoneOutput::Route::Headphones;
-    p.headphoneLoadOhms = 32.f;
+    if (!mainScore) {
+        p.outputRoute = HeadphoneOutput::Route::Headphones;
+        p.headphoneLoadOhms = 32.f;
+    } else {
+        p.outputRoute = HeadphoneOutput::Route::Line;
+        p.outputSelector = OutputNetwork::Selector::Medium;
+        p.outputLoadOhms = 47000.f;
+        p.outputCapacitancePf = 960.f;
+    }
 #endif
     p.highPass = HighPassMode::One; p.cutoff = 1; p.resonance = p.envDepth = p.keyFollow = 0;
     p.vcaMode = VcaMode::Gate; p.chorusNoise = 0;
@@ -270,6 +290,21 @@ StereoBuffer phones(int quality)
 StereoBuffer bbdHiss(int quality)
 {
     auto p = panel();
+    if (mainScore) {
+        // Ordinary six-voice limit, maximum tone sources/VCA LEVEL, bass
+        // Boost, then upper-register chords: stresses the existing shared
+        // amplifier model. Volume follows that amplifier, so reducing it
+        // leaves the internal drive intact while keeping audition headroom.
+        p.volume = .35f; p.vcaLevel = 1.f;
+        p.highPass = HighPassMode::Boost;
+        p.cutoff = 1.f; p.resonance = p.envDepth = p.keyFollow = 0.f;
+        p.vcaMode = VcaMode::Gate; p.chorusNoise = p.noiseLevel = 0.f;
+        p.subLevel = 1.f; p.pulseEnabled = true;
+        Performance take(p, quality);
+        take.chord({36,43,48,52,55,60}, 1.8, .2);
+        take.chord({72,76,79,84,88,91}, 1.8, .2);
+        return take.take(4);
+    }
     p.sawEnabled = p.pulseEnabled = false; p.subLevel = p.noiseLevel = 0;
     p.chorus = continuationScore ? ChorusMode::Off : ChorusMode::One;
     p.chorusNoise = continuationScore ? 0.f : .75f;
@@ -407,7 +442,9 @@ std::string manifestJson(const std::array<StereoBuffer, slugs.size()>& audio,
         << "\"noise_seeds\":\"prepare/reset defined fixed seeds\",\n"
         << "\"product_profile\":true,\n"
         << "\"numerical_modes\":\"PolyZoned/Cubic/Rk4Single\",\n"
-        << "\"unit_character\":1,\"aging\":0.5,\"volume\":0.6,\n"
+        << "\"unit_character\":1,\"aging\":0.5,"
+        << (mainScore ? "\"volume_default\":0.6,\n" : "\"volume\":0.6,\n")
+        << (mainScore ? mainSettings : "")
         << "\"velocity\":1,\"velocity_depth\":0,\"polyphony\":6,\n"
         << "\"declared_latency_samples\":\"";
     for (std::size_t index = 0; index + 1 < slugs.size(); ++index)
@@ -488,7 +525,7 @@ void validateManifest(const std::string& manifest, const std::string& label,
         "\"discarded_preroll_seconds\":0.25,", "\"thermal_start\":\"settled\",",
         "\"noise_seeds\":\"prepare/reset defined fixed seeds\",", "\"product_profile\":true,",
         "\"numerical_modes\":\"PolyZoned/Cubic/Rk4Single\",", "\"unit_character\":1,",
-        "\"aging\":0.5,", "\"volume\":0.6,", "\"velocity\":1,",
+        "\"aging\":0.5,", mainScore ? "\"volume_default\":0.6," : "\"volume\":0.6,", "\"velocity\":1,",
         "\"velocity_depth\":0,", "\"polyphony\":6,"
     };
     for (const auto& fragment : required)
@@ -496,6 +533,7 @@ void validateManifest(const std::string& manifest, const std::string& label,
         requireUniqueFragment(manifest, fragment.substr(0, fragment.find(':') + 1));
         requireUniqueFragment(manifest, fragment);
     }
+    if (mainScore) requireUniqueFragment(manifest, std::string(mainSettings));
     const auto qualityKey = std::string("\"quality\":");
     requireUniqueFragment(manifest, qualityKey);
     const auto qualityPosition = manifest.find(qualityKey) + qualityKey.size();
@@ -538,6 +576,8 @@ std::string readManifest(const std::filesystem::path& path)
 void render(const std::filesystem::path& directory, const std::string& label,
             const std::string& revision, int quality)
 {
+    require(!mainScore || YOUKNOW_ELECTRONICS_HAVE_PHONES,
+        "LINE score requires the selected-output APIs; cannot silently change its load");
     require(isFingerprint(YOUKNOW_DSP_SOURCE_SHA256),
         "compile the renderer with the CMake DSP source fingerprint");
     require(isFingerprint(YOUKNOW_ELECTRONICS_SOURCE_SHA256),
@@ -559,7 +599,12 @@ void render(const std::filesystem::path& directory, const std::string& label,
         writeAudio(output / (std::string(slugs[index]) + "-raw.wav"), audio[index]);
     std::string error;
     require(writeText(output / "manifest.json", manifest, error), error);
-    const std::string_view score = continuationScore ? R"score(All passages use the product path, 48 kHz /128 frames, fixed reset seeds, settled warm-up and declared-latency compensation. Both builds use the same score and compiler. The baseline is e752eff (DSP identical to 8f7c8a1); final enables the additional supported electronics models. Both builds select the existing 32-ohm Phones route in the two Phones passages. Individual sections include all product changes, so they are revealing passages rather than single-flag causal experiments.
+    const std::string_view score = mainScore ? R"score(All passages use LINE through the product path, 48 kHz /128 frames, fixed reset seeds, settled warm-up and independently declared-latency compensation. Both builds use the identical score and compiler; exact revisions and DSP fingerprints are bound in the manifests. No Phones passage is selected.
+
+Montage order: resonance 3.2s, voice tail 3.6s, chorus switching 3.6s, bright LINE 3.2s, hot LINE chords 4s, musical chords 3.65s; .25s silence between sections. Bright LINE selects Medium, a declared47k receiver and960pF cable load in BOTH builds. Hot LINE uses six voices, maximum VCA LEVEL and tone sources, Boost, then bass/upper chords with post-amplifierVolume.35. It is a stress witness of the existing approximate overload model, not a newly measured hardware clipping curve. Other scenes retain High/open/.6Volume. Individual sections include all selected product differences rather than isolate each feature.
+
+The comparison provides immutable raw float32 audio, PCM24 whole-file stereo RMS-matched A/B, signed B-A, and an explicitly boosted diagnostic residual. Only the declared processing latency is removed; no fitted alignment, noise-seed retiming or spectral fitting is applied. A latency change can retime downstream noise, so the musical residual alone is not a causal alias/noise-density measurement; use the independent zero-noise and physical-PSD fixtures. These are model renders, not hardware recordings.
+)score" : continuationScore ? R"score(All passages use the product path, 48 kHz /128 frames, fixed reset seeds, settled warm-up and declared-latency compensation. Both builds use the same score and compiler. The baseline is e752eff (DSP identical to 8f7c8a1); final enables the additional supported electronics models. Both builds select the existing 32-ohm Phones route in the two Phones passages. Individual sections include all product changes, so they are revealing passages rather than single-flag causal experiments.
 
 Montage order: resonance 3.2s, voice tail 3.6s, chorus switching 3.6s, bright Phones 3.2s, grounded-volume Phones floor 4s, musical chords 3.65s; .25s silence between sections. Exact frame counts are in the manifest. Normal playing seldom reaches the Phones amplifier's nominal slew limit; its bandwidth change is expected to be subtle. The floor passage exposes noise after the volume control.
 
@@ -698,6 +743,17 @@ void selfTest()
     wrongHash[hashPosition] = wrongHash[hashPosition] == '0' ? '1' : '0';
     reject([&] { validateManifest(wrongHash, "before", audio); }, "wrong raw hash");
     reject([&] { validateManifest(before, "after", audio); }, "wrong label");
+    if (mainScore) {
+        auto wrongRoute = before;
+        wrongRoute.replace(wrongRoute.find("\"output_route\":\"LINE\""),
+                           std::string("\"output_route\":\"LINE\"").size(),
+                           "\"output_route\":\"PHONES\"");
+        reject([&] { validateManifest(wrongRoute, "before", audio); }, "wrong main output route");
+        auto wrongVolume = before;
+        wrongVolume.replace(wrongVolume.find("volume_override\":0.35"),
+                            std::string("volume_override\":0.35").size(), "volume_override\":0.6");
+        reject([&] { validateManifest(wrongVolume, "before", audio); }, "wrong hot scene volume");
+    }
     const auto otherQuality = makeManifest("after", 4, 'b');
     validateManifest(otherQuality, "after", audio);
     reject([&] { validatePair(before, otherQuality); }, "quality mismatch");
@@ -765,13 +821,19 @@ int main(int argc, char** argv)
             selfTest();
             selectContinuationScore();
             selfTest();
+            selectMainScore();
+            selfTest();
             return 0;
         }
-        require(argc >= 5, "usage: YouKnowRenderElectronics render[-next] dir label git-revision [1|4] | compare[-next] dir before-label after-label");
+        require(argc >= 5, "usage: YouKnowRenderElectronics render[-next|-line] dir label git-revision [1|4] | compare[-next|-line] dir before-label after-label");
         std::string_view command(argv[1]);
         if (command == "render-next" || command == "compare-next") {
             selectContinuationScore();
             command = command == "render-next" ? "render" : "compare";
+        }
+        if (command == "render-line" || command == "compare-line") {
+            selectMainScore();
+            command = command == "render-line" ? "render" : "compare";
         }
         const auto firstLabel = safeLabel(argv[3]);
         if (command == "render")
