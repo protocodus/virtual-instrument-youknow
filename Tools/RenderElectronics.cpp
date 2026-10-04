@@ -2,8 +2,8 @@
 // render-next/compare-next select the 2026-10-04 continuation score; both
 // builds use the existing Phones route. Never overwrite a previous review.
 // Compile this IDENTICAL score against the archived baseline and final DSP.
-// Feature guards omit APIs absent at baseline; the only changed connection is
-// the explicitly requested headphone route (Line at baseline, Phones at final).
+// Feature guards omit APIs absent at the original baseline. The original
+// score changes Line to Phones; the continuation uses Phones in both builds.
 // Each take trims declared latency, uses fixed reset seeds, settled thermal
 // state, 48 kHz / 128-frame event-split blocks and the product signal path.
 // Raw float audio is immutable; PCM24 listening copies use whole-file stereo
@@ -767,7 +767,7 @@ int main(int argc, char** argv)
             selfTest();
             return 0;
         }
-        require(argc >= 5, "usage: YouKnowRenderElectronics render dir label git-revision [1|4] | compare dir before-label after-label");
+        require(argc >= 5, "usage: YouKnowRenderElectronics render[-next] dir label git-revision [1|4] | compare[-next] dir before-label after-label");
         std::string_view command(argv[1]);
         if (command == "render-next" || command == "compare-next") {
             selectContinuationScore();

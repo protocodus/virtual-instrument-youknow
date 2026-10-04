@@ -120,6 +120,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowChorus.h
     Source/DSP/YouKnowNoiseCalibration.h
     Source/DSP/YouKnowNoiseC41.h
+    Source/DSP/YouKnowOtaShotNoise.h
     Source/DSP/YouKnowVoiceVcaAntialias.h
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
