@@ -119,6 +119,9 @@ struct ProductFidelityProfile
         // ORIGINAL M5218L's2uVrms integrated noise atRs1k,10Hz..30k:
         // conservative white-equivalent device floor, separate from Johnson.
         parameters.enableHeadphoneIntrinsicNoise = true;
+        // Drawn GC1 resistors' Johnson voltage noise follows NEC's shared
+        // VCA control law, before both dry and wet feeds; no device CV fit.
+        parameters.enableCommonVcaControlNoise = true;
         // Named typical same-listed-part Tr4/JFET drive, not installed timing.
         parameters.enableChorusFiniteMuteDrive = true;
         parameters.enableChorusFiniteTr5Drive = true;

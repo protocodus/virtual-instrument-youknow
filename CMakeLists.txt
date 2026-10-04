@@ -92,6 +92,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowBa662Noise.h
+    Source/DSP/YouKnowCommonVcaControlNoise.h
     Source/DSP/YouKnowEngine.h
     Source/DSP/YouKnowFirmwareTrace.h
     Source/DSP/YouKnowFirmwareProgram.h
@@ -863,6 +864,11 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.CommonVcaOutput COMMAND YouKnowCommonVcaOutputTests)
     set_tests_properties(YouKnow.CommonVcaOutput PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowCommonVcaControlNoiseTests Tests/YouKnowCommonVcaControlNoiseTests.cpp)
+    target_link_libraries(YouKnowCommonVcaControlNoiseTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.CommonVcaControlNoise COMMAND YouKnowCommonVcaControlNoiseTests)
+    set_tests_properties(YouKnow.CommonVcaControlNoise PROPERTIES TIMEOUT 120)
+
     add_executable(YouKnowVcfCalibrationTests Tests/YouKnowVcfCalibrationTests.cpp)
     target_link_libraries(YouKnowVcfCalibrationTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcfCalibration COMMAND YouKnowVcfCalibrationTests)
@@ -1077,6 +1083,7 @@ if(BUILD_TESTING)
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
                    YouKnowChorusInputLoadingTests YouKnowOutputJackTests
                    YouKnowHeadphoneOutputTests YouKnowOutputNetworkTests YouKnowPulseBalanceTests YouKnowCommonVcaOutputTests
+                   YouKnowCommonVcaControlNoiseTests
                    YouKnowVcfIntegratorTests YouKnowVcfNoiseTests YouKnowSysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)

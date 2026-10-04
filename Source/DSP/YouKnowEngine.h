@@ -2,6 +2,7 @@
 
 #include "YouKnowOtaShotNoise.h"
 #include "YouKnowBa662Noise.h"
+#include "YouKnowCommonVcaControlNoise.h"
 
 #include "YouKnowChorus.h"
 #include "YouKnowCoupledMixer.h"
@@ -463,6 +464,9 @@ struct EngineParameters
     // exactly like the resistor floors -- the exact-silence endpoint at 0 is
     // product policy, not a statement that the floor is a tolerance.
     bool enableCommonVcaNoise { true };
+    // External R30/R32/R31/R165 Johnson voltage noise modulates the shared
+    // gain through NEC's control slope. Raw keeps this comparison off.
+    bool enableCommonVcaControlNoise { false };
     // Product-selected support circuit: IC2b's R16 33k || C5 22p feedback
     // after the common VCA and before the dry/wet split (p.15). The matched
     // digital filter approximates its magnitude, not exact analogue phase.
@@ -2991,6 +2995,7 @@ private:
         float outputSummerNoiseScale { 0.0f };
         NoiseC41LowPass::Coefficients mainNoiseMagnitudePole {};
         float commonVcaNoiseScale { 0.0f };
+        CommonVcaControlNoise::Coefficients commonVcaControlNoise {};
         OutputJackLowPass::Coefficients commonVcaOutputPole {};
     };
     [[nodiscard]] static PwmHoldCoefficients pwmHoldCoefficients(
@@ -3396,6 +3401,8 @@ private:
     // where the densities are stated. Resampled with jackBoardCelsius_.
     float jackBoardJohnsonScale_ { 1.0f };
     void refreshJackBoardTemperature(
+        const EngineParameters& parameters) noexcept;
+    [[nodiscard]] float applyCommonVcaControlNoise(float signal,
         const EngineParameters& parameters) noexcept;
     [[nodiscard]] float jackBoardCelsius(
         const EngineParameters& parameters) const noexcept;
@@ -3876,6 +3883,8 @@ private:
     std::uint32_t headphoneIntrinsicNoiseStateLeft_ { 0x91ac6e27u };
     std::uint32_t headphoneIntrinsicNoiseStateRight_ { 0x2e735bd1u };
     std::uint32_t commonVcaNoiseState_ { 0x7f4a7c15u };
+    OtaShotNoise::Random commonVcaControlRandom_ {0x6412b9a7u};
+    CommonVcaControlNoise commonVcaControlNoise_ {};
 
     float displayEnvelope_ { 0.0f };
     float displayLfo_ { 0.0f };

@@ -6056,6 +6056,8 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     processingCoefficients_.commonVcaDecay = std::exp(
         -processingCoefficients_.internalIntervalSeconds
         / processingCoefficients_.commonVcaTime);
+    processingCoefficients_.commonVcaControlNoise =
+        CommonVcaControlNoise::coefficients(oversampledRate_);
     processingCoefficients_.subDecay = std::exp(
         -processingCoefficients_.internalIntervalSeconds
         / static_cast<double>(subHoldSlewSeconds));
@@ -6374,6 +6376,8 @@ void YouKnowEngine::clearOutputPath() noexcept
     outputWiperNoiseStateLeft_ = 0x94d049bbu;
     outputWiperNoiseStateRight_ = 0x8538ecadu;
     commonVcaNoiseState_ = 0x7f4a7c15u;
+    commonVcaControlRandom_.seed(0x6412b9a7u);
+    commonVcaControlNoise_.reset();
 }
 
 void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
@@ -10024,6 +10028,26 @@ void YouKnowEngine::refreshJackBoardTemperature(
         (jackBoardCelsius_ + 273.15f) / outputNoiseTemperatureKelvin);
 }
 
+float YouKnowEngine::applyCommonVcaControlNoise(float signal,
+    const EngineParameters& parameters) noexcept
+{
+    // Independent physical-board innovations also run during silence and
+    // Character0. They never consume a pre-existing audio/device stream.
+    const double white = commonVcaControlRandom_.next();
+    const double slow = commonVcaControlRandom_.next();
+    const double voltage = commonVcaControlNoise_.process(
+        processingCoefficients_.commonVcaControlNoise,
+        jackBoardJohnsonScale_, white, slow);
+    if (parameters.calibration == 0 || signal == 0) return signal;
+    const double sensitivity = CommonVcaControlNoise::referenceGainSensitivity
+        *CommonVcaControlNoise::referenceKelvin/(jackBoardCelsius_+273.15);
+    // Apply at the actual shared gain BEFORE C5 and the dry/wet split. A
+    // voltage perturbation changes gain, so zero signal adds no audio floor.
+    // Double precision preserves tiny modulation instead of rounding a
+    // near-unity gain factor to float before multiplying the signal.
+    return static_cast<float>(signal*(1-voltage*sensitivity*parameters.calibration));
+}
+
 void YouKnowEngine::advanceDcoPitAndRamp(
     Voice& voice, DcoRange range, float previousThresholdVolts,
     float thresholdVolts, bool previousPinnedHigh, bool pinnedHigh,
@@ -12233,6 +12257,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 patchLevelCacheValid = true;
             }
             float levelled = vcaInput * patchLevelCacheValue;
+            if (parameters.enableCommonVcaControlNoise)
+                levelled = applyCommonVcaControlNoise(levelled, parameters);
             if (parameters.enableCommonVcaOutputPole)
                 levelled = commonVcaOutputPole_.process(
                     levelled, coefficients.commonVcaOutputPole);
