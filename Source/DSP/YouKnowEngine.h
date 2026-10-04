@@ -516,6 +516,9 @@ struct EngineParameters
     // IC7's original M5218L7MHz/2.2V/us typical component prior. Product on,
     // raw diagnostic off; not a stored tone/session parameter. LINE is independent.
     bool enableHeadphoneAmplifierDynamics { false };
+    // IC7's original2uVrms/10Hz..30k/Rs1k, conservative source-deembedded
+    // white-equivalent prior. Product on, rawdiagnostic off; not serialised.
+    bool enableHeadphoneIntrinsicNoise { false };
     OutputNetwork::Selector outputSelector { OutputNetwork::Selector::High };
     float outputLoadOhms { 0.0f };
     // Added capacitance of each stereo cable/input, or the one mono cable.
@@ -3869,6 +3872,8 @@ private:
     std::uint32_t headphoneNoiseStateRight_ { 0xe1a6b82du };
     std::uint32_t headphoneOutputNoiseStateLeft_ { 0x3b71c92du };
     std::uint32_t headphoneOutputNoiseStateRight_ { 0x8d4e6a13u };
+    std::uint32_t headphoneIntrinsicNoiseStateLeft_ { 0x91ac6e27u };
+    std::uint32_t headphoneIntrinsicNoiseStateRight_ { 0x2e735bd1u };
     std::uint32_t commonVcaNoiseState_ { 0x7f4a7c15u };
 
     float displayEnvelope_ { 0.0f };

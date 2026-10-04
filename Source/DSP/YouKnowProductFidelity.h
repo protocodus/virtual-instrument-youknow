@@ -116,6 +116,9 @@ struct ProductFidelityProfile
         // Original M5218L's nominal7MHz/3.6 response and2.2V/us slew on
         // PHONES only. The current/load-dependent installed limits remain unknown.
         parameters.enableHeadphoneAmplifierDynamics = true;
+        // ORIGINAL M5218L's2uVrms integrated noise atRs1k,10Hz..30k:
+        // conservative white-equivalent device floor, separate from Johnson.
+        parameters.enableHeadphoneIntrinsicNoise = true;
         // Named typical same-listed-part Tr4/JFET drive, not installed timing.
         parameters.enableChorusFiniteMuteDrive = true;
         parameters.enableChorusFiniteTr5Drive = true;
