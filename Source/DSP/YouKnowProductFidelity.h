@@ -104,6 +104,9 @@ struct ProductFidelityProfile
         // Tr18 uses the same nominal PNP prior, with its own drawn network
         // and service-endpoint trimmer solve rather than a hard 0.6-V knee.
         parameters.enableResonanceSoftJunction = true;
+        // Physical collector component of the voice OTA pairs, with current
+        // and covariance normalization; installed excess spectra stay open.
+        parameters.enableOtaShotNoise = true;
         // Prevent the physical BA662 pair's ultrasonic harmonics/control
         // sidebands folding back on coarse output grids; gain is unchanged.
         parameters.enableVoiceVcaAntialias = true;

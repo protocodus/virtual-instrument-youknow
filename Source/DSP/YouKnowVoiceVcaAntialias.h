@@ -114,7 +114,27 @@ struct VoiceVcaAntialias
     [[nodiscard]] float process(float input, float gain, const Kernel& k,
                                 Shape&& shape) noexcept
     {
-        if (k.factor == 1) return shape(input) * gain;
+        return processCore<false>(input, gain, k, shape,
+            [](double, double) noexcept { return 0.0; });
+    }
+    // Additional output current/signal AFTER shape*gain, in the same output
+    // coordinate. The callback receives the same reconstructed drive/gain
+    // timestamp and runs once per local-rate phase, including zero current.
+    template <class Shape, class OutputNoise>
+    [[nodiscard]] float processWithOutputNoise(float input, float gain,
+        const Kernel& k, Shape&& shape, OutputNoise&& noise) noexcept
+    {
+        return processCore<true>(input, gain, k, shape, noise);
+    }
+    template <bool addNoise, class Shape, class OutputNoise>
+    [[nodiscard]] float processCore(float input, float gain, const Kernel& k,
+        Shape&& shape, OutputNoise&& noise) noexcept
+    {
+        if (k.factor == 1) {
+            if constexpr (addNoise)
+                return static_cast<float>(shape(input) * gain + noise(input, gain));
+            return shape(input) * gain;
+        }
         inputs[static_cast<std::size_t>(inputWrite)] = input;
         gains[static_cast<std::size_t>(inputWrite)] = gain;
         float result = 0;
@@ -142,8 +162,12 @@ struct VoiceVcaAntialias
             // envelope or add a new circuit time constant.
             const double fraction = static_cast<double>(phase) / k.factor;
             const double g = g0 + fraction * (g1 - g0);
-            outputs[static_cast<std::size_t>(outputWrite)] =
-                static_cast<float>(shape(static_cast<float>(drive)) * g);
+            if constexpr (addNoise)
+                outputs[static_cast<std::size_t>(outputWrite)] = static_cast<float>(
+                    shape(static_cast<float>(drive)) * g + noise(drive, g));
+            else
+                outputs[static_cast<std::size_t>(outputWrite)] =
+                    static_cast<float>(shape(static_cast<float>(drive)) * g);
             if (phase == 0)
             {
                 const int centre = (k.taps - 1) / 2;

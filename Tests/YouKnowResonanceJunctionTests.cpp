@@ -86,8 +86,7 @@ Render render(bool enabled,float resonance,int block,double rate=48000,int quali
     p.sawEnabled=true;p.pulseEnabled=false;p.subLevel=0;p.attack=0;p.decay=.1f;p.sustain=1;
     p.cutoff=.27f;p.resonance=resonance;p.enableResonanceSoftJunction=enabled;
     p.useCircuitDerivedResonanceShape=circuit;
-    e->setOversamplingFactor(1<<quality);
-    e->setParameters(p);e->prepare(rate,block);e->noteOn(60,1);
+    e->setParameters(p);e->prepare(rate,block,1<<quality);e->noteOn(60,1);
     Render r;r.audio.resize(static_cast<std::size_t>(rate*.16));std::vector<float> right(r.audio.size());
     std::size_t at=0;
     for(int section=0;section<4;++section) {

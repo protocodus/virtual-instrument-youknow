@@ -6197,6 +6197,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     {
         voice.cutoffChainCounts = -1.0e30f;
         voice.cutoffChainFeedback = -1.0e30f;
+        voice.filterShotCache = {};
     }
     chorus_.prepare(oversampledRate_, preserveFreeRunningState);
 }
@@ -6534,6 +6535,10 @@ void YouKnowEngine::reset()
         // card, so seed it once per slot rather than once per MIDI assignment.
         voice.noiseState = hash32(static_cast<std::uint32_t>(index)
                                   * 2246822519u + 1u) | 1u;
+        voice.filterShotRandom.seed(hash32(static_cast<std::uint32_t>(index)
+            * 2246822519u + 0x53484f54u));
+        voice.vcaShotRandom.seed(hash32(static_cast<std::uint32_t>(index)
+            * 2246822519u + 0x56434153u));
     }
     refreshVoiceRampCurrentScales();
     // `voice = Voice {}` above zeroed the offsets, and the cards outlive a
@@ -7520,6 +7525,11 @@ void YouKnowEngine::silenceVoice(Voice& voice) noexcept
         voice.vcaInputVolts = 0.0f;
         voice.noiseState = hash32(
             static_cast<std::uint32_t>(voice.cardIndex) * 2246822519u + 1u) | 1u;
+        voice.filterShotRandom.seed(hash32(static_cast<std::uint32_t>(voice.cardIndex)
+            * 2246822519u + 0x53484f54u));
+        voice.vcaShotRandom.seed(hash32(static_cast<std::uint32_t>(voice.cardIndex)
+            * 2246822519u + 0x56434153u));
+        voice.filterShotCache = {};
     }
     // Physical slots deliberately keep their free-running DCO, filter and
     // card-noise state. Every slot keeps both digital note memories,
@@ -10469,6 +10479,15 @@ void YouKnowEngine::advanceDcoPitAndRamp(
 
 void YouKnowEngine::freewheelVoiceCard(Voice& voice) noexcept
 {
+    if (activeParameters_.enableOtaShotNoise)
+    {
+        // Retired physical cards retain independent device-noise chronology;
+        // the established freewheel policy skips their inaudible filter solve.
+        for (int i=0;i<4;++i) (void) voice.filterShotRandom.next();
+        const int factor=activeParameters_.enableVoiceVcaAntialias
+            ? voiceVcaAntialiasKernel_.factor : 1;
+        for (int i=0;i<factor;++i) (void) voice.vcaShotRandom.next();
+    }
     voice.freewheeling = true;
     advanceDcoPitAndRamp(
         voice, activeParameters_.range,
@@ -10863,6 +10882,28 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         controlTrajectory = &eventControlTrajectory;
     }
     VoiceFilterFrame frame;
+    if (parameters.enableOtaShotNoise)
+    {
+        frame.shotNoiseOrigin = voice.filter.state;
+        frame.shotNoiseInput = .5 * (filterInput + voice.filter.inputHistory[0]);
+        if (controlTrajectory != nullptr)
+        {
+            frame.shotNoiseOmega = controlTrajectory->omegaStep[3];
+            frame.shotNoiseFeedback = controlTrajectory->feedback[3];
+            frame.shotNoiseHeadroom = controlTrajectory->headroom[3];
+        }
+        else
+        {
+            const bool primed = voice.filter.parameterHistoryPrimed;
+            frame.shotNoiseOmega = primed
+                ? .5 * (effectiveFilterOmegaStep + voice.filter.previousOmegaStep)
+                : effectiveFilterOmegaStep;
+            frame.shotNoiseFeedback = primed
+                ? .5 * (voice.feedback + voice.filter.previousFeedback) : voice.feedback;
+            frame.shotNoiseHeadroom = primed
+                ? .5 * (dynamicHeadroom + voice.filter.previousHeadroom) : dynamicHeadroom;
+        }
+    }
     frame.input = filterInput;
     frame.omegaStep = effectiveFilterOmegaStep;
     frame.headroom = dynamicHeadroom;
@@ -10873,6 +10914,88 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     }
     frame.needsFilter = true;
     return frame;
+}
+
+float YouKnowEngine::applyVoiceFilterShotNoise(
+    Voice& voice, const VoiceFilterFrame& frame, float filtered) noexcept
+{
+    if (!activeParameters_.enableOtaShotNoise) return filtered;
+    OtaShotNoise::Vector normal {};
+    for (double& value : normal) value = voice.filterShotRandom.next();
+    // Unit Character is the established floor-amplitude policy: zero is
+    // the deterministic calibrated reference; one is the physical density.
+    // Apply its square to PSD, retaining independent chronology at zero.
+    const double character=activeParameters_.calibration;
+    if(character==0) return filtered;
+    const double h = frame.shotNoiseHeadroom;
+    if (!(h>0 && frame.shotNoiseOmega>0)) return filtered;
+    auto& filter=voice.filter;
+    OtaShotNoise::Vector midpoint {};
+    for (std::size_t i=0;i<4;++i)
+        midpoint[i]=.5*(frame.shotNoiseOrigin[i]+filter.state[i]);
+    const double loopH=filter.resonanceHeadroomFollowsStage
+        ? resonanceHeadroomFor(h)
+        : VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
+    // Reuse the already qualified pair kernel on the shipped numerical
+    // path (absolute tanh error <=4.31e-7); Exact retains libm. Noise density
+    // introduces no differently voiced saturation or fitted amplitude.
+    const auto pair=[fast=activeParameters_.vcfTanhMode!=VcfTanhMode::Exact](double x) {
+        return fast?polyZonedTanhImpl(x):std::tanh(x);
+    };
+    const double resY=pair((midpoint[3]
+        -filter.inputCompensationCoefficient*frame.shotNoiseInput
+        +filter.resonanceOffsetVolts)/loopH);
+    double previous=frame.shotNoiseInput-frame.shotNoiseFeedback*loopH*resY;
+    OtaShotNoise::Matrix jacobian {};
+    OtaShotNoise::Vector diffusion {};
+    double firstSlope=0;
+    // omega_i*C_i*H is the actual pair current implied by the already
+    // declared nonlinear stage law. gScale is C_nom/C_i, so capacitance
+    // tolerance must not accidentally become a different tail current.
+    // The voiced Early multiplier affects incremental transfer below, but
+    // does not establish a different control-tail current or excess-noise
+    // amplitude; only the declared bare-pair collector term is generated.
+    const double tail=frame.shotNoiseOmega*oversampledRate_*240.0e-12*h;
+    for (std::size_t i=0;i<4;++i)
+    {
+        const double y=pair((previous-midpoint[i]+filter.offsetVoltage[i])/h);
+        const double sensitivity=std::max(0.0,1-y*y);
+        const double omegaDt=frame.shotNoiseOmega*filter.gScale[i];
+        const double c=240.0e-12/filter.gScale[i];
+        const double earlyAmount=activeParameters_.enableVcfEarlyEffect
+            ? otaEarlyEffectCoefficient*activeParameters_.calibration : 0;
+        const double earlyArgument=midpoint[i]/h;
+        const double earlyY=useCubicEarly_?OtaCascade::cubicEarlyTanh(earlyArgument):pair(earlyArgument);
+        const double earlySlope=useCubicEarly_
+            ? std::max(0.0,1-(4.0/9.0)*earlyArgument*earlyArgument) : 1-earlyY*earlyY;
+        const double early=1+earlyAmount*earlyY;
+        const double slope=omegaDt*early*sensitivity;
+        jacobian[i][i]=-slope+omegaDt*earlyAmount*earlySlope*y;
+        if(i>0) jacobian[i][i-1]=slope;
+        else { firstSlope=slope; jacobian[0][3]=-slope*frame.shotNoiseFeedback*(1-resY*resY); }
+        // Single-sided current PSD divided by2*C^2 is the SDE diffusion;
+        // covariance() expects its integral over this physical interval.
+        diffusion[i]=OtaShotNoise::currentPsd(tail,y)
+            *inverseOversampledRate_/(2*c*c);
+        previous=midpoint[i];
+    }
+    // Resonance OTA output current reaches the first stage through the 68k
+    // summing resistor, BEFORE that stage's pair. Its own quiet-tail noise
+    // is therefore attenuated by the first pair's incremental sensitivity.
+    // Recover its current at the fixed service temperature, rather than
+    // allowing live warm-up to re-trim the grounded-base control stage.
+    const double serviceKelvin=voiceCardCelsius(
+        activeParameters_,voice.cardIndex,1.0f)+273.15;
+    const double serviceLoopH=filter.resonanceHeadroomFollowsStage
+        ? resonanceHeadroomFor(otaHeadroomVolts*serviceKelvin/298.15) : loopH;
+    const double resTail=frame.shotNoiseFeedback*serviceLoopH/68000.0;
+    const double noiseGainPerAmp=firstSlope*oversampledRate_*68000.0;
+    diffusion[0]+=OtaShotNoise::currentPsd(resTail,resY)
+        *noiseGainPerAmp*noiseGainPerAmp*inverseOversampledRate_/2;
+    for(double& value:diffusion)value*=character*character;
+    const auto innovation=voice.filterShotCache.next(jacobian,diffusion,normal);
+    for(std::size_t i=0;i<4;++i) filter.state[i]+=innovation[i];
+    return static_cast<float>(filter.state[3]);
 }
 
 float YouKnowEngine::finishVoiceFilter(Voice& voice,
@@ -10894,7 +11017,15 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     voice.vcaInputVolts = vcaInput;
 
     if (!voice.active)
+    {
+        if(activeParameters_.enableOtaShotNoise)
+        {
+            const int factor=activeParameters_.enableVoiceVcaAntialias
+                ? voiceVcaAntialiasKernel_.factor : 1;
+            for(int i=0;i<factor;++i) (void) voice.vcaShotRandom.next();
+        }
         return 0.0f;
+    }
 
     // VR30 injects a signal-input null into the BA662 through R112; it is
     // separate from Tr20's control-current path and is adjusted per card to
@@ -10914,22 +11045,42 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
         * voiceVcaThermalDriveScale(activeParameters_, voice.cardIndex);
     const auto shape = [saturate = activeParameters_.enableVoiceVcaSignalSaturation]
         (float volts) noexcept { return saturate ? VoiceVcaSignalLaw::shape(volts) : volts; };
-    const float controlled = activeParameters_.enableVoiceVcaAntialias
-        ? voice.vcaAntialias.process(drive, voice.vca, voiceVcaAntialiasKernel_, shape)
-        : shape(drive) * voice.vca;
     // This fixed gain was formerly lost when the physical BA662 law was
     // normalized to unity. Apply it in volts before the 2.6-V model-unit
     // conversion, so every downstream circuit receives the service level.
     const float serviceGain = activeParameters_.enableVoiceVcaServiceGain
         ? VoiceVcaSignalLaw::serviceGain() : 1.0f;
+    const auto noise=[&](double pairDrive,double currentFraction) noexcept {
+        // voice.vca is normalized at4095; 302uA is the SERVICE sustain
+        // code4064 current. Output-current noise scales with sqrt(I), and
+        // is added after the signal/gain law. It is already physical TP8
+        // volts across47k, so divide serviceGain before the common multiply.
+        const double normal=voice.vcaShotRandom.next();
+        if(activeParameters_.calibration==0 || currentFraction<=0) return 0.0;
+        const double tail=VoiceVcaSignalLaw::fullControlTailAmps
+            /VoiceVcaControlLaw::gain(4064.0f/4095.0f)*std::max(0.0,currentFraction);
+        const double pairOutput=polyZonedTanhImpl(pairDrive/VoiceVcaSignalLaw::headroomVolts);
+        const int factor=activeParameters_.enableVoiceVcaAntialias
+            ? voiceVcaAntialiasKernel_.factor : 1;
+        return normal*activeParameters_.calibration*VoiceVcaSignalLaw::loadOhms/serviceGain
+            *std::sqrt(OtaShotNoise::currentPsd(tail,pairOutput)*oversampledRate_*factor/2);
+    };
+    const float controlled=activeParameters_.enableOtaShotNoise
+        ? (activeParameters_.enableVoiceVcaAntialias
+            ? voice.vcaAntialias.processWithOutputNoise(drive,voice.vca,voiceVcaAntialiasKernel_,shape,noise)
+            : static_cast<float>(shape(drive)*voice.vca+noise(drive,voice.vca)))
+        : (activeParameters_.enableVoiceVcaAntialias
+            ? voice.vcaAntialias.process(drive,voice.vca,voiceVcaAntialiasKernel_,shape)
+            : shape(drive)*voice.vca);
     const float output = controlled * serviceGain * voltsToSample;
 
     // The existing energy-driven rail proxy reads the physical current-time
     // amplifier output. A numerical reconstruction delay must not insert
     // extra delay into that shared feedback interaction or alter it with
     // quality. Only the audible path needs the FIR's delayed/bandlimited law.
-    const float energyOutput = activeParameters_.enableVoiceVcaAntialias
-        && voiceVcaAntialiasKernel_.factor > 1
+    const float energyOutput = activeParameters_.enableOtaShotNoise
+        || (activeParameters_.enableVoiceVcaAntialias
+            && voiceVcaAntialiasKernel_.factor > 1)
         ? shape(drive) * voice.vca * serviceGain * voltsToSample : output;
     voice.energy += voiceEnergyFollower_ * (std::abs(energyOutput) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
@@ -10948,7 +11099,7 @@ float YouKnowEngine::renderVoice(Voice& voice,
         frame.input, frame.omegaStep, voice.feedback, frame.headroom,
         parameters.enableVcfEarlyEffect, parameters.calibration, trajectory,
         parameters.vcfTanhMode, parameters.vcfSolverMode);
-    return finishVoiceFilter(voice, filtered);
+    return finishVoiceFilter(voice, applyVoiceFilterShotNoise(voice, frame, filtered));
 }
 
 template float YouKnowEngine::renderVoice<false>(
@@ -11004,9 +11155,9 @@ std::array<float, 2> YouKnowEngine::renderVoicePair(
 
     return {
         firstFrame.needsFilter
-            ? finishVoiceFilter(first, filtered[0]) : 0.0f,
+            ? finishVoiceFilter(first, applyVoiceFilterShotNoise(first, firstFrame, filtered[0])) : 0.0f,
         secondFrame.needsFilter
-            ? finishVoiceFilter(second, filtered[1]) : 0.0f
+            ? finishVoiceFilter(second, applyVoiceFilterShotNoise(second, secondFrame, filtered[1])) : 0.0f
     };
 }
 
@@ -11098,7 +11249,7 @@ std::array<float, 4> YouKnowEngine::renderVoiceQuad(
     std::array<float, 4> result {};
     for (std::size_t lane = 0; lane < voices.size(); ++lane)
         if (frames[lane].needsFilter)
-            result[lane] = finishVoiceFilter(*voices[lane], filtered[lane]);
+            result[lane] = finishVoiceFilter(*voices[lane], applyVoiceFilterShotNoise(*voices[lane], frames[lane], filtered[lane]));
     return result;
 }
 #endif

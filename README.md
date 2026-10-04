@@ -119,6 +119,11 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### Unreleased — 2026-10-03
 
+- Quiet filter output and voice-amplifier tails now include the bipolar
+  pairs' current-dependent collector shot noise. It follows cutoff,
+  resonance and envelope current, with independent card streams and matched
+  amplifier latency. Unit Character zero remains deterministic. This adds
+  a supported noise component, not a measured full-IC hiss calibration.
 - Low resonance now follows Tr18's gradual exponential junction rather than
   an abrupt 0.6 V turn-on. Its nominal 2SA1015 current and drawn trimmer are
   solved against the existing service endpoint; exact RES zero and full
@@ -796,6 +801,33 @@ forty-year-old unit will null against the plug-in.
   filters lose at most 0.04 dB through 20 kHz at 44.1 kHz. Control and audio
   reconstruction share a timestamp; their 48-internal-sample delay is
   included in host compensation. Raw reference fixtures retain the direct law.
+- The product also adds the bare OTA pairs' collector shot-noise component,
+  separately from resistor Johnson noise. [TI's transistor-noise model](https://www.ti.com/lit/pdf/snoa626)
+  and [ADI's Schottky relation](https://www.analog.com/media/en/training-seminars/tutorials/MT-047.pdf)
+  supply `2qIc`; projecting two collector sources through an ideal quiet
+  shared tail gives differential-current PSD `2qItail(1−tanh²(u))`.
+  The existing nonlinear voltage/current laws determine each tail current.
+  Four stage sources enter their own 240 pF capacitors; the resonance OTA
+  enters the first pair through the reconstructed 68 kΩ summer. A locally
+  frozen midpoint Jacobian integrates each interval's physical covariance,
+  rather than adding noise on every solver evaluation. Independent continuous
+  ODE and projected-node tests qualify the numerical solve, including saturated
+  pairs; small-tolerance factor reuse saves CPU. The actual-filter PSD tests
+  compare sampled continuous noise, including its alias sum, rather than
+  claiming an unaliased analog spectrum on coarse grids. Midpoint freezing,
+  source interpolation and the existing numerical filter remain approximations.
+  At nominal 25 °C and 248 Hz, the four open-loop stage sources predict about
+  68.2 µVrms total continuous-band filter output. At the service sustain current,
+  the voice VCA's 47 kΩ load receives 462 nV/√Hz (65.4 µVrms over 20 kHz)
+  at zero differential drive. Its current noise is added after signal gain
+  at the local antialias rate, using the same delayed envelope timestamp.
+  All new sources have independent deterministic streams; physical-card idle
+  draws and hard-reset behavior are preserved. RMS follows Unit Character,
+  retaining exact zero there, and raw-reference engines leave the feature off.
+  Original BA662/IR3109 mirror, base-resistance, tail excess and flicker noise
+  remain unmeasured; no extra factor is fitted. A paired 48 kHz six/16-voice
+  patch benchmark measured about 33–45% more CPU at 4× and 52–55% at 1×;
+  this is a tested workload, not a universal performance bound.
 
 **Bus and output**
 

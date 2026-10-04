@@ -1,5 +1,7 @@
 #pragma once
 
+#include "YouKnowOtaShotNoise.h"
+
 #include "YouKnowChorus.h"
 #include "YouKnowCoupledMixer.h"
 #include "YouKnowSubLevel.h"
@@ -469,6 +471,10 @@ struct EngineParameters
     // poles fix each source's different output spectrum. False retains the
     // former input-only voiced 20 uV seed for comparisons. Not serialised.
     bool enableCardJohnsonFloor { true };
+    // Product-selected collector component of the declared bare OTA pairs:
+    // four VCF stages, resonance return and voice VCA. Independent device
+    // streams; no invented mirror/base/flicker excess or full-IC noise fit.
+    bool enableOtaShotNoise { false };
     // Engine-level aged-unit extension, exposed as the Aging host parameter
     // (2026-08-21, on request) and still defaulted off. Zero is
     // the freshly calibrated instrument every other mechanism describes; one
@@ -3226,6 +3232,8 @@ private:
 
         float energy { 0.0f };
         std::uint32_t noiseState { 1u };
+        OtaShotNoise::Random filterShotRandom {}, vcaShotRandom {};
+        OtaShotNoise::Cache filterShotCache {};
         Envelope envelope {};
         Dco dco {};
         OtaCascade filter {};
@@ -3543,6 +3551,8 @@ private:
         float rawNoise, float level, bool levelBeforeC41) noexcept;
     struct VoiceFilterFrame
     {
+        OtaShotNoise::Vector shotNoiseOrigin {};
+        double shotNoiseInput {}, shotNoiseOmega {}, shotNoiseFeedback {}, shotNoiseHeadroom {};
         float input {};
         float omegaStep {};
         float headroom {};
@@ -3550,6 +3560,8 @@ private:
         bool hasTrajectory { false };
         bool needsFilter { false };
     };
+    [[nodiscard]] float applyVoiceFilterShotNoise(
+        Voice& voice, const VoiceFilterFrame& frame, float filtered) noexcept;
     [[nodiscard]] VoiceFilterFrame prepareVoiceFilter(
         Voice& voice, const EngineParameters& parameters,
         float noiseSample) noexcept;
