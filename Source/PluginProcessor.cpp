@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 
 namespace
 {
@@ -918,7 +919,7 @@ YouKnowAudioProcessor::createParameterLayout()
     // Changing modes clears held notes and tails, so host automation is disabled.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { originalPerformance, 11 }, "Performance Timing",
-        juce::StringArray { "Direct", "Original" }, 0,
+        juce::StringArray { "Direct", "Original" }, 1,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
     // Append after every shipped host/AU index. These describe a connection,
     // never a tone, and are deliberately not host-automatable.
@@ -1016,8 +1017,11 @@ YouKnowAudioProcessor::YouKnowAudioProcessor()
     // randomisation, recall or SysEx. Listening at the parameters is the only
     // place all of those paths meet, and lets a later pair write supersede an
     // obsolete-id write that is still waiting for the 20 ms bridge timer.
-    for (const auto* id : { poly1, poly2, chorusI, chorusII, pitchBend, modulation })
+    for (const auto* id : { poly1, poly2, pitchBend, modulation })
         parameters.addParameterListener (id, this);
+    for (const auto parameter : tonePanelParameters)
+        parameters.addParameterListener (
+            parameterPointers[static_cast<std::size_t> (parameter)].id, this);
 
     keyboardState.addListener (this);
 
@@ -1037,8 +1041,11 @@ YouKnowAudioProcessor::~YouKnowAudioProcessor()
 {
     stopTimer();
     using namespace youknow::parameters;
-    for (const auto* id : { poly1, poly2, chorusI, chorusII, pitchBend, modulation })
+    for (const auto* id : { poly1, poly2, pitchBend, modulation })
         parameters.removeParameterListener (id, this);
+    for (const auto parameter : tonePanelParameters)
+        parameters.removeParameterListener (
+            parameterPointers[static_cast<std::size_t> (parameter)].id, this);
     keyboardState.removeListener (this);
 }
 
@@ -1170,7 +1177,8 @@ void YouKnowAudioProcessor::reset()
     queueModulation (valueOf (ParameterIndex::modulation));
     panicRequested.store (false, std::memory_order_release);
     keyModeReassertRequested.store (false, std::memory_order_release);
-    pendingMidiToneShadowActive = false;
+    // Accepted MIDI tone ownership survives a transport stop until APVTS has
+    // reflected it. Otherwise a stale UI image becomes a false panel gesture.
     clearDisplayTelemetry();
 
     if (wasReady)
@@ -1204,6 +1212,14 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
         reflectedMidiSequence.load (std::memory_order_acquire);
     const auto recallGeneration =
         toneRecallGeneration.load (std::memory_order_acquire);
+    PanelEditVersions panelVersions;
+    PanelEditValues panelValues;
+    for (std::size_t i = 0; i < panelVersions.size(); ++i)
+    {
+        const auto edit = panelEdits[i].load (std::memory_order_acquire);
+        panelVersions[i] = static_cast<std::uint32_t> (edit >> 32u);
+        panelValues[i] = std::bit_cast<float> (static_cast<std::uint32_t> (edit));
+    }
 
     EngineParameters engineParameters;
     ActiveProductFidelityProfile::applyTo (engineParameters);
@@ -1349,13 +1365,23 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
             reseedLegacyBridges.store (true, std::memory_order_release);
         return false;
     }
+    for (std::size_t i = 0; i < panelVersions.size(); ++i)
+        if (panelVersions[i] != static_cast<std::uint32_t> (
+                panelEdits[i].load (std::memory_order_acquire) >> 32u))
+        {
+            if (reseeding)
+                reseedLegacyBridges.store (true, std::memory_order_release);
+            return false;
+        }
 
     keyModeBridge = nextKeyModeBridge;
     chorusBridge = nextChorusBridge;
-    audioBaseParameters = engineParameters;
 
-    if (recallGeneration != audioBaseToneRecallGeneration)
+    const bool toneRecalled = recallGeneration != audioBaseToneRecallGeneration;
+    if (toneRecalled)
     {
+        audioMidiPanelVersions = panelVersions;
+        pendingMidiPanelVersions = panelVersions;
         audioBaseToneRecallGeneration = recallGeneration;
         pendingMidiToneShadowActive = false;
         pendingMidiNeedsResync = false;
@@ -1369,15 +1395,48 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
     // The message thread may currently be reflecting an older event from the
     // same queue. Do not let that intermediate APVTS state pull the DSP back
     // from a newer MIDI event which has already happened in sample time.
+    bool nativeToneEdit = false;
+    const auto nativeFields = panelEditMask (panelVersions, audioPanelEditVersions);
+    auto nativePanelParameters = engineParameters;
+    (void) mergeEditedPanelTone (nativePanelParameters, panelValues,
+                                panelVersions, audioPanelEditVersions);
     if (pendingMidiToneShadowActive)
     {
         if (reflectedAfterSnapshot >= pendingMidiToneShadowSequence)
             pendingMidiToneShadowActive = false;
         else
+        {
             applyPatchToEngineParameters (engineParameters,
                                           pendingMidiToneShadow);
+            // New physical gestures still belong to the panel while the
+            // message thread is reflecting an older MIDI packet. Retain only
+            // fields actually edited since the previous audio snapshot.
+        }
     }
-    engine.setParameters (engineParameters);
+    if (!toneRecalled)
+    {
+        // The retained values also protect a native edit that races the final
+        // reflection setter. A later MIDI event takes ownership only of its
+        // actual fields; unchanged host snapshots cannot revert newer edits.
+        (void) mergeEditedPanelTone (engineParameters, panelValues,
+                                    panelVersions, audioMidiPanelVersions);
+        nativeToneEdit = nativeFields != 0;
+        if (pendingMidiToneShadowActive && nativeToneEdit)
+            pendingMidiToneShadow = patchFromEngineParameters (engineParameters);
+    }
+    audioPanelEditVersions = panelVersions;
+    audioBaseParameters = engineParameters;
+    if (originalTiming && !toneRecalled)
+        engine.applyOriginalPerformancePanelEdit (nativePanelParameters, nativeFields);
+    engine.setParameters (engineParameters,
+        toneRecalled ? YouKnowEngine::ParameterInputSource::ToneRecall
+        : originalTiming ? YouKnowEngine::ParameterInputSource::MidiReflection
+        : YouKnowEngine::ParameterInputSource::Panel);
+    // Changing timing resets the engine's performance. Retire the matching
+    // UI owners too, so an old physical key-up cannot release a new host note
+    // through the other mode's adapter. Later queued presses still belong.
+    if (engine.originalPerformanceMode() != originalTiming)
+        uiHeldNotes.fill (0);
     engine.setOriginalPerformanceMode (originalTiming);
 
     // The editor draws one lamp per available voice, so it needs the count the
@@ -1502,6 +1561,11 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             renderedTo = eventSample;
         }
 
+        // Native publications can arrive after this block's APVTS snapshot.
+        // Apply their physical controls before the next MIDI event takes tone
+        // ownership; their actual value cannot be inferred from that tone.
+        consumePublishedPanelEdits();
+
         if (isMidiNoteEvent (metadata))
         {
             // Normalise only adjacent notes sharing the original timestamp.
@@ -1550,6 +1614,22 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 event.kind = PendingMidiEventKind::FullPatch;
                 std::copy_n (raw + length - 1 - sysex::toneByteCount,
                              sysex::toneByteCount, event.bytes.begin());
+                if (length == sysex::legacyPatchMessageBytes)
+                {
+                    // Older YouKnow exports omitted the program byte. Adapt
+                    // only that legacy format to the documented manual frame;
+                    // every real 24-byte packet retains opcode/program/channel.
+                    event.wireBytes[0] = 0xf0;
+                    event.wireBytes[1] = 0x41;
+                    event.wireBytes[2] = 0x31;
+                    event.wireBytes[3] = static_cast<std::uint8_t> (channel);
+                    std::copy (event.bytes.begin(), event.bytes.end(),
+                               event.wireBytes.begin() + 5);
+                    event.wireBytes.back() = 0xf7;
+                }
+                else
+                    std::copy_n (raw, length, event.wireBytes.begin());
+                event.wireSize = sysex::patchMessageBytes;
                 stageAndApplyPendingMidiEvent (event);
             }
             else if (sysex::readParameterMessage (
@@ -1565,6 +1645,8 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 event.kind = PendingMidiEventKind::SingleParameter;
                 event.parameter = parameter;
                 event.value = value;
+                std::copy_n (raw, length, event.wireBytes.begin());
+                event.wireSize = static_cast<std::uint8_t> (length);
                 if (parameter >= 0 && parameter < sysex::toneByteCount)
                     stageAndApplyPendingMidiEvent (event);
             }
@@ -1584,6 +1666,7 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // Avoid note accessors on two-byte program/channel-pressure events.
         if (message.isAllSoundOff())
         {
+            engine.clearLocalKeyboardNotes();
             engine.allNotesOff();
             uiHeldNotes.fill (0);
         }
@@ -1594,6 +1677,7 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             // coupling for another 28 s after it -- so truncating it would be
             // an all-sound-off.
         {
+            engine.clearLocalKeyboardNotes();
             engine.releaseAllNotes();
             // These global releases also clear the engine's press counts.
             // A later UI key-up no longer owns a count and must not release
@@ -1736,6 +1820,26 @@ void YouKnowAudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int midiCha
 void YouKnowAudioProcessor::parameterChanged (const juce::String& parameterId,
                                                  float newValue)
 {
+    if (const int index = tonePanelIndex (parameterId); index >= 0)
+    {
+        const auto* write = currentWriteForThisThread();
+        const bool reflection = write != nullptr && write->reflectedParameterId != nullptr
+            && parameterId == write->reflectedParameterId
+            && newValue == write->reflectedParameterValue;
+        if (!reflection)
+        {
+            auto& publication = panelEdits[static_cast<std::size_t> (index)];
+            auto previous = publication.load (std::memory_order_relaxed);
+            for (;;)
+            {
+                const auto version = static_cast<std::uint32_t> (previous >> 32u) + 1u;
+                const auto next = (static_cast<std::uint64_t> (version) << 32u)
+                    | std::bit_cast<std::uint32_t> (newValue);
+                if (publication.compare_exchange_weak (previous, next,
+                        std::memory_order_release, std::memory_order_relaxed)) break;
+            }
+        }
+    }
     using namespace youknow::parameters;
     if (parameterId == poly1 || parameterId == poly2)
         publishKeyModePairAuthority();
@@ -1745,6 +1849,135 @@ void YouKnowAudioProcessor::parameterChanged (const juce::String& parameterId,
         queuePitchBend (newValue);
     else if (parameterId == modulation)
         queueModulation (newValue);
+}
+
+int YouKnowAudioProcessor::tonePanelIndex (const juce::String& id) const noexcept
+{
+    for (std::size_t i = 0; i < tonePanelParameters.size(); ++i)
+        if (id == parameterPointers[static_cast<std::size_t> (tonePanelParameters[i])].id)
+            return static_cast<int> (i);
+    return -1;
+}
+
+void YouKnowAudioProcessor::setToneParameterValue (const char* id, float value)
+{
+    auto* parameter = parameters.getParameter (id);
+    if (parameter == nullptr) return;
+    auto* write = currentWriteForThisThread();
+    const int index = tonePanelIndex (id);
+    if (write != nullptr && write->reflectedPanelVersions != nullptr && index >= 0)
+    {
+        if (write->reflectedRecallGeneration
+            != toneRecallGeneration.load (std::memory_order_acquire)) return;
+        if (static_cast<std::uint32_t> (panelEdits[static_cast<std::size_t> (index)].load (
+                std::memory_order_acquire) >> 32u)
+            != (*write->reflectedPanelVersions)[static_cast<std::size_t> (index)])
+            return; // A later physical gesture owns this field.
+        const auto normalised = parameter->convertTo0to1 (value);
+        write->reflectedParameterId = id;
+        write->reflectedParameterValue = parameter->convertFrom0to1 (normalised);
+        parameter->setValueNotifyingHost (normalised);
+        // A plain host setter does not take our multi-parameter writer scope.
+        // If it overlapped the checked reflection write, restore its retained
+        // native value. Bounded retries avoid waiting on an active host writer;
+        // the audio snapshot and saves also use the authoritative publication.
+        for (unsigned retry = 0; retry < 8; ++retry)
+        {
+            if (write->reflectedRecallGeneration
+                != toneRecallGeneration.load (std::memory_order_acquire)) break;
+            const auto edit = panelEdits[static_cast<std::size_t> (index)].load (
+                std::memory_order_acquire);
+            if (static_cast<std::uint32_t> (edit >> 32u)
+                == (*write->reflectedPanelVersions)[static_cast<std::size_t> (index)]) break;
+            const auto wanted = parameter->convertTo0to1 (
+                std::bit_cast<float> (static_cast<std::uint32_t> (edit)));
+            write->reflectedParameterValue = parameter->convertFrom0to1 (wanted);
+            parameter->setValueNotifyingHost (wanted);
+            if (panelEdits[static_cast<std::size_t> (index)].load (
+                    std::memory_order_acquire) == edit) break;
+        }
+        write->reflectedParameterId = nullptr;
+    }
+    else
+        parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+}
+
+bool YouKnowAudioProcessor::mergeEditedPanelTone (youknow::EngineParameters& to,
+    const PanelEditValues& values, const PanelEditVersions& now,
+    const PanelEditVersions& before) noexcept
+{
+    bool changed = false;
+    std::size_t i = 0;
+    const auto copy = [&] (auto& destination)
+    {
+        if (now[i] != before[i])
+        {
+            using Value = std::remove_reference_t<decltype (destination)>;
+            destination = static_cast<Value> (values[i]); changed = true;
+        }
+        ++i;
+    };
+    copy (to.lfoRate); copy (to.lfoDelay); copy (to.dcoLfoDepth); copy (to.pwmDepth);
+    copy (to.noiseLevel); copy (to.cutoff); copy (to.resonance); copy (to.envDepth);
+    copy (to.vcfLfoDepth); copy (to.keyFollow); copy (to.vcaLevel); copy (to.attack);
+    copy (to.decay); copy (to.sustain); copy (to.release); copy (to.subLevel);
+    copy (to.range); copy (to.sawEnabled); copy (to.pulseEnabled); copy (to.pwmSource);
+    copy (to.vcaMode); copy (to.envPolarity); copy (to.highPass);
+    if (now[i] != before[i] || now[i+1] != before[i+1])
+    {
+        const bool one = now[i] != before[i] ? values[i] > 0.5f
+            : youknow::chorusOneEngaged (to.chorus);
+        const bool two = now[i+1] != before[i+1] ? values[i+1] > 0.5f
+            : youknow::chorusTwoEngaged (to.chorus);
+        to.chorus = youknow::chorusModeFor (one, two); changed = true;
+    }
+    return changed;
+}
+
+std::uint32_t YouKnowAudioProcessor::panelEditMask (
+    const PanelEditVersions& now, const PanelEditVersions& before) noexcept
+{
+    std::uint32_t fields = 0;
+    for (std::size_t i = 0; i < now.size(); ++i)
+        if (now[i] != before[i]) fields |= 1u << i;
+    return fields;
+}
+
+void YouKnowAudioProcessor::consumePublishedPanelEdits() noexcept
+{
+    const auto generation = parameterWriteGeneration.load (std::memory_order_acquire);
+    if ((generation & 1u) != 0u
+        || toneRecallGeneration.load (std::memory_order_acquire)
+               != audioBaseToneRecallGeneration)
+        return;
+    PanelEditVersions versions;
+    PanelEditValues values;
+    for (std::size_t i = 0; i < versions.size(); ++i)
+    {
+        const auto edit = panelEdits[i].load (std::memory_order_acquire);
+        versions[i] = static_cast<std::uint32_t> (edit >> 32u);
+        values[i] = std::bit_cast<float> (static_cast<std::uint32_t> (edit));
+    }
+    if (generation != parameterWriteGeneration.load (std::memory_order_acquire)
+        || toneRecallGeneration.load (std::memory_order_acquire)
+               != audioBaseToneRecallGeneration)
+        return;
+    const auto fields = panelEditMask (versions, audioPanelEditVersions);
+    if (fields == 0) return;
+
+    auto native = audioBaseParameters;
+    if (pendingMidiToneShadowActive)
+        applyPatchToEngineParameters (native, pendingMidiToneShadow);
+    (void) mergeEditedPanelTone (native, values, versions, audioPanelEditVersions);
+    if (engine.originalPerformanceMode())
+        engine.applyOriginalPerformancePanelEdit (native, fields);
+    engine.setParameters (native, engine.originalPerformanceMode()
+        ? youknow::YouKnowEngine::ParameterInputSource::MidiReflection
+        : youknow::YouKnowEngine::ParameterInputSource::Panel);
+    audioPanelEditVersions = versions;
+    audioBaseParameters = native;
+    if (pendingMidiToneShadowActive)
+        pendingMidiToneShadow = patchFromEngineParameters (native);
 }
 
 void YouKnowAudioProcessor::queuePitchBend (float value) noexcept
@@ -1805,6 +2038,7 @@ void YouKnowAudioProcessor::discardUiMidiEvents() noexcept
         pending.exchange (0, std::memory_order_acq_rel);
     const auto write = uiWriteIndex.load (std::memory_order_acquire);
     uiHeldNotes.fill (0);
+    engine.clearLocalKeyboardNotes();
     uiReadIndex.store (write, std::memory_order_release);
     uiOverflowAcknowledged.store (recoverySequence, std::memory_order_release);
 }
@@ -1834,6 +2068,19 @@ void YouKnowAudioProcessor::dispatchUiMidiEvents() noexcept
     // at least a block of its own, at the cost of a block of latency in the
     // case that would otherwise have lost the note entirely.
     std::array<std::uint64_t, uiNoteBitmapWords> touched {};
+    const auto localKeyHeld = [this] (unsigned note)
+    {
+        const auto bit = std::uint64_t { 1 } << (note & 63u);
+        for (std::size_t channel = 0; channel < 16; ++channel)
+            if ((uiHeldNotes[channel * 2u + (note >> 6u)] & bit) != 0)
+                return true;
+        return false;
+    };
+    const auto releaseLocalKey = [&] (unsigned note)
+    {
+        if (! engine.originalPerformanceMode() || ! localKeyHeld (note))
+            engine.noteOffFromLocalKeyboard (static_cast<int> (note));
+    };
 
     while (read != write)
     {
@@ -1860,13 +2107,17 @@ void YouKnowAudioProcessor::dispatchUiMidiEvents() noexcept
 
         if (event.noteOn)
         {
+            const bool wasHeld = localKeyHeld (note);
             uiHeldNotes[word] |= bit;
-            engine.noteOn (event.note, event.velocity);
+            // All UI channels share one physical key; the actual A-5 ORs
+            // that local contact with its separate incoming MIDI bitmap.
+            if (! engine.originalPerformanceMode() || ! wasHeld)
+                engine.noteOnFromLocalKeyboard (event.note, event.velocity);
         }
         else
         {
             uiHeldNotes[word] &= ~bit;
-            engine.noteOff (event.note);
+            releaseLocalKey (note);
         }
         ++read;
     }
@@ -1910,7 +2161,7 @@ void YouKnowAudioProcessor::dispatchUiMidiEvents() noexcept
             if ((uiHeldNotes[word] & mask) != 0)
             {
                 uiHeldNotes[word] &= ~mask;
-                engine.noteOff (static_cast<int> ((word % 2u) * 64u + bit));
+                releaseLocalKey (static_cast<unsigned> ((word % 2u) * 64u + bit));
             }
         }
     }
@@ -1996,6 +2247,14 @@ YouKnowAudioProcessor::activeWriteForThisThread() const noexcept
          scope != nullptr; scope = scope->previous)
         if (&scope->processor == this && scope->ownsGeneration)
             return scope;
+    return nullptr;
+}
+
+YouKnowAudioProcessor::ScopedParameterWrite*
+YouKnowAudioProcessor::currentWriteForThisThread() const noexcept
+{
+    for (auto* scope = activeParameterWrite; scope != nullptr; scope = scope->previous)
+        if (&scope->processor == this) return scope;
     return nullptr;
 }
 
@@ -2157,6 +2416,9 @@ juce::ValueTree YouKnowAudioProcessor::copyStateForSave (int& program)
 
         const auto reflected = reflectedMidiSequence.load (std::memory_order_acquire);
         const auto recall = toneRecallGeneration.load (std::memory_order_acquire);
+        std::array<std::uint64_t, tonePanelParameters.size()> panelEditsBefore;
+        for (std::size_t i = 0; i < panelEditsBefore.size(); ++i)
+            panelEditsBefore[i] = panelEdits[i].load (std::memory_order_acquire);
         auto state = parameters.copyState();
         program = currentProgram.load (std::memory_order_relaxed);
         PendingMidiEvent pending;
@@ -2171,6 +2433,10 @@ juce::ValueTree YouKnowAudioProcessor::copyStateForSave (int& program)
             parameterWriteGeneration.load (std::memory_order_acquire);
         if (before != after || (after & 1u) != 0u)
             continue;
+        bool panelChanged = false;
+        for (std::size_t i = 0; i < panelEditsBefore.size(); ++i)
+            panelChanged |= panelEditsBefore[i] != panelEdits[i].load (std::memory_order_acquire);
+        if (panelChanged) continue;
 
         if (hasPending && pending.recallGeneration == recall
             && pending.sequence > reflected)
@@ -2179,6 +2445,18 @@ juce::ValueTree YouKnowAudioProcessor::copyStateForSave (int& program)
             if (pending.programIndex >= 0 && pending.programSequence > reflected)
                 program = pending.programIndex;
         }
+        // A save can precede the next audio block or race a reflection setter.
+        // Restore actual published native values, never a stale APVTS copy.
+        if (hasPending && pending.recallGeneration == recall)
+            for (std::size_t i = 0; i < tonePanelParameters.size(); ++i)
+                if (static_cast<std::uint32_t> (panelEditsBefore[i] >> 32u)
+                    != pending.panelVersions[i])
+                {
+                    const auto* id = parameterPointers[
+                        static_cast<std::size_t> (tonePanelParameters[i])].id;
+                    setStoredParameterValue (state, id, std::bit_cast<float> (
+                        static_cast<std::uint32_t> (panelEditsBefore[i])));
+                }
         return state;
     }
 }
@@ -2264,6 +2542,10 @@ void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInByt
                                  static_cast<float> (qualityChoiceCount - 1));
     if (! containsParameterState (state, youknow::parameters::aging))
         setStoredParameterValue (state, youknow::parameters::aging, 0.0f);
+    // New instruments use the original processors. An absent timing entry
+    // predates that default and must retain its historical Direct behavior.
+    if (! containsParameterState (state, youknow::parameters::originalPerformance))
+        setStoredParameterValue (state, youknow::parameters::originalPerformance, 0.0f);
 
     // A state written by an earlier build will not carry parameters added
     // since. Filling them with their defaults keeps the rest of the patch
@@ -2391,9 +2673,16 @@ void YouKnowAudioProcessor::applyMidiProgramSelection (int index)
     // Incoming Program Change models the JUNO's own patch selector. Its
     // real-time shadow carries only tone memory, so reflection must retain the
     // same boundary instead of changing performance controls a timer tick later.
+    const auto* parentWrite = currentWriteForThisThread();
     ScopedParameterWrite write { *this };
+    write.reflectedPanelVersions = parentWrite != nullptr
+        ? parentWrite->reflectedPanelVersions : nullptr;
+    write.reflectedRecallGeneration = parentWrite != nullptr
+        ? parentWrite->reflectedRecallGeneration : 0;
     applyPatchValues (programPatch (index));
-    currentProgram.store (index, std::memory_order_relaxed);
+    if (write.reflectedPanelVersions == nullptr || write.reflectedRecallGeneration
+        == toneRecallGeneration.load (std::memory_order_acquire))
+        currentProgram.store (index, std::memory_order_relaxed);
 }
 
 youknow::sysex::Patch YouKnowAudioProcessor::programPatch (int index) const
@@ -2470,8 +2759,7 @@ void YouKnowAudioProcessor::applyPatchValues (
 
     const auto set = [this] (const char* id, float value)
     {
-        if (auto* parameter = parameters.getParameter (id))
-            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+        setToneParameterValue (id, value);
     };
 
     set (lfoRate, patch.lfoRate);
@@ -2640,7 +2928,13 @@ void YouKnowAudioProcessor::applyPendingMidiEventToEngine (
 
     auto immediate = audioBaseParameters;
     applyPatchToEngineParameters (immediate, pendingMidiToneShadow);
-    engine.setParameters (immediate);
+    if (engine.originalPerformanceMode() && event.wireSize != 0)
+        (void) engine.receiveOriginalPerformanceMidi (
+            std::span (event.wireBytes).first (event.wireSize));
+    engine.setParameters (immediate,
+        event.kind == PendingMidiEventKind::ProgramChange
+            ? youknow::YouKnowEngine::ParameterInputSource::ToneRecall
+            : youknow::YouKnowEngine::ParameterInputSource::MidiReflection);
 }
 
 youknow::sysex::Patch YouKnowAudioProcessor::currentPatch() const
@@ -2769,6 +3063,21 @@ void YouKnowAudioProcessor::stageAndApplyPendingMidiEvent (
 {
     event.sequence = nextPendingMidiSequence + 1;
     event.recallGeneration = audioBaseToneRecallGeneration;
+    // Capture only native revisions which have actually reached the physical
+    // panel. A publication racing the block snapshot must not become MIDI-
+    // owned before its pot/contact gesture has been consumed.
+    consumePublishedPanelEdits();
+    for (std::size_t i = 0; i < event.panelVersions.size(); ++i)
+    {
+        event.panelVersions[i] = audioPanelEditVersions[i];
+        const int toneByte = i < 16 ? static_cast<int> (i)
+            : (i < 19 || i >= 23) ? 16 : 17;
+        if (event.kind != PendingMidiEventKind::SingleParameter || toneByte == event.parameter)
+        {
+            pendingMidiPanelVersions[i] = event.panelVersions[i];
+            audioMidiPanelVersions[i] = event.panelVersions[i];
+        }
+    }
     nextPendingMidiSequence = event.sequence;
     if (event.kind == PendingMidiEventKind::ProgramChange)
     {
@@ -2834,6 +3143,7 @@ void YouKnowAudioProcessor::tryStagePendingMidiResync() noexcept
     event.sequence = pendingMidiToneShadowSequence;
     event.recallGeneration = audioBaseToneRecallGeneration;
     event.snapshot = pendingMidiToneShadow;
+    event.panelVersions = pendingMidiPanelVersions;
     event.programIndex = pendingMidiLatestProgramIndex;
     event.programSequence = pendingMidiLatestProgramSequence;
     event.replacesTone = pendingMidiResyncReplacesTone;
@@ -2872,6 +3182,9 @@ void YouKnowAudioProcessor::publishPendingMidiResyncMailbox() noexcept
     for (std::size_t index = 0; index < pendingMidiToneByteSequences.size(); ++index)
         pendingMidiResyncToneByteSequences[index].store (
             pendingMidiToneByteSequences[index], std::memory_order_seq_cst);
+    for (std::size_t i = 0; i < pendingMidiPanelVersions.size(); ++i)
+        pendingMidiResyncPanelVersions[i].store (
+            pendingMidiPanelVersions[i], std::memory_order_seq_cst);
 
     const std::uint32_t switches =
           (static_cast<std::uint32_t> (patch.range) & 0x3u)
@@ -2940,6 +3253,9 @@ bool YouKnowAudioProcessor::readPendingMidiResyncMailbox (
             std::memory_order_seq_cst);
         const auto recallGeneration = pendingMidiResyncMailboxRecallGeneration.load (
             std::memory_order_seq_cst);
+        PanelEditVersions panelVersions;
+        for (std::size_t i = 0; i < panelVersions.size(); ++i)
+            panelVersions[i] = pendingMidiResyncPanelVersions[i].load (std::memory_order_seq_cst);
         std::array<std::uint64_t, youknow::sysex::toneByteCount> sequences {};
         if (toneByteSequences != nullptr)
             for (std::size_t index = 0; index < sequences.size(); ++index)
@@ -2985,6 +3301,7 @@ bool YouKnowAudioProcessor::readPendingMidiResyncMailbox (
 
         event = {};
         event.kind = PendingMidiEventKind::ResyncSnapshot;
+        event.panelVersions = panelVersions;
         event.sequence = sequence;
         event.recallGeneration = recallGeneration;
         event.snapshot = patch;
@@ -3134,6 +3451,8 @@ void YouKnowAudioProcessor::reflectPendingMidiEvent (
         // Check under the same writer scope as the parameter changes: a host
         // recall must not slip between the check and reflection.
         ScopedParameterWrite write { *this };
+        write.reflectedPanelVersions = &event.panelVersions;
+        write.reflectedRecallGeneration = event.recallGeneration;
         if (event.recallGeneration
             != toneRecallGeneration.load (std::memory_order_acquire))
         {
@@ -3167,7 +3486,8 @@ void YouKnowAudioProcessor::reflectPendingMidiEvent (
                         applyToneParameterValues (
                             parameter, youknow::sysex::parameterValue (
                                            event.snapshot, parameter));
-            if (programChanged)
+            if (programChanged && event.recallGeneration
+                == toneRecallGeneration.load (std::memory_order_acquire))
             {
                 currentProgram.store (event.programIndex,
                                       std::memory_order_relaxed);
@@ -3177,6 +3497,8 @@ void YouKnowAudioProcessor::reflectPendingMidiEvent (
         // Commit APVTS, program and acknowledgement in the same generation.
         // State saves must never overlay an already-reflected MIDI event onto
         // a later edit made from the host's program-change notification.
+        if (event.recallGeneration != toneRecallGeneration.load (std::memory_order_acquire))
+            programChanged = false;
         reflectedMidiSequence.store (event.sequence, std::memory_order_release);
     }
     if (programChanged)
@@ -3245,8 +3567,7 @@ void YouKnowAudioProcessor::applyToneParameterValues (int parameter, int value)
 
     const auto set = [this] (const char* id, float newValue)
     {
-        if (auto* target = parameters.getParameter (id))
-            target->setValueNotifyingHost (target->convertTo0to1 (newValue));
+        setToneParameterValue (id, newValue);
     };
 
     if (parameter < 0 || parameter >= youknow::sysex::toneByteCount)

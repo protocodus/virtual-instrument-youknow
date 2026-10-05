@@ -175,6 +175,10 @@ FirmwareAssignerAudioBridge::Result FirmwareAssignerAudioBridge::advanceTo(
         const auto sender = Sender::advanceTo(
             state.assigner, state.uart, configuration, tables, inputs,
             incoming.subspan(result.consumedInputs), next, discarded, wire);
+        // The configured contact owner can change its physical pins at exact
+        // CPU instruction endpoints. Retain its resulting input image across
+        // output-pressure retries, never a host-polling endpoint.
+        if (configuration.inputService != nullptr) state.heldInputs = inputs;
         ++senderCalls;
         result.consumedInputs += sender.consumedInputs;
         state.wireCount = wire.count;

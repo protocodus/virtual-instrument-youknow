@@ -40,8 +40,11 @@ struct YouKnowTestAccess
     static bool coupledMixer(const YouKnowEngine& engine) { return engine.coupledMixerEnabled_; }
     static auto mixerCalibration(const YouKnowEngine& engine) { return engine.coupledMixerCalibration_; }
     static auto chorusTransfer(const YouKnowEngine& engine) { return engine.chorus_.getBbdTransferProfile(); }
+    static auto chorusInsertion(const YouKnowEngine& engine) { return engine.chorus_.getBbdInsertionGainProfile(); }
     static auto chorusSupport(const YouKnowEngine& engine) { return engine.chorus_.getSupportProfile(); }
     static auto chorusBuilds(const YouKnowEngine& engine) { return engine.chorus_.supportBuildCount_; }
+    static auto resonanceOffset(const YouKnowEngine& engine, int slot) { return engine.voices_[slot].filter.resonanceOffsetVolts; }
+    static auto stageOffsets(const YouKnowEngine& engine, int slot) { return engine.voices_[slot].filter.offsetVoltage; }
 };
 }
 
@@ -85,8 +88,10 @@ void activeProductPromotion()
 #if !defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) || YOUKNOW_HARDWARE_REALISM_CANDIDATE
     require(Probe::coupledMixer(*active)
             && Probe::chorusTransfer(*active) == ChorusBbdTransferProfile::ServicedBiasEstimate
+            && Probe::chorusInsertion(*active) == ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate
             && applied.chorusTimingProfile == ChorusTimingProfile::HardwareEvidence
-            && applied.enableEvidenceVcaCalibration && applied.useOriginalCardVcfCalibration,
+            && applied.enableEvidenceVcaCalibration && applied.useOriginalCardVcfCalibration
+            && applied.enableVoiceVcaJunctionTemperature && applied.useBa662AResonanceOffsetEstimate,
             "active product setup lost an accepted-B circuit selection");
 #else
     require(!Probe::coupledMixer(*active)
@@ -104,10 +109,12 @@ void selections(const YouKnowEngine& engine)
     require(parameters.chorusTimingProfile == ChorusTimingProfile::HardwareEvidence,
             "combined profile did not retain recording-derived chorus timing");
     require(parameters.enableEvidenceVcaCalibration
+            && parameters.enableVoiceVcaJunctionTemperature
             && parameters.enableCoupledVoiceVcaControl
             && parameters.enableVoiceVcaServiceGain,
             "combined profile did not retain the quiet VCA circuit selection");
     require(parameters.useOriginalCardVcfCalibration
+            && parameters.useBa662AResonanceOffsetEstimate
             && parameters.useCircuitDerivedResonanceShape
             && parameters.enableResonanceSoftJunction,
             "combined profile did not retain original-card resonance/drive selection");
@@ -121,8 +128,46 @@ void selections(const YouKnowEngine& engine)
             && std::abs(engine.pulseLevelScale() - 0.857f) < 1e-7f,
             "combined profile did not keep the stated oscillator/pulse source levels");
     require(Probe::chorusTransfer(engine) == ChorusBbdTransferProfile::ServicedBiasEstimate
+            && Probe::chorusInsertion(engine) == ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate
             && Probe::chorusSupport(engine) == ChorusSupportProfile::Nominal2SA1015Nonlinear,
             "combined profile lost the BBD operating prior or nonlinear support");
+}
+
+void resonanceOffsetEstimate()
+{
+    // Keep the physical card draw and IR3109 offsets fixed while changing the
+    // named BA662 prior. The original card's 100k/1.5k return divider converts
+    // 250 uV at the differential pair to at most 16.667 mV at the loop node.
+    auto engine = std::make_unique<YouKnowEngine>();
+    EngineParameters parameters;
+    parameters.calibration = 1;
+    parameters.useBa662AResonanceOffsetEstimate = false;
+    engine->setParameters(parameters);
+    engine->prepare(48000, blockSize, 1);
+    std::array<float, 6> previous {};
+    std::array<std::array<float, 4>, 6> stages {};
+    for (int slot = 0; slot < 6; ++slot)
+    {
+        previous[slot] = Probe::resonanceOffset(*engine, slot);
+        stages[slot] = Probe::stageOffsets(*engine, slot);
+    }
+    parameters.useBa662AResonanceOffsetEstimate = true;
+    engine->setParameters(parameters);
+    for (int slot = 0; slot < 6; ++slot)
+    {
+        const auto offset = Probe::resonanceOffset(*engine, slot);
+        require(std::abs(offset) <= 0.000250f * (100000.0f / 1500.0f),
+                "BA662 estimate exceeded its declared pair-voltage span");
+        require(std::abs(offset * 6 - previous[slot]) < 1e-7f,
+                "BA662 prior edit changed its deterministic card identity");
+        require(Probe::stageOffsets(*engine, slot) == stages[slot],
+                "BA662 estimate incorrectly rescaled IR3109 stage offsets");
+    }
+    parameters.calibration = 0;
+    engine->setParameters(parameters);
+    for (int slot = 0; slot < 6; ++slot)
+        require(Probe::resonanceOffset(*engine, slot) == 0,
+                "BA662 dispersion remained at calibrated nominal Character");
 }
 
 EngineParameters panel()
@@ -281,6 +326,7 @@ int main()
     try
     {
         activeProductPromotion();
+        resonanceOffsetEstimate();
         rate(44100.0, false);
         rate(48000.0, true);
         rate(96000.0, false);

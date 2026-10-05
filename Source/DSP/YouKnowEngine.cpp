@@ -1949,6 +1949,21 @@ const EvidenceVcaCalibration& YouKnowEngine::evidenceVcaCalibration() noexcept
     return calibration;
 }
 
+const VcaJunctionTemperatureCircuit& YouKnowEngine::voiceVcaJunctionCircuit() noexcept
+{
+    static const VcaJunctionTemperatureCircuit circuit {
+        VoiceVcaControlLaw::controlFullScaleVolts };
+    return circuit;
+}
+
+void YouKnowEngine::initialiseVoiceVcaJunctionCharge(Voice& voice) noexcept
+{
+    if (voice.vcaJunctionChargeInitialised) return;
+    voice.vcaJunctionCharge = voiceVcaJunctionCircuit().chargeAtControl(
+        voice.vcaControl, cards_[static_cast<std::size_t>(voice.cardIndex)].vcaJunctionCelsius);
+    voice.vcaJunctionChargeInitialised = true;
+}
+
 const VcaControlCircuit& YouKnowEngine::voiceVcaControlCircuit(bool evidence) noexcept
 {
     if (evidence)
@@ -5806,6 +5821,8 @@ void YouKnowEngine::refreshVoiceCardStageTrims() noexcept
                        ? activeParameters_.calibration : 0.0f;
     const float resonanceAmount = activeParameters_.enableResonanceOtaOffset
                                 ? activeParameters_.calibration : 0.0f;
+    const float resonanceOffsetScale = activeParameters_.useBa662AResonanceOffsetEstimate
+                                    ? 0.000250f / 0.0015f : 1.0f;
     for (auto& voice : voices_)
     {
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
@@ -5813,7 +5830,7 @@ void YouKnowEngine::refreshVoiceCardStageTrims() noexcept
         // 100k/1.5k divider rather than the stages' 560/68560 one.
         voice.filter.resonanceOffsetVolts = card.resonanceOtaOffset
             * VoicedResonanceCompatibilityProfile::loopDividerRatio
-            * resonanceAmount;
+            * resonanceAmount * resonanceOffsetScale;
         for (std::size_t stage = 0; stage < 4; ++stage)
         {
             // The draw is volts at the pair; the cascade sums it with
@@ -5858,7 +5875,9 @@ void YouKnowEngine::refreshCardJohnsonTemperatureScales() noexcept
     {
         const float kelvin = voiceCardCelsius(
             activeParameters_, index, thermalWarmupFraction_) + 273.15f;
-        cards_[static_cast<std::size_t>(index)].johnsonTemperatureScale =
+        auto& card = cards_[static_cast<std::size_t>(index)];
+        card.vcaJunctionCelsius = kelvin - 273.15f;
+        card.johnsonTemperatureScale =
             std::sqrt(kelvin / outputNoiseTemperatureKelvin);
     }
 }
@@ -5868,6 +5887,22 @@ void YouKnowEngine::refreshVoiceVcaCoupling() noexcept
     for (int index = 0; index < maxVoices; ++index)
     {
         auto& card = cards_[static_cast<std::size_t>(index)];
+        const bool junctionTemperature = voiceVcaJunctionTemperatureEnabled(activeParameters_);
+        if (junctionTemperature)
+        {
+            const double serviceCelsius = voiceCardCelsius(activeParameters_, index, 1.0f);
+            const auto& junction = voiceVcaJunctionCircuit();
+            card.vcaJunctionServiceEmitterAmps = junction.emitterAmpsAtControl(1.0, serviceCelsius);
+            const double collectorFraction = EvidenceVcaCalibration::beta
+                / (EvidenceVcaCalibration::beta + 1.0);
+            const double sustainCollectorAmps = collectorFraction
+                * junction.emitterAmpsAtControl(4064.0 / 4095.0, serviceCelsius);
+            card.vcaJunctionHeadroomVolts = 2.4 / std::atanh(
+                3.0 / (EvidenceVcaCalibration::outputLoadOhms * sustainCollectorAmps));
+            card.vcaJunctionServiceGain = static_cast<float>(
+                EvidenceVcaCalibration::outputLoadOhms * collectorFraction
+                * card.vcaJunctionServiceEmitterAmps / card.vcaJunctionHeadroomVolts);
+        }
         if (!serviceDerivedVcaCoupling_)
         {
             card.vcaInputCouplingG = vcaInputCouplingG_;
@@ -5881,7 +5916,8 @@ void YouKnowEngine::refreshVoiceVcaCoupling() noexcept
             + card.vcaGainError * 0.03f * activeParameters_.calibration;
         const double referenceThermalVolts = activeParameters_.enableEvidenceVcaCalibration
             ? EvidenceVcaCalibration::thermalVolts : static_cast<double>(thermalVoltage);
-        const double referenceHeadroom = activeParameters_.enableEvidenceVcaCalibration
+        const double referenceHeadroom = junctionTemperature ? card.vcaJunctionHeadroomVolts
+            : activeParameters_.enableEvidenceVcaCalibration
             ? evidenceVcaCalibration().headroomVolts() : static_cast<double>(VoiceVcaSignalLaw::headroomVolts);
         const double requiredDivider = 2.0 * referenceThermalVolts
             * (static_cast<double>(serviceKelvin) / 298.15)
@@ -6056,6 +6092,9 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     // Prepare the control circuit's table before entering the audio callback.
     (void) voiceVcaControlCircuit();
     (void) voiceVcaControlCircuit(true);
+    // Prepare even with the comparison switch off: a later diagnostic enable
+    // must not construct the shared thermal tables in an audio callback.
+    (void) voiceVcaJunctionCircuit();
     const double previousProcessingRate = oversampledRate_;
     oversampling_ = effectiveOversampleFactor(oversamplingApplied_);
 
@@ -6906,6 +6945,13 @@ bool YouKnowEngine::configureChorusBbdTransferProfile(ChorusBbdTransferProfile p
     return chorus_.configureBbdTransferProfile(profile);
 }
 
+bool YouKnowEngine::configureChorusBbdInsertionGainProfile(ChorusBbdInsertionGainProfile profile) noexcept
+{
+    if (prepared_)
+        return false;
+    return chorus_.configureBbdInsertionGainProfile(profile);
+}
+
 bool YouKnowEngine::configureOscillatorLevelScale(float scale) noexcept
 {
     if (prepared_ || coupledMixerEnabled_ || !std::isfinite(scale)
@@ -7026,20 +7072,49 @@ void YouKnowEngine::setOriginalPerformanceMode(bool enabled) noexcept
     if (prepared_) reset();
 }
 
-void YouKnowEngine::setParameters(const EngineParameters& parameters)
+bool YouKnowEngine::receiveOriginalPerformanceMidi(
+    std::span<const std::uint8_t> bytes) noexcept
+{
+    if (!originalPerformanceEnabled_ || !prepared_)
+        return false;
+    if (originalPerformance_.message(bytes,
+            static_cast<std::uint64_t>(std::floor(firmwareSerialAudioStates_))))
+        return true;
+    // Queue refusal cannot leave half a received packet or stale later work.
+    resetForHostStop();
+    originalPerformanceHealthy_ = false;
+    return false;
+}
+
+void YouKnowEngine::applyOriginalPerformancePanelEdit(
+    const EngineParameters& parameters, std::uint32_t fields) noexcept
+{
+    if (!originalPerformanceEnabled_ || !prepared_ || fields == 0)
+        return;
+    originalPerformance_.panelParameters(sanitise(parameters), fields);
+}
+
+void YouKnowEngine::setParameters(const EngineParameters& parameters,
+    ParameterInputSource source)
 {
     // Before the first valid prepared audio interval, even an equal snapshot has
     // the one-shot responsibility of priming the physical holds below.  Once
     // audio time has begun, an equal complete image has no ordered converter
     // write or assignment side effect and can return exactly.
-    const bool startupSnapshot = !prepared_ || !panelGlidePrimed_;
+    const bool startupSnapshot = !prepared_ || (!panelGlidePrimed_
+        && (!originalPerformanceEnabled_
+            || (source != ParameterInputSource::MidiReflection
+                && source != ParameterInputSource::ToneRecall
+                && originalPerformance_.pending() == 0)));
+    const bool explicitToneRecall = originalPerformanceEnabled_ && prepared_
+        && source == ParameterInputSource::ToneRecall;
     bool originalParameterOverflow=false;
-    if (!startupSnapshot && parameters == activeParameters_
+    if (!startupSnapshot && !explicitToneRecall && parameters == activeParameters_
         && parameters == targetParameters_)
         return;
 
     const auto next = sanitise(parameters);
-    if (!startupSnapshot && next == activeParameters_
+    if (!startupSnapshot && !explicitToneRecall && next == activeParameters_
         && next == targetParameters_)
         return;
 
@@ -7047,7 +7122,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         firmwareSerialConfiguration_.inputs=originalPerformanceAdc(next);
         if (startupSnapshot && originalPerformance_.pending()==0) originalPerformance_.reset(next);
         else if (!originalPerformance_.parameters(next,
-                   static_cast<std::uint64_t>(std::floor(firmwareSerialAudioStates_)))) {
+                   static_cast<std::uint64_t>(std::floor(firmwareSerialAudioStates_)), source)) {
             originalParameterOverflow=true;
         }
     }
@@ -7069,8 +7144,11 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         || next.enableVcfStageOffsets
                != activeParameters_.enableVcfStageOffsets
         || next.enableResonanceOtaOffset
-               != activeParameters_.enableResonanceOtaOffset;
+               != activeParameters_.enableResonanceOtaOffset
+        || next.useBa662AResonanceOffsetEstimate
+               != activeParameters_.useBa662AResonanceOffsetEstimate;
     const bool thermalScalesChanged = startupSnapshot
+        || next.enableVoiceVcaJunctionTemperature != activeParameters_.enableVoiceVcaJunctionTemperature
         || next.enableEvidenceVcaCalibration != activeParameters_.enableEvidenceVcaCalibration
         || next.calibration != activeParameters_.calibration
         || next.enableSpatialThermalGradient
@@ -7092,6 +7170,39 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     // return before setting it, and reset clears it. Do not use output-path
     // silence here. Once audio time has started, the hardware scanner keeps
     // running through ordinary silence and after panic.
+    if (prepared_ && (voiceVcaJunctionTemperatureEnabled(next)
+            != voiceVcaJunctionTemperatureEnabled(activeParameters_)
+        || next.enableCoupledVoiceVcaControl != activeParameters_.enableCoupledVoiceVcaControl))
+    {
+        for (auto& voice : voices_)
+        {
+            if (voice.vcaJunctionChargeInitialised)
+            {
+                // Map retained charge into the old solver's coordinate on
+                // a deliberate comparison switch; do not reset C58.
+                if (!voiceVcaJunctionTemperatureEnabled(next) || !next.enableCoupledVoiceVcaControl)
+                {
+                    const auto& oldCircuit = voiceVcaControlCircuit(next.enableEvidenceVcaCalibration);
+                    double low = 0.0, high = 1.0;
+                    for (int iteration = 0; iteration < 48; ++iteration)
+                    {
+                        const double middle = .5 * (low + high);
+                        if (oldCircuit.capacitorCoordinate(middle) < voice.vcaJunctionCharge) low = middle;
+                        else high = middle;
+                    }
+                    voice.vcaControl = .5 * (low + high);
+                    voice.vcaJunctionChargeInitialised = false;
+                }
+            }
+            else if (voiceVcaJunctionTemperatureEnabled(next) && next.enableCoupledVoiceVcaControl)
+            {
+                voice.vcaJunctionCharge = activeParameters_.enableCoupledVoiceVcaControl
+                    ? voiceVcaControlCircuit(activeParameters_.enableEvidenceVcaCalibration)
+                        .capacitorCoordinate(voice.vcaControl) : voice.vcaControl;
+                voice.vcaJunctionChargeInitialised = true;
+            }
+        }
+    }
     targetParameters_ = next;
     if (rangeChanged && !startupSnapshot)
     {
@@ -7576,6 +7687,7 @@ void YouKnowEngine::silenceVoice(Voice& voice) noexcept
     voice.vca = 0.0f;
     voice.vcaControlTarget = 0.0f;
     voice.vcaControl = 0.0f;
+    voice.vcaJunctionChargeInitialised = false;
     voice.energy = 0.0f;
     voice.envelope.reset();
     if (voice.cardIndex >= hardwareVoices)
@@ -7658,6 +7770,50 @@ bool YouKnowEngine::serviceVoiceBoardNoteOff(int card) noexcept
     updateActiveVoiceCount();
     restartVoiceBoardScanAfterSerialVoiceCommand();
     return true;
+}
+
+void YouKnowEngine::noteOnFromLocalKeyboard(int midiNote, float velocity)
+{
+    if (midiNote < 0 || midiNote >= 128) return;
+    if (velocity <= 0.f) { noteOffFromLocalKeyboard(midiNote); return; }
+    if (originalPerformanceEnabled_)
+    {
+        const int pitch = originalWirePitch(midiNote, activeParameters_.keyTranspose);
+        if (originalPerformance_.keyboardNoteOn(midiNote, pitch)) return;
+        // The visible keyboard is36..96. Programmatic keys and host transpose
+        // outside that61-contact span retain the prior DIN pitch/folding
+        // policy. This is an adapter extension, not additional hardware keys.
+        // Its retained UI wire pitch is independent of host MIDI bookkeeping.
+        const std::array<std::uint8_t,3> message { 0x90,
+            static_cast<std::uint8_t>(pitch), static_cast<std::uint8_t>(
+                std::clamp(std::lround(sanitised(velocity,1.f)*127.f),0l,127l)) };
+        if (!originalPerformance_.message(message,
+                static_cast<std::uint64_t>(firmwareSerialAudioStates_)))
+        { allNotesOff(); originalPerformanceHealthy_ = false; }
+        return;
+    }
+    noteOn(midiNote, velocity);
+}
+
+void YouKnowEngine::noteOffFromLocalKeyboard(int midiNote)
+{
+    if (originalPerformanceEnabled_)
+    {
+        const int pitch = originalPerformance_.keyboardNoteOff(midiNote);
+        if (pitch < 0) return; // Native release, or a retired UI owner.
+        const std::array<std::uint8_t,3> message { 0x80,
+            static_cast<std::uint8_t>(pitch), 0 };
+        if (!originalPerformance_.message(message,
+                static_cast<std::uint64_t>(firmwareSerialAudioStates_)))
+        { allNotesOff(); originalPerformanceHealthy_ = false; }
+        return;
+    }
+    noteOff(midiNote);
+}
+
+void YouKnowEngine::clearLocalKeyboardNotes() noexcept
+{
+    if (originalPerformanceEnabled_) originalPerformance_.clearKeyboardNotes();
 }
 
 void YouKnowEngine::noteOn(int midiNote, float velocity)
@@ -8910,6 +9066,31 @@ void YouKnowEngine::advanceEnvelopeHolds(
         {
             control = input.throughOnePole(control, seconds, voiceVcaHoldSlewSeconds);
         }
+        else if (voiceVcaJunctionTemperatureEnabled(parameters))
+        {
+            auto& voice = voices_[index];
+            initialiseVoiceVcaJunctionCharge(voice);
+            const auto& circuit = voiceVcaJunctionCircuit();
+            const double temperature = cards_[index].vcaJunctionCelsius;
+            const double fast = std::abs(input.exponential) > 1.0e-12
+                ? std::min(seconds, 16.0 * input.tau) : 0.0;
+            if (fast > 0.0)
+                voice.vcaJunctionCharge = circuit.advanceDriven(
+                    voice.vcaJunctionCharge, fast, temperature,
+                    [&input](double t) { return input.at(t); },
+                    std::max(1, static_cast<int>(std::ceil(4.0 * fast / input.tau))));
+            const double rest = seconds - fast;
+            if (rest > 0.0)
+            {
+                if (input.exponential == 0.0 && input.slope == 0.0)
+                    voice.vcaJunctionCharge = circuit.advance(
+                        voice.vcaJunctionCharge, input.constant, rest, temperature);
+                else voice.vcaJunctionCharge = circuit.advanceDriven(
+                    voice.vcaJunctionCharge, rest, temperature,
+                    [&input, fast](double t) { return input.at(t + fast); }, 8);
+            }
+            control = circuit.controlAtCharge(voice.vcaJunctionCharge, temperature);
+        }
         else
         {
             const auto& circuit = voiceVcaControlCircuit(parameters.enableEvidenceVcaCalibration);
@@ -9518,7 +9699,20 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     // actually gone silent; cache the raw gain so it reads this value
     // instead of paying for another lookup.
     const auto vcaControl = static_cast<float>(voice.vcaControl);
-    voice.vcaGain = parameters.enableEvidenceVcaCalibration
+    if (voiceVcaJunctionTemperatureEnabled(parameters))
+    {
+        const auto& circuit = voiceVcaJunctionCircuit();
+        const double emitter = parameters.enableCoupledVoiceVcaControl
+            && voice.vcaJunctionChargeInitialised
+            ? circuit.emitterAmpsAtCharge(voice.vcaJunctionCharge, card.vcaJunctionCelsius)
+            : circuit.emitterAmpsAtControl(voice.vcaControl, card.vcaJunctionCelsius);
+        // Preserve the existing declared off-current/retirement boundary.
+        // The denominator is the fixed warm service current, never the
+        // current at this running temperature or panel position.
+        voice.vcaGain = vcaControl > .001f
+            ? static_cast<float>(emitter / card.vcaJunctionServiceEmitterAmps) : 0.0f;
+    }
+    else voice.vcaGain = parameters.enableEvidenceVcaCalibration
                         ? evidenceVcaCalibration().gain(vcaControl)
                         : parameters.useSoftplusVoiceVcaCompatibilityLaw
                         ? VoiceVcaControlLaw::softplusGain(vcaControl)
@@ -11153,7 +11347,10 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     const float drive = trimmed
         * voiceVcaThermalDriveScale(activeParameters_, voice.cardIndex);
     const bool evidenceVca = activeParameters_.enableEvidenceVcaCalibration;
-    const double headroom = evidenceVca ? evidenceVcaCalibration().headroomVolts()
+    const bool junctionTemperature = voiceVcaJunctionTemperatureEnabled(activeParameters_);
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    const double headroom = junctionTemperature ? card.vcaJunctionHeadroomVolts
+        : evidenceVca ? evidenceVcaCalibration().headroomVolts()
         : static_cast<double>(VoiceVcaSignalLaw::headroomVolts);
     const auto shape = [saturate = activeParameters_.enableVoiceVcaSignalSaturation,
                         evidenceVca, headroom](float volts) noexcept {
@@ -11168,7 +11365,8 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     // normalized to unity. Apply it in volts before the 2.6-V model-unit
     // conversion, so every downstream circuit receives the service level.
     const float serviceGain = activeParameters_.enableVoiceVcaServiceGain
-        ? (evidenceVca ? static_cast<float>(evidenceVcaCalibration().serviceGain())
+        ? (junctionTemperature ? card.vcaJunctionServiceGain
+            : evidenceVca ? static_cast<float>(evidenceVcaCalibration().serviceGain())
                        : VoiceVcaSignalLaw::serviceGain()) : 1.0f;
     const float actualKelvin=voiceCardCelsius(
         activeParameters_,voice.cardIndex,thermalWarmupFraction_)+273.15f;
@@ -11181,7 +11379,10 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
         // volts across47k, so divide serviceGain before the common multiply.
         const double normal=voice.vcaShotRandom.next();
         if(activeParameters_.calibration==0 || currentFraction<=0) return 0.0;
-        const double peakTail = evidenceVca ? evidenceVcaCalibration().referenceTailAmps()
+        const double peakTail = junctionTemperature
+            ? card.vcaJunctionServiceEmitterAmps * EvidenceVcaCalibration::beta
+                / (EvidenceVcaCalibration::beta + 1.0)
+            : evidenceVca ? evidenceVcaCalibration().referenceTailAmps()
             : VoiceVcaSignalLaw::fullControlTailAmps / VoiceVcaControlLaw::gain(4064.0f/4095.0f);
         const double tail=peakTail*std::max(0.0,currentFraction);
         const double pairOutput=polyZonedTanhImpl(pairDrive/headroom);
@@ -12195,20 +12396,37 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 }
                 else if (parameters.enableCoupledVoiceVcaControl)
                 {
-                    const auto& circuit = voiceVcaControlCircuit(parameters.enableEvidenceVcaCalibration);
                     const double dt = coefficients.internalIntervalSeconds;
-                    if (voiceVcaEvent)
+                    if (voiceVcaJunctionTemperatureEnabled(parameters))
                     {
-                        voice.vcaControl = circuit.advance(
-                            voice.vcaControl, physicalHoldEvent.previousTarget,
-                            dt * physicalHoldEvent.position);
-                        voice.vcaControl = circuit.advance(
-                            voice.vcaControl, physicalHoldEvent.target,
-                            dt * (1.0 - physicalHoldEvent.position));
+                        initialiseVoiceVcaJunctionCharge(voice);
+                        const auto& circuit = voiceVcaJunctionCircuit();
+                        const double temperature = cards_[static_cast<std::size_t>(voice.cardIndex)].vcaJunctionCelsius;
+                        if (voiceVcaEvent)
+                        {
+                            voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
+                                physicalHoldEvent.previousTarget, dt * physicalHoldEvent.position, temperature);
+                            voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
+                                physicalHoldEvent.target, dt * (1.0 - physicalHoldEvent.position), temperature);
+                        }
+                        else voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
+                            voice.vcaControlTarget, dt, temperature);
+                        voice.vcaControl = circuit.controlAtCharge(voice.vcaJunctionCharge, temperature);
                     }
                     else
-                        voice.vcaControl = circuit.advance(
-                            voice.vcaControl, voice.vcaControlTarget, dt);
+                    {
+                        const auto& circuit = voiceVcaControlCircuit(parameters.enableEvidenceVcaCalibration);
+                        if (voiceVcaEvent)
+                        {
+                            voice.vcaControl = circuit.advance(
+                                voice.vcaControl, physicalHoldEvent.previousTarget,
+                                dt * physicalHoldEvent.position);
+                            voice.vcaControl = circuit.advance(
+                                voice.vcaControl, physicalHoldEvent.target,
+                                dt * (1.0 - physicalHoldEvent.position));
+                        }
+                        else voice.vcaControl = circuit.advance(voice.vcaControl, voice.vcaControlTarget, dt);
+                    }
                 }
                 else
                     voice.vcaControl = voiceVcaEvent

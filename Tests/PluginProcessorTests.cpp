@@ -156,7 +156,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::outputSelector, 0.0f, 1.0e-5f },
     { parameters::outputLoad,   0.0f,  1.0e-5f },
     { parameters::outputCapacitance, 0.0f, 1.0e-5f },
-    { parameters::originalPerformance, 0.0f, 1.0e-5f },
+    { parameters::originalPerformance, 1.0f, 1.0e-5f },
     { parameters::outputRoute, 0.0f, 1.0e-5f },
     { parameters::headphoneLoad, 0.0f, 1.0e-5f },
 });
@@ -602,6 +602,9 @@ EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& proce
 void testProductFidelitySurvivesHostLifecycle()
 {
     YouKnowAudioProcessor processor;
+    // Isolate circuit-profile persistence against the measured-chart Direct
+    // engine below; Original's two-ROM event chronology has separate coverage.
+    setParameterValue (processor, parameters::originalPerformance, 0.0f);
     // Selected product, alternate VCF, and legacy HPF. The isolated
     // alternatives prove that this musical probe detects each selection.
     std::array<std::unique_ptr<YouKnowEngine>, 3> references;
@@ -620,6 +623,9 @@ void testProductFidelitySurvivesHostLifecycle()
         expect (references[index]->configureChorusBbdTransferProfile (
                     ChorusBbdTransferProfile::ServicedBiasEstimate),
                 "cannot configure the explicit candidate BBD reference");
+        expect (references[index]->configureChorusBbdInsertionGainProfile (
+                    ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate),
+                "cannot configure the explicit candidate BBD insertion reference");
 #else
         // Independently derive the adopted C56 input-load reduction. Keep
         // it common to all references so the two other circuit contrasts
@@ -927,6 +933,8 @@ void testOutputConnectionsReachMonoAndStereoAudio()
     for (bool mono : { false, true })
     {
         YouKnowAudioProcessor processor;
+        // This oracle compares the connection adapter with a Direct engine.
+        setParameterValue (processor, parameters::originalPerformance, 0.0f);
         auto layout = processor.getBusesLayout();
         layout.outputBuses.set (0, mono ? juce::AudioChannelSet::mono()
                                       : juce::AudioChannelSet::stereo());
@@ -1322,6 +1330,8 @@ void testProcessingProducesSound()
     YouKnowAudioProcessor processor;
     processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
     processor.prepareToPlay (sampleRate, blockSize);
+    expect (processor.getOriginalPerformanceModeForTest(),
+            "a fresh prepared processor did not select Original performance timing");
 
     juce::AudioBuffer<float> buffer (2, blockSize);
     juce::MidiBuffer midi;
@@ -1439,6 +1449,9 @@ juce::AudioBuffer<float> renderNoteOrderingTimeline (
 {
     constexpr int timelineSamples = 3072;
     YouKnowAudioProcessor processor;
+    // Direct normalizes adjacent host events and permits 1..16 voices.
+    // Original intentionally preserves DIN arrival order and six-card limits.
+    setParameterValue (processor, parameters::originalPerformance, 0.0f);
     setParameterValue (processor, parameters::quality, 0.0f);
     setParameterValue (processor, parameters::calibration, 0.0f);
     setParameterValue (processor, parameters::chorusNoise, 0.0f);
@@ -1643,6 +1656,8 @@ void testZeroFrameMidiNoteOrderingKeepsOriginalTimestamps()
     const auto render = [] (int scenario)
     {
         YouKnowAudioProcessor processor;
+        // Test Direct's host-order normalization at the zero-frame boundary.
+        setParameterValue (processor, parameters::originalPerformance, 0.0f);
         setParameterValue (processor, parameters::quality, 0.0f);
         setParameterValue (processor, parameters::calibration, 0.0f);
         setParameterValue (processor, parameters::chorusNoise, 0.0f);
@@ -2151,6 +2166,90 @@ void testDeferredKeyboardResetBalancesANewerUiPress()
     processor.releaseResources();
 }
 
+void testUiKeyboardUsesNativeContactsAndRetainsExtendedKeys()
+{
+    YouKnowAudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    expect (processor.getOriginalPerformanceModeForTest(),
+            "native keyboard fixture starts in the shipping Original mode");
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::release, 0.0f);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    processor.keyboardState.noteOn (1, 60, 0.8f);
+    renderBlocks (processor, buffer, 4);
+    const auto& nativeRam = processor.getOriginalPerformanceForTest().state().assigner.ram;
+    expect (processor.getActiveVoiceCount() == 1
+                && (nativeRam[0x53] & 1u) != 0
+                && (nativeRam[0x46] & 1u) == 0
+                && processor.getOriginalPerformanceForTest().pending() == 0,
+            "the local C4 key reaches A5's physical contact history without inventing DIN input");
+    processor.keyboardState.noteOff (1, 60, 0.0f);
+    renderBlocks (processor, buffer, 32);
+    expect (processor.getActiveVoiceCount() == 0 && (nativeRam[0x53] & 1u) == 0,
+            "the local C4 release clears its actual contact and voice");
+
+    // MidiKeyboardState is public even though the editor exposes36..96.
+    // Keep its wider programmatic range on the prior DIN octave-folding
+    // adapter, rather than ignoring keys or inventing extra physical wiring.
+    for (const int note : { 12, 108 })
+    {
+        processor.keyboardState.noteOn (1, note, 0.8f);
+        renderBlocks (processor, buffer, 4);
+        const auto& ram = processor.getOriginalPerformanceForTest().state().assigner.ram;
+        bool localContact = false;
+        for (unsigned i = 0; i < 8; ++i) localContact |= ram[0x50 + i] != 0;
+        const unsigned folded = static_cast<unsigned> ((note == 12 ? 24 : note) - 12);
+        expect (processor.getActiveVoiceCount() == 1 && ! localContact
+                    && (ram[0x40 + folded / 8] & (1u << (folded % 8))) != 0,
+                "a programmatic key beyond the61-key span retains the Original DIN pitch adapter");
+        processor.keyboardState.noteOff (1, note, 0.0f);
+        renderBlocks (processor, buffer, 32);
+        expect (processor.getActiveVoiceCount() == 0,
+                "an extended local key balances its retained DIN release");
+    }
+    processor.releaseResources();
+}
+
+void testTimingModeSwitchRetiresOldUiKeyOwnership()
+{
+    for (const bool startsOriginal : { false, true })
+        for (const int note : { 60, 24 })
+        {
+            YouKnowAudioProcessor processor;
+            setParameterValue (processor, parameters::originalPerformance,
+                               startsOriginal ? 1.0f : 0.0f);
+            processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+            processor.prepareToPlay (sampleRate, blockSize);
+            setParameterValue (processor, parameters::attack, 0.0f);
+            setParameterValue (processor, parameters::sustain, 1.0f);
+            setParameterValue (processor, parameters::release, 0.0f);
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            processor.keyboardState.noteOn (1, note, 0.8f);
+            renderBlocks (processor, buffer, 4);
+            expect (processor.getActiveVoiceCount() == 1,
+                    "the timing-switch fixture first sounds its local key");
+
+            setParameterValue (processor, parameters::originalPerformance,
+                               startsOriginal ? 0.0f : 1.0f);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (2, note, 0.8f), 0);
+            processor.processBlock (buffer, midi);
+            processor.keyboardState.noteOff (1, note, 0.0f);
+            renderBlocks (processor, buffer, 32);
+            expect (processor.getOriginalPerformanceModeForTest() != startsOriginal
+                        && processor.getActiveVoiceCount() == 1,
+                    "an old UI key-up across a timing reset cannot release a new host owner");
+            midi.addEvent (juce::MidiMessage::noteOff (2, note), 0);
+            processor.processBlock (buffer, midi);
+            renderBlocks (processor, buffer, 32);
+            expect (processor.getActiveVoiceCount() == 0,
+                    "the post-switch host owner releases without a stranded local contact");
+            processor.releaseResources();
+        }
+}
+
 void testMalformedChannelMessagesAreIgnored()
 {
     // MidiBuffer retains a truncated channel message; MidiMessage's status
@@ -2589,6 +2688,9 @@ void testResetAllControllersLiftsHoldAndCentresTheWheels()
     YouKnowAudioProcessor untouched;
     for (auto* processor : { &reset, &explicitReturn, &untouched })
     {
+        // CC121 is a Direct host convenience; this oracle compares its
+        // immediate controller stores with the three explicit stores.
+        setParameterValue (*processor, parameters::originalPerformance, 0.0f);
         setParameterValue (*processor, parameters::calibration, 0.0f);
         setParameterValue (*processor, parameters::chorusNoise, 0.0f);
         setParameterValue (*processor, parameters::chorusI, 0.0f);
@@ -2673,6 +2775,9 @@ void testUiPerformanceLeverMatchesMidiAndCoalesces()
     YouKnowAudioProcessor neutral;
     for (auto* processor : { &uiDriven, &midiDriven, &neutral })
     {
+        // Qualify the immediate Direct mailbox/axis adapter. Original's
+        // physical lever and received DIN frames have distinct latencies.
+        setParameterValue (*processor, parameters::originalPerformance, 0.0f);
         setParameterValue (*processor, parameters::calibration, 0.0f);
         setParameterValue (*processor, parameters::chorusNoise, 0.0f);
         setParameterValue (*processor, parameters::chorusI, 0.0f);
@@ -4356,6 +4461,9 @@ void testProgramChangeAffectsFollowingNoteWithoutTheMessageThread()
 
     for (auto* processor : { &midiDriven, &reference })
     {
+        // Atomic host recall is the Direct policy; Original sends the tone
+        // through the ROM and cannot equal an already-prepared reference.
+        setParameterValue (*processor, parameters::originalPerformance, 0.0f);
         setParameterValue (*processor, parameters::calibration, 0.0f);
         setParameterValue (*processor, parameters::chorusNoise, 0.0f);
         processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
@@ -4949,6 +5057,9 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
     reference.applyPatch (dumpPatch);
     for (auto* processor : { &midiDriven, &reference })
     {
+        // This prepared-tone oracle tests Direct's atomic audio-side shadow;
+        // the literal incremental ROM receive path has separate coverage.
+        setParameterValue (*processor, parameters::originalPerformance, 0.0f);
         setParameterValue (*processor, parameters::calibration, 0.0f);
         setParameterValue (*processor, parameters::chorusNoise, 0.0f);
         processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
@@ -5067,6 +5178,8 @@ void testReflectionAckCannotRetireShadowAgainstAStaleSnapshot()
     reference.applyPatch (expected);
     for (auto* processor : { &midiDriven, &reference })
     {
+        // Keep the race oracle on Direct's sample-zero atomic tone policy.
+        setParameterValue (*processor, parameters::originalPerformance, 0.0f);
         setParameterValue (*processor, parameters::calibration, 0.0f);
         setParameterValue (*processor, parameters::chorusNoise, 0.0f);
         processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
@@ -5269,6 +5382,9 @@ void testOverflowedMidiReflectionCoalescesWithoutDroppingAudioEvents()
     reference.applyPatch (baselinePatch);
     for (auto* processor : { &midiDriven, &reference })
     {
+        // Direct no-op prefixes share the reference's event chronology;
+        // Original must spend actual DIN time receiving every prefix byte.
+        setParameterValue (*processor, parameters::originalPerformance, 0.0f);
         setParameterValue (*processor, parameters::calibration, 0.0f);
         setParameterValue (*processor, parameters::chorusNoise, 0.0f);
         processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
@@ -9319,6 +9435,8 @@ int main()
         testMidiGlobalReleaseRetiresUiOwnership();
         testDroppedUiPressCannotReleaseAnExternalMidiNote();
         testDeferredKeyboardResetBalancesANewerUiPress();
+        testUiKeyboardUsesNativeContactsAndRetainsExtendedKeys();
+        testTimingModeSwitchRetiresOldUiKeyOwnership();
         testMalformedChannelMessagesAreIgnored();
         testAllNotesOffReleasesAndAllSoundOffCuts();
         testHoldLatchesOnAnyNonZeroValue();
@@ -9406,6 +9524,8 @@ int main()
     testMidiGlobalReleaseRetiresUiOwnership();
     testDroppedUiPressCannotReleaseAnExternalMidiNote();
     testDeferredKeyboardResetBalancesANewerUiPress();
+    testUiKeyboardUsesNativeContactsAndRetainsExtendedKeys();
+    testTimingModeSwitchRetiresOldUiKeyOwnership();
     testMalformedChannelMessagesAreIgnored();
     testDeferredQualitySwitchIsNotAutomatable();
     testVcfTanhSelectorDrivesTheEngine();

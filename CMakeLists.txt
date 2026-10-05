@@ -71,7 +71,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(YOUKNOW_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
 option(YOUKNOW_HARDWARE_REALISM_CANDIDATE
-    "Use the accepted 2026-10-05 hardware profile; OFF retains the prior reference sound" ON)
+    "Use the current hardware component profile; OFF retains the prior reference sound" ON)
 option(YOUKNOW_BUILD_CLAP "Build the CLAP plug-in alongside the JUCE formats" ON)
 set(YOUKNOW_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
@@ -513,6 +513,20 @@ if(YOUKNOW_BUILD_TOOLS)
         "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
         "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
 
+    add_executable(YouKnowRenderNextHardwareRealism Tools/RenderNextHardwareRealism.cpp)
+    target_link_libraries(YouKnowRenderNextHardwareRealism PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderNextHardwareRealism PRIVATE cxx_std_20)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderNextHardwareRealism.cpp"
+        YOUKNOW_NEXT_HARDWARE_REALISM_SOURCE_SHA256)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderNextHardwareRealism.cpp")
+    target_compile_definitions(YouKnowRenderNextHardwareRealism PRIVATE
+        YOUKNOW_NEXT_HARDWARE_REALISM_AVAILABLE=1
+        "YOUKNOW_NEXT_HARDWARE_REALISM_SOURCE_SHA256=\"${YOUKNOW_NEXT_HARDWARE_REALISM_SOURCE_SHA256}\""
+        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
+        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
+        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
+
     add_executable(YouKnowRenderPresetScore Tools/RenderPresetScore.cpp)
     target_link_libraries(YouKnowRenderPresetScore
         PRIVATE YouKnowDSP Threads::Threads)
@@ -762,6 +776,9 @@ if(BUILD_TESTING)
             add_test(NAME YouKnow.HardwareRealismPackage
                 COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/Tools/PackageHardwareRealism.py" --self-test)
+            add_test(NAME YouKnow.NextHardwareRealismPackage
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Tools/PackageNextHardwareRealism.py" --self-test)
         endif()
     endif()
 
@@ -1023,6 +1040,10 @@ if(BUILD_TESTING)
     add_executable(YouKnowEvidenceCalibrationTests Tests/YouKnowEvidenceCalibrationTests.cpp)
     target_link_libraries(YouKnowEvidenceCalibrationTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.EvidenceCalibration COMMAND YouKnowEvidenceCalibrationTests)
+
+    add_executable(YouKnowVcaJunctionTemperatureTests Tests/YouKnowVcaJunctionTemperatureTests.cpp)
+    target_link_libraries(YouKnowVcaJunctionTemperatureTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VcaJunctionTemperature COMMAND YouKnowVcaJunctionTemperatureTests)
 
     add_executable(YouKnowHardwareRealismProfileTests Tests/YouKnowHardwareRealismProfileTests.cpp)
     target_link_libraries(YouKnowHardwareRealismProfileTests PRIVATE YouKnowDSP)

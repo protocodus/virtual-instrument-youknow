@@ -20,6 +20,7 @@ void operator delete[](void* p) noexcept { std::free(p); }
 static void check(bool b,const char* message) { if(!b) { std::fprintf(stderr,"FAIL: %s\n",message); std::abort(); } }
 using namespace youknow;
 using E=YouKnowEngine;
+using ParameterSource=E::ParameterInputSource;
 namespace youknow {
 struct YouKnowTestAccess {
     static bool gate(const E& e,unsigned i) { return e.voices_[i].keyDown; }
@@ -92,7 +93,7 @@ std::vector<float> score(double rate,int factor,unsigned block) {
     e->setSustainPedal(false); render(*e,2048,block,&audio);
     auto p=patch(); p.cutoff=30.f/127; p.sawEnabled=true; p.pulseEnabled=false;
     e->setParameters(p); render(*e,4096,block,&audio);
-    check(e->originalPerformance().state().assigner.ram[0x95]==30,"host tone edit parsed by original A5 SysEx");
+    check(e->originalPerformance().state().assigner.ram[0x95]==30,"host panel edit reaches original A5 stored cutoff");
     e->noteOn(55,1); render(*e,2048,block,&audio);
     e->releaseAllNotes(); render(*e,2048,block,&audio);
     check(!YouKnowTestAccess::held(*e,55),"all notes off clears host bookkeeping");
@@ -189,7 +190,9 @@ void burstAndRecovery() {
     check(gates(*e)==1,"explicit reset recovers ordinary performance after queue failure");
     check(YouKnowTestAccess::enqueue(*e,full),"parameter overflow scenario fills the queue");
     auto p=patch(); p.cutoff=17.f/127; p.masterTuneCents=12.5f;
-    e->setParameters(p);
+    e->setParameters(p,ParameterSource::MidiReflection);
+    const std::array<std::uint8_t,7> cutoff{0xf0,0x41,0x32,0,5,17,0xf7};
+    check(!e->receiveOriginalPerformanceMidi(cutoff),"raw tone overflow reports failure");
     check(!e->originalPerformanceHealthy() && e->originalPerformance().pending()==0,
           "tone queue overflow resets coherently and exposes failure");
     check(e->originalPerformance().state().assigner.ram[0x95]==17
@@ -197,6 +200,290 @@ void burstAndRecovery() {
           "overflow recovery seeds the newly adopted tone and physical Tune, not the old image");
     e->reset(); e->noteOn(67,1); render(*e,2048,173);
     check(gates(*e)==1,"newly adopted tone remains playable after failure recovery");
+}
+
+// A-5 062A..066A stores each received full-tone payload byte and marks it
+// pending, including equal values; 0683..06AF distinguishes 30/31 from 32.
+// These literal byte counts and open receive frontiers are ROM/wire checks,
+// not fitted attack latency or an atomic-F7 patch convention.
+// https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L869-L945
+constexpr std::array<std::uint8_t,24> currentTone{
+    0xf0,0x41,0x31,0,0,
+    64,0,0,0,0,100,40,0,0,0,100,0,20,100,20,20,
+    0x2a,0,0xf7
+};
+
+void rawToneReceiptAndOrdering(unsigned block) {
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    const auto frames=e->originalPerformance().state().uart.frameOrdinal;
+    watch=true;
+    const bool accepted=e->receiveOriginalPerformanceMidi(currentTone);
+    watch=false;
+    check(accepted && allocations==0,"equal raw full tone is accepted without allocation");
+    check(e->originalPerformance().pending()==currentTone.size(),
+          "equal full-tone values retain the actual 24-byte transport");
+    e->setParameters(patch(),ParameterSource::MidiReflection);
+    check(e->originalPerformance().pending()==currentTone.size(),
+          "equal incoming tone reflection neither drops nor duplicates its wire bytes");
+    e->noteOn(60,1);
+    // The note's velocity is byte 27, ready no earlier than 27*1280 states:
+    // 8.64 ms at the original 4 MHz state rate. 400 frames at 48k are 8.333 ms.
+    render(*e,400,block);
+    check(gates(*e)==0,"following note cannot overtake the equal full-tone packet");
+    render(*e,4096,block);
+    check(gates(*e)==1,"following note executes after the preserved packet");
+    check(e->originalPerformance().state().uart.frameOrdinal>frames+2,
+          "equal tone values still produce physical module traffic");
+    e->noteOff(60); render(*e,4096,block);
+    const auto repeatedFrames=e->originalPerformance().state().uart.frameOrdinal;
+    check(e->receiveOriginalPerformanceMidi(currentTone),"identical repeated full tone accepted");
+    render(*e,4096,block);
+    check(e->originalPerformance().state().uart.frameOrdinal>repeatedFrames,
+          "identical repeated full tone is forwarded again by the original foreground");
+}
+
+void rawToneIncrementalFrontiers(unsigned block) {
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    auto changed=currentTone;
+    for(unsigned i=0;i<16;++i) changed[5+i]=static_cast<std::uint8_t>(5+i);
+    changed[21]=0x32; changed[22]=4;
+    check(e->receiveOriginalPerformanceMidi(changed),"literal changed full tone accepted");
+    // Five header bytes precede the first value. At 48k, 107/122/367 frames
+    // end about 8917/10167/30583 states after the declared frame start;
+    // respectively before bytes 7, 8 and 24 can become ready. The allowance
+    // after the preceding byte includes the actual receive ISR work.
+    render(*e,107,block);
+    const auto& first=e->originalPerformance().state().assigner.ram;
+    check(first[0x90]==5 && first[0x91]==0 && first[0x95]==100,
+          "full-tone first payload commits while later values remain untouched");
+    render(*e,15,block);
+    const auto& second=e->originalPerformance().state().assigner.ram;
+    check(second[0x90]==5 && second[0x91]==6 && second[0x92]==0,
+          "second full-tone payload commits without an individual parameter frame");
+    render(*e,245,block);
+    const auto& last=e->originalPerformance().state().assigner.ram;
+    for(unsigned i=0;i<16;++i)
+        check(last[0x90+i]==changed[5+i],"all continuous payloads commit before final F7");
+    check(last[0x8e]==changed[21] && last[0x8f]==changed[22],
+          "both packed switch payloads commit before final F7");
+    check(e->originalPerformance().pending()==1,"final F7 has not arrived at the last payload frontier");
+    render(*e,4096,block);
+    check(e->originalPerformance().pending()==0,"full-tone receive completes and drains");
+}
+
+void physicalPanelAndIncomingTone(unsigned block) {
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    auto p=patch();
+    const auto& initial=e->originalPerformance().state().assigner.ram;
+    check(initial[0x95]==100 && initial[0x5e]==204 && initial[0x72]==204,
+          "cutoff starts at the independent warm panel raw/stored coordinates");
+    p.cutoff=20.f/127;
+    e->setParameters(p);
+    check(e->originalPerformance().pending()==0,"physical slider does not create incoming DIN traffic");
+    check(e->originalPerformance().state().assigner.ram[0x95]==100,
+          "slider movement cannot anticipate its ADC and foreground store");
+    render(*e,4096,block);
+    const auto& panel=e->originalPerformance().state().assigner.ram;
+    check(panel[0x95]==20 && panel[0x5e]==44 && panel[0x72]==44,
+          "physical cutoff passes original raw ADC conditioning and accepted-history store");
+    const std::array<std::uint8_t,7> incoming{0xf0,0x41,0x32,0,5,30,0xf7};
+    check(e->receiveOriginalPerformanceMidi(incoming),"incoming cutoff parameter accepted");
+    p.cutoff=30.f/127;
+    e->setParameters(p,ParameterSource::MidiReflection);
+    check(e->originalPerformance().pending()==incoming.size(),
+          "incoming tone reflection adds no synthetic receive frame");
+    render(*e,4096,block);
+    const auto& remote=e->originalPerformance().state().assigner.ram;
+    check(remote[0x95]==30 && remote[0x5e]==44 && remote[0x72]==44,
+          "incoming tone changes stored cutoff while leaving the physical pot stationary");
+    const auto& module=e->firmwareSerialState().control.ram;
+    check(unsigned(module[0x3d])+256u*module[0x3e]==30u*128u,
+          "received cutoff reaches the real module parameter interpreter");
+    e->setParameters(p,ParameterSource::MidiReflection);
+    render(*e,4096,block);
+    const auto& stationary=e->originalPerformance().state().assigner.ram;
+    check(stationary[0x95]==30 && stationary[0x5e]==44 && stationary[0x72]==44,
+          "unchanged panel scans and host reflection cannot restore the old physical-pot value");
+    p.cutoff=31.f/127;
+    e->setParameters(p);
+    render(*e,4096,block);
+    const auto& moved=e->originalPerformance().state().assigner.ram;
+    // A-5 08BE marks a panel-owned value with bit7 after a received tone.
+    check((moved[0x95]&0x7fu)==31 && moved[0x5e]==66 && moved[0x72]==66,
+          "a later genuine slider gesture retakes cutoff through the original ADC path");
+}
+
+void libraryToneRecall(unsigned block) {
+    auto beforeAudio=create(48000,1);
+    beforeAudio->setParameters(patch(),ParameterSource::ToneRecall);
+    check(beforeAudio->originalPerformance().pending()==currentTone.size(),
+          "same-value explicit library recall before first audio retains its full frame");
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    auto recalled=patch();
+    recalled.cutoff=17.f/127; recalled.resonance=80.f/127;
+    recalled.attack=30.f/127; recalled.release=40.f/127;
+    e->setParameters(recalled,ParameterSource::ToneRecall);
+    check(e->originalPerformance().pending()==currentTone.size(),
+          "library recall uses one full manual-tone frame regardless of changed-control count");
+    render(*e,4096,block);
+    const auto& ram=e->originalPerformance().state().assigner.ram;
+    check(ram[0x95]==17 && ram[0x96]==80 && ram[0x9b]==30 && ram[0x9e]==40,
+          "library full tone reaches original per-payload receive stores");
+    check(ram[0x5e]==204 && ram[0x72]==204,
+          "library tone recall leaves the physical cutoff pot and history stationary");
+}
+
+void lowRateWireBursts() {
+    for(auto rate:{8000.,16000.}) {
+        auto e=create(rate,1);
+        for(int i=0;i<24;++i) e->noteOn(48+i,1);
+        check(e->originalPerformance().pending()==72,
+              "low-rate burst preserves all complete note packets");
+        // A64-sample piece at8k spans25 DIN bytes and eight message starts;
+        // the channel-routing slices must fit their bounded work budget.
+        render(*e,512,173);
+        check(e->originalPerformance().pending()==0 && gates(*e)!=0,
+              "supported low-rate note burst drains without a routing work fault");
+        for(int i=0;i<24;++i) e->noteOff(48+i);
+        render(*e,512,173);
+        check(e->originalPerformance().pending()==0 && gates(*e)==0,
+              "supported low-rate release burst clears the actual hardware gates");
+    }
+}
+
+void replacedPanelSwitchContacts(unsigned block) {
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    auto p=patch();
+    // Switch byte one: range bits 0..2, pulse/saw bits 3/4,
+    // chorus-off/mode-I bits 5/6. Native buttons are edge contacts,
+    // so a replaced request must not turn a held press into another toggle.
+    p.range=DcoRange::Four; p.pulseEnabled=false; p.sawEnabled=true;
+    p.chorus=ChorusMode::One;
+    e->setParameters(p);
+    p.range=DcoRange::Sixteen; p.pulseEnabled=true; p.chorus=ChorusMode::Two;
+    e->setParameters(p);
+    check(e->originalPerformance().pending()==0,
+          "replaced native switch presses add no incoming DIN bytes");
+    render(*e,4096,block);
+    check((e->originalPerformance().state().assigner.ram[0x8e]&0x7fu)==0x19,
+          "replacement before the first contact scan reaches the newest switch target");
+
+    p.range=DcoRange::Four; p.pulseEnabled=p.sawEnabled=false;
+    p.chorus=ChorusMode::Off;
+    e->setParameters(p);
+    unsigned waited=0;
+    while(e->originalPerformance().state().assigner.ram[0xa6]==0 && waited<4096) {
+        render(*e,1,1); ++waited;
+    }
+    check(waited<4096,"native switch press reaches the actual contact history");
+    p.range=DcoRange::Eight; p.pulseEnabled=true; p.chorus=ChorusMode::One;
+    e->setParameters(p);
+    render(*e,4096,block);
+    check((e->originalPerformance().state().assigner.ram[0x8e]&0x7fu)==0x4a,
+          "replacement after the contact read releases and re-presses for the newest target");
+
+    auto remote=currentTone;
+    remote[3]=11; remote[21]=0x51; // 16', saw, chorus I.
+    check(e->receiveOriginalPerformanceMidi(remote),"mixed incoming switch tone accepted");
+    p=patch(); p.range=DcoRange::Sixteen; p.pulseEnabled=false;
+    p.sawEnabled=true; p.chorus=ChorusMode::One;
+    e->setParameters(p,ParameterSource::MidiReflection);
+    p.range=DcoRange::Four; p.sawEnabled=false; p.chorus=ChorusMode::Two;
+    e->setParameters(p);
+    check(e->originalPerformance().pending()==remote.size(),
+          "panel presses mixed with a tone keep only the original received bytes");
+    render(*e,122,block);
+    p.range=DcoRange::Eight; p.sawEnabled=true; p.chorus=ChorusMode::Off;
+    e->setParameters(p);
+    render(*e,4096,block);
+    check(e->originalPerformance().pending()==0,"mixed incoming switch tone drains");
+    // After the received switch payload has arrived, a fresh physical gesture
+    // wins. Replace it again before its scan to exercise retained ROM state,
+    // rather than using the preceding host reflection as the toggle baseline.
+    p.range=DcoRange::Four; p.pulseEnabled=true; p.chorus=ChorusMode::Two;
+    e->setParameters(p);
+    p.range=DcoRange::Sixteen; p.sawEnabled=false; p.chorus=ChorusMode::One;
+    e->setParameters(p);
+    render(*e,4096,block);
+    check((e->originalPerformance().state().assigner.ram[0x8e]&0x7fu)==0x49,
+          "newest physical switch target survives rapid replacements around received tone data");
+    render(*e,4096,block);
+    check((e->originalPerformance().state().assigner.ram[0x8e]&0x7fu)==0x49,
+          "settled switch contacts produce no later accidental toggle");
+}
+
+auto rapidContactAudio(unsigned block,bool afterRead) {
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    e->noteOn(60,1); render(*e,2048,block);
+    auto p=patch();
+    p.range=DcoRange::Four; p.pulseEnabled=false; p.sawEnabled=true;
+    p.chorus=ChorusMode::One;
+    e->setParameters(p);
+    if(afterRead) {
+        unsigned waited=0;
+        while(e->originalPerformance().state().assigner.ram[0xa6]==0 && waited<4096) {
+            render(*e,1,1); ++waited;
+        }
+        check(waited<4096,"rapid audio fixture reaches the real native contact read");
+    }
+    p.range=DcoRange::Sixteen; p.pulseEnabled=true; p.sawEnabled=false;
+    p.chorus=ChorusMode::Two;
+    e->setParameters(p);
+    std::vector<float> audio;
+    render(*e,8192,block,&audio);
+    e->noteOff(60); render(*e,1024,block,&audio);
+    const auto& a=e->originalPerformance().state().assigner;
+    const auto& b=e->firmwareSerialState();
+    return std::tuple{audio,a.ram,a.now,a.foregroundPasses,a.registers.pc,
+        b.control.ram,b.now,b.ordinal,b.registers.pc};
+}
+
+void omniReceivedToneAndGeneratedNotes(unsigned block) {
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    for(unsigned channel=0;channel<16;++channel) {
+        auto full=currentTone;
+        full[3]=static_cast<std::uint8_t>(channel);
+        full[10]=static_cast<std::uint8_t>(40+channel);
+        check(e->receiveOriginalPerformanceMidi(full),"omni full tone accepted");
+        auto p=patch(); p.cutoff=float(full[10])/127;
+        e->setParameters(p,ParameterSource::MidiReflection);
+        e->noteOn(60,1);
+        check(e->originalPerformance().pending()==full.size()+3,
+              "channel sideband preserves a full tone plus generated note byte count");
+        render(*e,400,block);
+        check(gates(*e)==0,"generated channel-zero On cannot overtake a received channel tone");
+        render(*e,2048,block);
+        check(e->originalPerformance().state().assigner.ram[0x95]==full[10],
+              "every received full-tone channel reaches the original cutoff store");
+        check(gates(*e)==1,"generated channel-zero On works after every received tone channel");
+        check(e->originalPerformance().state().assigner.ram[0xbd]==0,
+              "generated note restores the original receive channel at its message boundary");
+
+        const std::array<std::uint8_t,7> parameter{
+            0xf0,0x41,0x32,static_cast<std::uint8_t>(channel),5,
+            static_cast<std::uint8_t>(80+channel),0xf7
+        };
+        check(e->receiveOriginalPerformanceMidi(parameter),"omni parameter frame accepted");
+        p.cutoff=float(parameter[5])/127;
+        e->setParameters(p,ParameterSource::MidiReflection);
+        e->noteOff(60);
+        check(e->originalPerformance().pending()==parameter.size()+3,
+              "channel sideband preserves a parameter frame plus generated Off byte count");
+        render(*e,2048,block);
+        check(e->originalPerformance().state().assigner.ram[0x95]==parameter[5],
+              "every received parameter channel reaches the original cutoff store");
+        check(gates(*e)==0,"generated channel-zero Off works after every received parameter channel");
+        check(e->originalPerformance().state().assigner.ram[0xbd]==0
+              && e->originalPerformance().pending()==0,
+              "interleaved received and generated messages drain with channel zero restored");
+    }
 }
 void startupControlsAndLifecycle() {
     auto p=patch();
@@ -249,6 +536,18 @@ int main() {
     check(repeatedMode(1)==repeatedMode(173),"same-mode contact processing is block invariant");
     burstAndRecovery();
     startupControlsAndLifecycle();
+    lowRateWireBursts();
+    for(bool afterRead:{false,true})
+        check(rapidContactAudio(1,afterRead)==rapidContactAudio(173,afterRead),
+              "rapid native switch replacement preserves full stereo audio and firmware state across host blocks");
+    for(unsigned block:{1u,173u}) {
+        rawToneReceiptAndOrdering(block);
+        rawToneIncrementalFrontiers(block);
+        physicalPanelAndIncomingTone(block);
+        libraryToneRecall(block);
+        replacedPanelSwitchContacts(block);
+        omniReceivedToneAndGeneratedNotes(block);
+    }
     for(auto rate:{44100.,48000.,96000.}) for(int factor:{1,4}) {
         check(score(rate,factor,1)==score(rate,factor,173),"absolute firmware and stereo output invariant to host blocks");
     }

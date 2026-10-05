@@ -102,6 +102,18 @@ enum class ChorusTimingProfile
 // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19
 enum class ChorusBbdTransferProfile { Legacy, ServicedBiasEstimate };
 
+// Holters/Parker report that the MN3009 itself amplified by about 2.3 dB
+// when measured in their Juno-60 circuit (DAFx-18, printed p.16 / PDF p.6).
+// Panasonic specifies -4/typ.0/+4 dB at 40 kHz, 1 kHz, 1.7 Vrms, RL100k.
+// The sibling measurement is a same-chip insertion-gain prior, not a
+// Juno-106 calibration: measurement frequency, bias and loading are unnamed.
+// Apply it to the emerging signal before the external postfilter/followers;
+// output-referred BBD noise and separately modeled relative line gain retain
+// their own scales. UnityReference preserves the uncalibrated comparison.
+// https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=6
+// https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf#page=2
+enum class ChorusBbdInsertionGainProfile { UnityReference, HoltersParkerJuno60Estimate };
+
 // A named component approximation, separate from timing and
 // insertion-gain calibration. The raw reference retains ideal followers.
 // Nominal2SA1015 is the small-signal model and uses Toshiba's typical beta200/Cob4pF coordinates and
@@ -320,6 +332,11 @@ public:
     [[nodiscard]] bool configureBbdTransferProfile(ChorusBbdTransferProfile) noexcept;
     [[nodiscard]] ChorusBbdTransferProfile getBbdTransferProfile() const noexcept
     { return lineA_.transferProfile; }
+    // Fixed before prepare; reset and numerical rate changes retain the
+    // signal-only gain prior without changing the bucket or noise laws.
+    [[nodiscard]] bool configureBbdInsertionGainProfile(ChorusBbdInsertionGainProfile) noexcept;
+    [[nodiscard]] ChorusBbdInsertionGainProfile getBbdInsertionGainProfile() const noexcept
+    { return lineA_.insertionGainProfile; }
     void prepare(double sampleRate,
                  bool preserveState = false) noexcept;
     void reset(bool preserveLfoPhase = false) noexcept;
@@ -952,6 +969,9 @@ private:
     struct Line
     {
         ChorusBbdTransferProfile transferProfile { ChorusBbdTransferProfile::Legacy };
+        ChorusBbdInsertionGainProfile insertionGainProfile {
+            ChorusBbdInsertionGainProfile::UnityReference };
+        float signalInsertionGain { 1.0f };
         struct BlepEvent
         {
             float jump { 0.0f };

@@ -41,7 +41,8 @@ class FirmwareAssignerAudioBridge {
         // CPU has already consumed the inclusive endpoint of this source slice.
         bool completedSourceValid = false;
         std::uint64_t completedSourceThrough = 0;
-        // Held physical inputs may change only after a public ReachedTarget.
+        // Held physical inputs may change after ReachedTarget or through the
+        // configured owner's exact instruction-endpoint inputService.
         FirmwareAssignerIo::Inputs heldInputs{};
         bool heldInputsValid = false;
     };
@@ -68,7 +69,8 @@ class FirmwareAssignerAudioBridge {
 
     // Advance to an inclusive absolute 4MHz CPU-state target. Configuration and
     // tables must remain immutable. Physical inputs may change only after this
-    // API reports ReachedTarget; all incomplete retries use the same held inputs.
+    // API reports ReachedTarget, apart from the configured inputService owner.
+    // All incomplete retries use the resulting retained physical input image.
     // At most maximumInputEvents sorted RX events are accepted per call. Consume
     // exactly Result::consumedInputs before retrying. Future inputs stay caller-
     // owned. Once an inclusive source boundary is completed, new RX events at

@@ -157,6 +157,10 @@ public:
     }
     bool getOriginalPerformanceModeForTest() const noexcept { return engine.originalPerformanceMode(); }
     bool getOriginalPerformanceHealthyForTest() const noexcept { return engine.originalPerformanceHealthy(); }
+    const youknow::OriginalPerformance& getOriginalPerformanceForTest() const noexcept
+    {
+        return engine.originalPerformance();
+    }
     int getActiveVoiceCount() const noexcept
     {
         return activeVoiceCount.load (std::memory_order_relaxed);
@@ -331,8 +335,9 @@ private:
     std::atomic<unsigned> uiWriteIndex { 0 };
     std::atomic<unsigned> uiReadIndex { 0 };
     // Audio-thread-owned UI channel/key bits. JUCE can emit duplicate
-    // mouse/computer-key presses but only one release; host MIDI retains its
-    // separate counted ownership in the engine.
+    // mouse/computer-key presses but only one release. Original aggregates
+    // UI channels onto local contacts, separate from its DIN bitmap; Direct
+    // retains the engine's separate counted host-MIDI ownership.
     std::array<std::uint64_t, uiNoteBitmapWords> uiHeldNotes {};
     // Key releases the queue had no room for. Dropping a press costs a note
     // nobody hears; dropping a release leaves one held down for good.
@@ -441,6 +446,33 @@ private:
     };
     static constexpr std::size_t parameterPointerCount =
         static_cast<std::size_t> (ParameterIndex::count);
+    static constexpr std::array<ParameterIndex, 25> tonePanelParameters {
+        ParameterIndex::lfoRate, ParameterIndex::lfoDelay, ParameterIndex::dcoLfo,
+        ParameterIndex::pwm, ParameterIndex::noise, ParameterIndex::cutoff,
+        ParameterIndex::resonance, ParameterIndex::vcfEnv, ParameterIndex::vcfLfo,
+        ParameterIndex::keyFollow, ParameterIndex::vcaLevel, ParameterIndex::attack,
+        ParameterIndex::decay, ParameterIndex::sustain, ParameterIndex::release,
+        ParameterIndex::sub, ParameterIndex::range, ParameterIndex::saw,
+        ParameterIndex::pulse, ParameterIndex::pwmMode, ParameterIndex::vcaMode,
+        ParameterIndex::envPolarity, ParameterIndex::highPass,
+        ParameterIndex::chorusI, ParameterIndex::chorusII
+    };
+    using PanelEditVersions = std::array<std::uint32_t, tonePanelParameters.size()>;
+    using PanelEditValues = std::array<float, tonePanelParameters.size()>;
+    // Upper32 bits order native edits; lower32 bits retain their actual value.
+    // Reflection can overlap an unscoped host setter, so a revision alone is
+    // insufficient to recover the newer gesture if APVTS is overwritten.
+    std::array<std::atomic<std::uint64_t>, tonePanelParameters.size()> panelEdits {};
+    PanelEditVersions audioPanelEditVersions {};
+    PanelEditVersions audioMidiPanelVersions {};
+    int tonePanelIndex (const juce::String&) const noexcept;
+    void setToneParameterValue (const char*, float);
+    static bool mergeEditedPanelTone (youknow::EngineParameters&,
+        const PanelEditValues&, const PanelEditVersions&,
+        const PanelEditVersions&) noexcept;
+    static std::uint32_t panelEditMask (const PanelEditVersions&,
+        const PanelEditVersions&) noexcept;
+    void consumePublishedPanelEdits() noexcept;
     std::array<ParameterPointer, parameterPointerCount> parameterPointers {};
     float valueOf (ParameterIndex parameter) const noexcept;
     int choiceOf (ParameterIndex parameter, int maximum) const noexcept;
@@ -553,9 +585,14 @@ private:
         std::array<float, parameterPointerCount> values {};
         int program { 0 };
         bool ownsGeneration { false };
+        const PanelEditVersions* reflectedPanelVersions { nullptr };
+        std::uint64_t reflectedRecallGeneration { 0 };
+        const char* reflectedParameterId { nullptr };
+        float reflectedParameterValue { 0 };
     };
     static thread_local ScopedParameterWrite* activeParameterWrite;
     const ScopedParameterWrite* activeWriteForThisThread() const noexcept;
+    ScopedParameterWrite* currentWriteForThisThread() const noexcept;
     // Shared by session and SysEx saves; never consumes MIDI reflection.
     juce::ValueTree copyStateForSave (int& program);
     static void serialiseStateSnapshot (juce::ValueTree state, int program,
@@ -588,6 +625,12 @@ private:
         // FullPatch: the eighteen tone bytes as they arrived, which are already
         // the message's own representation and so lose nothing in transit.
         std::array<std::uint8_t, youknow::sysex::toneByteCount> bytes {};
+        // The wire identity is separate from the decoded UI reflection.
+        // Original timing consumes this frame once at its audio event; the
+        // message thread only reflects bytes and never retransmits it.
+        std::array<std::uint8_t, youknow::sysex::patchMessageBytes> wireBytes {};
+        std::uint8_t wireSize { 0 };
+        PanelEditVersions panelVersions {};
         // SingleParameter: the number and value, and nothing else.
         int parameter { 0 };
         int value { 0 };
@@ -660,6 +703,9 @@ private:
     // lossless history needed to update APVTS in the same order later.
     youknow::sysex::Patch pendingMidiToneShadow {};
     bool pendingMidiToneShadowActive { false };
+    PanelEditVersions pendingMidiPanelVersions {};
+    std::array<std::atomic<std::uint32_t>, tonePanelParameters.size()>
+        pendingMidiResyncPanelVersions {};
     std::uint64_t pendingMidiToneShadowSequence { 0 };
     // State saves overlay only MIDI-owned fields not yet reflected to APVTS.
     // A single-parameter event must not restore unrelated old shadow values.

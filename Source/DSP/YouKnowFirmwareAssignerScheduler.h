@@ -74,6 +74,12 @@ class FirmwareAssignerScheduler {
         FirmwareUartTrace::Configuration uart{};
         FirmwareAssignerIo::AnmWritePhase anmWritePhase =
             FirmwareAssignerIo::AnmWritePhase::RestartConversion;
+        // Optional native contact owner. Called after actual FFA6/FFA8
+        // scan-history stores and completed foreground-pass instructions;
+        // it may update only its borrowed physical inputs before subsequent
+        // instructions. Null retains the historical immutable-input contract.
+        void* inputServiceContext = nullptr;
+        void (*inputService)(void*, const State&, const Event&) noexcept = nullptr;
     };
     enum class Status : std::uint8_t {
         ReachedTarget, OutputFull, InstructionBudget, InvalidState,
@@ -87,7 +93,8 @@ class FirmwareAssignerScheduler {
     // Inclusive absolute original 4MHz-state target; CPU and UART now agree.
     // Partial instructions and16-state entries survive arbitrary chunking.
     // Config/tables are immutable across continuations; input pins may change at
-    // call boundaries (no analog acquisition-aperture claim). ByteReady is an
+    // call boundaries or through inputService at the specified instruction
+    // endpoints (no analog acquisition-aperture claim). ByteReady is an
     // explicit RXB-ready scenario, not a pin UART/latch timing model. A new byte
     // while RXB remains unread stops with ReceiveOverrun before choosing which
     // byte real hardware retains. ReceiveError sets/clears ER from value!=0.

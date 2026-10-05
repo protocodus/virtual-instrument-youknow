@@ -249,6 +249,16 @@ struct EngineParameters
     // like the stage offsets; false retains the offset-free loop solely for
     // controlled A/B renders.
     bool enableResonanceOtaOffset { true };
+    // Named same-part estimate: use a 250 uV signed span for the resonance
+    // BA662A instead of the older voiced 1.5 mV BA6110-family span. Open Music
+    // Labs measured two originals at 30/250 uV; this deliberately does not
+    // claim a population bound or a measured 80017A distribution. The draw
+    // and Character scaling are unchanged; IR3109 stage offsets are separate.
+    // https://synthcube.com/open-music-labs-ba662-ota-clone/
+    // AS662D (sibling) lists 250/700 uV grades at 5 uA and up to 1 mV change
+    // over 5..500 uA; that unknown original current dependence is not fitted.
+    // https://www.alfatriode.lv/eng/sc/AS662D.pdf
+    bool useBa662AResonanceOffsetEstimate { false };
     bool enableOpAmpSlewLimiting { true };
     bool enableVcfEarlyEffect { true };
     bool enableSpatialThermalGradient { true };
@@ -296,8 +306,8 @@ struct EngineParameters
     bool enableVoiceVcaServiceGain { true };
     // Hold the service input trim fixed as the BA662 warms: apply T_ref/T to
     // its differential input, changing both small-signal gain and distortion.
-    // Tr20's existing control-current law is held at its reference condition;
-    // this is a partial thermal model, not a fitted junction temperature law.
+    // Tr20's current is fixed unless enableVoiceVcaJunctionTemperature is
+    // also selected; this switch governs the signal pair only.
     // False retains the former fixed-temperature VCA for diagnostic renders.
     bool enableVoiceVcaTemperature { true };
     // C58 and Tr20 form one loaded control circuit. Its time constant tends
@@ -308,6 +318,12 @@ struct EngineParameters
     // 150mV knee together with C58 loading and the fixed service input trim.
     // This is a conditional nominal circuit, not an original BA662 fit.
     bool enableEvidenceVcaCalibration { false };
+    // Extend that same named Tr20 specimen with Toshiba's conservative
+    // -1.6mV/C Vbe shift. Current and C58 load move together while the warm
+    // service trim stays fixed; the BA662's T_service/T factor remains separate.
+    // Installed junction/reference temperature coefficients are unmeasured.
+    // False preserves the fixed-25C control law for review A/Bs.
+    bool enableVoiceVcaJunctionTemperature { false };
     // On by default: Tr21/C42 feed the BA662 level OTA, whose output is then
     // loaded by C41/R79. Putting the scanned NOISE control before that output
     // pole lets C41 discharge while muted and recharge when the level returns.
@@ -673,7 +689,9 @@ public:
     // cards' own component trims already do: a chassis that has been powered
     // for ten minutes is still warm when the transport stops.
     void resetForHostStop();
-    void setParameters(const EngineParameters& parameters);
+    using ParameterInputSource = OriginalPerformance::ParameterInputSource;
+    void setParameters(const EngineParameters& parameters,
+        ParameterInputSource source = ParameterInputSource::Panel);
     // Session-only optional original A-5 -> module UART -> B-2 execution.
     // Switching clears the performance and output tails. This installs a
     // coherent time-zero warm panel; it does not synthesize a cold boot.
@@ -681,6 +699,17 @@ public:
     [[nodiscard]] bool originalPerformanceMode() const noexcept { return originalPerformanceEnabled_; }
     [[nodiscard]] bool originalPerformanceHealthy() const noexcept { return originalPerformanceHealthy_; }
     [[nodiscard]] const OriginalPerformance& originalPerformance() const noexcept { return originalPerformance_; }
+    // Complete incoming DIN packet, serialized once in the caller's order.
+    // Unlike parameter adoption, equal-value packets still occupy wire time.
+    // The caller may reflect decoded controls with MidiReflection afterward;
+    // that changes neither physical panel positions nor received traffic.
+    [[nodiscard]] bool receiveOriginalPerformanceMidi(
+        std::span<const std::uint8_t> bytes) noexcept;
+    // Published native controls use explicit field ownership, even when their
+    // value equals the MIDI-owned tone. Same 25-bit order as panelParameters.
+    // Disabled/unprepared engines ignore this physical-panel-only operation.
+    void applyOriginalPerformancePanelEdit(const EngineParameters& parameters,
+        std::uint32_t fields) noexcept;
     // Comparison-only circuit calibration. Call before prepare(); an invalid
     // calibration or a prepared engine is rejected without changing state.
     // No public plug-in parameter, preset byte or shipping default selects it.
@@ -706,6 +735,7 @@ public:
     // Reset and host-quality changes retain the selection; no preset changes it.
     [[nodiscard]] bool configureChorusSupport(ChorusSupportProfile profile) noexcept;
     [[nodiscard]] bool configureChorusBbdTransferProfile(ChorusBbdTransferProfile profile) noexcept;
+    [[nodiscard]] bool configureChorusBbdInsertionGainProfile(ChorusBbdInsertionGainProfile profile) noexcept;
     // Before prepare(): one scale on the saw, pulse and sub legs of every
     // WAVE node, the source-to-filter level OQ-15 leaves voiced; noise has
     // its own TP8 trim and is untouched. process() divides it back out at
@@ -778,6 +808,12 @@ public:
     static constexpr double subSwitchStorageSeconds = 0.2e-6;
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
+    // Original uses native local keyboard contacts independently of DIN.
+    // Direct and pitches outside the physical keyboard retain the existing
+    // MIDI adapter. The UI aggregates channel owners before calling these.
+    void noteOnFromLocalKeyboard(int midiNote, float velocity);
+    void noteOffFromLocalKeyboard(int midiNote);
+    void clearLocalKeyboardNotes() noexcept;
     // Audio-thread query for host event ordering. Counts include overlapping
     // presses and keys dropped by the full assigner, independently of voices.
     [[nodiscard]] bool isNoteHeld(int midiNote) const noexcept
@@ -2213,6 +2249,13 @@ private:
     static constexpr float thermalVoltage = 0.026f;
     [[nodiscard]] static const VcaControlCircuit& voiceVcaControlCircuit(bool evidence = false) noexcept;
     [[nodiscard]] static const EvidenceVcaCalibration& evidenceVcaCalibration() noexcept;
+    [[nodiscard]] static const VcaJunctionTemperatureCircuit& voiceVcaJunctionCircuit() noexcept;
+    [[nodiscard]] static bool voiceVcaJunctionTemperatureEnabled(
+        const EngineParameters& parameters) noexcept
+    {
+        return parameters.enableEvidenceVcaCalibration
+            && parameters.enableVoiceVcaJunctionTemperature;
+    }
     // Roland's JUNO-6/JUNO-60 CPU BOARD p. 9 prints the four IR3109 stage
     // capacitors as "240PJ" -- C1, C2, C3, C4 alongside the seven 68K -- so
     // both the value and its tolerance class come from the drawing rather than
@@ -3077,6 +3120,12 @@ private:
         // temperature/input trim. Rebuilt on Character/gradient/rate edits,
         // never from the live warm-up clock; capacitor charge stays in Voice.
         float vcaInputCouplingG { 0.0001f };
+        // Fixed once against this card's settled temperature, never
+        // renormalized at its running temperature or a new played control.
+        double vcaJunctionServiceEmitterAmps { 1.0 };
+        double vcaJunctionHeadroomVolts { 1.0 };
+        float vcaJunctionServiceGain { 1.0f };
+        float vcaJunctionCelsius { 25.0f };
         float subLevelError { 0.0f };
         float noiseLevelError { 0.0f };
         // Per-card cutoff factor of the spatial gradient at the running
@@ -3223,6 +3272,10 @@ private:
         // precision keeps very slow tails moving at high internal rates after
         // their float-sized increment falls below half an ULP of this state.
         double vcaControl { 0.0 };
+        // Thermal Tr20 path retains actual C58 charge independently of the
+        // temperature-dependent equivalent settled CV above.
+        double vcaJunctionCharge { 0.0 };
+        bool vcaJunctionChargeInitialised { false };
         // Oscillator compensation hold in the firmware's unshifted 12-bit DAC
         // code. Ideal acquisition occurs at the physical converter timestamp;
         // its current changes immediately while capacitor voltage is retained.
@@ -3402,6 +3455,7 @@ private:
         float warmupFraction) noexcept;
     [[nodiscard]] float voiceVcaThermalDriveScale(
         const EngineParameters& parameters, int cardIndex) const noexcept;
+    void initialiseVoiceVcaJunctionCharge(Voice& voice) noexcept;
     // The jack board's temperature: the chassis warm-up the cards read,
     // without their spatial gradient, because it is not a voice card. Unit
     // Character scales the rise exactly as dynamicOtaHeadroomVolts does.

@@ -1079,7 +1079,9 @@ AnalogDrive outputSupportDrive() noexcept
     // Preserve the established loaded wet-level convention. The MN3009
     // Gi-RL fixture does not identify active source impedance or installed
     // insertion gain; this normalization is not a new hardware calibration.
-    // The effective source boundary and absolute wet level remain OQ-04.
+    // The effective source boundary remains OQ-04. The optional same-chip
+    // insertion-gain prior scales the held signal upstream; do not compensate
+    // this loaded-source convention again or scale output-referred noise.
     const double source = outputTapEffectiveDriveOhms;
     const double tapReturn = outputTapReturnOhms;
     const double tapCap = outputTapShuntFarads;
@@ -2262,7 +2264,7 @@ double Chorus::Line::deterministicBlepCorrection(
         const float draw = ChorusBucketNoise::step(noiseFromState(predictedNoiseState),
             transferDraw,predictedPreviousTransferNoise,bucketNoise);
         predictedPreviousTransferNoise = transferDraw;
-        predictedHeld = predictedTransferState + draw
+        predictedHeld = predictedTransferState * signalInsertionGain + draw
             * Chorus::independentLineRandomAmplitude * noiseScale;
         const float jump = predictedHeld - before;
 
@@ -2369,7 +2371,10 @@ float Chorus::Line::processClockedCore(float limitedInput, double clockHz,
         const float draw = ChorusBucketNoise::step(noiseFromState(noiseState),
             transferDraw,previousTransferNoise,bucketNoise);
         previousTransferNoise = transferDraw;
-        held = transferState + draw
+        // Absolute insertion gain belongs to the emerging signal source,
+        // before postfilter/follower drive. The independent random term is
+        // already output-referred; it is not multiplied by signal gain.
+        held = transferState * signalInsertionGain + draw
                * Chorus::independentLineRandomAmplitude * noiseScale;
         rememberBlepEvent(held - heldBefore, ageInSamples);
         if (recoverHeldOutput && outputEventCount < maximumHalfCycleEventsPerSample)
@@ -2486,6 +2491,22 @@ bool Chorus::configureBbdTransferProfile(ChorusBbdTransferProfile profile) noexc
             && profile != ChorusBbdTransferProfile::ServicedBiasEstimate))
         return false;
     lineA_.transferProfile = lineB_.transferProfile = profile;
+    return true;
+}
+
+bool Chorus::configureBbdInsertionGainProfile(ChorusBbdInsertionGainProfile profile) noexcept
+{
+    if (supportProfilePrepared_
+        || (profile != ChorusBbdInsertionGainProfile::UnityReference
+            && profile != ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate))
+        return false;
+    // +2.3 dB from the same MN3009 in Holters/Parker's Juno-60 circuit.
+    // Compute outside processing; neither this approximate sibling prior nor
+    // the floating-point factor identifies an installed Juno-106 chip gain.
+    const float gain = profile == ChorusBbdInsertionGainProfile::UnityReference
+        ? 1.0f : static_cast<float>(std::pow(10.0, 2.3 / 20.0));
+    lineA_.insertionGainProfile = lineB_.insertionGainProfile = profile;
+    lineA_.signalInsertionGain = lineB_.signalInsertionGain = gain;
     return true;
 }
 

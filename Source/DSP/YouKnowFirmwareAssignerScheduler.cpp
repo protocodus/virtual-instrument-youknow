@@ -435,6 +435,16 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                 ++result.completedInstructions;
                 if (state.eiDeferred != 0) --state.eiDeferred;
             }
+            if (configuration.inputService != nullptr)
+                for (unsigned i = 0; i < commit.count; ++i) {
+                    const auto& event = commit.events[i];
+                    if (event.kind == EventKind::ForegroundPass
+                        || (event.kind == EventKind::RamWrite
+                            && (event.address == 0xffa6 || event.address == 0xffa8))) {
+                        configuration.inputService(configuration.inputServiceContext, state, event);
+                        break;
+                    }
+                }
         }
         if (state.pending.kind == PendingKind::None) {
             unsigned vector = 0;
