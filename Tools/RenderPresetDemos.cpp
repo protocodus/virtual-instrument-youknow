@@ -5,7 +5,7 @@
 #include "PresetScores.h"
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowPresets.h"
-#include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowActiveProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -171,7 +171,7 @@ RenderResult renderDemo (const PresetDemo& d, const std::filesystem::path& direc
     });
 
     auto engine = std::make_unique<YouKnowEngine>();
-    ProductFidelityProfile::configureBeforePrepare (*engine);
+    ActiveProductFidelityProfile::configureBeforePrepare (*engine);
     engine->selectConverterTimingProfile (YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine->prepare (sampleRate, blockSize, requestedQuality);
 

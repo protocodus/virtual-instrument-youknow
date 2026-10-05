@@ -4,10 +4,12 @@
 #include <array>
 #include <cmath>
 
+#include "YouKnowSubLevel.h"
+
 namespace youknow
 {
 
-// Calibration-only model of the module-board WAVE/Sub/C56 network.
+// Explicitly configured model of the module-board WAVE/Sub/C56 network.
 //
 // Roland JUNO-106 Service Notes, printed pp. 9 and 13:
 // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf
@@ -22,7 +24,9 @@ namespace youknow
 // swing and loaded module input impedance remain unmeasured.
 //
 // Those quantities are deliberately REQUIRED calibration inputs. Zero-filled
-// Calibration is invalid, and the engine never enables this model by default.
+// Calibration is invalid, and the raw engine keeps this model disabled.
+// evidenceCalibration supplies a named, endpoint-constrained source prior;
+// that candidate does not turn these unknowns into installed-part readings.
 // sourceScale/sourceBias map the existing no-sub source coordinate to the
 // measured WAVE Thevenin voltage; loadOhms is the measured small-signal VCF
 // input resistance. A real unit with frequency-dependent impedance needs a
@@ -43,11 +47,27 @@ public:
         double sourceBiasVolts {};
         double diodeDropVolts {};
         double collectorOnVolts {};
+        // Appended fields preserve the original constant-drop fixtures exactly.
+        // A zero slope selects that legacy diode. A positive slope requires a
+        // declared forward-current operating point at diodeDropVolts.
+        double diodeSlopeVolts {};
+        double diodeReferenceAmps {};
+        // Physical pin-1 voltage and the cascade's feedback-node coordinate are
+        // different: the reconstructed hybrid has 4.7k input and 68k feedback.
+        double pinToCoreGain { 1.0 };
+        // Explicit product source conventions, applied before the physical
+        // solve. The oscillator drive's existing digital normalization uses
+        // this same coordinate; no compensating gain is hidden in the circuit.
+        double oscillatorDriveScale { 1.0 };
+        double pulseSourceScale { 1.0 };
+        bool unipolarSawSource { false };
 
         [[nodiscard]] bool valid() const noexcept
         {
             const std::array values { sourceOhms, loadOhms, sourceScale,
-                sourceBiasVolts, diodeDropVolts, collectorOnVolts };
+                sourceBiasVolts, diodeDropVolts, collectorOnVolts,
+                diodeSlopeVolts, diodeReferenceAmps, pinToCoreGain,
+                oscillatorDriveScale, pulseSourceScale };
             for (const auto value : values)
                 if (!std::isfinite(value))
                     return false;
@@ -57,9 +77,59 @@ public:
                 && sourceScale > 0.0 && sourceScale <= 100.0
                 && std::abs(sourceBiasVolts) <= 30.0
                 && diodeDropVolts >= 0.0 && diodeDropVolts <= 2.0
-                && collectorOnVolts >= 0.0 && collectorOnVolts <= 2.0;
+                && collectorOnVolts >= 0.0 && collectorOnVolts <= 2.0
+                && diodeSlopeVolts >= 0.0 && diodeSlopeVolts <= 0.2
+                && (diodeSlopeVolts == 0.0 || (diodeSlopeVolts >= 1.0e-4
+                    && diodeReferenceAmps >= 1.0e-30
+                    && diodeReferenceAmps <= 0.1))
+                && pinToCoreGain > 0.0 && pinToCoreGain <= 100.0
+                && oscillatorDriveScale >= 0.25 && oscillatorDriveScale <= 2.0
+                && pulseSourceScale >= 0.25 && pulseSourceScale <= 2.0;
         }
     };
+
+    // Evidence-constrained nominal candidate, NOT an installed MC5534A fit.
+    // Drawn external resistors and the reconstructed hybrid fix the branch,
+    // load and pin-to-core gain. The SUB-only capture fixes the aggregate
+    // S=8.896V resistor/junction law (YouKnowSubLevel.h). Its full-level
+    // balance remains the product's existing voiced 7.57V source coordinate.
+    // Infer a SOURCE PRIOR that retains that endpoint rather than inventing
+    // an internal resistor value. For a settled 50% sub with negligible
+    // capacitor ripple, Re=Rs||Rl, Iref=S/[60k+(Rs+Re)/2] and Vpin_pp=Re*Iref.
+    // There are two positive solutions: ~4.978k and ~95.658k. Choosing the
+    // lower-resistance solution is explicit compatibility policy, not a
+    // measurement or proof of the custom IC's internal resistor inventory.
+    // The nominal 0.6V forward reference and ideal grounded collector remain
+    // stated junction/switch priors. Mixed-source and transient captures are
+    // required to distinguish these coordinates and validate the candidate.
+    [[nodiscard]] static Calibration evidenceCalibration() noexcept
+    {
+        constexpr double load = 4700.0 * 25500.0 / (4700.0 + 25500.0);
+        constexpr double gain = 68000.0 / 4700.0;
+        constexpr double oscillatorDrive = 0.738;
+        constexpr double pulseScale = 0.857;
+        constexpr double coreSubPeakToPeak = 2.0 * 7.57 * oscillatorDrive * 0.4;
+        constexpr double pinSubPeakToPeak = coreSubPeakToPeak / gain;
+        constexpr double seriesSpan = SubLevelDiodeLaw::referenceSeriesSpanVolts;
+        constexpr double branch = pullupOhms + seriesOhms;
+        constexpr double a = 0.5 * pinSubPeakToPeak;
+        constexpr double b = pinSubPeakToPeak * (branch + load) - seriesSpan * load;
+        constexpr double constant = branch * pinSubPeakToPeak * load;
+        // Stable lower root of a*Rs^2+b*Rs+constant=0.
+        const double source = 2.0 * constant / (-b + std::sqrt(b * b - 4.0 * a * constant));
+        const double effective = source * load / (source + load);
+        const double current = seriesSpan / (branch + 0.5 * (source + effective));
+        const double sourceScale = 0.4 / (gain * load / (source + load));
+        constexpr double drop = 0.6;
+        const double isolatedBias = railFullScaleVolts - seriesSpan - drop;
+        // SUB-only reference has SAW off and Pulse Off's comparator high.
+        // Keep its physical Thevenin bias at the aggregate calibration point.
+        const double sourceBias = isolatedBias - sourceScale * oscillatorDrive
+            * 6.0 * pulseScale;
+        return { source, load, sourceScale, sourceBias, drop, 0.0,
+            SubLevelDiodeLaw::junctionSlopeVolts, current, gain,
+            oscillatorDrive, pulseScale, true };
+    }
 
     struct Result
     {
@@ -81,6 +151,9 @@ public:
         double historyVolts) noexcept
     {
         const double q = std::clamp(gate, 0.0, 1.0);
+        if (c.diodeSlopeVolts > 0.0)
+            return solveExponential(c, sourceVolts, railVolts, q,
+                                    loadConductance, historyVolts);
         const std::array drive { railVolts - c.diodeDropVolts,
             c.collectorOnVolts - c.diodeDropVolts };
         const std::array conductance { q / (pullupOhms + seriesOhms),
@@ -147,6 +220,41 @@ public:
     [[nodiscard]] double capacitorAmps() const noexcept { return capacitorAmps_; }
 
 private:
+    [[nodiscard]] static Result solveExponential(const Calibration& c,
+        double sourceVolts, double railVolts, double gate,
+        double loadConductance, double historyVolts) noexcept
+    {
+        const double sourceG = 1.0 / c.sourceOhms;
+        const double baseG = sourceG + loadConductance;
+        const double baseWave = (sourceVolts * sourceG
+            + historyVolts * loadConductance) / baseG;
+        double wave = baseWave;
+        double off = 0.0, on = 0.0;
+        // Current is monotonic in junction voltage; F'(wave) >= baseG.
+        // Starting at the unloaded node converges from below. The branch
+        // series resistance limits its derivative, even at extreme drives.
+        for (int iteration = 0; iteration < 12; ++iteration)
+        {
+            off = gate > 0.0 ? SubLevelDiodeLaw::forwardCurrent(
+                railVolts - wave, pullupOhms + seriesOhms,
+                c.diodeSlopeVolts, c.diodeReferenceAmps, c.diodeDropVolts) : 0.0;
+            on = gate < 1.0 ? SubLevelDiodeLaw::forwardCurrent(
+                c.collectorOnVolts - wave, seriesOhms,
+                c.diodeSlopeVolts, c.diodeReferenceAmps, c.diodeDropVolts) : 0.0;
+            const double residual = (wave - baseWave) * baseG
+                - gate * off - (1.0 - gate) * on;
+            const double derivative = baseG
+                + gate * off / (c.diodeSlopeVolts + (pullupOhms + seriesOhms) * off)
+                + (1.0 - gate) * on / (c.diodeSlopeVolts + seriesOhms * on);
+            const double step = residual / derivative;
+            wave -= step;
+            if (std::abs(step) <= 1.0e-13 * std::max(1.0, std::abs(wave)))
+                break;
+        }
+        const double current = (wave - historyVolts) * loadConductance;
+        return { wave, current * c.loadOhms, current, gate * off, (1.0 - gate) * on };
+    }
+
     double capacitorVolts_ {};
     double capacitorAmps_ {};
 };

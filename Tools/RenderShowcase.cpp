@@ -194,7 +194,7 @@ Result render (const Demo& d, const std::filesystem::path& directory)
     std::stable_sort (gates.begin(), gates.end(), [] (const Gate& a, const Gate& b)
     { return a.frame != b.frame ? a.frame < b.frame : a.on < b.on; });
     auto engine = std::make_unique<YouKnowEngine>();
-    ProductFidelityProfile::configureBeforePrepare (*engine);
+    ActiveProductFidelityProfile::configureBeforePrepare (*engine);
     engine->selectConverterTimingProfile (YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     engine->prepare (rate, blockSize, requestedQuality);
     auto p = d.parameters;

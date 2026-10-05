@@ -3,6 +3,7 @@
 #include "YouKnowOtaShotNoise.h"
 #include "YouKnowBa662Noise.h"
 #include "YouKnowCommonVcaControlNoise.h"
+#include "YouKnowEvidenceVca.h"
 
 #include "YouKnowChorus.h"
 #include "YouKnowCoupledMixer.h"
@@ -303,6 +304,10 @@ struct EngineParameters
     // to 1ms as Tr20 closes and to (10k||22k)*0.1uF at high current. Retains
     // the same DC junction calibration; false is the former fixed-RC A/B.
     bool enableCoupledVoiceVcaControl { true };
+    // Optional same-listed 25C Tr20 transistor prior, replacing the voiced
+    // 150mV knee together with C58 loading and the fixed service input trim.
+    // This is a conditional nominal circuit, not an original BA662 fit.
+    bool enableEvidenceVcaCalibration { false };
     // On by default: Tr21/C42 feed the BA662 level OTA, whose output is then
     // loaded by C41/R79. Putting the scanned NOISE control before that output
     // pole lets C41 discharge while muted and recharge when the level returns.
@@ -437,6 +442,10 @@ struct EngineParameters
     // Fit at Unit Character zero; also selects the existing measured DAC
     // carry steps independently of Character. Not serialised.
     bool useServiced439522VcfCalibration { false };
+    // Optional original hybrid/service nominal FREQ/WIDTH curve instead of
+    // the Borish replacement-card coordinates above. It retains the service
+    // anchors and declared current-knee prior; no original sweep is claimed.
+    bool useOriginalCardVcfCalibration { false };
     // Which reading of the resonance input-compensation bracket the voice
     // applies. Both derivable readings put the coefficient between 0.2751 and
     // 0.3078; the shipped default is that bracket's floor, and Legacy restores
@@ -696,6 +705,7 @@ public:
     // nominal transistor model and its source assumptions live in Chorus.cpp.
     // Reset and host-quality changes retain the selection; no preset changes it.
     [[nodiscard]] bool configureChorusSupport(ChorusSupportProfile profile) noexcept;
+    [[nodiscard]] bool configureChorusBbdTransferProfile(ChorusBbdTransferProfile profile) noexcept;
     // Before prepare(): one scale on the saw, pulse and sub legs of every
     // WAVE node, the source-to-filter level OQ-15 leaves voiced; noise has
     // its own TP8 trim and is untouched. process() divides it back out at
@@ -2201,7 +2211,8 @@ private:
     // own comment for why the constant nonetheless stands.) The suites solve
     // the same ODE.
     static constexpr float thermalVoltage = 0.026f;
-    [[nodiscard]] static const VcaControlCircuit& voiceVcaControlCircuit() noexcept;
+    [[nodiscard]] static const VcaControlCircuit& voiceVcaControlCircuit(bool evidence = false) noexcept;
+    [[nodiscard]] static const EvidenceVcaCalibration& evidenceVcaCalibration() noexcept;
     // Roland's JUNO-6/JUNO-60 CPU BOARD p. 9 prints the four IR3109 stage
     // capacitors as "240PJ" -- C1, C2, C3, C4 alongside the seven 68K -- so
     // both the value and its tolerance class come from the drawing rather than

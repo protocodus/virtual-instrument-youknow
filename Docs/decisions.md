@@ -5,6 +5,50 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-10-05 — Select all five hardware-realism candidates
+
+The owner accepted B by ear and requested that it become the product default
+and be pushed to main. A was the frozen shipping DSP at `8f51dc8`; B enabled
+all five candidates together: the original-board effective chorus timing,
+the named Tr20/BA662 quiet-current model, nominal original-hybrid VCF
+frequency coordinates, the coupled WAVE/SUB/D6/C56 mixer, and the
+serviced-bias MN3009 transfer estimate. This licenses selecting the complete
+B profile for the plug-in and maintained product renders. The former
+product profile remains available through the explicit OFF audit build.
+The joint mixer solve and continuous six-card processing increase CPU cost,
+including while idle; acceptance includes that model tradeoff, with no
+general cost bound established by the listening comparison.
+
+The comparison used the identical 25-second score, controls, reset seeds,
+compiler, 48 kHz stereo/1× setup and settled thermal state. One whole-montage
+stereo RMS match was reused for the excerpts. The signed difference was
+matched B minus A; its normalized version received a single additional
+montage-wide gain to match A/B RMS. These differences show what changed,
+not closeness to hardware. The listening files remain frozen working
+artifacts under `out/hardware-realism-2026-10-05/review-v2/` and are not
+committed by this decision.
+
+Mode I uses the existing recording-derived effective fit, about 3.3803 ms
+centre, ±1.7618 ms at 0.51593 Hz; Mode II applies the schematic's rate ratio
+to that excursion, about 0.83761 Hz. The latter remains an estimate. Tr20
+uses the named 25 °C Toshiba 2SA1015 specimen and the drawn control resistors
+and service standoff, giving a conditional 177.78 mV knee while preserving
+the gain-service anchors. The mixer retains the measured 8.896 V SUB-only
+aggregate and existing full-level balance; its approximately 4.98 kΩ source
+resistance is the explicitly selected lower solution of two compatible
+source priors, not a measured MC5534A impedance. The physical hybrid resistor
+ratio supplies the pin-to-core conversion. The BBD curve's approximately
+0.43% harmonic figure at 0.78 Vrms depends on a declared noise subtraction
+from Panasonic's bias graph; the installed bias and noise split remain open.
+
+The VCF selection replaces the six Borish replacement-card frequency fits
+with the existing nominal original-hybrid/service law. It does not identify
+original 80017A population tolerances or supply an original-card
+resonance-versus-byte curve. Tr18's current model and resonance compensation
+remain separately qualified estimates. Acceptance by ear changes the product
+selection, not the evidence class of any parameter, and establishes no new
+original-unit measurement.
+
 ## 2026-10-04 — Prioritize the main output
 
 The owner directed further realism work toward LINE rather than PHONES,

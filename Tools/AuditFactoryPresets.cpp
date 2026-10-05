@@ -5,7 +5,7 @@
 // factory bank's absolute peak and gated-level ceilings.
 
 #include "DSP/YouKnowEngine.h"
-#include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowActiveProductFidelity.h"
 #include "DSP/YouKnowPresets.h"
 #include "DSP/YouKnowSysEx.h"
 
@@ -126,7 +126,7 @@ EngineParameters parametersFor (const Preset& preset, bool muteChorusNoise)
     const auto& patch = preset.patch;
     const auto& controls = preset.controls;
     EngineParameters parameters;
-    youknow::ProductFidelityProfile::applyTo (parameters);
+    youknow::ActiveProductFidelityProfile::applyTo (parameters);
 
     // Every stored tone field, without gain correction or rebalancing.
     parameters.lfoRate = patch.lfoRate;
@@ -183,7 +183,7 @@ public:
                    bool shippingDefaults = false)
         : engine (std::make_unique<YouKnowEngine>())
     {
-        youknow::ProductFidelityProfile::configureBeforePrepare (*engine);
+        youknow::ActiveProductFidelityProfile::configureBeforePrepare (*engine);
         // Original presets exercise a fresh plug-in; the immutable factory
         // corpus retains its established 4x numerical reference settings.
         // Both use the product's approved physical fidelity profile.

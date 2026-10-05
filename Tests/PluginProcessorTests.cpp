@@ -1,7 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "PublicParameterOrder.h"
-#include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowActiveProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -595,16 +595,15 @@ EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& proce
     result.outputMono = processor.getTotalNumOutputChannels() == 1;
     // The product's own circuit selections, so a new one reaches the
     // reference the moment the processor takes it up.
-    youknow::ProductFidelityProfile::applyTo (result);
+    youknow::ActiveProductFidelityProfile::applyTo (result);
     return result;
 }
 
 void testProductFidelitySurvivesHostLifecycle()
 {
     YouKnowAudioProcessor processor;
-    // B/B, nominal-VCF/B, and B/legacy-HPF. The isolated alternatives prove
-    // that this musical probe detects each filter selection. All three share
-    // the product's temperature proxy to keep those comparisons isolated.
+    // Selected product, alternate VCF, and legacy HPF. The isolated
+    // alternatives prove that this musical probe detects each selection.
     std::array<std::unique_ptr<YouKnowEngine>, 3> references;
     for (std::size_t index = 0; index < references.size(); ++index)
     {
@@ -614,12 +613,21 @@ void testProductFidelitySurvivesHostLifecycle()
                     "cannot configure the explicit HPF B reference");
         expect (references[index]->configureDcoTemperatureProxy (true, 25.0),
                 "cannot configure the explicit product temperature reference");
+#if defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) && YOUKNOW_HARDWARE_REALISM_CANDIDATE
+        expect (references[index]->configureCoupledMixer (
+                    CoupledSubMixer::evidenceCalibration()),
+                "cannot configure the explicit candidate WAVE reference");
+        expect (references[index]->configureChorusBbdTransferProfile (
+                    ChorusBbdTransferProfile::ServicedBiasEstimate),
+                "cannot configure the explicit candidate BBD reference");
+#else
         // Independently derive the adopted C56 input-load reduction. Keep
         // it common to all references so the two other circuit contrasts
         // remain isolated throughout preset/session/quality transitions.
         expect (references[index]->configureModuleInputCouplingResistanceOhms (
                     1.0 / (1.0 / 4700.0 + 1.0 / 25500.0)),
                 "cannot configure the explicit product C56 reference");
+#endif
         // C59 follows each card's fixed service input trim in the product.
         // Select it explicitly here so this independent lifecycle reference
         // catches a missing profile selection or a reset to the raw 82k path.
@@ -628,23 +636,37 @@ void testProductFidelitySurvivesHostLifecycle()
         expect (references[index]->configureChorusSupport (
                     youknow::ChorusSupportProfile::Nominal2SA1015Nonlinear),
                 "cannot configure the explicit product chorus support reference");
+#if !defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) || !YOUKNOW_HARDWARE_REALISM_CANDIDATE
         // The chosen oscillator level (Docs/decisions.md, 2026-09-22) is
         // common to all three for the same reason.
         expect (references[index]->configureOscillatorLevelScale (0.738f),
                 "cannot configure the explicit product oscillator level");
         expect (references[index]->configurePulseLevelScale (0.857f),
                 "cannot configure the explicit product pulse balance");
+#endif
         references[index]->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }
+    const auto referenceParameters = [&] (std::size_t index)
+    {
+        auto result = fidelityReferenceParameters (processor);
+        if (index == 1)
+        {
+#if defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) && YOUKNOW_HARDWARE_REALISM_CANDIDATE
+            result.useOriginalCardVcfCalibration = false;
+            result.useServiced439522VcfCalibration = true;
+#else
+            result.useServiced439522VcfCalibration = false;
+#endif
+        }
+        return result;
+    };
     processor.prepareToPlay (sampleRate, blockSize);
     for (std::size_t index = 0; index < references.size(); ++index)
     {
         auto& reference = *references[index];
         reference.prepare (sampleRate, blockSize, 1);
-        auto parameters = fidelityReferenceParameters (processor);
-        parameters.useServiced439522VcfCalibration = index != 1;
-        reference.setParameters (parameters);
+        reference.setParameters (referenceParameters (index));
     }
 
     const auto compare = [&] (const std::string& context, bool notes,
@@ -659,13 +681,11 @@ void testProductFidelitySurvivesHostLifecycle()
         for (int block = 0; block < 8; ++block)
         {
             juce::MidiBuffer midi;
-            auto parameters = fidelityReferenceParameters (processor);
             for (int index = 0; index < referenceCount; ++index)
             {
                 auto& reference = *references[static_cast<std::size_t> (index)];
                 reference.setOversamplingFactor (factor);
-                parameters.useServiced439522VcfCalibration = index != 1;
-                reference.setParameters (parameters);
+                reference.setParameters (referenceParameters (static_cast<std::size_t> (index)));
             }
             if (notes && block == 0)
                 for (int note : { 48, 55, 60, 64, 67, 72 })
@@ -698,7 +718,7 @@ void testProductFidelitySurvivesHostLifecycle()
         {
             expect (peak > 1.0e-4f, "the product-fidelity probe was silent");
             expect (differences[1] > 1.0e-5f,
-                    "the product-fidelity probe cannot detect nominal VCF calibration");
+                    "the product-fidelity probe cannot detect alternate VCF calibration");
             expect (differences[2] > 1.0e-5f,
                     "the product-fidelity probe cannot detect the legacy HPF");
         }
@@ -915,7 +935,7 @@ void testOutputConnectionsReachMonoAndStereoAudio()
         setParameterValue (processor, parameters::quality, 0);
         processor.prepareToPlay (sampleRate, blockSize);
         YouKnowEngine reference;
-        ProductFidelityProfile::configureBeforePrepare (reference);
+        ActiveProductFidelityProfile::configureBeforePrepare (reference);
         reference.selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
         reference.prepare (sampleRate, blockSize, 1);

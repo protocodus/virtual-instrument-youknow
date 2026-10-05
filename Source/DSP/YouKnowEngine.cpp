@@ -1942,8 +1942,23 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts,
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
 }
 
-const VcaControlCircuit& YouKnowEngine::voiceVcaControlCircuit() noexcept
+const EvidenceVcaCalibration& YouKnowEngine::evidenceVcaCalibration() noexcept
 {
+    static const EvidenceVcaCalibration calibration {
+        VoiceVcaControlLaw::controlFullScaleVolts };
+    return calibration;
+}
+
+const VcaControlCircuit& YouKnowEngine::voiceVcaControlCircuit(bool evidence) noexcept
+{
+    if (evidence)
+    {
+        static const VcaControlCircuit circuit {
+            EvidenceVcaCalibration::thermalVolts,
+            VoiceVcaControlLaw::controlFullScaleVolts,
+            evidenceVcaCalibration().turnOnVolts() / VoiceVcaControlLaw::controlFullScaleVolts };
+        return circuit;
+    }
     static const VcaControlCircuit circuit {
         thermalVoltage,
         VoiceVcaControlLaw::controlFullScaleVolts,
@@ -5864,9 +5879,13 @@ void YouKnowEngine::refreshVoiceVcaCoupling() noexcept
             voiceCardCelsius(activeParameters_, index, 1.0f) + 273.15f;
         const float inputTrim = 1.0f
             + card.vcaGainError * 0.03f * activeParameters_.calibration;
-        const double requiredDivider = 2.0 * thermalVoltage
+        const double referenceThermalVolts = activeParameters_.enableEvidenceVcaCalibration
+            ? EvidenceVcaCalibration::thermalVolts : static_cast<double>(thermalVoltage);
+        const double referenceHeadroom = activeParameters_.enableEvidenceVcaCalibration
+            ? evidenceVcaCalibration().headroomVolts() : static_cast<double>(VoiceVcaSignalLaw::headroomVolts);
+        const double requiredDivider = 2.0 * referenceThermalVolts
             * (static_cast<double>(serviceKelvin) / 298.15)
-            / VoiceVcaSignalLaw::headroomVolts * inputTrim;
+            / referenceHeadroom * inputTrim;
         // The supported Character/card domain stays inside VR27's 0..50k
         // travel. Retain that physical limit if a future profile exceeds it.
         const double totalOhms = std::clamp(
@@ -6036,6 +6055,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
 {
     // Prepare the control circuit's table before entering the audio callback.
     (void) voiceVcaControlCircuit();
+    (void) voiceVcaControlCircuit(true);
     const double previousProcessingRate = oversampledRate_;
     oversampling_ = effectiveOversampleFactor(oversamplingApplied_);
 
@@ -6834,6 +6854,10 @@ bool YouKnowEngine::configureCoupledMixer(
         return false;
     coupledMixerCalibration_ = calibration;
     coupledMixerEnabled_ = true;
+    // The optional physical source profile owns these same drive coordinates;
+    // old six-value calibrations retain1 and the legacy boundary exactly.
+    oscillatorLevelScale_ = static_cast<float>(calibration.oscillatorDriveScale);
+    pulseLevelScale_ = static_cast<float>(calibration.pulseSourceScale);
     return true;
 }
 
@@ -6868,6 +6892,13 @@ bool YouKnowEngine::configureChorusSupport(ChorusSupportProfile profile) noexcep
     if (prepared_)
         return false;
     return chorus_.configureSupportProfile(profile);
+}
+
+bool YouKnowEngine::configureChorusBbdTransferProfile(ChorusBbdTransferProfile profile) noexcept
+{
+    if (prepared_)
+        return false;
+    return chorus_.configureBbdTransferProfile(profile);
 }
 
 bool YouKnowEngine::configureOscillatorLevelScale(float scale) noexcept
@@ -7035,6 +7066,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
         || next.enableResonanceOtaOffset
                != activeParameters_.enableResonanceOtaOffset;
     const bool thermalScalesChanged = startupSnapshot
+        || next.enableEvidenceVcaCalibration != activeParameters_.enableEvidenceVcaCalibration
         || next.calibration != activeParameters_.calibration
         || next.enableSpatialThermalGradient
                != activeParameters_.enableSpatialThermalGradient;
@@ -7044,7 +7076,9 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters)
     if (next.useFixedVcfServiceFrequencyTrim
             != activeParameters_.useFixedVcfServiceFrequencyTrim
         || next.useServiced439522VcfCalibration
-            != activeParameters_.useServiced439522VcfCalibration)
+            != activeParameters_.useServiced439522VcfCalibration
+        || next.useOriginalCardVcfCalibration
+            != activeParameters_.useOriginalCardVcfCalibration)
         for (auto& voice : voices_)
             voice.cutoffChainCounts = -1.0e30f;
     // Before the first valid prepared audio interval, a host snapshot is the
@@ -7974,7 +8008,7 @@ float YouKnowEngine::firmwareConverterTarget(const ConverterWrite& write) const 
             return voiceVcfTarget(voices_[static_cast<std::size_t>(write.voice)], activeParameters_);
         const float counts = code * 4.0f;
         return counts + vcfConverterCarryCounts(counts)
-            * (activeParameters_.useServiced439522VcfCalibration ? 1.0f : activeParameters_.calibration);
+            * ((activeParameters_.useServiced439522VcfCalibration && !activeParameters_.useOriginalCardVcfCalibration) ? 1.0f : activeParameters_.calibration);
     }
     if (write.destination == ConverterDestination::VoiceVca)
     {
@@ -8661,7 +8695,7 @@ float YouKnowEngine::voiceVcfTarget(
     // frequency step. The approved serviced-card fit fixes its strength at 1;
     // the legacy profile retains its existing Unit Character scaling.
     return code + vcfConverterCarryCounts(code)
-        * (parameters.useServiced439522VcfCalibration ? 1.0f : parameters.calibration);
+        * ((parameters.useServiced439522VcfCalibration && !parameters.useOriginalCardVcfCalibration) ? 1.0f : parameters.calibration);
 }
 
 void YouKnowEngine::updateVoiceVcaTarget(
@@ -8873,7 +8907,7 @@ void YouKnowEngine::advanceEnvelopeHolds(
         }
         else
         {
-            const auto& circuit = voiceVcaControlCircuit();
+            const auto& circuit = voiceVcaControlCircuit(parameters.enableEvidenceVcaCalibration);
             // Resolve the upstream RC boundary layer independently of host
             // rate. After 16 time constants its residual is <1.13e-7 of the
             // initial step. Quarter-tau RK stages integrate that trajectory;
@@ -9460,7 +9494,7 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
         YOUKNOW_COUNT_DOMAIN_WORK(cutoffMemoMisses, 1);
 #endif
         const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, calibrationFeedback,
-            parameters.useServiced439522VcfCalibration ? voice.cardIndex : -1);
+            (parameters.useServiced439522VcfCalibration && !parameters.useOriginalCardVcfCalibration) ? voice.cardIndex : -1);
         const float limited =
             std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
         voice.filterOmegaStep = twoPi * limited * inverseOversampledRate_;
@@ -9479,7 +9513,9 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     // actually gone silent; cache the raw gain so it reads this value
     // instead of paying for another lookup.
     const auto vcaControl = static_cast<float>(voice.vcaControl);
-    voice.vcaGain = parameters.useSoftplusVoiceVcaCompatibilityLaw
+    voice.vcaGain = parameters.enableEvidenceVcaCalibration
+                        ? evidenceVcaCalibration().gain(vcaControl)
+                        : parameters.useSoftplusVoiceVcaCompatibilityLaw
                         ? VoiceVcaControlLaw::softplusGain(vcaControl)
                         : VoiceVcaControlLaw::gain(vcaControl);
     voice.vca = voice.vcaGain;
@@ -9660,9 +9696,11 @@ float YouKnowEngine::sawWaveNodeOffset(
     // scale for DC and AC, with no new absolute-voltage calibration. Pin17's
     // shunt diode/Tr24 retains the existing ideal-zero off endpoint; its
     // installed residual and internal resistance ratios remain unmeasured.
-    // Required coupled-mixer sourceBias/sourceScale already map the centred
-    // source to a measured Thevenin voltage, so never rebase that contract.
-    return parameters.enableSawUnipolarNodeCoupling && !coupledMixerEnabled_
+    // Old explicit calibrations own their centred source contract. The
+    // evidence profile explicitly retains the MC5534A's unipolar source,
+    // allowing its real mean to affect D6 conduction before C56 rejects DC.
+    return parameters.enableSawUnipolarNodeCoupling
+        && (!coupledMixerEnabled_ || coupledMixerCalibration_.unipolarSawSource)
         ? sawMixVolts : 0.0f;
 }
 
@@ -9877,8 +9915,9 @@ void YouKnowEngine::primeVoiceWaveNode(
         // This is not a claim about power-on charge or the nonlinear periodic
         // mean; the audit allows settling before measuring steady windows.
         voice.coupledMixer.prime(c,
-            c.sourceBiasVolts + c.sourceScale * (pulseWaveNodeMean(voice, parameters)
-                + (parameters.sawEnabled ? steadyDcoSawMean(voice) : 0.0f)),
+            c.sourceBiasVolts + c.sourceScale * oscillatorLevelScale_ * (pulseWaveNodeMean(voice, parameters)
+                + (parameters.sawEnabled
+                    ? steadyDcoSawMean(voice) + sawWaveNodeOffset(parameters) : 0.0f)),
             CoupledSubMixer::railFullScaleVolts * subCv_, 0.5);
     }
 }
@@ -10800,15 +10839,17 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         // Required calibration maps the existing no-sub source sum to the
         // physical Thevenin source. The coupled solve replaces BOTH the
         // independent sub add and C56: its output is already volts at VCF IN.
-        // Divide out the compatibility coordinate here so the existing
-        // compensation/core path below receives those physical volts once.
+        // The hybrid's4.7k input drives a68k inverting summer: its physical
+        // pin1 voltage becomes (68/4.7)*pin1 in the stage coordinate. An
+        // explicit calibrated pinToCoreGain supplies that conversion; old
+        // fixtures retain1. Divide the compatibility attenuation only once.
         // Inactive cards run the same solve, preserving real capacitor charge;
         // the old freewheel mean is invalid for this nonlinear network.
         const auto node = voice.coupledMixer.process(c,
             c.sourceBiasVolts + c.sourceScale * mixed,
             CoupledSubMixer::railFullScaleVolts * subCv_,
             0.5 * (1.0 + subTrack), inverseOversampledRate_);
-        coupled = static_cast<float>(node.filterVolts / filterInputAttenuation);
+        coupled = static_cast<float>(node.filterVolts * c.pinToCoreGain / filterInputAttenuation);
     }
     else
         coupled = voice.moduleCoupling.process(
@@ -10868,7 +10909,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
                 : mappedFeedback;
             const float cutoffHz = vcfEffectiveCutoffHz(
                 mappedAnalogCounts, calibrationFeedback,
-                parameters.useServiced439522VcfCalibration ? voice.cardIndex : -1);
+                (parameters.useServiced439522VcfCalibration && !parameters.useOriginalCardVcfCalibration) ? voice.cardIndex : -1);
             const float limited = std::min(
                 cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
             const float baseOmega = twoPi * limited
@@ -11106,13 +11147,24 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     const float trimmed = vcaInput * voice.vcaInputTrim;
     const float drive = trimmed
         * voiceVcaThermalDriveScale(activeParameters_, voice.cardIndex);
-    const auto shape = [saturate = activeParameters_.enableVoiceVcaSignalSaturation]
-        (float volts) noexcept { return saturate ? VoiceVcaSignalLaw::shape(volts) : volts; };
+    const bool evidenceVca = activeParameters_.enableEvidenceVcaCalibration;
+    const double headroom = evidenceVca ? evidenceVcaCalibration().headroomVolts()
+        : static_cast<double>(VoiceVcaSignalLaw::headroomVolts);
+    const auto shape = [saturate = activeParameters_.enableVoiceVcaSignalSaturation,
+                        evidenceVca, headroom](float volts) noexcept {
+        if (!saturate) return volts;
+        if (!evidenceVca) return VoiceVcaSignalLaw::shape(volts);
+        const double drive = static_cast<double>(volts) / headroom;
+        const double square = drive * drive;
+        return static_cast<float>(headroom * (square < 1
+            ? drive * vcfInnerTanhFactor(square) : OtaCascade::zonedHermiteTanh(drive)));
+    };
     // This fixed gain was formerly lost when the physical BA662 law was
     // normalized to unity. Apply it in volts before the 2.6-V model-unit
     // conversion, so every downstream circuit receives the service level.
     const float serviceGain = activeParameters_.enableVoiceVcaServiceGain
-        ? VoiceVcaSignalLaw::serviceGain() : 1.0f;
+        ? (evidenceVca ? static_cast<float>(evidenceVcaCalibration().serviceGain())
+                       : VoiceVcaSignalLaw::serviceGain()) : 1.0f;
     const float actualKelvin=voiceCardCelsius(
         activeParameters_,voice.cardIndex,thermalWarmupFraction_)+273.15f;
     if(activeParameters_.enableVoiceVcaAntialias)
@@ -11124,9 +11176,10 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
         // volts across47k, so divide serviceGain before the common multiply.
         const double normal=voice.vcaShotRandom.next();
         if(activeParameters_.calibration==0 || currentFraction<=0) return 0.0;
-        const double tail=VoiceVcaSignalLaw::fullControlTailAmps
-            /VoiceVcaControlLaw::gain(4064.0f/4095.0f)*std::max(0.0,currentFraction);
-        const double pairOutput=polyZonedTanhImpl(pairDrive/VoiceVcaSignalLaw::headroomVolts);
+        const double peakTail = evidenceVca ? evidenceVcaCalibration().referenceTailAmps()
+            : VoiceVcaSignalLaw::fullControlTailAmps / VoiceVcaControlLaw::gain(4064.0f/4095.0f);
+        const double tail=peakTail*std::max(0.0,currentFraction);
+        const double pairOutput=polyZonedTanhImpl(pairDrive/headroom);
         const int factor=activeParameters_.enableVoiceVcaAntialias
             ? voiceVcaAntialiasKernel_.factor : 1;
         const double psd=OtaShotNoise::currentPsd(tail,pairOutput)
@@ -11651,7 +11704,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     // The configured oscillator level is cancelled the same way, so a drive
     // change does not become a loudness change; it is exactly 1 unconfigured.
     const float outputBoundaryScale = (parameters.enableVoiceVcaServiceGain
-        ? coefficients.outputBoundaryGain / VoiceVcaSignalLaw::serviceGain()
+        ? coefficients.outputBoundaryGain / (parameters.enableEvidenceVcaCalibration
+            ? static_cast<float>(evidenceVcaCalibration().serviceGain()) : VoiceVcaSignalLaw::serviceGain())
         : coefficients.outputBoundaryGain) / oscillatorLevelScale_;
     // Ordinary intervals use finite engine-owned state, sanitized targets and
     // precomputed finite decays. Keep exactOnePoleHoldEndpoint's full guards
@@ -12136,7 +12190,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 }
                 else if (parameters.enableCoupledVoiceVcaControl)
                 {
-                    const auto& circuit = voiceVcaControlCircuit();
+                    const auto& circuit = voiceVcaControlCircuit(parameters.enableEvidenceVcaCalibration);
                     const double dt = coefficients.internalIntervalSeconds;
                     if (voiceVcaEvent)
                     {
@@ -13043,7 +13097,7 @@ float YouKnowEngine::firmwareSerialDacTarget(const ConverterWrite& write, unsign
     {
         const float counts = static_cast<float>(code * 4);
         return counts + vcfConverterCarryCounts(counts)
-            * (activeParameters_.useServiced439522VcfCalibration ? 1.0f : activeParameters_.calibration);
+            * ((activeParameters_.useServiced439522VcfCalibration && !activeParameters_.useOriginalCardVcfCalibration) ? 1.0f : activeParameters_.calibration);
     }
     if (write.destination == ConverterDestination::VoiceVca)
     {

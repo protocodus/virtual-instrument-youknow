@@ -70,6 +70,8 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(YOUKNOW_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
+option(YOUKNOW_HARDWARE_REALISM_CANDIDATE
+    "Use the accepted 2026-10-05 hardware profile; OFF retains the prior reference sound" ON)
 option(YOUKNOW_BUILD_CLAP "Build the CLAP plug-in alongside the JUCE formats" ON)
 set(YOUKNOW_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
@@ -115,7 +117,10 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowChorusBucketNoise.h
     Source/DSP/YouKnowChorusMuteDrive.h
     Source/DSP/YouKnowProductFidelity.h
+    Source/DSP/YouKnowProductHardwareRealism.h
+    Source/DSP/YouKnowActiveProductFidelity.h
     Source/DSP/YouKnowVcaControl.h
+    Source/DSP/YouKnowEvidenceVca.h
     Source/DSP/YouKnowCoupledMixer.h
     Source/DSP/YouKnowSubLevel.h
     Source/DSP/YouKnowReferenceVcf.h
@@ -141,6 +146,8 @@ add_library(YouKnowDSP STATIC
 target_include_directories(YouKnowDSP
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
 target_compile_features(YouKnowDSP PUBLIC cxx_std_20)
+target_compile_definitions(YouKnowDSP PUBLIC
+    YOUKNOW_HARDWARE_REALISM_CANDIDATE=$<BOOL:${YOUKNOW_HARDWARE_REALISM_CANDIDATE}>)
 set_target_properties(YouKnowDSP PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
@@ -492,6 +499,20 @@ if(YOUKNOW_BUILD_TOOLS)
         YOUKNOW_ELECTRONICS_HAVE_OTA=${YOUKNOW_ELECTRONICS_HAVE_OTA}
         YOUKNOW_ELECTRONICS_HAVE_PHONES=${YOUKNOW_ELECTRONICS_HAVE_PHONES})
 
+    add_executable(YouKnowRenderHardwareRealism Tools/RenderHardwareRealism.cpp)
+    target_link_libraries(YouKnowRenderHardwareRealism PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderHardwareRealism PRIVATE cxx_std_20)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderHardwareRealism.cpp"
+        YOUKNOW_HARDWARE_REALISM_SOURCE_SHA256)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderHardwareRealism.cpp")
+    target_compile_definitions(YouKnowRenderHardwareRealism PRIVATE
+        YOUKNOW_HARDWARE_REALISM_AVAILABLE=1
+        "YOUKNOW_HARDWARE_REALISM_SOURCE_SHA256=\"${YOUKNOW_HARDWARE_REALISM_SOURCE_SHA256}\""
+        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
+        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
+        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
+
     add_executable(YouKnowRenderPresetScore Tools/RenderPresetScore.cpp)
     target_link_libraries(YouKnowRenderPresetScore
         PRIVATE YouKnowDSP Threads::Threads)
@@ -546,7 +567,8 @@ if(YOUKNOW_BUILD_TOOLS)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
     target_compile_features(YouKnowDSPWorkAudit PUBLIC cxx_std_20)
     target_compile_definitions(YouKnowDSPWorkAudit
-        PRIVATE YOUKNOW_WORK_AUDIT=1)
+        PRIVATE YOUKNOW_WORK_AUDIT=1
+        PUBLIC YOUKNOW_HARDWARE_REALISM_CANDIDATE=$<BOOL:${YOUKNOW_HARDWARE_REALISM_CANDIDATE}>)
     set_target_properties(YouKnowDSPWorkAudit PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 
@@ -733,6 +755,14 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.ResonatorProxy
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/AnalyzeResonatorProxy.py" --self-test)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import numpy, scipy"
+            RESULT_VARIABLE YOUKNOW_REVIEW_PYTHON_IMPORT_RESULT
+            OUTPUT_QUIET ERROR_QUIET)
+        if(YOUKNOW_REVIEW_PYTHON_IMPORT_RESULT EQUAL 0)
+            add_test(NAME YouKnow.HardwareRealismPackage
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Tools/PackageHardwareRealism.py" --self-test)
+        endif()
     endif()
 
     add_executable(YouKnowChorusInputLoadingTests Tests/YouKnowChorusInputLoadingTests.cpp)
@@ -750,6 +780,16 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowChorusNonlinearTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowChorusNonlinearTests PRIVATE cxx_std_20)
     add_test(NAME YouKnow.ChorusNonlinear COMMAND YouKnowChorusNonlinearTests)
+
+    add_executable(YouKnowChorusHardwareEvidenceTests
+        Tests/YouKnowChorusHardwareEvidenceTests.cpp)
+    target_link_libraries(YouKnowChorusHardwareEvidenceTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowChorusHardwareEvidenceTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.ChorusHardwareEvidence COMMAND YouKnowChorusHardwareEvidenceTests)
+
+    add_executable(YouKnowCoupledMixerJunctionTests Tests/YouKnowCoupledMixerJunctionTests.cpp)
+    target_link_libraries(YouKnowCoupledMixerJunctionTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.CoupledMixerJunction COMMAND YouKnowCoupledMixerJunctionTests)
     set_tests_properties(YouKnow.ChorusNonlinear PROPERTIES TIMEOUT 180)
 
     add_executable(YouKnowChorusClockIntegrationTests Tests/YouKnowChorusClockIntegrationTests.cpp)
@@ -980,6 +1020,16 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowVcaControlTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaControl COMMAND YouKnowVcaControlTests)
 
+    add_executable(YouKnowEvidenceCalibrationTests Tests/YouKnowEvidenceCalibrationTests.cpp)
+    target_link_libraries(YouKnowEvidenceCalibrationTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.EvidenceCalibration COMMAND YouKnowEvidenceCalibrationTests)
+
+    add_executable(YouKnowHardwareRealismProfileTests Tests/YouKnowHardwareRealismProfileTests.cpp)
+    target_link_libraries(YouKnowHardwareRealismProfileTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowHardwareRealismProfileTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.HardwareRealismProfile COMMAND YouKnowHardwareRealismProfileTests)
+    set_tests_properties(YouKnow.HardwareRealismProfile PROPERTIES TIMEOUT 60)
+
     add_executable(YouKnowVcaServiceTests Tests/YouKnowVcaServiceTests.cpp)
     target_link_libraries(YouKnowVcaServiceTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaService COMMAND YouKnowVcaServiceTests)
@@ -1159,7 +1209,10 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.AuditFactoryPresets
                  COMMAND YouKnowAuditFactoryPresets --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/factory-audit-smoke")
-        set_tests_properties(YouKnow.AuditFactoryPresets PROPERTIES TIMEOUT 60)
+        # The accepted coupled profile keeps all cards advancing; this smoke
+        # also covers sixteen original-program scores and took 131 s during
+        # the promotion checks. Allow shared-runner margin without a new oracle.
+        set_tests_properties(YouKnow.AuditFactoryPresets PROPERTIES TIMEOUT 240)
 
         # A same-length WAV is not sufficient evidence for a build-to-build
         # claim. The strict BBD comparison must bind its baseline audio hash,
@@ -1331,7 +1384,10 @@ if(BUILD_TESTING)
         endif()
 
         add_test(NAME YouKnow.PluginProcessor COMMAND YouKnowPluginProcessorTests)
-        set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 60)
+        # The accepted coupled WAVE circuit advances all six physical cards.
+        # The complete processor suite takes about 88 s on the review runner;
+        # retain a runaway guard with margin for shared CI machines.
+        set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 180)
 
         # Exercise the shipping processor and editor with reproducible control
         # storms. Timing is reported separately from correctness: shared CI

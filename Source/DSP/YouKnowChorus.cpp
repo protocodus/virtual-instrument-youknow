@@ -60,6 +60,27 @@ constexpr float bbdSaturationLevel = 1.1246614f; // 2.924 V at the node
 constexpr float bbdSaturationCurvature = 1.2044546f;
 constexpr float bbdSaturationExponent = 12.9395323f;
 
+// Panasonic's printed p.38 THD-Vbias curve distinguishes the large-swing
+// optimum near -8.3 V (about 0.46% at 1 kHz/0 dBm/40 kHz) from the minimum
+// small-signal THD near -9.1 V. Roland p.19 balances clipping at the former
+// criterion rather than specifying minimum low-level THD. The new candidate
+// conditionally subtracts noise power using a declared 1.25 mVrms prior,
+// midpoint of the THD-Vi-derived 1.1-1.4 mVrms bracket documented in the
+// header. sqrt(.0046^2-(.00125/.78)^2) gives about .43% harmonic distortion;
+// the noise bracket gives .4235-.4378%. Dense Fourier quadrature solves only
+// this curvature in the established 0.78 Vrms coordinate, retaining the
+// exponent, unity tangent and 2.924 V asymptote. At 2 Vrms it predicts about
+// 2.21%, within the graph's approximate 2-2.5% high-level reading. The bias
+// and level plots' unspecified measurement bandwidths need not agree: this
+// deembedding is a conservative named hypothesis, not identification of the
+// installed bias, harmonic distribution or noise split. The existing noise
+// source is retained rather than counting all .46% again as harmonics.
+// Do not add a clock multiplier: the THD-fcp graph includes
+// filter-dependent aliases/noise already carried by clock sampling.
+// https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf#page=40
+// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19
+constexpr float bbdServicedBiasCurvature = 1.8116256f;
+
 double bbdTransferBase(double normalised) noexcept
 {
     return 1.0
@@ -106,7 +127,33 @@ const std::array<BbdTransferHermiteNode,
     return result;
 }();
 
-double interpolatedBbdTransfer(double normalised) noexcept
+// Fixed component candidate, built before audio processing. Both profiles
+// use the same monotone Hermite support and defensive extreme-input fallback.
+const std::array<BbdTransferHermiteNode,
+                 bbdTransferHermiteIntervals + 1u> bbdServicedBiasHermiteTable = [] {
+    std::array<BbdTransferHermiteNode,
+               bbdTransferHermiteIntervals + 1u> result {};
+    const double exponent = static_cast<double>(bbdSaturationExponent);
+    const double curvature = static_cast<double>(bbdServicedBiasCurvature);
+    for (std::size_t index = 0; index < result.size(); ++index)
+    {
+        const double normalised = bbdTransferHermiteLimit
+            * static_cast<double>(index)
+            / static_cast<double>(bbdTransferHermiteIntervals);
+        const double squared = normalised * normalised;
+        const double base = 1.0 + curvature * squared
+            + std::pow(normalised, exponent);
+        const double denominator = std::pow(base, 1.0 / exponent);
+        result[index].value = normalised / denominator;
+        result[index].slope = (1.0 + curvature * (1.0 - 2.0 / exponent) * squared)
+            / (base * denominator);
+    }
+    return result;
+}();
+
+double interpolatedBbdTransfer(double normalised,
+    const std::array<BbdTransferHermiteNode,
+                     bbdTransferHermiteIntervals + 1u>& table = bbdTransferHermiteTable) noexcept
 {
     const double position = normalised
         * static_cast<double>(bbdTransferHermiteIntervals)
@@ -117,8 +164,8 @@ double interpolatedBbdTransfer(double normalised) noexcept
     const double cubic = squared * fraction;
     constexpr double width = bbdTransferHermiteLimit
                            / static_cast<double>(bbdTransferHermiteIntervals);
-    const auto& first = bbdTransferHermiteTable[index];
-    const auto& second = bbdTransferHermiteTable[index + 1u];
+    const auto& first = table[index];
+    const auto& second = table[index + 1u];
     return (2.0 * cubic - 3.0 * squared + 1.0) * first.value
          + (cubic - 2.0 * squared + fraction) * width * first.slope
          + (-2.0 * cubic + 3.0 * squared) * second.value
@@ -1424,6 +1471,7 @@ Chorus::ModeSettings Chorus::settingsFor(
             switch (timingProfile)
             {
                 case ChorusTimingProfile::A11Spectral:
+                case ChorusTimingProfile::HardwareEvidence:
                     return { spectralRate, spectralCentre, spectralSweep, lineGain };
                 case ChorusTimingProfile::A11ClickTiming:
                     return { clickRate, clickCentre, clickSweep, lineGain };
@@ -1460,8 +1508,19 @@ Chorus::ModeSettings Chorus::settingsFor(
             }
             return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:
-            // Only the blend reaches Mode II (Docs/decisions.md, 2026-09-22):
-            // the other candidates were Mode I readings, and the rate-only
+            if (timingProfile == ChorusTimingProfile::HardwareEvidence)
+            {
+                // Mode I is the verified recording's effective fit above.
+                // The board's binary rate switch changes timing resistance,
+                // leaving triangle thresholds/excursion unchanged. Applying
+                // that rate ratio is a named schematic estimate for Mode II,
+                // not an independent Mode-II capture or a chip-delay claim.
+                return { spectralRate * (rateTwo / rateOne),
+                         spectralCentre, spectralSweep, lineGain };
+            }
+            // Among historical profiles, only the blend reaches Mode II
+            // (Docs/decisions.md, 2026-09-22): the other candidates were Mode I
+            // readings, and the rate-only
             // mode line keeps the blend's excursion at 3.49 ms +/-2.04 ms,
             // 0.852 Hz. The ratio is the derived one; no Mode II was measured.
             if (timingProfile == ChorusTimingProfile::OwnerBlend)
@@ -1517,6 +1576,26 @@ float Chorus::bbdTransfer(float input) noexcept
                   * std::pow(inverse, exponent - 2.0)
             + std::pow(inverse, exponent),
         1.0 / exponent);
+    return std::copysign(static_cast<float>(
+        static_cast<double>(bbdSaturationLevel) / correction), input);
+}
+
+float Chorus::bbdServicedBiasTransfer(float input) noexcept
+{
+    if (!std::isfinite(input))
+        return 0.0f;
+    const double normalised = std::abs(static_cast<double>(input))
+                            / static_cast<double>(bbdSaturationLevel);
+    if (normalised < bbdTransferHermiteLimit)
+        return std::copysign(static_cast<float>(
+            static_cast<double>(bbdSaturationLevel)
+                * interpolatedBbdTransfer(normalised, bbdServicedBiasHermiteTable)), input);
+    const double inverse = 1.0 / normalised;
+    const double exponent = static_cast<double>(bbdSaturationExponent);
+    const double correction = std::pow(
+        1.0 + static_cast<double>(bbdServicedBiasCurvature)
+                  * std::pow(inverse, exponent - 2.0)
+            + std::pow(inverse, exponent), 1.0 / exponent);
     return std::copysign(static_cast<float>(
         static_cast<double>(bbdSaturationLevel) / correction), input);
 }
@@ -2248,7 +2327,10 @@ float Chorus::Line::processClockedCore(float limitedInput, double clockHz,
                     ageInSamples);
             // Charge acquisition/overload happens only at the input edge.
             writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
-            cells[static_cast<std::size_t>(writeIndex)] = Chorus::bbdTransfer(atEdge);
+            cells[static_cast<std::size_t>(writeIndex)] =
+                transferProfile == ChorusBbdTransferProfile::ServicedBiasEstimate
+                    ? Chorus::bbdServicedBiasTransfer(atEdge)
+                    : Chorus::bbdTransfer(atEdge);
             continue;
         }
 
@@ -2394,6 +2476,16 @@ bool Chorus::configureSupportProfile(ChorusSupportProfile profile) noexcept
         return false;
     supportProfile_ = profile;
     supportRatesPrepared_ = false;
+    return true;
+}
+
+bool Chorus::configureBbdTransferProfile(ChorusBbdTransferProfile profile) noexcept
+{
+    if (supportProfilePrepared_
+        || (profile != ChorusBbdTransferProfile::Legacy
+            && profile != ChorusBbdTransferProfile::ServicedBiasEstimate))
+        return false;
+    lineA_.transferProfile = lineB_.transferProfile = profile;
     return true;
 }
 

@@ -2,7 +2,7 @@
 
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowPresets.h"
-#include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowActiveProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -51,7 +51,7 @@ inline EngineParameters loadPresetParameters (const char* slot)
     const auto& patch = preset->patch;
     const auto& controls = preset->controls;
     EngineParameters p;
-    ProductFidelityProfile::applyTo (p);
+    ActiveProductFidelityProfile::applyTo (p);
 
     p.lfoRate = patch.lfoRate;
     p.lfoDelay = patch.lfoDelay;

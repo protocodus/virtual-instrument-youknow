@@ -38,6 +38,28 @@ public:
     static constexpr double referenceSeriesSpanVolts = 8.896019223386196;
     static constexpr int tableSteps = 4096;
 
+    // Forward current of a resistor followed by an ideal exponential junction.
+    // The reference is a declared forward operating point, not an independently
+    // identified 1SS133 saturation current. Solve y + log(y) = z with
+    // y=R*I/Vt; this avoids exponentiating the full applied voltage.
+    [[nodiscard]] static double forwardCurrent(double voltage, double resistanceOhms,
+        double slopeVolts, double referenceAmps, double referenceDropVolts) noexcept
+    {
+        const double scale = resistanceOhms * referenceAmps / slopeVolts;
+        const double z = std::log(scale) + (voltage - referenceDropVolts) / slopeVolts;
+        if (z < -740.0)
+            return 0.0;
+        double y = z > 1.0 ? z - std::log(z) : std::exp(z);
+        for (int iteration = 0; iteration < 12; ++iteration)
+        {
+            const double delta = (y + std::log(y) - z) * y / (y + 1.0);
+            y -= delta;
+            if (std::abs(delta) <= 1.0e-14 * y)
+                break;
+        }
+        return y * slopeVolts / resistanceOhms;
+    }
+
     [[nodiscard]] static double exactGain(double control) noexcept
     {
         if (!(control > 0.0))

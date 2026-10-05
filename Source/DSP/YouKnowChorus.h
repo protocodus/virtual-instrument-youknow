@@ -40,7 +40,8 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 // Which Mode I timing coordinates the chorus runs on (OwnerBlend: Mode II's too).
 //
 // Shipping is the engine default, the reference configuration every frozen
-// fingerprint tests; the product selects OwnerBlend (ProductFidelityProfile),
+// fingerprint tests; the product selects HardwareEvidence through the active
+// profile. OwnerBlend remains the earlier ProductFidelityProfile selection,
 // the owner's by-ear decision of 2026-09-17 between the three candidates
 // OQ-01 names (Docs/decisions.md). The candidates' evidence differs: one is
 // an effective recording fit, one a clock-click estimate, and one a
@@ -68,7 +69,7 @@ enum class ChorusMode { Off, One, Two, OneTwo };
 //                   A11ClickTiming -- the identified unit's spectral fit
 //                   counted twice -- chosen by ear as a compromise weighted
 //                   towards that fit: 3.49 ms centre, +/-2.04 ms, 0.5248 Hz.
-//                   The only profile that also moves Mode II: onto the same
+//                   The historical profile that also moves Mode II: onto the same
 //                   excursion at the derived II/I rate ratio, 0.852 Hz,
 //                   chosen by ear on 2026-09-22 (settingsFor).
 enum class ChorusTimingProfile
@@ -77,8 +78,29 @@ enum class ChorusTimingProfile
     A11Spectral,
     A11ClickTiming,
     DerivedNominal,
-    OwnerBlend
+    OwnerBlend,
+    // Existing verified A11 Mode-I effective fit, with Mode II estimated
+    // from the same excursion and this board's schematic II/I rate ratio.
+    // This is one original chorus board's recording fit, not an installed
+    // chip-delay measurement or an independently measured Mode-II profile.
+    HardwareEvidence
 };
+
+// The Panasonic MN3009's lowest small-signal THD and maximum symmetrical
+// input swing occur at different input biases. Roland's service procedure
+// selects the latter (10 Vpp at MODULE TP2; JACK VR1/VR2 balance clipping).
+// ServicedBiasEstimate starts from the typical THD-Vbias graph's roughly
+// 0.46% at -8.3 V / 1 kHz / 0 dBm / 40 kHz, deembedding a declared
+// 1.25 mVrms noise prior (midpoint of the THD-Vi-derived 1.1-1.4 mV
+// bracket) to estimate about 0.43% harmonic distortion at 0.78 Vrms.
+// It is a graph-derived component estimate, not an original-unit measurement;
+// the graph measurement bandwidth, harmonic phases and exact THD+N split are
+// unidentified. This conditional deembedding avoids assigning the entire
+// reading to harmonics while the existing physical noise source also runs.
+// The symmetric transfer, unity tangent and existing clipping ceiling remain.
+// https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf#page=40
+// https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19
+enum class ChorusBbdTransferProfile { Legacy, ServicedBiasEstimate };
 
 // A named component approximation, separate from timing and
 // insertion-gain calibration. The raw reference retains ideal followers.
@@ -292,6 +314,12 @@ public:
     [[nodiscard]] bool configureSupportProfile(ChorusSupportProfile) noexcept;
     [[nodiscard]] ChorusSupportProfile getSupportProfile() const noexcept
     { return supportProfile_; }
+    // Select before the first prepare(); both lines retain this operating
+    // prior across reset and rate changes. Lookup coefficients are prepared
+    // outside processing. Legacy preserves existing reference fingerprints.
+    [[nodiscard]] bool configureBbdTransferProfile(ChorusBbdTransferProfile) noexcept;
+    [[nodiscard]] ChorusBbdTransferProfile getBbdTransferProfile() const noexcept
+    { return lineA_.transferProfile; }
     void prepare(double sampleRate,
                  bool preserveState = false) noexcept;
     void reset(bool preserveLfoPhase = false) noexcept;
@@ -906,6 +934,7 @@ private:
     // and frequency-response figures without the support filters obscuring the
     // result.
     [[nodiscard]] static float bbdTransfer(float input) noexcept;
+    [[nodiscard]] static float bbdServicedBiasTransfer(float input) noexcept;
     static float transferLossStep(float& state, float input) noexcept;
     // Reconstruct the already support-filtered input at an asynchronous BBD
     // edge from the current and three preceding numerical samples.  The edge
@@ -922,6 +951,7 @@ private:
     // grid and the output held between clock edges exactly as the part does.
     struct Line
     {
+        ChorusBbdTransferProfile transferProfile { ChorusBbdTransferProfile::Legacy };
         struct BlepEvent
         {
             float jump { 0.0f };

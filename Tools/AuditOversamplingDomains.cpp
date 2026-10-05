@@ -7,7 +7,7 @@
 // raw-float fingerprint mode so CTest can prove that observation is inert.
 
 #include "DSP/YouKnowEngine.h"
-#include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowActiveProductFidelity.h"
 #include "OversamplingAuditSupport.h"
 
 #include <algorithm>
@@ -238,7 +238,7 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
     PreparedSnapshot snapshot;
     if (profile == SnapshotProfile::Product)
     {
-        youknow::ProductFidelityProfile::configureBeforePrepare(snapshot.engine);
+        youknow::ActiveProductFidelityProfile::configureBeforePrepare(snapshot.engine);
         snapshot.engine.selectConverterTimingProfile(
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }
@@ -248,7 +248,7 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
         scenario.kind, tanhMode, fastEarlyMode, solverMode);
     if (profile == SnapshotProfile::Product)
     {
-        youknow::ProductFidelityProfile::applyTo(parameters);
+        youknow::ActiveProductFidelityProfile::applyTo(parameters);
         parameters.aging = 0.5f;
     }
     parameters.polyphony = std::max(parameters.polyphony, scenario.heldNotes);
@@ -596,7 +596,7 @@ int printFingerprints()
     std::cout << "protocol host_rate=" << sampleRate
               << " requested_quality=" << requestedFactor << "x"
               << " kernel=poly-zoned early=cubic solver=rk4-single"
-              << " fidelity=product-b converter=measured-chart aging=0.5"
+              << " fidelity=active-product converter=measured-chart aging=0.5"
               << " block_size=" << blockSize
               << " preroll_seconds=" << preRollSeconds
               << " timed_blocks=" << timingBlocks

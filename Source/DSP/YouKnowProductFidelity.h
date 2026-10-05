@@ -6,11 +6,13 @@
 
 namespace youknow
 {
-// Product selections: the 2026-09-11, 09-17 and 09-22 auditions
+// Earlier product selections: the 2026-09-11, 09-17 and 09-22 auditions
 // (Docs/decisions.md), plus the approximate thermal clock coupling and
 // 2026-09-15 C56 selection.
-// Raw engine fixtures keep their nominal reference defaults. The plug-in
-// and maintained product renderers select these settings centrally.
+// Raw engine fixtures keep their nominal reference defaults. The active
+// product profile reuses the common selections here and replaces the five
+// mechanisms accepted on 2026-10-05; this earlier profile remains available
+// for historical comparisons and explicit reference builds.
 struct ProductFidelityProfile
 {
     // The B audition used this datasheet comparison coordinate. It is not a
