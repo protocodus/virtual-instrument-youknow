@@ -166,12 +166,37 @@ struct VoiceVcaAntialias
             t0=temperatures[static_cast<std::size_t>((inputWrite-lookBack+inputRingSize)&(inputRingSize-1))];
             t1=temperatures[static_cast<std::size_t>((inputWrite-lookBack+1+inputRingSize)&(inputRingSize-1))];
         }
+        std::array<double, maximumFactor> reconstructed {};
+        if (k.factor == 4)
+        {
+            // These phases read the same 48 past samples. Share each ring
+            // index/load while retaining every phase's tap accumulation
+            // order and double precision. Adjacent quarter-phase lanes allow
+            // ordinary compiler SLP; the half phase stays a separate sum.
+            // Only reconstruction is batched: the output loop below retains
+            // shape/noise callbacks, RNG chronology and phase-zero decimation.
+            std::array<double, 2> quarter {};
+            double half = 0;
+            for (int tap = 0; tap < delaySamples; ++tap)
+            {
+                const double sample = inputs[static_cast<std::size_t>(
+                    (inputWrite-tap+inputRingSize) & (inputRingSize-1))];
+                quarter[0] += k.interpolation[1][static_cast<std::size_t>(tap)] * sample;
+                quarter[1] += k.interpolation[3][static_cast<std::size_t>(tap)] * sample;
+                half += k.interpolation[2][static_cast<std::size_t>(tap)] * sample;
+            }
+            reconstructed[1] = quarter[0];
+            reconstructed[2] = half;
+            reconstructed[3] = quarter[1];
+        }
         for (int phase = 0; phase < k.factor; ++phase)
         {
             double drive = 0;
             if (phase == 0)
                 drive = inputs[static_cast<std::size_t>(
                     (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
+            else if (k.factor == 4)
+                drive = reconstructed[static_cast<std::size_t>(phase)];
             else
                 for (int tap = 0; tap < delaySamples; ++tap)
                     drive += k.interpolation[static_cast<std::size_t>(phase)]

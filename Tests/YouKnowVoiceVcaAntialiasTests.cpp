@@ -6,9 +6,11 @@
 #include "DSP/YouKnowProductFidelity.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -130,6 +132,89 @@ namespace
 using namespace youknow;
 constexpr double pi = std::numbers::pi;
 void require(bool ok, const char* message) {if (!ok) throw std::runtime_error(message);}
+// Frozen pre-batching arithmetic and callback order. Use the same prepared
+// kernel so this checks the optimization, rather than a different FIR design.
+struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
+{
+    template <bool addNoise, bool withTemperature=false, class Shape, class OutputNoise>
+    [[nodiscard]] float processOriginal(float input, float gain, const Kernel& k,
+        Shape&& shape, OutputNoise&& noise,float kelvin) noexcept
+    {
+        if (k.factor == 1) {
+            if constexpr (withTemperature)
+                return static_cast<float>(shape(input)*gain+noise(input,gain,kelvin));
+            if constexpr (addNoise)
+                if constexpr (!withTemperature)
+                    return static_cast<float>(shape(input) * gain + noise(input, gain));
+            return shape(input) * gain;
+        }
+        inputs[static_cast<std::size_t>(inputWrite)] = input;
+        gains[static_cast<std::size_t>(inputWrite)] = gain;
+        if constexpr (withTemperature)
+            temperatures[static_cast<std::size_t>(inputWrite)] = kelvin;
+        float result = 0;
+        constexpr int lookBack = delaySamples / 2;
+        const double g0 = gains[static_cast<std::size_t>(
+            (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
+        const double g1 = gains[static_cast<std::size_t>(
+            (inputWrite - lookBack + 1 + inputRingSize) & (inputRingSize - 1))];
+        double t0=0,t1=0;
+        if constexpr (withTemperature) {
+            t0=temperatures[static_cast<std::size_t>((inputWrite-lookBack+inputRingSize)&(inputRingSize-1))];
+            t1=temperatures[static_cast<std::size_t>((inputWrite-lookBack+1+inputRingSize)&(inputRingSize-1))];
+        }
+        for (int phase = 0; phase < k.factor; ++phase)
+        {
+            double drive = 0;
+            if (phase == 0)
+                drive = inputs[static_cast<std::size_t>(
+                    (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
+            else
+                for (int tap = 0; tap < delaySamples; ++tap)
+                    drive += k.interpolation[static_cast<std::size_t>(phase)]
+                        [static_cast<std::size_t>(tap)]
+                        * inputs[static_cast<std::size_t>(
+                            (inputWrite - tap + inputRingSize) & (inputRingSize - 1))];
+            // The physical control hold is slow and continuous; reconstruct
+            // it linearly at the SAME delayed timestamp as the audio input.
+            // Gain is inside the high-rate nonlinear path, so its sidebands
+            // also cross the antialias filter. This does not smooth a stored
+            // envelope or add a new circuit time constant.
+            const double fraction = static_cast<double>(phase) / k.factor;
+            const double g = g0 + fraction * (g1 - g0);
+            if constexpr (withTemperature)
+                outputs[static_cast<std::size_t>(outputWrite)]=static_cast<float>(
+                    shape(static_cast<float>(drive))*g+noise(drive,g,t0+fraction*(t1-t0)));
+            else if constexpr (addNoise)
+                outputs[static_cast<std::size_t>(outputWrite)] = static_cast<float>(
+                    shape(static_cast<float>(drive)) * g + noise(drive, g));
+            else
+                outputs[static_cast<std::size_t>(outputWrite)] =
+                    static_cast<float>(shape(static_cast<float>(drive)) * g);
+            if (phase == 0)
+            {
+                const int centre = (k.taps - 1) / 2;
+                double y = k.decimation[static_cast<std::size_t>(centre)]
+                    * outputs[static_cast<std::size_t>(
+                        (outputWrite - centre + outputRingSize) & (outputRingSize - 1))];
+                for (int index = 0; index < k.pairCount; ++index)
+                {
+                    const auto& pair = k.pairs[static_cast<std::size_t>(index)];
+                    const int opposite = k.taps - 1 - pair.tap;
+                    const double a = outputs[static_cast<std::size_t>(
+                        (outputWrite - pair.tap + outputRingSize) & (outputRingSize - 1))];
+                    const double b = outputs[static_cast<std::size_t>(
+                        (outputWrite - opposite + outputRingSize) & (outputRingSize - 1))];
+                    y += pair.weight * (a + b);
+                }
+                result = static_cast<float>(y);
+            }
+            outputWrite = (outputWrite + 1) & (outputRingSize - 1);
+        }
+        inputWrite = (inputWrite + 1) & (inputRingSize - 1);
+        return result;
+    }
+};
 std::unique_ptr<YouKnowEngine> prepared(double rate, bool corrected, bool nonlinear = true)
 {
     auto e = std::make_unique<YouKnowEngine>();
@@ -166,6 +251,118 @@ std::vector<float> sine(double rate, bool corrected, double amplitude,
         if (n >= 0) values[static_cast<std::size_t>(n)] = y;
     }
     return values;
+}
+void phaseBatchingBitEquivalence()
+{
+    const auto sameFloat = [](float a, float b) {
+        return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+    };
+    const auto sameHistory = [&](const VoiceVcaAntialias& a,
+                                 const VoiceVcaAntialias& b) {
+        return a.inputWrite == b.inputWrite && a.outputWrite == b.outputWrite
+            && std::equal(a.inputs.begin(), a.inputs.end(), b.inputs.begin(), sameFloat)
+            && std::equal(a.gains.begin(), a.gains.end(), b.gains.begin(), sameFloat)
+            && std::equal(a.temperatures.begin(), a.temperatures.end(), b.temperatures.begin(), sameFloat)
+            && std::equal(a.outputs.begin(), a.outputs.end(), b.outputs.begin(), sameFloat);
+    };
+    struct Callbacks
+    {
+        struct Event
+        {
+            int kind {};
+            std::uint64_t drive {}, gain {}, kelvin {};
+            bool operator==(const Event&) const = default;
+        };
+        std::array<Event, 8> events {};
+        std::size_t used {};
+        unsigned shapes {}, noises {};
+        std::uint32_t noiseState {0x4197d5cb};
+
+        float shape(float drive)
+        {
+            events[used++] = {1, std::bit_cast<std::uint64_t>(double(drive)), 0, 0};
+            // Actual physical law plus a small stateful witness makes
+            // startup/zero-gain shape calls part of the observable result.
+            return YouKnowEngine::VoiceVcaSignalLaw::shape(drive) + float(++shapes % 7) * .00001f;
+        }
+        double noise(double drive, double gain, double kelvin)
+        {
+            events[used++] = {2, std::bit_cast<std::uint64_t>(drive),
+                                std::bit_cast<std::uint64_t>(gain),
+                                std::bit_cast<std::uint64_t>(kelvin)};
+            ++noises;
+            noiseState ^= noiseState << 13;
+            noiseState ^= noiseState >> 17;
+            noiseState ^= noiseState << 5;
+            const double normal = double(noiseState) / 4294967295. * 2 - 1;
+            // Signal/control/temperature dependent current-noise witness,
+            // drawn even behind a closed gain, as the real stage does.
+            return normal * 1e-4 * std::sqrt(std::max(0., gain))
+                * std::sqrt(kelvin / 298.15) * (1 + .125 * std::tanh(drive / 2.8));
+        }
+    };
+    std::uint32_t random = 0x95ad7823;
+    const auto next = [&]() {
+        random ^= random << 13;
+        random ^= random >> 17;
+        random ^= random << 5;
+        return double(random) / 4294967295.;
+    };
+    unsigned compared = 0;
+    for (double rate : {44100., 48000., 96000., 192000.})
+        for (int mode : {0, 1, 2})
+        {
+            VoiceVcaAntialias candidate;
+            FrozenVoiceVcaAntialias reference;
+            Callbacks actual, expected;
+            auto kernel = VoiceVcaAntialias::prepare(rate);
+            for (int frame = 0; frame < 2048; ++frame)
+            {
+                if (frame == 513) {candidate.reset(); reference.reset();}
+                // Test retained history across grids as well as reset startup.
+                if (frame == 777) kernel = VoiceVcaAntialias::prepare(rate < 88200. ? 96000. : 48000.);
+                if (frame == 1234) kernel = VoiceVcaAntialias::prepare(rate);
+                float input = float((next() - .5) * 24);
+                if (frame < 96) input = frame == 0 ? 17.f : frame == 7 ? -19.f : 0.f;
+                if (frame % 197 == 0) input = -0.f;
+                const float gain = frame % 73 < 21 ? 0.f : float(next() * 1.4);
+                const float kelvin = float(273.15 + next() * 60);
+                candidate.storeTemperatureContext(kelvin);
+                reference.storeTemperatureContext(kelvin);
+                actual.used = expected.used = 0;
+                const auto shape = [&](float x) {return actual.shape(x);};
+                const auto refShape = [&](float x) {return expected.shape(x);};
+                const auto noise = [&](double x, double g) {return actual.noise(x, g, kelvin);};
+                const auto refNoise = [&](double x, double g) {return expected.noise(x, g, kelvin);};
+                const auto temperatureNoise = [&](double x, double g, double t) {return actual.noise(x, g, t);};
+                const auto refTemperatureNoise = [&](double x, double g, double t) {return expected.noise(x, g, t);};
+                float want = 0, got = 0;
+                if (mode == 0)
+                    want = reference.processOriginal<false>(input, gain, kernel, refShape, refNoise, 0);
+                else if (mode == 1)
+                    want = reference.processOriginal<true>(input, gain, kernel, refShape, refNoise, 0);
+                else
+                    want = reference.processOriginal<true, true>(input, gain, kernel, refShape, refTemperatureNoise, kelvin);
+                guardAllocation = true;
+                if (mode == 0)
+                    got = candidate.process(input, gain, kernel, shape);
+                else if (mode == 1)
+                    got = candidate.processWithOutputNoise(input, gain, kernel, shape, noise);
+                else
+                    got = candidate.processWithTemperatureNoise(input, gain, kelvin, kernel, shape, temperatureNoise);
+                guardAllocation = false;
+                require(sameFloat(got, want), "VCA phase batching changed output bits");
+                require(sameHistory(candidate, reference), "VCA phase batching changed full FIR history");
+                require(actual.used == expected.used && actual.shapes == expected.shapes
+                    && actual.noises == expected.noises && actual.noiseState == expected.noiseState
+                    && std::equal(actual.events.begin(), actual.events.begin() + actual.used, expected.events.begin()),
+                    "VCA phase batching changed shape/noise drive, control, temperature or RNG chronology");
+                ++compared;
+            }
+        }
+    require(allocations == 0, "VCA phase batching allocated");
+    std::cout << "VCA batched interpolation original bit/history/callback parity: "
+              << compared << " random/hot/startup/reset/rate frames\n";
 }
 void linearResponseAndDelay()
 {
@@ -440,6 +637,7 @@ int main()
 {
     try
     {
+        phaseBatchingBitEquivalence();
         linearResponseAndDelay();
         wantedHarmonicsAndAliasing();
         envelopeTransient();

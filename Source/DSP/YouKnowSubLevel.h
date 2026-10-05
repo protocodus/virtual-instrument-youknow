@@ -42,11 +42,27 @@ public:
     // The reference is a declared forward operating point, not an independently
     // identified 1SS133 saturation current. Solve y + log(y) = z with
     // y=R*I/Vt; this avoids exponentiating the full applied voltage.
-    [[nodiscard]] static double forwardCurrent(double voltage, double resistanceOhms,
-        double slopeVolts, double referenceAmps, double referenceDropVolts) noexcept
+    struct ForwardCurrentCoefficients
+    {
+        double resistanceOhms {};
+        double slopeVolts {};
+        double referenceDropVolts {};
+        double logScale {};
+    };
+
+    [[nodiscard]] static ForwardCurrentCoefficients prepareForwardCurrent(
+        double resistanceOhms, double slopeVolts, double referenceAmps,
+        double referenceDropVolts) noexcept
     {
         const double scale = resistanceOhms * referenceAmps / slopeVolts;
-        const double z = std::log(scale) + (voltage - referenceDropVolts) / slopeVolts;
+        return { resistanceOhms, slopeVolts, referenceDropVolts, std::log(scale) };
+    }
+
+    [[nodiscard]] static double forwardCurrent(double voltage,
+        const ForwardCurrentCoefficients& coefficients) noexcept
+    {
+        const double z = coefficients.logScale
+            + (voltage - coefficients.referenceDropVolts) / coefficients.slopeVolts;
         if (z < -740.0)
             return 0.0;
         double y = z > 1.0 ? z - std::log(z) : std::exp(z);
@@ -57,7 +73,14 @@ public:
             if (std::abs(delta) <= 1.0e-14 * y)
                 break;
         }
-        return y * slopeVolts / resistanceOhms;
+        return y * coefficients.slopeVolts / coefficients.resistanceOhms;
+    }
+
+    [[nodiscard]] static double forwardCurrent(double voltage, double resistanceOhms,
+        double slopeVolts, double referenceAmps, double referenceDropVolts) noexcept
+    {
+        return forwardCurrent(voltage, prepareForwardCurrent(resistanceOhms,
+            slopeVolts, referenceAmps, referenceDropVolts));
     }
 
     [[nodiscard]] static double exactGain(double control) noexcept

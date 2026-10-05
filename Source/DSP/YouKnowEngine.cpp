@@ -6061,6 +6061,9 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
 
     oversampledRate_ = sampleRate_ * oversampling_;
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
+    if (coupledMixerEnabled_)
+        coupledMixerCoefficients_ = CoupledSubMixer::prepareCoefficients(
+            coupledMixerCalibration_, static_cast<double>(inverseOversampledRate_));
     noiseRateScale_ = static_cast<float>(
         std::sqrt(oversampledRate_ / noiseReferenceRateHz));
     const auto slewFor = [this](float seconds) {
@@ -6854,6 +6857,8 @@ bool YouKnowEngine::configureCoupledMixer(
         return false;
     coupledMixerCalibration_ = calibration;
     coupledMixerEnabled_ = true;
+    coupledMixerCoefficients_ = CoupledSubMixer::prepareCoefficients(
+        coupledMixerCalibration_, static_cast<double>(inverseOversampledRate_));
     // The optional physical source profile owns these same drive coordinates;
     // old six-value calibrations retain1 and the legacy boundary exactly.
     oscillatorLevelScale_ = static_cast<float>(calibration.oscillatorDriveScale);
@@ -10845,10 +10850,10 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         // fixtures retain1. Divide the compatibility attenuation only once.
         // Inactive cards run the same solve, preserving real capacitor charge;
         // the old freewheel mean is invalid for this nonlinear network.
-        const auto node = voice.coupledMixer.process(c,
+        const auto node = voice.coupledMixer.process(c, coupledMixerCoefficients_,
             c.sourceBiasVolts + c.sourceScale * mixed,
             CoupledSubMixer::railFullScaleVolts * subCv_,
-            0.5 * (1.0 + subTrack), inverseOversampledRate_);
+            0.5 * (1.0 + subTrack));
         coupled = static_cast<float>(node.filterVolts * c.pinToCoreGain / filterInputAttenuation);
     }
     else
@@ -11494,7 +11499,7 @@ void YouKnowEngine::processOutputSummer(float& wetLeft,float& wetRight,
         chorus_.wetInputConductanceRatio(), chorus_.isWetInputConnected() };
     if (parameters.enableOutputSummerAntialias)
     {
-        const auto corrected = outputSummerAntialias_.process(wetLeft,wetRight,
+        const auto corrected = outputSummerAntialias_.processStereo(wetLeft,wetRight,
             currentContext,voiceVcaAntialiasKernel_,[](float x) { return outputSummerClip(x); });
         outputSummerDelayedContext_ = corrected.context;
         wetLeft=corrected.left; wetRight=corrected.right;
@@ -12293,8 +12298,28 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                             slot += 4;
                             continue;
                         }
-                        if (slot + 1 < maxVoices && voice.active
+                        // The coupled product keeps a physical card's complete
+                        // audio state live behind a closed VCA. Its double
+                        // pair kernel is scalar-bit-equivalent, so those cards
+                        // can share the solve without approximating idle state.
+                        const auto hasLiveAudioCell = [&](const Voice& cell) {
+                            return cell.active
+                                || (coupledMixerEnabled_
+                                    && cell.cardIndex < hardwareVoices);
+                        };
+                        const bool nextStartsActiveQuad = !voice.active
+                            && slot + 4 < maxVoices
                             && voices_[static_cast<std::size_t>(slot + 1)].active
+                            && voices_[static_cast<std::size_t>(slot + 2)].active
+                            && voices_[static_cast<std::size_t>(slot + 3)].active
+                            && voices_[static_cast<std::size_t>(slot + 4)].active;
+                        // Preserve the established float-quad schedule: pairing
+                        // an idle card with the next active card must not take
+                        // that card away from an existing four-active group.
+                        if (slot + 1 < maxVoices && hasLiveAudioCell(voice)
+                            && hasLiveAudioCell(voices_[
+                                static_cast<std::size_t>(slot + 1)])
+                            && !nextStartsActiveQuad
                             && parameters.vcfTanhMode
                                    == VcfTanhMode::PolyZoned
                             && parameters.vcfSolverMode
@@ -12305,8 +12330,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                             updateVoiceForInterval(slot + 1);
                             const auto outputs = renderVoicePair(
                                 voice, second, parameters, noiseSample);
-                            accountRenderedVoice(voice, outputs[0]);
-                            accountRenderedVoice(second, outputs[1]);
+                            // Inactive cards update their capacitor/filter/RNG
+                            // histories, but do not enter sounding/retirement
+                            // accounting or reset their retained CV state.
+                            if (voice.active)
+                                accountRenderedVoice(voice, outputs[0]);
+                            if (second.active)
+                                accountRenderedVoice(second, outputs[1]);
                             slot += 2;
                             continue;
                         }

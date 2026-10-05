@@ -164,15 +164,26 @@ struct OtaShotNoise {
         for(auto&row:a)for(double&x:row)x*=scale;for(double&x:d)x*=scale;
         constexpr Vector nodes{.06943184420297371,.33000947820757187,.6699905217924281,.9305681557970262};
         constexpr Vector weights{.1739274225687269,.3260725774312731,.3260725774312731,.1739274225687269};
-        const auto exponential=[&](double position,int terms) {
-            Matrix f{},term{};for(std::size_t i=0;i<4;++i)f[i][i]=term[i][i]=1;
-            for(int order=1;order<=terms;++order){Matrix next{};
-                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j) {
-                    next[i][j]=(a[i][i]*term[i][j]+a[i][(i+3)&3]*term[(i+3)&3][j])*position/order;
-                    f[i][j]+=next[i][j];
-                }
-                term=next;
-            }return f;
+        // All quadrature positions use the same scaled circuit. Form its
+        // Taylor coefficients A^n/n! once, rather than repeat the sparse
+        // matrix recurrence at every position. Horner evaluates the SAME
+        // degree-eight polynomial; only floating-point rounding order changes.
+        // This changes neither the physical interval nor its diffusion law.
+        std::array<Matrix,9> coefficients{};
+        for(std::size_t i=0;i<4;++i)coefficients[0][i][i]=1;
+        for(int order=1;order<=8;++order) {
+            const auto& previous=coefficients[order-1];
+            auto& current=coefficients[order];
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)
+                current[i][j]=(a[i][i]*previous[i][j]
+                    +a[i][(i+3)&3]*previous[(i+3)&3][j])/order;
+        }
+        const auto exponential=[&](double position) {
+            Matrix f=coefficients[8];
+            for(int order=7;order>=0;--order)
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)
+                    f[i][j]=coefficients[order][i][j]+position*f[i][j];
+            return f;
         };
         // Positive four-node Gauss--Legendre integration of F(t)D F(t)':
         // four nodes retain all four controllable directions even for one
@@ -180,14 +191,19 @@ struct OtaShotNoise {
         // projected node variances are screened independently, not only norm.
         Matrix q{};
         for(std::size_t node=0;node<4;++node) {
-            const auto f=exponential(nodes[node],8);
+            const auto f=exponential(nodes[node]);
             for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
                 double value=0;for(std::size_t k=0;k<4;++k)value+=f[i][k]*d[k]*f[j][k];
                 q[i][j]+=weights[node]*value;
             }
         }
         for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[j][i]=q[i][j];
-        if(squares>0){auto f=exponential(1,8);
+        if(squares>0){auto f=coefficients[0];
+            // At position one, ascending coefficient addition retains the
+            // original endpoint exponential's operation order for doubling.
+            for(int order=1;order<=8;++order)
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)
+                    f[i][j]+=coefficients[order][i][j];
             for(int square=0;square<squares;++square){const auto propagated=multiply(multiply(f,q),transpose(f));
                 for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];f=multiply(f,f);}
             for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);

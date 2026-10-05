@@ -140,6 +140,47 @@ public:
         double subOnAmps {};
     };
 
+    // Rate/calibration invariants only. Preparation does not read or replace
+    // capacitor charge. The engine rebuilds this bundle only when its
+    // configured circuit or processing interval changes.
+    struct PreparedCoefficients
+    {
+        double companionOhms {};
+        double loadConductance {};
+        double sourceConductance {};
+        double baseConductance {};
+        double baseResistance {};
+        SubLevelDiodeLaw::ForwardCurrentCoefficients offBranch {};
+        SubLevelDiodeLaw::ForwardCurrentCoefficients onBranch {};
+        SubLevelDiodeLaw::ForwardCurrentCoefficients effectiveOffBranch {};
+        SubLevelDiodeLaw::ForwardCurrentCoefficients effectiveOnBranch {};
+    };
+
+    [[nodiscard]] static PreparedCoefficients prepareCoefficients(
+        const Calibration& c, double seconds) noexcept
+    {
+        PreparedCoefficients result;
+        result.companionOhms = seconds / (2.0 * couplingFarads);
+        result.loadConductance = 1.0 / (c.loadOhms + result.companionOhms);
+        result.sourceConductance = 1.0 / c.sourceOhms;
+        result.baseConductance = result.sourceConductance + result.loadConductance;
+        result.baseResistance = 1.0 / result.baseConductance;
+        if (c.diodeSlopeVolts > 0.0)
+        {
+            const auto currentCoefficients = [&](double resistance) {
+                return SubLevelDiodeLaw::prepareForwardCurrent(resistance,
+                    c.diodeSlopeVolts, c.diodeReferenceAmps, c.diodeDropVolts);
+            };
+            result.offBranch = currentCoefficients(pullupOhms + seriesOhms);
+            result.onBranch = currentCoefficients(seriesOhms);
+            result.effectiveOffBranch = currentCoefficients(
+                pullupOhms + seriesOhms + result.baseResistance);
+            result.effectiveOnBranch = currentCoefficients(
+                seriesOhms + result.baseResistance);
+        }
+        return result;
+    }
+
     // Sub gate is an antialias reconstruction weight: 1 means Tr19 off,
     // 0 means on. At fractional edge samples the two branch currents are
     // interpolated. The clamp discards BLEP overshoot to keep conductances
@@ -152,7 +193,7 @@ public:
     {
         const double q = std::clamp(gate, 0.0, 1.0);
         if (c.diodeSlopeVolts > 0.0)
-            return solveExponential(c, sourceVolts, railVolts, q,
+            return solveExponential<false>(c, sourceVolts, railVolts, q,
                                     loadConductance, historyVolts);
         const std::array drive { railVolts - c.diodeDropVolts,
             c.collectorOnVolts - c.diodeDropVolts };
@@ -216,31 +257,87 @@ public:
         return result;
     }
 
+    // The bundle belongs to this calibration and interval. Keep the original
+    // on-demand API above for independent circuit fixtures and variable-step
+    // callers; neither path changes the capacitor's physical state at retime.
+    [[nodiscard]] Result process(const Calibration& c,
+        const PreparedCoefficients& coefficients, double sourceVolts,
+        double railVolts, double gate) noexcept
+    {
+        const double history = capacitorVolts_
+            + coefficients.companionOhms * capacitorAmps_;
+        const auto result = c.diodeSlopeVolts > 0.0
+            ? solveExponential<true>(c, sourceVolts, railVolts,
+                std::clamp(gate, 0.0, 1.0), coefficients.loadConductance,
+                history, &coefficients)
+            : solve(c, sourceVolts, railVolts, gate,
+                coefficients.loadConductance, history);
+        capacitorVolts_ = result.waveVolts - result.filterVolts;
+        capacitorAmps_ = result.capacitorAmps;
+        return result;
+    }
+
     [[nodiscard]] double capacitorVolts() const noexcept { return capacitorVolts_; }
     [[nodiscard]] double capacitorAmps() const noexcept { return capacitorAmps_; }
 
 private:
+    template <bool usePrepared>
     [[nodiscard]] static Result solveExponential(const Calibration& c,
         double sourceVolts, double railVolts, double gate,
-        double loadConductance, double historyVolts) noexcept
+        double loadConductance, double historyVolts,
+        const PreparedCoefficients* coefficients = nullptr) noexcept
     {
-        const double sourceG = 1.0 / c.sourceOhms;
-        const double baseG = sourceG + loadConductance;
+        const double sourceG = usePrepared
+            ? coefficients->sourceConductance : 1.0 / c.sourceOhms;
+        const double baseG = usePrepared
+            ? coefficients->baseConductance : sourceG + loadConductance;
         const double baseWave = (sourceVolts * sourceG
             + historyVolts * loadConductance) / baseG;
+        if (gate == 0.0 || gate == 1.0)
+        {
+            // Only one diode branch carries current at an integer gate.
+            // The source/load companion is its Thevenin source: KCL gives
+            // WAVE = baseWave + I/baseG. Substituting into the diode equation
+            // adds 1/baseG to its series resistance, so one log-current solve
+            // replaces the nested node/current Newton iterations exactly.
+            // Fractional antialias edges still require the two-branch solve.
+            const bool offBranch = gate == 1.0;
+            const double branchOhms = offBranch
+                ? pullupOhms + seriesOhms : seriesOhms;
+            const double drive = offBranch ? railVolts : c.collectorOnVolts;
+            const double diodeAmps = [&] {
+                if constexpr (usePrepared)
+                    return SubLevelDiodeLaw::forwardCurrent(drive - baseWave,
+                        offBranch ? coefficients->effectiveOffBranch
+                                  : coefficients->effectiveOnBranch);
+                else
+                    return SubLevelDiodeLaw::forwardCurrent(
+                        drive - baseWave, branchOhms + 1.0 / baseG,
+                        c.diodeSlopeVolts, c.diodeReferenceAmps, c.diodeDropVolts);
+            }();
+            const double wave = baseWave + diodeAmps / baseG;
+            const double current = (wave - historyVolts) * loadConductance;
+            return { wave, current * c.loadOhms, current,
+                offBranch ? diodeAmps : 0.0, offBranch ? 0.0 : diodeAmps };
+        }
         double wave = baseWave;
         double off = 0.0, on = 0.0;
+        const auto branchCurrent = [&](double voltage, bool offBranch) {
+            if constexpr (usePrepared)
+                return SubLevelDiodeLaw::forwardCurrent(voltage,
+                    offBranch ? coefficients->offBranch : coefficients->onBranch);
+            else
+                return SubLevelDiodeLaw::forwardCurrent(voltage,
+                    offBranch ? pullupOhms + seriesOhms : seriesOhms,
+                    c.diodeSlopeVolts, c.diodeReferenceAmps, c.diodeDropVolts);
+        };
         // Current is monotonic in junction voltage; F'(wave) >= baseG.
         // Starting at the unloaded node converges from below. The branch
         // series resistance limits its derivative, even at extreme drives.
         for (int iteration = 0; iteration < 12; ++iteration)
         {
-            off = gate > 0.0 ? SubLevelDiodeLaw::forwardCurrent(
-                railVolts - wave, pullupOhms + seriesOhms,
-                c.diodeSlopeVolts, c.diodeReferenceAmps, c.diodeDropVolts) : 0.0;
-            on = gate < 1.0 ? SubLevelDiodeLaw::forwardCurrent(
-                c.collectorOnVolts - wave, seriesOhms,
-                c.diodeSlopeVolts, c.diodeReferenceAmps, c.diodeDropVolts) : 0.0;
+            off = gate > 0.0 ? branchCurrent(railVolts - wave, true) : 0.0;
+            on = gate < 1.0 ? branchCurrent(c.collectorOnVolts - wave, false) : 0.0;
             const double residual = (wave - baseWave) * baseG
                 - gate * off - (1.0 - gate) * on;
             const double derivative = baseG

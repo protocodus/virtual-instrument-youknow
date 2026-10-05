@@ -4095,6 +4095,7 @@ private:
     // exact equality against the same parameters.portamento source, so the
     // memo can never return anything the unconditional call would not have.
     CoupledSubMixer::Calibration coupledMixerCalibration_ {};
+    CoupledSubMixer::PreparedCoefficients coupledMixerCoefficients_ {};
     bool coupledMixerEnabled_ { false };
     // Zero selects the existing voiced resistance; no preset selects an
     // override. Keeping this separate also detects incompatible calibration.

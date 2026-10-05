@@ -1,7 +1,10 @@
 #include "../Source/DSP/YouKnowCoupledMixer.h"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 
@@ -13,6 +16,102 @@ void require(bool condition, const char* message)
 {
     if (!condition)
         throw std::runtime_error(message);
+}
+
+bool sameBits(double first, double second)
+{
+    return std::bit_cast<std::uint64_t>(first) == std::bit_cast<std::uint64_t>(second);
+}
+
+// Frozen C56 update composed from the independent on-demand public node
+// solve. It never reads PreparedCoefficients or the instance process path.
+struct ReferenceC56
+{
+    double capacitorVolts {};
+    double capacitorAmps {};
+
+    void prime(const Mixer::Calibration& c, double source, double rail, double gate)
+    {
+        capacitorVolts = Mixer::solve(c, source, rail, gate, 0.0, 0.0).waveVolts;
+        capacitorAmps = 0.0;
+    }
+
+    Mixer::Result process(const Mixer::Calibration& c, double source,
+                          double rail, double gate, double seconds)
+    {
+        const double companionOhms = seconds / (2.0 * Mixer::couplingFarads);
+        const double history = capacitorVolts + companionOhms * capacitorAmps;
+        const auto result = Mixer::solve(c, source, rail, gate,
+            1.0 / (c.loadOhms + companionOhms), history);
+        capacitorVolts = result.waveVolts - result.filterVolts;
+        capacitorAmps = result.capacitorAmps;
+        return result;
+    }
+};
+
+void testPreparedTrajectory()
+{
+    const auto nominal = Mixer::evidenceCalibration();
+    auto alternate = nominal;
+    alternate.sourceOhms = 32000.0;
+    alternate.loadOhms = 8200.0;
+    alternate.diodeSlopeVolts = 0.041;
+    alternate.diodeReferenceAmps = 0.000082;
+    alternate.diodeDropVolts = 0.71;
+    alternate.collectorOnVolts = 0.13;
+    auto constantDrop = nominal;
+    constantDrop.sourceOhms = 10000.0;
+    constantDrop.loadOhms = 47000.0;
+    constantDrop.diodeSlopeVolts = 0.0;
+    constantDrop.diodeReferenceAmps = 0.0;
+    constantDrop.collectorOnVolts = 0.1;
+    const std::array calibrations { nominal, alternate, constantDrop };
+    constexpr std::array rates { 8000.0, 44100.0, 48000.0, 96000.0, 192000.0 };
+    constexpr std::array gates { -0.2, 0.0, 1.0e-12, 0.3,
+        1.0 - 1.0e-12, 1.0, 1.2 };
+
+    Mixer mixer;
+    ReferenceC56 reference;
+    mixer.prime(nominal, 0.4, 5.0, 0.5);
+    reference.prime(nominal, 0.4, 5.0, 0.5);
+    int checked = 0;
+    for (const auto& calibration : calibrations)
+    {
+        require(calibration.valid(), "prepared trajectory calibration invalid");
+        for (const double rate : rates)
+            for (const bool promotedFloatInterval : { false, true })
+            {
+                // Engine C56 uses its float reciprocal promoted to double;
+                // direct scientific fixtures also use an exact double step.
+                const double seconds = promotedFloatInterval
+                    ? static_cast<double>(static_cast<float>(1.0 / rate))
+                    : 1.0 / rate;
+                const auto coefficients = Mixer::prepareCoefficients(calibration, seconds);
+                const double chargeBefore = mixer.capacitorVolts();
+                require(sameBits(chargeBefore, reference.capacitorVolts),
+                        "coefficient rebuild replaced retained C56 charge");
+                for (int sample = 0; sample < 64; ++sample)
+                {
+                    const double source = 0.12 + 2.3 * std::sin(checked * 0.17);
+                    const double rail = Mixer::railFullScaleVolts
+                        * (0.5 + 0.49 * std::sin(checked * 0.013));
+                    const double gate = gates[static_cast<std::size_t>(sample) % gates.size()];
+                    const auto expected = reference.process(calibration, source, rail, gate, seconds);
+                    const auto actual = mixer.process(calibration, coefficients, source, rail, gate);
+                    require(sameBits(actual.waveVolts, expected.waveVolts)
+                        && sameBits(actual.filterVolts, expected.filterVolts)
+                        && sameBits(actual.capacitorAmps, expected.capacitorAmps)
+                        && sameBits(actual.subOffAmps, expected.subOffAmps)
+                        && sameBits(actual.subOnAmps, expected.subOnAmps),
+                        "prepared mixer changed the public node solve");
+                    require(sameBits(mixer.capacitorVolts(), reference.capacitorVolts),
+                            "prepared mixer changed the retained C56 trajectory");
+                    ++checked;
+                }
+            }
+    }
+    std::cout << "prepared/on-demand C56 trajectories: " << checked
+              << " samples bit-identical across circuits, rates and gate boundaries\n";
 }
 
 // Independent log-current bisection, followed by node-voltage bisection.
@@ -202,6 +301,7 @@ int main()
         require(std::isfinite(changedRate.filterVolts)
             && std::abs(mixer.capacitorVolts() - chargeBefore) < 0.01,
             "rate change replaced retained C56 voltage");
+        testPreparedTrajectory();
         std::cout << "soft coupled mixer: cases=" << cases
                   << " worst_node_error_V=" << worstVolts
                   << " worst_KCL_A=" << worstAmps

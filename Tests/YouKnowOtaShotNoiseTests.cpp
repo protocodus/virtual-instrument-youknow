@@ -113,6 +113,118 @@ template<class Reference> double error(const Matrix&a,const Reference&b) {
     for(int i=0;i<4;++i)for(int j=0;j<4;++j){const auto delta=a[i][j]-b[i][j];difference+=delta*delta;power+=b[i][j]*b[i][j];}
     return power>0?std::sqrt(difference/power):difference==0?0:std::numeric_limits<double>::infinity();
 }
+// Frozen pre-optimization positive quadrature. Keep this recurrence explicit
+// and independent of the shared-power/Horner implementation: it pins the
+// same Taylor8 polynomial, quadrature nodes, covariance doubling and PSD
+// behavior without altering the continuous ODE oracle or its tolerances.
+Matrix frozenPositiveCovariance(Matrix a,Vector d) {
+    double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=std::abs(x);norm=std::max(norm,sum);}
+    int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
+    const double scale=std::ldexp(1.0,-squares);
+    for(auto&row:a)for(double&x:row)x*=scale;
+    for(double&x:d)x*=scale;
+    constexpr Vector nodes{.06943184420297371,.33000947820757187,.6699905217924281,.9305681557970262};
+    constexpr Vector weights{.1739274225687269,.3260725774312731,.3260725774312731,.1739274225687269};
+    const auto exponential=[&](double position,int terms) {
+        Matrix f{},term{};for(std::size_t i=0;i<4;++i)f[i][i]=term[i][i]=1;
+        for(int order=1;order<=terms;++order){Matrix next{};
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j) {
+                next[i][j]=(a[i][i]*term[i][j]+a[i][(i+3)&3]*term[(i+3)&3][j])*position/order;
+                f[i][j]+=next[i][j];
+            }
+            term=next;
+        }return f;
+    };
+    Matrix q{};
+    for(std::size_t node=0;node<4;++node) {
+        const auto f=exponential(nodes[node],8);
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
+            double value=0;for(std::size_t k=0;k<4;++k)value+=f[i][k]*d[k]*f[j][k];
+            q[i][j]+=weights[node]*value;
+        }
+    }
+    for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[j][i]=q[i][j];
+    if(squares>0){auto f=exponential(1,8);
+        for(int square=0;square<squares;++square){const auto propagated=OtaShotNoise::multiply(OtaShotNoise::multiply(f,q),OtaShotNoise::transpose(f));
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];
+            f=OtaShotNoise::multiply(f,f);}
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
+    }return q;
+}
+void sharedPositiveCovarianceParity() {
+    double worstCovariance=0,worstProjection=0,worstInnovation=0;
+    std::size_t cases=0;
+    const auto screen=[&](const Matrix&a,const Vector&d) {
+        const auto expected=frozenPositiveCovariance(a,d);
+        const auto actual=OtaShotNoise::positiveCovariance(a,d);
+        const double covarianceError=error(actual,expected);
+        worstCovariance=std::max(worstCovariance,covarianceError);
+        require(covarianceError<1e-10,"shared Taylor8 covariance differs from the frozen polynomial");
+        bool expectedValid=false,actualValid=false;
+        const auto expectedL=OtaShotNoise::factor(expected,&expectedValid);
+        const auto actualL=OtaShotNoise::factor(actual,&actualValid);
+        require(actualValid==expectedValid,"shared Taylor8 changed positive Cholesky validity");
+        for(std::size_t i=0;i<4;++i) {
+            require(std::isfinite(actual[i][i]),"shared Taylor8 produced nonfinite node variance");
+            if(expected[i][i]>0) {
+                const double relative=std::abs(actual[i][i]/expected[i][i]-1);
+                worstProjection=std::max(worstProjection,relative);
+                require(relative<1e-10,"shared Taylor8 changed a tiny projected-node variance");
+            } else require(actual[i][i]==0,"shared Taylor8 introduced an unreachable node variance");
+        }
+        if(actualValid) {
+            const auto realized=OtaShotNoise::multiply(actualL,OtaShotNoise::transpose(actualL));
+            require(error(realized,actual)<1e-12,"shared Taylor8 covariance lost Cholesky reconstruction");
+            // Basis vectors expose every Cholesky column; mixed vectors
+            // also screen a realized innovation. Normalize each node by its
+            // own standard deviation, not the dominant covariance norm.
+            constexpr std::array<Vector,6> normals{{Vector{1,0,0,0},Vector{0,1,0,0},
+                Vector{0,0,1,0},Vector{0,0,0,1},Vector{.3,-.7,1.1,-.4},Vector{-1,.5,-.25,1.5}}};
+            for(const auto&normal:normals) {
+                const auto reference=OtaShotNoise::applyFactor(expectedL,normal);
+                const auto result=OtaShotNoise::applyFactor(actualL,normal);
+                for(std::size_t i=0;i<4;++i) {
+                    if(expected[i][i]>0) {
+                        const double normalized=std::abs(result[i]-reference[i])/std::sqrt(expected[i][i]);
+                        worstInnovation=std::max(worstInnovation,normalized);
+                        require(normalized<1e-8,"shared Taylor8 changed a normalized sparse-node innovation");
+                    } else require(result[i]==reference[i],"shared Taylor8 changed an unreachable innovation");
+                }
+            }
+        }
+        ++cases;
+    };
+    // Normalize to actual interval row norms, spanning physical low/high
+    // cutoff cases and several additional covariance-doubling levels.
+    constexpr std::array<Vector,6> spreads{{Vector{1,1,1,1},Vector{.95,1.05,.2,1.7},
+        Vector{1,1e-6,.02,.8},Vector{1,0,1,1},Vector{0,1,1,1},Vector{1,0,0,1}}};
+    for(const auto&spread:spreads)
+    for(double intervalNorm:{.0001,.0625,.125,.25,.5,1.,3.,12.,32.,64.})
+    for(double feedback:{0.,4.504,8.}) {
+        Matrix a{};double norm=0;
+        for(std::size_t i=0;i<4;++i) {
+            a[i][i]=-spread[i];a[i][(i+3)&3]=spread[i]*(i==0?-feedback:1);
+            norm=std::max(norm,std::abs(a[i][i])+std::abs(a[i][(i+3)&3]));
+        }
+        for(auto&row:a)for(double&value:row)value*=intervalNorm/norm;
+        screen(a,{});
+        for(int source=0;source<4;++source)
+        for(double floor:{0.,1e-30,1e-20,.009,.011}) {
+            Vector d{};for(int i=0;i<4;++i)d[i]=i==source?1:floor;
+            screen(a,d);
+        }
+        screen(a,{1e-7,1e-12,2e-12,.7e-12});
+    }
+    // The existing Q33 regression needs relative precision even though its
+    // variance is tiny. Keep its independently pinned tolerance unchanged.
+    Matrix critical{};for(int i=0;i<4;++i){critical[i][i]=-.0625;if(i)critical[i][i-1]=.0625;}
+    screen(critical,{1,0,0,0});
+    const auto q=OtaShotNoise::positiveCovariance(critical,{1,0,0,0});
+    require(std::abs(q[3][3]/2.120410e-10-1)<1e-6,"shared Taylor8 lost the fourth-stage sparse regression");
+    screen({},{});screen({},{1,0,0,0});screen({},{1e-30,1e-20,1e-12,1});
+    std::cout<<"shared Taylor8 frozen parity cases="<<cases<<"; covariance="<<worstCovariance
+        <<"; projected="<<worstProjection<<"; normalized innovation="<<worstInnovation<<"\n";
+}
 void currentAndCovariance() {
     constexpr double q=1.602176634e-19,C=240e-12,H=YouKnowTestAccess::h;
     for(double current:{0.,1e-9,1e-6,.000302079})for(double y:{0.,.1,.5,.9,1.})
@@ -403,4 +515,4 @@ void costs(){for(int voices:{6,16})for(int q:{1,4}){
         <<" s / .4 s audio (ratio "<<after/before<<")\n";
 }}
 }
-int main(){try{randomChecks();currentAndCovariance();sparseDiffusion();filterPsd();highCutoffVariance();vcaChecks();lifecycle();costs();}catch(const std::exception&e){guardAllocation=false;std::cerr<<e.what()<<'\n';return 1;}return 0;}
+int main(){try{randomChecks();sharedPositiveCovarianceParity();currentAndCovariance();sparseDiffusion();filterPsd();highCutoffVariance();vcaChecks();lifecycle();costs();}catch(const std::exception&e){guardAllocation=false;std::cerr<<e.what()<<'\n';return 1;}return 0;}

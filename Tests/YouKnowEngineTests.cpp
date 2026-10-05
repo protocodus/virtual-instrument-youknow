@@ -7,6 +7,7 @@
 #include "DSP/YouKnowPanel.h"
 #include "DSP/YouKnowPresets.h"
 #include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowProductHardwareRealism.h"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +22,7 @@
 #include <numbers>
 #include <iostream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1900,6 +1902,203 @@ struct YouKnowTestAccess
     }
 
 #if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
+    static void useScalarVoiceRenderer(YouKnowEngine& engine) noexcept
+    {
+        // With Early disabled, the template's two arithmetic paths are the
+        // same; this existing selector only bypasses SIMD scheduling.
+        engine.useCubicEarly_ = false;
+    }
+
+    static bool samePhysicalCardStates(const YouKnowEngine& first,
+                                       const YouKnowEngine& second,
+                                       int firstCard = 0) noexcept
+    {
+        // Compare retained values, never object representations: Voice and
+        // its nested state objects may contain compiler-dependent padding.
+        const auto controls = [](const auto& voice) {
+            return std::tie(voice.active, voice.keyDown, voice.sustained,
+                voice.releasing, voice.unisonMember, voice.dcoResetPending,
+                voice.freewheeling, voice.hasAllocatorHistory,
+                voice.hasVoicePitchHistory, voice.rootMidi, voice.cardIndex,
+                voice.generation, voice.releaseStamp, voice.velocity,
+                voice.currentMidi, voice.targetMidi, voice.lastRootMidi,
+                voice.lastVoiceMidi, voice.glideSemitonesPerScan,
+                voice.filterOmegaStep, voice.cutoffChainCounts,
+                voice.cutoffChainFeedback, voice.cutoffCountsTarget,
+                voice.cutoffCounts, voice.vcaControlTarget, voice.vcaControl,
+                voice.dcoCvTarget, voice.dcoCv, voice.dcoPitchTransactionValid,
+                voice.dcoPitchTransactionColdStart,
+                voice.dcoPitchTransactionCvTarget, voice.attackIncrement,
+                voice.decayMultiplier, voice.releaseMultiplier, voice.feedback,
+                voice.inputCompensation, voice.vca, voice.vcaGain,
+                voice.vcaInputTrim, voice.pulseDuty, voice.pulseThresholdVolts,
+                voice.pulsePinnedHigh, voice.rampCurrentScale,
+                voice.rampServiceScale, voice.previousPulseThresholdVolts,
+                voice.previousPulsePinnedHigh, voice.pulseThresholdPrimed,
+                voice.energy, voice.noiseState, voice.vcaInputVolts);
+        };
+        const auto envelope = [](const auto& state) {
+            return std::tie(state.stage, state.level, state.value,
+                state.attackPhase, state.decayPhase, state.phase, state.gate,
+                state.running);
+        };
+        const auto oscillator = [](const auto& state) {
+            return std::tie(state.divider, state.pendingDivider,
+                state.pendingDividerValid, state.pitState, state.pitOutHigh,
+                state.pitWriteState, state.pitWriteDivider,
+                state.cpuStatesToWrite, state.coldInitialLoadPending,
+                state.pitClocksToEvent, state.periodSamples, state.rampValue,
+                state.rampSlopePerSecond, state.resetSecondsRemaining,
+                state.physicalResetActive, state.resetTargetValue,
+                state.resetTimeConstant, state.resetSawCorrection,
+                state.positiveRailHeld, state.renderScale, state.pulseState,
+                state.subState);
+        };
+        const auto correction = [](const auto& state) {
+            return std::tie(state.ring, state.delay, state.base, state.primed);
+        };
+        const auto filter = [](const auto& state) {
+            return std::tie(state.state, state.offsetVoltage,
+                state.resonanceOffsetVolts, state.stageNoiseAt,
+                state.stageNoiseHistory, state.stageNoiseHistoryCount,
+                state.inputHistory, state.inputHistoryCount, state.gScale,
+                state.previousOmegaStep, state.previousFeedback,
+                state.previousHeadroom, state.parameterHistoryPrimed);
+        };
+        const auto random = [](const auto& state) {
+            return std::tie(state.state, state.spare, state.hasSpare);
+        };
+        const auto noiseCache = [](const auto& state) {
+            return std::tie(state.a, state.l, state.d, state.primed);
+        };
+        const auto amplifierSupport = [](const auto& state) {
+            return std::tie(state.inputs, state.gains, state.temperatures,
+                state.outputs, state.inputWrite, state.outputWrite);
+        };
+        for (int card = firstCard; card < YouKnowEngine::hardwareVoices; ++card)
+        {
+            const auto& a = first.voices_[static_cast<std::size_t>(card)];
+            const auto& b = second.voices_[static_cast<std::size_t>(card)];
+            if (controls(a) != controls(b)
+                || envelope(a.envelope) != envelope(b.envelope)
+                || oscillator(a.dco) != oscillator(b.dco)
+                || correction(a.dco.saw) != correction(b.dco.saw)
+                || correction(a.dco.pulse) != correction(b.dco.pulse)
+                || correction(a.dco.sub) != correction(b.dco.sub)
+                || filter(a.filter) != filter(b.filter)
+                || random(a.filterShotRandom) != random(b.filterShotRandom)
+                || random(a.vcaShotRandom) != random(b.vcaShotRandom)
+                || noiseCache(a.filterShotCache) != noiseCache(b.filterShotCache)
+                || a.moduleCoupling.state != b.moduleCoupling.state
+                || a.coupledMixer.capacitorVolts()
+                    != b.coupledMixer.capacitorVolts()
+                || a.coupledMixer.capacitorAmps()
+                    != b.coupledMixer.capacitorAmps()
+                || a.vcaInputCoupling.state != b.vcaInputCoupling.state
+                || amplifierSupport(a.vcaAntialias)
+                    != amplifierSupport(b.vcaAntialias))
+                return false;
+        }
+        return true;
+    }
+
+    static bool compareInactiveLivePair(const YouKnowEngine& initial,
+                                        float omega) noexcept
+    {
+        auto paired = std::make_unique<YouKnowEngine>(initial);
+        auto scalar = std::make_unique<YouKnowEngine>(initial);
+        for (auto* engine : { paired.get(), scalar.get() })
+            for (int card = 0; card < 2; ++card)
+            {
+                auto& voice = engine->voices_[static_cast<std::size_t>(card)];
+                voice.active = false;
+                voice.keyDown = false;
+                // A retired card may retain a quiet nonzero control. It must
+                // keep that state, rather than being retired/reset again.
+                voice.vcaControl = .02 + .001 * card;
+            }
+
+        for (int interval = 0; interval < 192; ++interval)
+        {
+            if (interval == 96)
+                for (auto* engine : { paired.get(), scalar.get() })
+                {
+                    engine->noteOn(48, .8f);
+                    engine->noteOn(55, .7f);
+                }
+            if (interval == 128)
+                for (auto* engine : { paired.get(), scalar.get() })
+                {
+                    auto edited = engine->activeParameters_;
+                    edited.calibration = 1.0f - edited.calibration;
+                    edited.pulseEnabled = !edited.pulseEnabled;
+                    engine->setParameters(edited);
+                }
+            for (auto* engine : { paired.get(), scalar.get() })
+                for (int card = 0; card < 2; ++card)
+                {
+                    auto& voice = engine->voices_[static_cast<std::size_t>(card)];
+                    engine->updatePulseComparator(voice, engine->activeParameters_);
+                    engine->updateVoiceAudio(voice, engine->activeParameters_);
+                    voice.filterOmegaStep = omega;
+                    engine->exactVcfControlInterval_[static_cast<std::size_t>(card)] = false;
+                }
+            const float source = .01f * static_cast<float>((interval % 9) - 4);
+            const auto actual = paired->renderVoicePair(
+                paired->voices_[0], paired->voices_[1], paired->activeParameters_, source);
+            const std::array expected {
+                scalar->renderVoice<true>(scalar->voices_[0], scalar->activeParameters_, source),
+                scalar->renderVoice<true>(scalar->voices_[1], scalar->activeParameters_, source)
+            };
+            if (std::memcmp(actual.data(), expected.data(),
+                            actual.size() * sizeof(actual[0])) != 0
+                || !samePhysicalCardStates(*paired, *scalar))
+                return false;
+            paired->advanceRangeClock(paired->activeParameters_.range);
+            scalar->advanceRangeClock(scalar->activeParameters_.range);
+        }
+        // The actual allocator and complete process resume from the compared
+        // inactive histories, rather than starting replacement cells from zero.
+        paired->allNotesOff();
+        scalar->allNotesOff();
+        paired->noteOn(60, .9f);
+        scalar->noteOn(60, .9f);
+        std::array<float, 64> aLeft {}, aRight {}, bLeft {}, bRight {};
+        paired->process(aLeft.data(), aRight.data(), 64);
+        scalar->process(bLeft.data(), bRight.data(), 64);
+        return aLeft == bLeft && aRight == bRight
+            && samePhysicalCardStates(*paired, *scalar);
+    }
+
+    static void activateQuartetAfterIdleCard(YouKnowEngine& engine) noexcept
+    {
+        for (int card = 0; card < YouKnowEngine::hardwareVoices; ++card)
+        {
+            auto& voice = engine.voices_[static_cast<std::size_t>(card)];
+            voice.active = card >= 1 && card <= 4;
+            voice.keyDown = voice.active;
+            voice.energy = 0;
+            if (voice.active)
+            {
+                voice.vcaControl = voice.vcaControlTarget = .65f;
+                voice.envelope.stage = YouKnowEngine::EnvelopeStage::Sustain;
+                voice.envelope.level = YouKnowEngine::envelopePeak;
+                voice.envelope.value = 1;
+                voice.envelope.gate = voice.envelope.running = true;
+                voice.envelope.attackPhase = voice.envelope.decayPhase = false;
+            }
+        }
+        engine.updateActiveVoiceCount();
+    }
+
+    static void suppressIdlePairBeforeQuartet(YouKnowEngine& engine) noexcept
+    {
+        // The closed card contributes no output/shared energy. Treating only
+        // that discarded cell as a virtual extension inhibits the new pair,
+        // leaving the old active-quartet schedule as an independent oracle.
+        engine.voices_[0].cardIndex = YouKnowEngine::hardwareVoices;
+    }
+
     struct OtaPairComparison
     {
         bool accepted {};
@@ -16881,6 +17080,110 @@ void testPanelHelpMatchesTheModulationRouting()
            "the panel still claims that LFO DELAY reaches PWM");
 }
 
+void testInactiveLivePairsPreserveCardState()
+{
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
+    const auto parametersForPair = [](float character) {
+        auto parameters = plainPatch();
+        ProductHardwareRealismProfile::applyTo(parameters);
+        parameters.calibration = character;
+        parameters.vcfTanhMode = VcfTanhMode::PolyZoned;
+        parameters.vcfFastEarlyMode = VcfFastEarlyMode::Cubic;
+        parameters.vcfSolverMode = VcfSolverMode::Rk4Single;
+        parameters.cutoff = .28f;
+        parameters.resonance = .65f;
+        parameters.pulseEnabled = true;
+        parameters.subLevel = .6f;
+        parameters.noiseLevel = .05f;
+        parameters.chorus = ChorusMode::Off;
+        return parameters;
+    };
+    for (const float character : { 0.0f, 1.0f })
+    {
+        auto initial = std::make_unique<YouKnowEngine>();
+        ProductHardwareRealismProfile::configureBeforePrepare(*initial);
+        expect(initial->configureThermalStart(true),
+               "the live-pair fixture rejected a settled thermal start");
+        initial->prepare(48000, blockSize, 1);
+        initial->setParameters(parametersForPair(character));
+        static_cast<void>(render(*initial, 256));
+        for (const float omega : { .08f, 2.1f })
+            expect(YouKnowTestAccess::compareInactiveLivePair(*initial, omega),
+                   "inactive coupled pair changed scalar card state/output through retrigger");
+    }
+
+    // Independent whole-process scalar oracle with Early disabled. This does
+    // not stand in for a default-product audio comparison: it isolates the
+    // scheduler while retaining card tolerances, shot noise and both couplings.
+    // The low cutoff stays on double RK4; float Merson quads are tested below.
+    for (const bool coupled : { false, true })
+        for (const float character : { 0.0f, 1.0f })
+        {
+            auto candidate = std::make_unique<YouKnowEngine>();
+            if (coupled)
+                ProductHardwareRealismProfile::configureBeforePrepare(*candidate);
+            else
+                ProductFidelityProfile::configureBeforePrepare(*candidate);
+            expect(candidate->configureThermalStart(true),
+                   "the process-pair fixture rejected a settled thermal start");
+            candidate->prepare(48000, blockSize, 1);
+            auto parameters = parametersForPair(character);
+            parameters.enableVcfEarlyEffect = false;
+            candidate->setParameters(parameters);
+            auto scalar = std::make_unique<YouKnowEngine>(*candidate);
+            for (int segment = 0; segment < 20; ++segment)
+            {
+                if (segment == 2 || segment == 8 || segment == 16)
+                    for (auto* engine : { candidate.get(), scalar.get() })
+                        engine->noteOn(48 + segment, .8f);
+                if (segment == 5 || segment == 12)
+                    for (auto* engine : { candidate.get(), scalar.get() })
+                        engine->allNotesOff();
+                if (segment == 7 || segment == 13)
+                {
+                    parameters.calibration = 1.0f - parameters.calibration;
+                    parameters.pulseEnabled = !parameters.pulseEnabled;
+                    parameters.pwmDepth = .61f;
+                    parameters.cutoff = .32f;
+                    candidate->setParameters(parameters);
+                    scalar->setParameters(parameters);
+                }
+                YouKnowTestAccess::useScalarVoiceRenderer(*scalar);
+                const auto actual = render(*candidate, 64);
+                const auto expected = render(*scalar, 64);
+                expect(actual.left == expected.left && actual.right == expected.right,
+                       "live-pair scheduling changed the Early-disabled scalar process output");
+                expect(YouKnowTestAccess::samePhysicalCardStates(*candidate, *scalar),
+                       "live-pair scheduling changed a physical card's persistent state");
+            }
+        }
+
+    // A closed card followed by active slots1–4 must not steal the first
+    // member of their existing float Merson quad. Inhibiting only that closed
+    // cell's new eligibility independently reproduces the old active schedule.
+    auto quartet = std::make_unique<YouKnowEngine>();
+    ProductHardwareRealismProfile::configureBeforePrepare(*quartet);
+    expect(quartet->configureThermalStart(true),
+           "the quartet fixture rejected a settled thermal start");
+    quartet->prepare(48000, blockSize, 1);
+    auto parameters = parametersForPair(1);
+    parameters.cutoff = 1;
+    parameters.resonance = .82f;
+    parameters.enableRailRipple = false;
+    quartet->setParameters(parameters);
+    static_cast<void>(render(*quartet, 256));
+    YouKnowTestAccess::activateQuartetAfterIdleCard(*quartet);
+    auto previousSchedule = std::make_unique<YouKnowEngine>(*quartet);
+    YouKnowTestAccess::suppressIdlePairBeforeQuartet(*previousSchedule);
+    const auto actual = render(*quartet, 64);
+    const auto expected = render(*previousSchedule, 64);
+    expect(actual.left == expected.left && actual.right == expected.right,
+           "pairing the preceding idle card changed the active quartet output");
+    expect(YouKnowTestAccess::samePhysicalCardStates(*quartet, *previousSchedule, 1),
+           "pairing the preceding idle card changed the active quartet schedule/state");
+#endif
+}
+
 void testSettledRk4PairMatchesScalar()
 {
 #if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
@@ -17208,6 +17511,7 @@ int main()
     {
 #if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
         testSettledRk4PairMatchesScalar();
+        testInactiveLivePairsPreserveCardState();
         if (failures != 0)
         {
             std::cerr << failures << " SIMD check(s) failed.\n";
@@ -17491,6 +17795,7 @@ int main()
     testPanelLayout();
     testPanelHelpMatchesTheModulationRouting();
     testSettledRk4PairMatchesScalar();
+    testInactiveLivePairsPreserveCardState();
     testQualityChangeRefreshesTheFilterCoefficient();
     testResonanceDoesNotMultiplyTheSolveCost();
     testCpuBudget();

@@ -6,8 +6,10 @@
 #include "DSP/YouKnowProductFidelity.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -24,6 +26,7 @@ void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p,std::size_t) noexcept { std::free(p); }
 namespace youknow {
 struct YouKnowTestAccess {
+ static float clip(float x) {return YouKnowEngine::outputSummerClip(x);}
  static EngineParameters parameters(const YouKnowEngine& e) {return e.activeParameters_;}
  static void summer(YouKnowEngine& e,float& l,float& r) {e.processOutputSummer(l,r,e.activeParameters_);}
  static void wet(YouKnowEngine& e,double r) { e.chorus_.finiteMuteDriveEnabled_=true; e.chorus_.wetInputConductanceRatio_=r; e.chorus_.muteDriveMuted_=r==0; }
@@ -153,5 +156,87 @@ void engineWitnessAndChronology() {
  std::cout<<"hot LINE+Boost IC6 peak="<<after.preclip<<"Vp aligned residual="<<10*std::log10(delta/energy)<<"dBc (whole-engine diagnostic)\n";
  require(after.preclip>4,"actual hot LINE fixture did not exercise IC6 signal");
 }
+
+void stereoSpecializationParity() {
+ // Independent general-channel routines are the frozen arithmetic oracle;
+ // context uses a separate event ledger rather than either stereo method.
+ const auto sameFloat=[](float a,float b) {return std::bit_cast<std::uint32_t>(a)==std::bit_cast<std::uint32_t>(b);};
+ const auto sameContext=[](OutputSummerAntialias::Context a,OutputSummerAntialias::Context b) {
+  return std::bit_cast<std::uint64_t>(a.wetRatio)==std::bit_cast<std::uint64_t>(b.wetRatio) && a.wetConnected==b.wetConnected;
+ };
+ const auto sameHistory=[&](const VoiceVcaAntialias& a,const VoiceVcaAntialias& b) {
+  return a.inputWrite==b.inputWrite && a.outputWrite==b.outputWrite
+   && std::equal(a.inputs.begin(),a.inputs.end(),b.inputs.begin(),sameFloat)
+   && std::equal(a.gains.begin(),a.gains.end(),b.gains.begin(),sameFloat)
+   && std::equal(a.temperatures.begin(),a.temperatures.end(),b.temperatures.begin(),sameFloat)
+   && std::equal(a.outputs.begin(),a.outputs.end(),b.outputs.begin(),sameFloat);
+ };
+ const auto clip=[](float x) {return YouKnowTestAccess::clip(x);};
+ std::uint32_t random=0x539a2d71;
+ const auto next=[&]() {random^=random<<13;random^=random>>17;random^=random<<5;return random;};
+ unsigned compared=0;
+ for(double rate:{44100.,48000.,96000.,192000.}) {
+  OutputSummerAntialias candidate;
+  VoiceVcaAntialias oracleLeft,oracleRight;
+  std::array<OutputSummerAntialias::Context,VoiceVcaAntialias::inputRingSize> ledger{};
+  int ledgerWrite=0;
+  auto kernel=VoiceVcaAntialias::prepare(rate);
+  for(int frame=0;frame<4096;++frame) {
+   if(frame==513 || frame==1769) {candidate.reset();oracleLeft.reset();oracleRight.reset();ledger={};ledgerWrite=0;}
+   // Deliberately retain histories through direct/2x/4x kernel changes as
+   // well as testing the engine's usual reset boundary above.
+   if(frame==2057) kernel=VoiceVcaAntialias::prepare(rate==96000.?48000.:rate==192000.?96000.:192000.);
+   if(frame==3001) kernel=VoiceVcaAntialias::prepare(rate);
+   if(frame==1537 && kernel.factor>1) {
+    // Public independent histories must keep working via the fallback.
+    const float a=candidate.right.process(.2345f,1,kernel,clip);
+    const float b=oracleRight.process(.2345f,1,kernel,clip);
+    require(sameFloat(a,b),"independent IC6 history setup differs");
+   }
+   float l=static_cast<float>((double(next())/4294967295.-.5)*40);
+   float r=static_cast<float>((double(next())/4294967295.-.5)*27);
+   if(frame%193==0) l=0.f;
+   if(frame%197==0) r=-0.f;
+   if(frame<96) {l=frame==0?17.f:0.f;r=frame==7?-19.f:0.f;}
+   const double ratio=frame%73<21?0:double(next())/4294967295.;
+   const OutputSummerAntialias::Context context{ratio,ratio!=0};
+   ledger[static_cast<std::size_t>(ledgerWrite)]=context;
+   const int delay=kernel.factor>1?VoiceVcaAntialias::delaySamples:0;
+   const auto expectedContext=ledger[static_cast<std::size_t>((ledgerWrite-delay+64)&63)];
+   ledgerWrite=(ledgerWrite+1)&63;
+   const float expectedLeft=oracleLeft.process(l,1,kernel,clip);
+   const float expectedRight=oracleRight.process(r,1,kernel,clip);
+   guardAllocation=true;
+   const auto result=candidate.processStereo(l,r,context,kernel,clip);
+   guardAllocation=false;
+   require(sameFloat(result.left,expectedLeft) && sameFloat(result.right,expectedRight),"stereo IC6 FIR changed channel arithmetic bits");
+   require(sameContext(result.context,expectedContext) && candidate.write==ledgerWrite,"stereo IC6 FIR changed context chronology");
+   if(frame%61==0 || frame==4095) {
+    require(sameHistory(candidate.left,oracleLeft) && sameHistory(candidate.right,oracleRight),"stereo IC6 FIR changed complete channel histories");
+    require(std::equal(candidate.contexts.begin(),candidate.contexts.end(),ledger.begin(),sameContext),"stereo IC6 FIR changed context history");
+   }
+   ++compared;
+  }
+ }
+ // A stateful shape proves that vectorizing reconstruction does not
+ // interleave L/R callback chronology or skip startup shape evaluations.
+ for(double rate:{48000.,96000.,192000.}) {
+  OutputSummerAntialias candidate;
+  VoiceVcaAntialias oracleLeft,oracleRight;
+  const auto kernel=VoiceVcaAntialias::prepare(rate);
+  unsigned calls=0,expectedCalls=0;
+  const auto shape=[&](float x) {return clip(x)+float(calls++%17)*.03125f;};
+  const auto expectedShape=[&](float x) {return clip(x)+float(expectedCalls++%17)*.03125f;};
+  for(int frame=0;frame<512;++frame) {
+   const float l=float(std::sin(frame*.019)*8),r=float(std::cos(frame*.073)*11);
+   const float a=oracleLeft.process(l,1,kernel,expectedShape),b=oracleRight.process(r,1,kernel,expectedShape);
+   const auto result=candidate.processStereo(l,r,{},kernel,shape);
+   require(sameFloat(result.left,a) && sameFloat(result.right,b) && calls==expectedCalls,"stereo IC6 FIR changed stateful shape order");
+  }
+ }
+ require(allocations==0,"stereo IC6 FIR allocated");
+ std::cout<<"stereo IC6 specialization bit parity="<<compared<<" random/hot/startup/reset/rate frames\n";
 }
-int main(){try{analogueHarmonicsAndAliases();moderatePassband();contextChronology();latencyAndLifecycle();engineWitnessAndChronology();std::cout<<"Output summer antialias tests passed; sizeof Engine="<<sizeof(YouKnowEngine)<<" bytes\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+
+}
+int main(){try{stereoSpecializationParity();analogueHarmonicsAndAliases();moderatePassband();contextChronology();latencyAndLifecycle();engineWitnessAndChronology();std::cout<<"Output summer antialias tests passed; sizeof Engine="<<sizeof(YouKnowEngine)<<" bytes\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
