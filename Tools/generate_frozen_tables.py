@@ -4,6 +4,27 @@
 Run with the same compiler and libm when checking exact reproduction: platforms
 may differ by a last bit in transcendental functions. Shipping native builds
 continue to use their original builders; embedded builds use the checked-in data.
+
+
+YOUKNOW_EMBEDDED_TARGET selects hexadecimal constants in the canonical engine,
+chorus and SUB control source. The storage/startup changes share exactly the
+same interpolation and processing code with the native builders. The 24 sets
+cover current and compatibility BBD transfer/noise, VCF interpolation/resonance,
+oscillator correction, control junctions, service calibration and firmware data.
+The temperature-dependent VCA set has 40 x 8,193 nodes (two binary64 currents and
+two binary32 slopes per node): 7,865,280 bytes plus its span, shared read-only
+rather than allocated in every engine. Its text is most of the ~26 MiB data.
+
+The generators include the shipping source directly and expose private tables
+only in their offline translation units. --check rebuilds the 24 data files and
+compares each emitted value, then verifies the embedded accessors against those
+same builders. No copied mathematical implementation supplies the oracle.
+
+Generation environment: GCC 14.2, glibc 2.41, Linux; GNU/ELF section garbage
+collection is required. Cross-platform last-bit transcendental differences must
+be reviewed, not silently regenerated. Inspected embedded C++17 GNU objects have
+no writable globals, static-initialization routines or static-guard references.
+Licensed Reason target analysis and packaging remain separate SDK checks.
 """
 import argparse
 import pathlib
