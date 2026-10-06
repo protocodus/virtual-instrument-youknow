@@ -396,8 +396,8 @@ constexpr float outputJackCapacitanceF = 1.0e-9f;
 // The generator is a bipolar uniform sequence at the 192 kHz reference rate, so
 // amplitude A gives RMS A/sqrt(3) over an fs/2 band: A = sqrt(3) * density *
 // sqrt(fs/2) = 198.7 uV, which is 19.9 dB above the retired value.
-constexpr float filterNoiseSourceOhms = 68000.0f * 560.0f / (68000.0f + 560.0f);
-constexpr float filterNoiseStageAttenuation = 560.0f / (68000.0f + 560.0f);
+[[maybe_unused]] constexpr float filterNoiseSourceOhms = 68000.0f * 560.0f / (68000.0f + 560.0f);
+[[maybe_unused]] constexpr float filterNoiseStageAttenuation = 560.0f / (68000.0f + 560.0f);
 #if defined(YOUKNOW_EMBEDDED_TARGET)
 constexpr float filterNoiseVoltsDerived =
 #include "FrozenTables/CardJohnsonNoise.inc"
@@ -3494,8 +3494,8 @@ constexpr double vcfTanhFineLimit = 5.0;
 constexpr double vcfTanhLimit = 19.0;
 constexpr std::size_t vcfTanhFineIntervals = 160;
 constexpr std::size_t vcfTanhTailIntervals = 56;
-constexpr double vcfTanhFineWidth = 1.0 / 32.0;
-constexpr double vcfTanhTailWidth = 1.0 / 4.0;
+[[maybe_unused]] constexpr double vcfTanhFineWidth = 1.0 / 32.0;
+[[maybe_unused]] constexpr double vcfTanhTailWidth = 1.0 / 4.0;
 constexpr double vcfTanhFineScale = 32.0;
 constexpr double vcfTanhTailScale = 4.0;
 

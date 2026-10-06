@@ -2970,7 +2970,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // history from before the skip began. Rebuild the wet path from silence:
     // the established from-zero wet glide then brings the effect in exactly
     // as a patch loaded with chorus engaged comes in.
-    if (wetPathFlushPending_) [[unlikely]]
+    if (wetPathFlushPending_)
     {
         wetPathFlushPending_ = false;
         lineA_.reset(0x9e3779b9u);
