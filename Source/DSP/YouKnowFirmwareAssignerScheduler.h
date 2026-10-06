@@ -4,7 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <span>
+#include "YouKnowCompatibility.h"
 
 namespace youknow {
 // Original A-5 normal foreground, receive parser, allocator, ADC and sender.
@@ -116,7 +116,7 @@ class FirmwareAssignerScheduler {
     // InstructionBudget is a resumable100000-instruction per-call safety bound.
     [[nodiscard]] static Result advanceTo(
         State &, FirmwareUartTrace::State &, const Configuration &, const Tables &,
-        const FirmwareAssignerIo::Inputs &, std::span<const InputEvent>,
+        const FirmwareAssignerIo::Inputs &, Span<const InputEvent>,
         std::uint64_t target, Events &, FirmwareUartTrace::EventBuffer &) noexcept;
 };
 } // namespace youknow

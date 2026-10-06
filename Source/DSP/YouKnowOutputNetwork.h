@@ -6,7 +6,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
-#include <numbers>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -53,7 +53,14 @@ public:
         // Per connected cable/input: one on each stereo jack, or ONE on the
         // shared mono jack. 0 retains the original 1nF internal capacitors.
         double externalCapacitanceFarads {};
-        bool operator==(const Configuration&) const = default;
+        constexpr bool operator==(const Configuration& other) const noexcept
+        {
+            return selector == other.selector && loadOhms == other.loadOhms
+                && mono == other.mono
+                && externalCapacitanceFarads == other.externalCapacitanceFarads;
+        }
+        constexpr bool operator!=(const Configuration& other) const noexcept
+        { return !(*this == other); }
     };
 
     struct Coefficients
@@ -165,7 +172,7 @@ public:
     }
 
 private:
-    static constexpr double twoPi = 2.0 * std::numbers::pi;
+    static constexpr double twoPi = 2.0 * numbers::pi;
     static constexpr double couplingFarads = 10e-6;
     static constexpr double jackFarads = 1e-9;
     static constexpr double boltzmann = 1.380649e-23;
@@ -262,7 +269,7 @@ private:
         coefficients_ = { low / twoPi, high / twoPi, -gaj / (capacitance * high),
                           noiseZero / low, std::sqrt(4.0 * boltzmann * gjj)
                               / (capacitance * high) };
-        lowG_ = std::tan(std::numbers::pi * coefficients_.lowPoleHz / sampleRate_);
+        lowG_ = std::tan(numbers::pi * coefficients_.lowPoleHz / sampleRate_);
         jackCoefficients_ = OutputJackLowPass::coefficients(coefficients_.highPoleHz, sampleRate_);
         refreshNoiseScale();
     }

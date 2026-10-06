@@ -1,7 +1,7 @@
 #pragma once
 #include "YouKnowFirmwareAssignerAudioBridge.h"
 #include <array>
-#include <span>
+#include "YouKnowCompatibility.h"
 
 namespace youknow {
 struct EngineParameters;
@@ -33,7 +33,7 @@ public:
     // or -2 when the native contact release was handled here.
     [[nodiscard]] int keyboardNoteOff(int sourceNote) noexcept;
     void clearKeyboardNotes() noexcept;
-    [[nodiscard]] bool message(std::span<const std::uint8_t>, std::uint64_t now) noexcept;
+    [[nodiscard]] bool message(Span<const std::uint8_t>, std::uint64_t now) noexcept;
     [[nodiscard]] bool advance(YouKnowEngine&, std::uint64_t target) noexcept;
     void keyMode(unsigned mode) noexcept;
     [[nodiscard]] const FirmwareAssignerAudioBridge::State& state() const noexcept { return state_; }

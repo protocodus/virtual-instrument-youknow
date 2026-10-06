@@ -1005,7 +1005,7 @@ Stream::Result advanceToImpl(Stream::State &state, const FirmwareControlTrace::T
                              const Stream::Tables *parameterTables,
                              const FirmwareAdcTrace::Inputs &inputs,
                              const Stream::Configuration &configuration,
-                             std::span<const Stream::ByteReady> bytes,
+                             Span<const Stream::ByteReady> bytes,
                              std::uint64_t target, Stream::Events &events) noexcept {
     using Status = Stream::Status;
     using PendingKind = Stream::PendingKind;
@@ -1109,7 +1109,7 @@ Stream::Result advanceToImpl(Stream::State &state, const FirmwareControlTrace::T
 
 FirmwareSerialTrace::Result FirmwareSerialTrace::advanceTo(
     State &state, const Tables &tables, const FirmwareAdcTrace::Inputs &inputs,
-    const Configuration &configuration, std::span<const ByteReady> bytes,
+    const Configuration &configuration, Span<const ByteReady> bytes,
     std::uint64_t target, Events &events) noexcept {
     return advanceToImpl(state, tables.control, &tables, inputs, configuration, bytes, target, events);
 }
@@ -1117,7 +1117,7 @@ FirmwareSerialTrace::Result FirmwareSerialTrace::advanceTo(
 FirmwareSerialTrace::Result FirmwareSerialTrace::advanceTo(
     State &state, const FirmwareControlTrace::Tables &tables,
     const FirmwareAdcTrace::Inputs &inputs, const Configuration &configuration,
-    std::span<const ByteReady> bytes, std::uint64_t target, Events &events) noexcept {
+    Span<const ByteReady> bytes, std::uint64_t target, Events &events) noexcept {
     return advanceToImpl(state, tables, nullptr, inputs, configuration, bytes, target, events);
 }
 } // namespace youknow

@@ -3,7 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <span>
+#include "YouKnowCompatibility.h"
 
 namespace youknow {
 // Original A-5 sender subgraph, not a complete keyboard/MIDI assigner.
@@ -89,7 +89,7 @@ class FirmwareAssignerTrace {
     // only the returned request prefix; drain both event buffers before resuming.
     [[nodiscard]] static Result advanceTo(
         State &, FirmwareUartTrace::State &, const FirmwareUartTrace::Configuration &,
-        std::span<const Request>, std::uint64_t target, Events &,
+        Span<const Request>, std::uint64_t target, Events &,
         FirmwareUartTrace::EventBuffer &) noexcept;
 };
 } // namespace youknow

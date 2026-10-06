@@ -5,7 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <span>
+#include "YouKnowCompatibility.h"
 
 namespace youknow {
 
@@ -20,7 +20,7 @@ class FirmwareAssignerAudioBridge {
     using Sender = FirmwareAssignerScheduler;
     using ByteReady = FirmwareSerialPinDecoder::ByteReady;
     struct Output {
-        std::span<ByteReady> bytes;
+        Span<ByteReady> bytes;
         std::size_t count = 0;
     };
     static constexpr std::size_t wireCapacity = 64;
@@ -94,7 +94,7 @@ class FirmwareAssignerAudioBridge {
     // nothing, and has no audio sample-rate or oversampling state.
     [[nodiscard]] static Result advanceTo(
         State&, const Sender::Configuration&, const Sender::Tables&,
-        const FirmwareAssignerIo::Inputs&, std::span<const Sender::InputEvent>,
+        const FirmwareAssignerIo::Inputs&, Span<const Sender::InputEvent>,
         std::uint64_t target, Output&) noexcept;
 };
 

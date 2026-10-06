@@ -65,7 +65,7 @@ void OriginalPerformance::reset(const EngineParameters& p) noexcept {
     r[0xc8]=static_cast<std::uint8_t>(0x40|contact(wantedMode_));
     (void)FirmwareAssignerAudioBridge::reset(state_,warm,uart);
 }
-bool OriginalPerformance::message(std::span<const std::uint8_t> bytes, std::uint64_t now) noexcept {
+bool OriginalPerformance::message(Span<const std::uint8_t> bytes, std::uint64_t now) noexcept {
     if(bytes.empty()) return true;
     if(bytes.size()>inputCapacity-count_) return false;
     if(now>std::numeric_limits<std::uint64_t>::max()-1280u) return false;
@@ -276,11 +276,11 @@ bool OriginalPerformance::advance(YouKnowEngine& engine,std::uint64_t target) no
         }
         FirmwareAssignerAudioBridge::Output output{ready,0};
         const auto result=FirmwareAssignerAudioBridge::advanceTo(state_,configuration,tables_,
-            inputs_,std::span(queue_).subspan(head_,inputCount),sliceTarget,output);
+            inputs_,Span<const FirmwareAssignerScheduler::InputEvent>(queue_).subspan(head_,inputCount),sliceTarget,output);
         head_+=result.consumedInputs; count_-=result.consumedInputs;
         if(count_==0) head_=0;
         for(std::size_t i=0;i<output.count;++i) serial[i]={ready[i].states,ready[i].value};
-        if(!engine.appendFirmwareSerialBytes(std::span(serial).first(output.count))) return false;
+        if(!engine.appendFirmwareSerialBytes(Span<const FirmwareSerialTrace::ByteReady>(serial).first(output.count))) return false;
         if(result.status==FirmwareAssignerAudioBridge::Status::ReachedTarget) {
             if(routePending) {
                 state_.assigner.ram[0xbd]=static_cast<std::uint8_t>(queueChannel_[head_]);

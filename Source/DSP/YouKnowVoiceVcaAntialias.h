@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <numbers>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -68,7 +68,7 @@ struct VoiceVcaAntialias
         for (int tap = 0; tap <= centre; ++tap)
         {
             const int offset = tap - centre;
-            const double x = std::numbers::pi * offset / k.factor;
+            const double x = numbers::pi * offset / k.factor;
             const double ideal = offset == 0 ? 1.0
                 : offset % k.factor == 0 ? 0.0 : std::sin(x) / x;
             const double t = static_cast<double>(offset) / centre;

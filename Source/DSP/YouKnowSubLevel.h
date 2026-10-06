@@ -106,6 +106,11 @@ public:
 
     [[nodiscard]] static const std::array<float, tableSteps + 1>& table() noexcept
     {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+        static constexpr std::array<float, tableSteps + 1> values =
+#include "FrozenTables/SubLevel.inc"
+;
+#else
         static const auto values = [] {
             std::array<float, tableSteps + 1> result {};
             for (int i = 0; i <= tableSteps; ++i)
@@ -113,6 +118,7 @@ public:
                     exactGain(static_cast<double>(i) / tableSteps));
             return result;
         }();
+#endif
         return values;
     }
 

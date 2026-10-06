@@ -93,6 +93,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowPresets.cpp
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
+    Source/DSP/YouKnowCompatibility.h
     Source/DSP/YouKnowBa662Noise.h
     Source/DSP/YouKnowCommonVcaControlNoise.h
     Source/DSP/YouKnowEngine.h
@@ -761,7 +762,36 @@ if(YOUKNOW_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    # Exercise the same host API in both native and restricted C++17 builds.
+    # Panel/preset translation belongs to the plugin, not the embedded engine.
+    set(YOUKNOW_EMBEDDED_DSP_SOURCES ${YOUKNOW_DSP_SOURCES})
+    list(REMOVE_ITEM YOUKNOW_EMBEDDED_DSP_SOURCES
+        Source/DSP/YouKnowPanel.cpp Source/DSP/YouKnowPresets.cpp)
+    add_library(YouKnowEmbeddedDSP STATIC ${YOUKNOW_EMBEDDED_DSP_SOURCES})
+    target_include_directories(YouKnowEmbeddedDSP PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_compile_definitions(YouKnowEmbeddedDSP PUBLIC YOUKNOW_EMBEDDED_TARGET=1)
+    set_target_properties(YouKnowEmbeddedDSP PROPERTIES CXX_STANDARD 17)
+    if(NOT MSVC)
+        target_compile_options(YouKnowEmbeddedDSP PRIVATE
+            -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
+    endif()
+    add_executable(YouKnowHostAdapterTests Tests/YouKnowHostAdapterTests.cpp)
+    target_link_libraries(YouKnowHostAdapterTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.HostAdapter COMMAND YouKnowHostAdapterTests)
+    add_executable(YouKnowEmbeddedHostAdapterTests Tests/YouKnowHostAdapterTests.cpp)
+    target_link_libraries(YouKnowEmbeddedHostAdapterTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedHostAdapterTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedHostAdapter COMMAND YouKnowEmbeddedHostAdapterTests)
+    set_tests_properties(YouKnow.HostAdapter YouKnow.EmbeddedHostAdapter PROPERTIES TIMEOUT 60)
+
     find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+        add_test(NAME YouKnow.DspPortability
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/CheckDspPortability.py"
+                --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(YouKnow.DspPortability PROPERTIES TIMEOUT 180)
+    endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME YouKnow.ControlDacTiming
             COMMAND "${Python3_EXECUTABLE}"
