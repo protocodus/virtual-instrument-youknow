@@ -490,111 +490,143 @@ std::array<Preset, productPresetCount> buildProductPresets()
     pad.volume = 0.48f;
     using Category = Preset::Category;
     auto result = std::array<Preset, productPresetCount> {{
-        { "YB1", "Round Sub", {
-            .cutoff = 0.27f, .resonance = 0.02f, .vcfEnv = 0.14f,
-            .vcaLevel = 0.74f, .decay = 0.26f, .sustain = 0.78f,
-            .release = 0.14f, .sub = 0.85f, .range = DcoRange::Sixteen,
-            .saw = false, .pulse = true, .highPass = HighPassMode::Boost
-        }, bass, Category::Bass },
-        { "YB2", "Pulse Pluck", {
-            .pwm = 0.24f, .cutoff = 0.23f, .resonance = 0.13f, .vcfEnv = 0.55f,
-            .vcaLevel = 0.78f, .decay = 0.24f, .sustain = 0.12f,
-            .release = 0.12f, .sub = 0.42f, .saw = false, .pulse = true,
-            .highPass = HighPassMode::Boost
-        }, bass, Category::Bass },
-        { "YB3", "Solid Saw", {
-            .cutoff = 0.52f, .resonance = 0.08f, .vcfEnv = 0.20f,
-            .vcaLevel = 0.74f, .decay = 0.38f, .sustain = 0.82f,
-            .release = 0.10f, .sub = 0.18f, .range = DcoRange::Sixteen,
-            .highPass = HighPassMode::Boost
-        }, bass, Category::Bass },
-        { "YB4", "Rubber Bass", {
-            .pwm = 0.36f, .cutoff = 0.16f, .resonance = 0.63f, .vcfEnv = 0.70f,
-            .vcaLevel = 0.76f, .decay = 0.32f, .sustain = 0.35f,
-            .release = 0.16f, .sub = 0.24f, .pulse = true,
-            .highPass = HighPassMode::Boost
-        }, bass, Category::Bass },
-        { "YB5", "Octave Weight", {
-            .pwm = 0.14f, .cutoff = 0.35f, .resonance = 0.06f, .vcfEnv = 0.12f,
-            .vcaLevel = 0.72f, .decay = 0.42f, .sustain = 0.88f,
-            .release = 0.20f, .sub = 0.90f, .pulse = true,
-            .highPass = HighPassMode::Boost
-        }, octaveBass, Category::Bass },
-        { "YB6", "Short PWM", {
-            .lfoRate = 0.30f, .pwm = 0.62f, .cutoff = 0.42f,
-            .resonance = 0.12f, .vcfEnv = 0.32f, .vcaLevel = 0.78f,
-            .decay = 0.19f, .sustain = 0.0f, .release = 0.10f,
-            .range = DcoRange::Sixteen, .saw = false, .pulse = true,
-            .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
-        }, bass, Category::Bass },
-        { "YB7", "Glide Mono", {
-            .cutoff = 0.31f, .resonance = 0.28f, .vcfEnv = 0.29f,
-            .vcaLevel = 0.76f, .decay = 0.48f, .sustain = 0.70f,
-            .release = 0.20f, .sub = 0.48f, .highPass = HighPassMode::Boost
-        }, glideBass, Category::Bass },
-        { "YB8", "Hollow Square", {
-            .pwm = 0.0f, .cutoff = 0.72f, .resonance = 0.08f, .vcfEnv = 0.0f,
-            .vcaLevel = 0.60f, .decay = 0.12f, .sustain = 1.0f,
-            .release = 0.16f, .range = DcoRange::Sixteen,
-            .saw = false, .pulse = true
-        }, bass, Category::Bass },
-        { "YP1", "Warm Ensemble", {
-            .lfoRate = 0.25f, .dcoLfo = 0.018f, .pwm = 0.25f,
-            .cutoff = 0.56f, .resonance = 0.06f, .vcfEnv = 0.05f,
-            .keyFollow = 0.56f, .vcaLevel = 0.70f, .attack = 0.48f,
-            .decay = 0.65f, .sustain = 0.80f, .release = 0.58f, .sub = 0.12f,
-            .pulse = true, .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::Two
-        }, pad, Category::Pad },
-        { "YP2", "Slow Horizon", {
-            .lfoRate = 0.13f, .pwm = 0.60f, .cutoff = 0.28f,
-            .resonance = 0.16f, .vcfEnv = 0.33f, .vcaLevel = 0.74f,
-            .attack = 0.78f, .decay = 0.75f, .sustain = 0.74f,
-            .release = 0.80f, .sub = 0.26f, .saw = false, .pulse = true,
-            .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
-        }, pad, Category::Pad },
-        { "YP3", "Glass Halo", {
-            .lfoRate = 0.28f, .dcoLfo = 0.009f, .pwm = 0.56f,
-            .cutoff = 0.74f, .resonance = 0.43f, .vcfEnv = 0.04f,
-            .keyFollow = 0.60f, .vcaLevel = 0.74f, .attack = 0.30f,
-            .decay = 0.45f, .sustain = 0.58f, .release = 0.70f,
-            .range = DcoRange::Four, .saw = false, .pulse = true,
-            .highPass = HighPassMode::Two, .chorus = ChorusMode::Two
-        }, pad, Category::Pad },
-        { "YP4", "Velvet PWM", {
-            .lfoRate = 0.18f, .pwm = 0.38f, .cutoff = 0.39f,
-            .resonance = 0.04f, .vcfEnv = 0.12f, .vcaLevel = 0.70f,
-            .attack = 0.42f, .decay = 0.62f, .sustain = 0.94f,
-            .release = 0.64f, .sub = 0.06f, .saw = false, .pulse = true,
-            .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
-        }, pad, Category::Pad },
-        { "YP5", "Hollow Choir", {
-            .lfoRate = 0.22f, .dcoLfo = 0.022f, .pwm = 0.38f,
-            .cutoff = 0.46f, .resonance = 0.72f, .vcfEnv = 0.03f,
-            .keyFollow = 0.84f, .vcaLevel = 0.70f, .attack = 0.59f,
-            .decay = 0.50f, .sustain = 0.83f, .release = 0.52f,
-            .saw = false, .pulse = true, .chorus = ChorusMode::Two
-        }, pad, Category::Pad },
-        { "YP6", "Brass Cloud", {
-            .lfoRate = 0.22f, .cutoff = 0.45f, .resonance = 0.10f,
-            .vcfEnv = 0.33f, .vcaLevel = 0.72f, .attack = 0.30f,
-            .decay = 0.72f, .sustain = 0.60f, .release = 0.55f,
-            .sub = 0.14f, .chorus = ChorusMode::One
-        }, pad, Category::Pad },
-        { "YP7", "Resonant Mist", {
-            .lfoRate = 0.16f, .pwm = 0.48f, .noise = 0.035f,
-            .cutoff = 0.42f, .resonance = 0.59f, .vcfEnv = 0.12f,
-            .vcfLfo = 0.07f, .vcaLevel = 0.72f, .attack = 0.69f,
-            .decay = 0.80f, .sustain = 0.81f, .release = 0.76f,
-            .pulse = true, .pwmSource = PwmSource::Lfo,
-            .highPass = HighPassMode::Two, .chorus = ChorusMode::Two
-        }, pad, Category::Pad },
-        { "YP8", "Dark Motion", {
-            .lfoRate = 0.09f, .pwm = 0.68f, .cutoff = 0.29f,
-            .resonance = 0.22f, .vcfEnv = 0.10f, .vcfLfo = 0.055f,
-            .vcaLevel = 0.72f, .attack = 0.52f, .decay = 0.78f,
-            .sustain = 0.77f, .release = 0.67f, .sub = 0.32f,
-            .pulse = true, .pwmSource = PwmSource::Lfo, .chorus = ChorusMode::One
-        }, pad, Category::Pad }
+        { "YB1", "Round Sub", [] {
+            sysex::Patch patch {};
+            patch.cutoff = 0.27f; patch.resonance = 0.02f; patch.vcfEnv = 0.14f;
+            patch.vcaLevel = 0.74f; patch.decay = 0.26f; patch.sustain = 0.78f;
+            patch.release = 0.14f; patch.sub = 0.85f; patch.range = DcoRange::Sixteen;
+            patch.saw = false; patch.pulse = true; patch.highPass = HighPassMode::Boost;
+            return patch;
+        }(), bass, Category::Bass },
+        { "YB2", "Pulse Pluck", [] {
+            sysex::Patch patch {};
+            patch.pwm = 0.24f; patch.cutoff = 0.23f; patch.resonance = 0.13f; patch.vcfEnv = 0.55f;
+            patch.vcaLevel = 0.78f; patch.decay = 0.24f; patch.sustain = 0.12f;
+            patch.release = 0.12f; patch.sub = 0.42f; patch.saw = false; patch.pulse = true;
+            patch.highPass = HighPassMode::Boost;
+            return patch;
+        }(), bass, Category::Bass },
+        { "YB3", "Solid Saw", [] {
+            sysex::Patch patch {};
+            patch.cutoff = 0.52f; patch.resonance = 0.08f; patch.vcfEnv = 0.20f;
+            patch.vcaLevel = 0.74f; patch.decay = 0.38f; patch.sustain = 0.82f;
+            patch.release = 0.10f; patch.sub = 0.18f; patch.range = DcoRange::Sixteen;
+            patch.highPass = HighPassMode::Boost;
+            return patch;
+        }(), bass, Category::Bass },
+        { "YB4", "Rubber Bass", [] {
+            sysex::Patch patch {};
+            patch.pwm = 0.36f; patch.cutoff = 0.16f; patch.resonance = 0.63f; patch.vcfEnv = 0.70f;
+            patch.vcaLevel = 0.76f; patch.decay = 0.32f; patch.sustain = 0.35f;
+            patch.release = 0.16f; patch.sub = 0.24f; patch.pulse = true;
+            patch.highPass = HighPassMode::Boost;
+            return patch;
+        }(), bass, Category::Bass },
+        { "YB5", "Octave Weight", [] {
+            sysex::Patch patch {};
+            patch.pwm = 0.14f; patch.cutoff = 0.35f; patch.resonance = 0.06f; patch.vcfEnv = 0.12f;
+            patch.vcaLevel = 0.72f; patch.decay = 0.42f; patch.sustain = 0.88f;
+            patch.release = 0.20f; patch.sub = 0.90f; patch.pulse = true;
+            patch.highPass = HighPassMode::Boost;
+            return patch;
+        }(), octaveBass, Category::Bass },
+        { "YB6", "Short PWM", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.30f; patch.pwm = 0.62f; patch.cutoff = 0.42f;
+            patch.resonance = 0.12f; patch.vcfEnv = 0.32f; patch.vcaLevel = 0.78f;
+            patch.decay = 0.19f; patch.sustain = 0.0f; patch.release = 0.10f;
+            patch.range = DcoRange::Sixteen; patch.saw = false; patch.pulse = true;
+            patch.pwmSource = PwmSource::Lfo; patch.chorus = ChorusMode::One;
+            return patch;
+        }(), bass, Category::Bass },
+        { "YB7", "Glide Mono", [] {
+            sysex::Patch patch {};
+            patch.cutoff = 0.31f; patch.resonance = 0.28f; patch.vcfEnv = 0.29f;
+            patch.vcaLevel = 0.76f; patch.decay = 0.48f; patch.sustain = 0.70f;
+            patch.release = 0.20f; patch.sub = 0.48f; patch.highPass = HighPassMode::Boost;
+            return patch;
+        }(), glideBass, Category::Bass },
+        { "YB8", "Hollow Square", [] {
+            sysex::Patch patch {};
+            patch.pwm = 0.0f; patch.cutoff = 0.72f; patch.resonance = 0.08f; patch.vcfEnv = 0.0f;
+            patch.vcaLevel = 0.60f; patch.decay = 0.12f; patch.sustain = 1.0f;
+            patch.release = 0.16f; patch.range = DcoRange::Sixteen;
+            patch.saw = false; patch.pulse = true;
+            return patch;
+        }(), bass, Category::Bass },
+        { "YP1", "Warm Ensemble", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.25f; patch.dcoLfo = 0.018f; patch.pwm = 0.25f;
+            patch.cutoff = 0.56f; patch.resonance = 0.06f; patch.vcfEnv = 0.05f;
+            patch.keyFollow = 0.56f; patch.vcaLevel = 0.70f; patch.attack = 0.48f;
+            patch.decay = 0.65f; patch.sustain = 0.80f; patch.release = 0.58f; patch.sub = 0.12f;
+            patch.pulse = true; patch.pwmSource = PwmSource::Lfo; patch.chorus = ChorusMode::Two;
+            return patch;
+        }(), pad, Category::Pad },
+        { "YP2", "Slow Horizon", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.13f; patch.pwm = 0.60f; patch.cutoff = 0.28f;
+            patch.resonance = 0.16f; patch.vcfEnv = 0.33f; patch.vcaLevel = 0.74f;
+            patch.attack = 0.78f; patch.decay = 0.75f; patch.sustain = 0.74f;
+            patch.release = 0.80f; patch.sub = 0.26f; patch.saw = false; patch.pulse = true;
+            patch.pwmSource = PwmSource::Lfo; patch.chorus = ChorusMode::One;
+            return patch;
+        }(), pad, Category::Pad },
+        { "YP3", "Glass Halo", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.28f; patch.dcoLfo = 0.009f; patch.pwm = 0.56f;
+            patch.cutoff = 0.74f; patch.resonance = 0.43f; patch.vcfEnv = 0.04f;
+            patch.keyFollow = 0.60f; patch.vcaLevel = 0.74f; patch.attack = 0.30f;
+            patch.decay = 0.45f; patch.sustain = 0.58f; patch.release = 0.70f;
+            patch.range = DcoRange::Four; patch.saw = false; patch.pulse = true;
+            patch.highPass = HighPassMode::Two; patch.chorus = ChorusMode::Two;
+            return patch;
+        }(), pad, Category::Pad },
+        { "YP4", "Velvet PWM", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.18f; patch.pwm = 0.38f; patch.cutoff = 0.39f;
+            patch.resonance = 0.04f; patch.vcfEnv = 0.12f; patch.vcaLevel = 0.70f;
+            patch.attack = 0.42f; patch.decay = 0.62f; patch.sustain = 0.94f;
+            patch.release = 0.64f; patch.sub = 0.06f; patch.saw = false; patch.pulse = true;
+            patch.pwmSource = PwmSource::Lfo; patch.chorus = ChorusMode::One;
+            return patch;
+        }(), pad, Category::Pad },
+        { "YP5", "Hollow Choir", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.22f; patch.dcoLfo = 0.022f; patch.pwm = 0.38f;
+            patch.cutoff = 0.46f; patch.resonance = 0.72f; patch.vcfEnv = 0.03f;
+            patch.keyFollow = 0.84f; patch.vcaLevel = 0.70f; patch.attack = 0.59f;
+            patch.decay = 0.50f; patch.sustain = 0.83f; patch.release = 0.52f;
+            patch.saw = false; patch.pulse = true; patch.chorus = ChorusMode::Two;
+            return patch;
+        }(), pad, Category::Pad },
+        { "YP6", "Brass Cloud", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.22f; patch.cutoff = 0.45f; patch.resonance = 0.10f;
+            patch.vcfEnv = 0.33f; patch.vcaLevel = 0.72f; patch.attack = 0.30f;
+            patch.decay = 0.72f; patch.sustain = 0.60f; patch.release = 0.55f;
+            patch.sub = 0.14f; patch.chorus = ChorusMode::One;
+            return patch;
+        }(), pad, Category::Pad },
+        { "YP7", "Resonant Mist", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.16f; patch.pwm = 0.48f; patch.noise = 0.035f;
+            patch.cutoff = 0.42f; patch.resonance = 0.59f; patch.vcfEnv = 0.12f;
+            patch.vcfLfo = 0.07f; patch.vcaLevel = 0.72f; patch.attack = 0.69f;
+            patch.decay = 0.80f; patch.sustain = 0.81f; patch.release = 0.76f;
+            patch.pulse = true; patch.pwmSource = PwmSource::Lfo;
+            patch.highPass = HighPassMode::Two; patch.chorus = ChorusMode::Two;
+            return patch;
+        }(), pad, Category::Pad },
+        { "YP8", "Dark Motion", [] {
+            sysex::Patch patch {};
+            patch.lfoRate = 0.09f; patch.pwm = 0.68f; patch.cutoff = 0.29f;
+            patch.resonance = 0.22f; patch.vcfEnv = 0.10f; patch.vcfLfo = 0.055f;
+            patch.vcaLevel = 0.72f; patch.attack = 0.52f; patch.decay = 0.78f;
+            patch.sustain = 0.77f; patch.release = 0.67f; patch.sub = 0.32f;
+            patch.pulse = true; patch.pwmSource = PwmSource::Lfo; patch.chorus = ChorusMode::One;
+            return patch;
+        }(), pad, Category::Pad }
     }};
     // Visible VR1 positions balanced against both the short stress score and
     // full phrases. Hot programs target 0.5 dB below the bank ceiling; the

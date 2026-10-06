@@ -7,7 +7,7 @@
 #include <cmath>
 #include <complex>
 #include <limits>
-#include <numbers>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -158,7 +158,7 @@ public:
     }
 
 private:
-    static constexpr double twoPi = 2.0 * std::numbers::pi;
+    static constexpr double twoPi = 2.0 * numbers::pi;
     struct Channel
     {
         double inputLow {}, headphoneLow {}, noiseLow {}, amplifierNoiseLow {};
@@ -200,8 +200,8 @@ private:
             lower/(upper+lower)*(100000.0/101000.0)*amplifierGain*outputDivider,
             std::sqrt(noiseDc/noiseHf),
             std::sqrt(4*1.380649e-23*noiseHf)*outputDivider};
-        inputG_ = std::tan(std::numbers::pi*inputPole/sampleRate_);
-        headphoneG_ = std::tan(std::numbers::pi*headphonePole/sampleRate_);
+        inputG_ = std::tan(numbers::pi*inputPole/sampleRate_);
+        headphoneG_ = std::tan(numbers::pi*headphonePole/sampleRate_);
         amplifierNoiseLowGain_ = std::sqrt((noiseDc-220)/(noiseHf-220));
         noiseScale_ = coefficients_.noiseDensityPerRootKelvin
                     * std::sqrt(0.5*sampleRate_*temperature_)*noiseAmount_;

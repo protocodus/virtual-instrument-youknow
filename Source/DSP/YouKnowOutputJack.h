@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -36,10 +36,10 @@ struct OutputJackLowPass
     [[nodiscard]] static Coefficients coefficients(double cornerHz,
                                                     double sampleRate) noexcept
     {
-        const double wm = std::min(0.9 * std::numbers::pi,
-                                   2.0 * std::numbers::pi * 20000.0 / sampleRate);
+        const double wm = std::min(0.9 * numbers::pi,
+                                   2.0 * numbers::pi * 20000.0 / sampleRate);
         const double beta = 2.0 / (wm * wm) - 1.0 / (1.0 - std::cos(wm));
-        const double wc = 2.0 * std::numbers::pi * cornerHz / sampleRate;
+        const double wc = 2.0 * numbers::pi * cornerHz / sampleRate;
         const double alpha = beta + 2.0 / (wc * wc);
         const auto root = [](double value) {
             return -value / (1.0 + value + std::sqrt(1.0 + 2.0 * value));

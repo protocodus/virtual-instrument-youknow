@@ -367,7 +367,7 @@ Trace::Status uartStatus(Uart::Status status) noexcept {
 
 FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
     State &state, Uart::State &uart, const Configuration &configuration,
-    const Tables &tables, const Io::Inputs &inputs, std::span<const InputEvent> inputEvents,
+    const Tables &tables, const Io::Inputs &inputs, Span<const InputEvent> inputEvents,
     std::uint64_t target, Events &events, Uart::EventBuffer &uartEvents) noexcept {
     Result result{Status::ReachedTarget};
     if (!valid(state) || !Io::valid(inputs) || !Io::valid(configuration.anmWritePhase) ||

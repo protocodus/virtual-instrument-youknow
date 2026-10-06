@@ -16,18 +16,28 @@ namespace youknow
 // for the frozen comparison protocol.
 struct ProductHardwareRealismProfile
 {
+#if !defined(YOUKNOW_EMBEDDED_TARGET)
     static void configureBeforePrepare(YouKnowEngine& engine)
     {
+        if (!tryConfigureBeforePrepare(engine))
+            throw std::logic_error("Hardware realism requires an unprepared engine");
+    }
+#endif
+
+    [[nodiscard]] static bool tryConfigureBeforePrepare(YouKnowEngine& engine) noexcept
+    {
         const auto mixer = CoupledSubMixer::evidenceCalibration();
-        ProductFidelityProfile::configureBeforePrepare(engine, &mixer);
+        if (!ProductFidelityProfile::tryConfigureBeforePrepare(engine, &mixer))
+            return false;
         if (!engine.configureChorusBbdTransferProfile(
                 ChorusBbdTransferProfile::ServicedBiasEstimate))
-            throw std::logic_error("Hardware realism requires an unprepared engine");
+            return false;
         // Same MN3009, measured in a Juno-60: a named insertion-gain prior,
         // separate from the Juno-106's finite surrounding filter/follower solve.
         if (!engine.configureChorusBbdInsertionGainProfile(
                 ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate))
-            throw std::logic_error("Hardware realism requires an unprepared engine");
+            return false;
+        return true;
     }
 
     static void applyTo(EngineParameters& parameters) noexcept

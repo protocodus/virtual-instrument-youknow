@@ -93,6 +93,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowPresets.cpp
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
+    Source/DSP/YouKnowCompatibility.h
     Source/DSP/YouKnowBa662Noise.h
     Source/DSP/YouKnowCommonVcaControlNoise.h
     Source/DSP/YouKnowEngine.h
@@ -762,6 +763,13 @@ endif()
 
 if(BUILD_TESTING)
     find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+        add_test(NAME YouKnow.DspPortability
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/CheckDspPortability.py"
+                --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(YouKnow.DspPortability PROPERTIES TIMEOUT 180)
+    endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME YouKnow.ControlDacTiming
             COMMAND "${Python3_EXECUTABLE}"

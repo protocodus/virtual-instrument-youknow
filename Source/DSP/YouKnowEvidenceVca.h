@@ -33,6 +33,16 @@ public:
     static constexpr double outputLoadOhms = 47000;
     static constexpr int tableSteps = 4096;
 
+    // Offline-generated immutable data for targets without static constructors.
+    constexpr EvidenceVcaCalibration(double span, double thermal, double reference,
+        double peak, double headroom, double serviceGain,
+        const std::array<float, tableSteps + 1>& gain) noexcept
+        : span_(span), thermalVolts_(thermal), referenceVbe_(reference),
+          peakEmitterAmps_(peak), headroom_(headroom), serviceGain_(serviceGain),
+          gain_(gain)
+    {
+    }
+
     explicit EvidenceVcaCalibration(double spanVolts, double celsius = 25.0) noexcept
         : span_(spanVolts), thermalVolts_(thermalVolts * ((celsius + 273.15) / 298.15)),
           referenceVbe_(referenceVbe + referenceVbeVoltsPerCelsius * (celsius - 25.0))
@@ -120,6 +130,22 @@ public:
     static constexpr double minimumCharge = -.01;
     static constexpr double maximumCharge = 1.01;
     static constexpr double capacitanceFarads = .1e-6;
+
+private:
+    struct Row
+    {
+        std::array<double, tableSteps + 1> capacitor {};
+        std::array<double, tableSteps + 1> control {};
+        std::array<float, tableSteps + 1> capacitorTemperatureSlope {};
+        std::array<float, tableSteps + 1> controlTemperatureSlope {};
+    };
+public:
+
+    constexpr VcaJunctionTemperatureCircuit(double span,
+        const std::array<Row, maximumCelsius - minimumCelsius + 1>& rows) noexcept
+        : span_(span), rows_(rows)
+    {
+    }
 
     explicit VcaJunctionTemperatureCircuit(double span) noexcept : span_(span)
     {
@@ -229,13 +255,6 @@ private:
         }
         return std::exp(logarithm);
     }
-    struct Row
-    {
-        std::array<double, tableSteps + 1> capacitor {};
-        std::array<double, tableSteps + 1> control {};
-        std::array<float, tableSteps + 1> capacitorTemperatureSlope {};
-        std::array<float, tableSteps + 1> controlTemperatureSlope {};
-    };
     [[nodiscard]] double sample(double coordinate, double celsius, bool capacitor) const noexcept
     {
         const double temperature = std::clamp(celsius,

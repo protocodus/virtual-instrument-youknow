@@ -27,7 +27,7 @@
 #include "YouKnowOriginalPerformance.h"
 
 #include <array>
-#include <bit>
+#include "YouKnowCompatibility.h"
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -131,6 +131,15 @@ struct EngineParameters
 
     // --- LFO ---------------------------------------------------------------
     float lfoRate { 0.42f };
+    // Rack tempo-sync extension: zero preserves the original firmware rate;
+    // a positive value clocks the same scanned triangle in cycles per second.
+    float lfoSyncRateHz { 0.0f };
+    // Negative keeps the firmware delay. Zero is immediate full depth;
+    // positive seconds set both the hold duration and following linear fade.
+    float lfoSyncDelaySeconds { -1.0f };
+    // Hosts may combine their global +/-100-cent preference with the panel
+    // +/-50-cent trim. The instrument's native panel retains its own range.
+    bool allowHostMasterTuneExtension { false };
     float lfoDelay { 0.0f };
 
     // --- DCO ---------------------------------------------------------------
@@ -641,7 +650,124 @@ struct EngineParameters
     // equal switch/control positions have no new physical write for
     // setParameters() to perform, while a NaN cannot compare equal and therefore
     // still reaches sanitise().
-    [[nodiscard]] bool operator==(const EngineParameters&) const noexcept = default;
+    [[nodiscard]] constexpr bool operator==(const EngineParameters& other) const noexcept
+    {
+        return lfoRate == other.lfoRate
+            && lfoSyncRateHz == other.lfoSyncRateHz
+            && lfoSyncDelaySeconds == other.lfoSyncDelaySeconds
+            && allowHostMasterTuneExtension == other.allowHostMasterTuneExtension
+            && lfoDelay == other.lfoDelay
+            && dcoLfoDepth == other.dcoLfoDepth
+            && pwmDepth == other.pwmDepth
+            && pwmSource == other.pwmSource
+            && range == other.range
+            && sawEnabled == other.sawEnabled
+            && pulseEnabled == other.pulseEnabled
+            && subLevel == other.subLevel
+            && noiseLevel == other.noiseLevel
+            && highPass == other.highPass
+            && cutoff == other.cutoff
+            && resonance == other.resonance
+            && envPolarity == other.envPolarity
+            && envDepth == other.envDepth
+            && vcfLfoDepth == other.vcfLfoDepth
+            && keyFollow == other.keyFollow
+            && vcaMode == other.vcaMode
+            && vcaLevel == other.vcaLevel
+            && attack == other.attack
+            && decay == other.decay
+            && sustain == other.sustain
+            && release == other.release
+            && chorus == other.chorus
+            && keyMode == other.keyMode
+            && portamento == other.portamento
+            && keyTranspose == other.keyTranspose
+            && benderDcoDepth == other.benderDcoDepth
+            && benderVcfDepth == other.benderVcfDepth
+            && benderLfoDepth == other.benderLfoDepth
+            && masterTuneCents == other.masterTuneCents
+            && volume == other.volume
+            && velocityDepth == other.velocityDepth
+            && calibration == other.calibration
+            && chorusNoise == other.chorusNoise
+            && chorusNoiseCalibrationProfile == other.chorusNoiseCalibrationProfile
+            && mainNoiseLevelScale == other.mainNoiseLevelScale
+            && mainNoiseCalibrationProfile == other.mainNoiseCalibrationProfile
+            && polyphony == other.polyphony
+            && vcfTanhMode == other.vcfTanhMode
+            && vcfSolverMode == other.vcfSolverMode
+            && enableVcfStageOffsets == other.enableVcfStageOffsets
+            && enableResonanceOtaOffset == other.enableResonanceOtaOffset
+            && useBa662AResonanceOffsetEstimate == other.useBa662AResonanceOffsetEstimate
+            && enableOpAmpSlewLimiting == other.enableOpAmpSlewLimiting
+            && enableVcfEarlyEffect == other.enableVcfEarlyEffect
+            && enableSpatialThermalGradient == other.enableSpatialThermalGradient
+            && enablePulseOffWaveNodeCoupling == other.enablePulseOffWaveNodeCoupling
+            && enableSawUnipolarNodeCoupling == other.enableSawUnipolarNodeCoupling
+            && enableSubHalfWaveNodeCoupling == other.enableSubHalfWaveNodeCoupling
+            && enableVoiceVcaSignalSaturation == other.enableVoiceVcaSignalSaturation
+            && enableVoiceVcaAntialias == other.enableVoiceVcaAntialias
+            && enableVoiceVcaServiceGain == other.enableVoiceVcaServiceGain
+            && enableVoiceVcaTemperature == other.enableVoiceVcaTemperature
+            && enableCoupledVoiceVcaControl == other.enableCoupledVoiceVcaControl
+            && enableEvidenceVcaCalibration == other.enableEvidenceVcaCalibration
+            && enableVoiceVcaJunctionTemperature == other.enableVoiceVcaJunctionTemperature
+            && enableNoiseLevelBeforeC41 == other.enableNoiseLevelBeforeC41
+            && enableMainNoiseMagnitudePole == other.enableMainNoiseMagnitudePole
+            && useCircuitDerivedNoiseLevelShape == other.useCircuitDerivedNoiseLevelShape
+            && enableNoiseLevelSoftJunction == other.enableNoiseLevelSoftJunction
+            && enableNarrowOneTwoChorus == other.enableNarrowOneTwoChorus
+            && enableChorusMuteDrive == other.enableChorusMuteDrive
+            && enableChorusClockMuteCircuit == other.enableChorusClockMuteCircuit
+            && enableChorusFiniteMuteDrive == other.enableChorusFiniteMuteDrive
+            && enableChorusFiniteTr5Drive == other.enableChorusFiniteTr5Drive
+            && enableChorusLineGainSpread == other.enableChorusLineGainSpread
+            && chorusTimingProfile == other.chorusTimingProfile
+            && enableChorusClockBleed == other.enableChorusClockBleed
+            && enableChorusHyperbolicSweep == other.enableChorusHyperbolicSweep
+            && useChorusRateNoiseHypothesis == other.useChorusRateNoiseHypothesis
+            && enableChorusCorrelatedNoise == other.enableChorusCorrelatedNoise
+            && chorusNoiseTransferFraction == other.chorusNoiseTransferFraction
+            && chorusNoiseTransferCorrelation == other.chorusNoiseTransferCorrelation
+            && enableElectrolyticC14Nonlinearity == other.enableElectrolyticC14Nonlinearity
+            && enableHighPassDepartingLegTail == other.enableHighPassDepartingLegTail
+            && useCircuitDerivedResonanceShape == other.useCircuitDerivedResonanceShape
+            && enableResonanceSoftJunction == other.enableResonanceSoftJunction
+            && useFixedVcfServiceFrequencyTrim == other.useFixedVcfServiceFrequencyTrim
+            && useServiced439522VcfCalibration == other.useServiced439522VcfCalibration
+            && useOriginalCardVcfCalibration == other.useOriginalCardVcfCalibration
+            && resonanceCompensationShape == other.resonanceCompensationShape
+            && enableDifferentialResonanceInput == other.enableDifferentialResonanceInput
+            && useSoftplusVoiceVcaCompatibilityLaw == other.useSoftplusVoiceVcaCompatibilityLaw
+            && enableCommonVcaNoise == other.enableCommonVcaNoise
+            && enableCommonVcaControlNoise == other.enableCommonVcaControlNoise
+            && enableCommonVcaOutputPole == other.enableCommonVcaOutputPole
+            && enableOutputSummerMagnitudePole == other.enableOutputSummerMagnitudePole
+            && enableOutputSummerAntialias == other.enableOutputSummerAntialias
+            && enableOutputSummerMuteLoading == other.enableOutputSummerMuteLoading
+            && enableCardJohnsonFloor == other.enableCardJohnsonFloor
+            && enableOtaShotNoise == other.enableOtaShotNoise
+            && enableBa662OutputMirrorNoise == other.enableBa662OutputMirrorNoise
+            && enableBa662TailMirrorNoise == other.enableBa662TailMirrorNoise
+            && aging == other.aging
+            && outputRoute == other.outputRoute
+            && headphoneLoadOhms == other.headphoneLoadOhms
+            && enableHeadphoneAmplifierDynamics == other.enableHeadphoneAmplifierDynamics
+            && enableHeadphoneIntrinsicNoise == other.enableHeadphoneIntrinsicNoise
+            && outputSelector == other.outputSelector
+            && outputLoadOhms == other.outputLoadOhms
+            && outputCapacitancePf == other.outputCapacitancePf
+            && outputMono == other.outputMono
+            && vcfFastEarlyMode == other.vcfFastEarlyMode
+            && enableSubDiodeControl == other.enableSubDiodeControl
+            && enableSubStorageSkew == other.enableSubStorageSkew
+            && enableResonanceHeadroomTemperature == other.enableResonanceHeadroomTemperature
+            && enableResonanceServiceTrim == other.enableResonanceServiceTrim
+            && enableConverterHoldDroop == other.enableConverterHoldDroop
+            && enableRailRipple == other.enableRailRipple;
+    }
+    [[nodiscard]] constexpr bool operator!=(const EngineParameters& other) const noexcept
+    { return !(*this == other); }
 };
 
 class YouKnowEngine
@@ -675,11 +801,23 @@ public:
     void prepare(double sampleRate, int maxBlockSize,
                  bool oversamplingEnabled = true);
     void prepare(double sampleRate, int maxBlockSize, int requestedFactor);
+    // Reason restores its document-owned Quality value after constructing the
+    // native object. Select that initial grid without paying the live-change
+    // safety fade; this is called before the first note or processed sample.
+    void setInitialOversamplingFactor(int factor) noexcept;
+    // Returns true only when both the requested path and its safety fade are
+    // ready. Reason may stop scheduling a silent device at that point.
     bool setOversamplingEnabled(bool enabled) noexcept;
     // Requests a rung of the quality ladder. Like the boolean form, the change
     // is deferred until the instrument is idle, and the return value says
     // whether it has been applied yet.
     bool setOversamplingFactor(int factor) noexcept;
+    // Hosts that suspend silent callbacks must keep rendering through fade-in.
+    [[nodiscard]] bool isOversamplingReady() const noexcept
+    {
+        return rateTransition_ == RateTransition::Idle
+            && effectiveOversampleFactor(oversamplingRequested_) == oversampling_;
+    }
     void reset();
     // A host's transport stop is not a power cycle. `reset()` above is the
     // cold one -- `prepare()` and a device change use it -- and returns every
@@ -704,12 +842,31 @@ public:
     // The caller may reflect decoded controls with MidiReflection afterward;
     // that changes neither physical panel positions nor received traffic.
     [[nodiscard]] bool receiveOriginalPerformanceMidi(
-        std::span<const std::uint8_t> bytes) noexcept;
+        Span<const std::uint8_t> bytes) noexcept;
     // Published native controls use explicit field ownership, even when their
     // value equals the MIDI-owned tone. Same 25-bit order as panelParameters.
     // Disabled/unprepared engines ignore this physical-panel-only operation.
     void applyOriginalPerformancePanelEdit(const EngineParameters& parameters,
         std::uint32_t fields) noexcept;
+    // Rack product extension: VOICES=1 follows the newest distinct held key,
+    // returning to the previous held key on release, in every key mode.
+    // Before prepare only; retained across reset/prepare/quality changes.
+    // The reference engine keeps the original no-steal/high-note policies.
+    [[nodiscard]] bool configureSingleVoiceLastNotePriority(bool enabled) noexcept;
+    // Rack's physical six-card poly glide starts from the retained power-on
+    // word, even before a card has played. Before prepare only; retained across
+    // reset/prepare. Mono, Unison and extension cards keep first-note startup.
+    [[nodiscard]] bool configurePhysicalVoicePowerOnGlide(bool enabled) noexcept;
+    // Rack source/resonance balance: scale the voiced source-to-filter transfer
+    // and compensate at the final digital boundary, preserving internal VCF
+    // self-oscillation trim. Reference default 1; finite 0.25..2, before prepare
+    // only. Retained across reset/prepare/quality changes. This is a product
+    // calibration, not a measured original-card resistor or a stored control.
+    [[nodiscard]] bool configureFilterSourceBalance(float scale) noexcept;
+    // Post-circuit product calibration, without changing any internal drive.
+    // Before prepare only; finite 0.125..16. Reference default 1. Retained
+    // across reset/prepare/quality changes. Output may exceed digital full scale.
+    [[nodiscard]] bool configureOutputGain(float gain) noexcept;
     // Comparison-only circuit calibration. Call before prepare(); an invalid
     // calibration or a prepared engine is rejected without changing state.
     // No public plug-in parameter, preset byte or shipping default selects it.
@@ -821,6 +978,9 @@ public:
         return midiNote >= 0 && midiNote < 128
             && heldNoteCounts_[static_cast<std::size_t>(midiNote)] != 0;
     }
+    // Reason's monophonic Note/Gate CV changes pitch while Gate remains high.
+    // Move one unambiguous held assignment without restarting its envelope.
+    bool retargetHeldNoteLegato(int oldMidiNote, int newMidiNote) noexcept;
     // Re-pressing the selected hardware POLY button leaves the visible mode
     // unchanged but still gates, clears and rescans all held assignments.
     void reassertKeyMode() noexcept;
@@ -835,8 +995,18 @@ public:
     void setModWheel(float amount) noexcept;
     void setSustainPedal(bool down) noexcept;
     void process(float* left, float* right, int numSamples);
+    // Call only for a silent interval the host wrapper does not process().
+    // Preserve tempo timing without rendering the dormant audio circuitry.
+    void advanceSilentLfoSync(int numSamples) noexcept;
 
     [[nodiscard]] int getActiveVoiceCount() const noexcept { return activeVoiceCount_; }
+    // A Key Mode change completes on the converter scan. Rack hosts may stop
+    // scheduling silent devices, so the adapter must keep that scan moving
+    // even before its held notes have been assigned to active voices.
+    [[nodiscard]] bool hasPendingVoiceAssignment() const noexcept
+    {
+        return assignmentRescanPending_;
+    }
     // The rate the engine actually runs its output grid at, which is the host's
     // once it has passed the guards in prepare(). A host that reports nothing
     // usable is not the rate the panel should be displaying.
@@ -901,7 +1071,7 @@ public:
     // byte in units of 1/256 semitone, so the positive hardware endpoint is
     // +127 units (+49.609375 cents) while the negative endpoint reaches -128.
     [[nodiscard]] static std::int16_t masterTunePitchWordOffset(
-        double cents) noexcept;
+        double cents, bool allowHostExtension = false) noexcept;
     // Pitch Wheel remains a normalised host control, but B-2 receives the
     // assigner's reduced signed byte and combines it with the eight-bit DCO
     // sensitivity using truncating integer shifts. The maximum is therefore
@@ -1528,7 +1698,7 @@ public:
         // Phase/ANM/mask/request/IE initialization at time zero. CR contents
         // are initialized from inputs for that ANM bank, not copied from here.
         FirmwareAdcTrace::Peripheral initialAdc {};
-        std::span<const FirmwareSerialTrace::ByteReady> schedule {};
+        Span<const FirmwareSerialTrace::ByteReady> schedule {};
         // Alternative to the caller-owned immutable schedule. Append ready
         // bytes before rendering the interval that contains them. This is a
         // bounded comparison input, not a host-MIDI-to-wire timing policy.
@@ -1546,7 +1716,7 @@ public:
     // Never retains caller memory or allocates. Configuration.streaming
     // requires an empty immutable schedule; no two-source merge is inferred.
     [[nodiscard]] bool appendFirmwareSerialBytes(
-        std::span<const FirmwareSerialTrace::ByteReady>) noexcept;
+        Span<const FirmwareSerialTrace::ByteReady>) noexcept;
     [[nodiscard]] std::size_t pendingFirmwareSerialBytes() const noexcept
     { return firmwareSerialStreamCount_; }
     [[nodiscard]] const FirmwareSerialTrace::State& firmwareSerialState() const noexcept
@@ -1587,8 +1757,8 @@ public:
     // The chorus refers its explicit recovered-wet-line product normalization
     // to the same coordinate and has to name it locally, so the two cannot be
     // allowed to drift apart.
-    static_assert(std::bit_cast<std::uint32_t> (Chorus::nodeVoltsPerUnit)
-                      == std::bit_cast<std::uint32_t> (internalVoltsPerUnit),
+    static_assert(Chorus::nodeVoltsPerUnit > 0.0f
+                      && Chorus::nodeVoltsPerUnit == internalVoltsPerUnit,
                   "the chorus and the engine disagree about the node volt scale");
     static constexpr float minus18DbfsAmplitude = 0.125892541f;
     // How much of the digital range the product actually uses, in decibels
@@ -3527,6 +3697,8 @@ private:
     // rescans its key table, scan order gives the highest held note priority in
     // Solo Unison.
     [[nodiscard]] int highestHeldNote() const noexcept;
+    [[nodiscard]] int newestHeldNote() const noexcept;
+    [[nodiscard]] bool usesSingleVoiceLastNotePriority() const noexcept;
     // POLY-button changes gate current assignments and clear only allocator
     // state immediately. The keyboard is rescanned after the next complete
     // converter boundary, so the voice CPUs can observe gate-off first.
@@ -3689,6 +3861,8 @@ private:
     // discarded behind the shut VCA. See Voice::freewheeling.
     void freewheelVoiceCard(Voice& voice) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
+    void sampleSyncedLfo() noexcept;
+    void sampleSyncedLfoDelay() noexcept;
     void advanceLfoDelay(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
     // The factor the engine would actually run for a requested rung at the
@@ -3873,14 +4047,16 @@ private:
     // a coarse grid of rates. The mechanism is kept separate from the still-
     // recovered coefficient law documented in OQ-13.
     std::uint16_t lfoAccumulator_ { 0u }; // 0..0x1fff
+    double lfoSyncPhase_ { 0.0 }; // cycles; independent of converter scan timing
+    double lfoSyncDelayProgress_ { 0.0 }; // 0..1 hold, 1..2 fade; tempo-independent progress
     bool lfoRising_ { true };
     float lfoPolarity_ { 1.0f };
     float lfoValue_ { 0.0f };
     float lfoDelayLevel_ { 0.0f };
     std::uint8_t lfoDelayByte_ { 0u };
-    // The modulator, its delay envelope and the note generators all advance on
-    // the converter scan, so the modulator's output is a staircase at that rate
-    // rather than a continuous triangle.
+    // The hardware modulator, delay envelope and note generators advance on
+    // the converter scan. Sync clocks use fractional time but retain that
+    // same sampled modulation staircase.
     std::uint32_t lfoDelayHoldoff_ { 0u }; // 0..0x4000
     std::uint32_t lfoDelayFade_ { 0u };    // 0..0x10000
     // The resonance control voltage: one converter output shared by every
@@ -3968,6 +4144,14 @@ private:
 
     std::array<float, 128> heldNoteVelocities_ {};
     std::array<std::uint16_t, 128> heldNoteCounts_ {};
+    // Distinct first presses, oldest first. Bounded keyboard storage avoids
+    // allocation and timestamp wrap; duplicate Note Ons never change order.
+    std::array<std::uint8_t, 128> heldNoteOrder_ {};
+    int heldNoteOrderSize_ { 0 };
+    bool singleVoiceLastNotePriority_ { false };
+    bool physicalVoicePowerOnGlide_ { false };
+    float filterSourceBalance_ { 1.0f };
+    float productOutputGain_ { 1.0f };
 
     std::array<Voice, maxVoices> voices_ {};
     std::array<VoiceCard, maxVoices> cards_ {};

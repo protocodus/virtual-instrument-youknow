@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#if !defined(YOUKNOW_EMBEDDED_TARGET)
 #include <complex>
+#endif
 #include <limits>
 #include <type_traits>
 
@@ -81,6 +83,7 @@ constexpr float bbdSaturationExponent = 12.9395323f;
 // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19
 constexpr float bbdServicedBiasCurvature = 1.8116256f;
 
+#if !defined(YOUKNOW_EMBEDDED_TARGET)
 double bbdTransferBase(double normalised) noexcept
 {
     return 1.0
@@ -89,6 +92,7 @@ double bbdTransferBase(double normalised) noexcept
          + std::pow(normalised,
                     static_cast<double>(bbdSaturationExponent));
 }
+#endif
 
 // The fitted exponent is non-integral, so there is no multiply/root identity
 // analogous to the output summer's fixed eighth power. Sample the reference
@@ -105,6 +109,11 @@ struct BbdTransferHermiteNode
     double slope {};
 };
 
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+constexpr std::array<BbdTransferHermiteNode, bbdTransferHermiteIntervals + 1u> bbdTransferHermiteTable =
+#include "FrozenTables/BbdTransfer.inc"
+;
+#else
 const std::array<BbdTransferHermiteNode,
                  bbdTransferHermiteIntervals + 1u> bbdTransferHermiteTable = [] {
     std::array<BbdTransferHermiteNode,
@@ -126,9 +135,15 @@ const std::array<BbdTransferHermiteNode,
     }
     return result;
 }();
+#endif
 
 // Fixed component candidate, built before audio processing. Both profiles
 // use the same monotone Hermite support and defensive extreme-input fallback.
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+constexpr std::array<BbdTransferHermiteNode, bbdTransferHermiteIntervals + 1u> bbdServicedBiasHermiteTable =
+#include "FrozenTables/BbdServicedBias.inc"
+;
+#else
 const std::array<BbdTransferHermiteNode,
                  bbdTransferHermiteIntervals + 1u> bbdServicedBiasHermiteTable = [] {
     std::array<BbdTransferHermiteNode,
@@ -150,6 +165,7 @@ const std::array<BbdTransferHermiteNode,
     }
     return result;
 }();
+#endif
 
 double interpolatedBbdTransfer(double normalised,
     const std::array<BbdTransferHermiteNode,
@@ -2529,6 +2545,7 @@ void Chorus::prepareSupportRates(double hostSampleRate) noexcept
 namespace
 {
 using NoiseMomentTable=std::array<double,Chorus::noiseMomentIntervals+1>;
+#if !defined(YOUKNOW_EMBEDDED_TARGET)
 NoiseMomentTable makeNoiseMoments(ChorusSupportProfile profile) noexcept
 {
     // Analogue small-signal transfer of the SAME connected post circuit,
@@ -2577,13 +2594,29 @@ NoiseMomentTable makeNoiseMoments(ChorusSupportProfile profile) noexcept
     }
     return result;
 }
+#endif
+
 const NoiseMomentTable& noiseMomentsFor(ChorusSupportProfile profile) noexcept
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    if (profile == ChorusSupportProfile::IdealFollowers)
+    {
+        static constexpr NoiseMomentTable ideal =
+#include "FrozenTables/ChorusIdealNoiseMoment.inc"
+;
+        return ideal;
+    }
+    static constexpr NoiseMomentTable finite =
+#include "FrozenTables/ChorusFiniteNoiseMoment.inc"
+;
+    return finite;
+#else
     // Warmed by prepare(), never lazily initialized on an audio callback.
     if(profile==ChorusSupportProfile::IdealFollowers)
     {static const auto ideal=makeNoiseMoments(profile);return ideal;}
     static const auto finite=makeNoiseMoments(ChorusSupportProfile::Nominal2SA1015);
     return finite;
+#endif
 }
 }
 double Chorus::bucketNoiseCosineMoment(double clockHz) const noexcept

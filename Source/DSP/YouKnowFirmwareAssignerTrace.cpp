@@ -184,7 +184,7 @@ Trace::Status uartStatus(Uart::Status status) noexcept {
 
 FirmwareAssignerTrace::Result FirmwareAssignerTrace::advanceTo(
     State &state, Uart::State &uart, const Uart::Configuration &configuration,
-    std::span<const Request> requests, std::uint64_t target, Events &events,
+    Span<const Request> requests, std::uint64_t target, Events &events,
     Uart::EventBuffer &uartEvents) noexcept {
     Result result{Status::ReachedTarget};
     if (!valid(state) || state.now != uart.now || target < state.now ||
