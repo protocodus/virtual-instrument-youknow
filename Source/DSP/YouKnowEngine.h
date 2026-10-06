@@ -32,8 +32,11 @@
 #include <cstddef>
 #include <cstdint>
 
-#if (defined(__aarch64__) && defined(__ARM_NEON)) \
-    || (defined(__x86_64__) && defined(__SSE2__))
+// The Jukebox embedded compiler defines host architecture macros but does
+// not provide the native SIMD intrinsics. Its target uses the scalar solver.
+#if !defined(YOUKNOW_EMBEDDED_TARGET) \
+    && ((defined(__aarch64__) && defined(__ARM_NEON)) \
+        || (defined(__x86_64__) && defined(__SSE2__)))
 #define YOUKNOW_HAS_VCF_PAIR_SIMD 1
 #endif
 

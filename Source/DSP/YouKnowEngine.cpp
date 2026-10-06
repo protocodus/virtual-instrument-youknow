@@ -7,10 +7,12 @@
 #include <limits>
 #include "YouKnowCompatibility.h"
 
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
 #if defined(__aarch64__) && defined(__ARM_NEON)
 #include <arm_neon.h>
 #elif defined(__x86_64__) && defined(__SSE2__)
 #include <emmintrin.h>
+#endif
 #endif
 
 #if defined(YOUKNOW_WORK_AUDIT)
