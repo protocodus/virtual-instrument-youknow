@@ -28,8 +28,10 @@ test -s "${PREVIEW_DIR}/editor-preview.tar.gz"
 for platform in macos windows linux; do
     (
         cd "${DIST_DIR}/${platform}"
-        test -s SHA256SUMS.txt
-        sha256sum --check --strict --quiet SHA256SUMS.txt
+        checksums=(YouKnow-*-SHA256SUMS.txt)
+        [[ ${#checksums[@]} -eq 1 ]]
+        test -s "${checksums[0]}"
+        sha256sum --check --strict --quiet "${checksums[0]}"
     )
 done
 
@@ -48,17 +50,29 @@ publish_packages() {
         echo "Source unchanged since the committed packages; keeping dist/."
         return 0
     fi
-    rm -rf dist/macos dist/windows dist/linux
+    local archive distribution version build target platform_suffix shared_identity=""
     for platform in macos windows linux; do
-        mkdir -p "dist/${platform}"
-        cp "${DIST_DIR}/${platform}"/* "dist/${platform}/"
+        archive="$(find "${DIST_DIR}/${platform}" -maxdepth 1 -name 'YouKnow-*-SHA256SUMS.txt' -exec basename {} \;)"
+        if [[ ! "$archive" =~ ^YouKnow-([0-9]+\.[0-9]+\.[0-9]+)-build\.([1-9][0-9]*(\.[1-9][0-9]*)?)-(macOS-universal|Windows-x64|Linux-x64)-SHA256SUMS.txt$ ]]; then
+            echo "error: invalid package identity: $archive" >&2; exit 1
+        fi
+        version="${BASH_REMATCH[1]}"; build="${BASH_REMATCH[2]}"; platform_suffix="${BASH_REMATCH[4]}"
+        distribution="${version}-build.${build}"
+        if [[ -n "$shared_identity" && "$shared_identity" != "$distribution" ]]; then
+            echo "error: platform packages have different build identities" >&2; exit 1
+        fi
+        shared_identity="$distribution"
+        target="dist/${version}/build.${build}/${platform_suffix}"
+        if [[ -d "$target" && -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+            echo "error: distribution identity already exists: $target" >&2; exit 1
+        fi
+        mkdir -p "$target"
+        cp "${DIST_DIR}/${platform}"/* "$target/"
     done
     cp Docs/screenshots/youknow-standalone.png dist/youknow-standalone.png
-    local archive
-    archive="$(cd dist/linux && ls YouKnow-*-Linux-x64.tar.gz)"
-    archive="${archive#YouKnow-}"
-    printf 'source=%s\nversion=%s\n' "${GITHUB_SHA}" \
-        "${archive%-Linux-x64.tar.gz}" > dist/BUILD.txt
+    printf 'source=%s\nversion=%s\npath=%s\n' "${GITHUB_SHA}" "$distribution" \
+        "dist/${version}/build.${build}" > dist/BUILD.txt
+
 }
 
 for attempt in 1 2 3; do

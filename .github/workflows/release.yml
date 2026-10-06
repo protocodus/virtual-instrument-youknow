@@ -182,7 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          dist="build-macos/dist"
+          dist="$(python3 scripts/distribution.py --build-dir build-macos --platform macOS --arch universal --formats VST3 AU CLAP Standalone)"
           version="${GITHUB_REF_NAME#youknow-v}"
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "error: invalid release tag: ${GITHUB_REF_NAME}" >&2
@@ -317,10 +317,11 @@ jobs:
 
           distribution_version="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' \
             build-macos/CMakeCache.txt)"
+          dist="$(python3 scripts/distribution.py --build-dir build-macos --platform macOS --arch universal --formats VST3 AU CLAP Standalone)"
           assets=(
-            "build-macos/dist/YouKnow-${distribution_version}-macOS-universal.pkg"
-            "build-macos/dist/YouKnow-${distribution_version}-macOS-universal.manifest.txt"
-            "build-macos/dist/YouKnow-${distribution_version}-macOS-universal-SHA256SUMS.txt"
+            "${dist}/YouKnow-${distribution_version}-macOS-universal.pkg"
+            "${dist}/YouKnow-${distribution_version}-macOS-universal.manifest.txt"
+            "${dist}/YouKnow-${distribution_version}-macOS-universal-SHA256SUMS.txt"
           )
           gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
             --verify-tag --title "YouKnow ${distribution_version}" \

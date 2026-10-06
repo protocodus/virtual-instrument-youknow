@@ -20,6 +20,13 @@ import zipfile
 
 
 SCRIPTS = Path(__file__).resolve().parent
+distribution_tests_spec = importlib.util.spec_from_file_location("distribution_tests", SCRIPTS / "test-distribution.py")
+distribution_tests = importlib.util.module_from_spec(distribution_tests_spec)
+distribution_tests_spec.loader.exec_module(distribution_tests)
+WindowsPackagingTests = distribution_tests.WindowsPackagingTests
+LinuxPackagingTests = distribution_tests.LinuxPackagingTests
+StablePathTests = distribution_tests.StablePathTests
+
 BUILD_NUMBER = "34393416911.1"
 DISTRIBUTION_VERSION = f"1.2.3-build.{BUILD_NUMBER}"
 
@@ -190,148 +197,6 @@ class WorkflowGateTests(unittest.TestCase):
             self.assertNotRegex(header, r"(?m)^    (?:if|continue-on-error):")
 
 
-class WindowsPackagingTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="youknow-package-test-")
-        self.addCleanup(self.temporary.cleanup)
-        self.project = Path(self.temporary.name)
-        self.script = self.project / "scripts/package-windows.py"
-        self.script.parent.mkdir()
-        shutil.copyfile(SCRIPTS / "package-windows.py", self.script)
-        self.build = self.project / "build-win"
-        self.artifacts = self.build / "YouKnow_artefacts/Release"
-        self.payload = {
-            "VST3/YouKnow.vst3/Contents/x86_64-win/YouKnow.vst3": b"vst3 binary",
-            "VST3/YouKnow.vst3/Contents/Resources/moduleinfo.json": b'{"Name":"YouKnow"}',
-            "CLAP/YouKnow.clap": b"clap binary",
-            "Standalone/YouKnow.exe": b"standalone binary",
-        }
-        for relative, contents in self.payload.items():
-            write(self.artifacts / relative, contents)
-        write(self.build / "CMakeCache.txt", version_cache())
-        self.notices = (
-            "LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md", "USER_GUIDE.md",
-            "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
-            "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
-        )
-        for relative in self.notices:
-            write(self.project / relative, relative.encode())
-
-    def package(self):
-        return subprocess.run(
-            [sys.executable, str(self.script), "--build-dir", str(self.build)],
-            capture_output=True, text=True, check=False,
-        )
-
-    def test_archive_contains_complete_bundle_formats_notices_and_matching_checksum(self):
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        archive = self.build / f"dist/YouKnow-{DISTRIBUTION_VERSION}-Windows-x64.zip"
-        with zipfile.ZipFile(archive) as output:
-            expected = set(self.payload) | (set(self.notices) - {"USER_GUIDE.md"}) | {"README.md"}
-            self.assertEqual(set(output.namelist()), expected)
-            self.assertEqual(len(output.namelist()), len(expected))
-            for relative, contents in self.payload.items():
-                self.assertEqual(output.read(relative), contents)
-            self.assertEqual(output.read("README.md"), b"USER_GUIDE.md")
-            self.assertIsNone(output.testzip())
-        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        self.assertEqual(
-            (archive.parent / "SHA256SUMS.txt").read_text(),
-            f"{digest}  {archive.name}\n",
-        )
-
-    def test_missing_or_empty_binary_and_notice_fail_before_archiving(self):
-        required = [
-            self.artifacts / "VST3/YouKnow.vst3/Contents/x86_64-win/YouKnow.vst3",
-            self.artifacts / "CLAP/YouKnow.clap",
-            self.artifacts / "Standalone/YouKnow.exe",
-            *(self.project / relative for relative in self.notices),
-        ]
-        for path in required:
-            original = path.read_bytes()
-            for empty in (False, True):
-                with self.subTest(path=str(path.relative_to(self.project)), empty=empty):
-                    if empty:
-                        path.write_bytes(b"")
-                    else:
-                        path.unlink()
-                    result = self.package()
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("Missing or empty", result.stderr)
-                    self.assertFalse((self.build / "dist").exists())
-                    path.write_bytes(original)
-
-    def test_invalid_or_ambiguous_version_fails_before_archiving(self):
-        for version in (b"", b"CMAKE_PROJECT_VERSION:STATIC=../bad\n",
-                        b"CMAKE_PROJECT_VERSION:STATIC=1.2\nCMAKE_PROJECT_VERSION:STATIC=2.3\n"):
-            with self.subTest(version=version):
-                (self.build / "CMakeCache.txt").write_bytes(version)
-                result = self.package()
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("one valid project version", result.stderr)
-                self.assertFalse((self.build / "dist").exists())
-
-    def test_invalid_or_inconsistent_build_identity_fails_before_archiving(self):
-        for description, cache in invalid_build_caches():
-            with self.subTest(description=description):
-                (self.build / "CMakeCache.txt").write_bytes(cache)
-                result = self.package()
-                self.assertNotEqual(result.returncode, 0)
-                self.assertRegex(result.stderr, "valid build number|distribution version must match")
-                self.assertFalse((self.build / "dist").exists())
-
-    def test_new_build_replaces_old_archive_and_checksum(self):
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        unrelated = self.build / "dist/keep.txt"
-        unrelated.write_text("preserve")
-        (self.build / "CMakeCache.txt").write_bytes(
-            version_cache().replace(BUILD_NUMBER.encode(), b"34393416911.2")
-        )
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        dist = self.build / "dist"
-        archive = dist / "YouKnow-1.2.3-build.34393416911.2-Windows-x64.zip"
-        self.assertEqual(set(dist.iterdir()), {archive, dist / "SHA256SUMS.txt", unrelated})
-        self.assertEqual(unrelated.read_text(), "preserve")
-        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        self.assertEqual((dist / "SHA256SUMS.txt").read_text(), f"{digest}  {archive.name}\n")
-
-    def test_failed_repack_preserves_valid_archive_and_checksum(self):
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        dist = self.build / "dist"
-        archive = next(dist.glob("*.zip"))
-        old_archive = archive.read_bytes()
-        old_checksum = (dist / "SHA256SUMS.txt").read_bytes()
-        spec = importlib.util.spec_from_file_location("fixture_windows_packager", self.script)
-        packager = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(packager)
-        # Exercise actual I/O failures, not just input preflight rejection.
-        # Both rebuilding the current version and starting a new version must
-        # leave the preceding distribution intact if preparation fails.
-        for build_number in (BUILD_NUMBER, "34393416911.2"):
-            (self.build / "CMakeCache.txt").write_bytes(
-                version_cache().replace(BUILD_NUMBER.encode(), build_number.encode())
-            )
-            faults = (
-                mock.patch.object(packager.zipfile.ZipFile, "write",
-                                  side_effect=OSError("simulated ZIP write failure")),
-                mock.patch.object(packager.zipfile.ZipFile, "testzip",
-                                  return_value="damaged member"),
-                mock.patch.object(packager.Path, "write_text",
-                                  side_effect=OSError("simulated checksum write failure")),
-            )
-            for index, fault in enumerate(faults):
-                with self.subTest(build_number=build_number, fault=index):
-                    with fault, self.assertRaises((OSError, ValueError)):
-                        packager.package(self.build)
-                    self.assertEqual(archive.read_bytes(), old_archive)
-                    self.assertEqual((dist / "SHA256SUMS.txt").read_bytes(), old_checksum)
-                    self.assertEqual(set(dist.iterdir()), {archive, dist / "SHA256SUMS.txt"})
-
-
 @unittest.skipUnless(sys.platform == "darwin", "macOS bundle validation requires PlistBuddy")
 class MacPackagingVersionTests(unittest.TestCase):
     def setUp(self):
@@ -416,136 +281,6 @@ class MacPackagingVersionTests(unittest.TestCase):
                 self.assertFalse((self.build / "dist").exists())
 
 
-class LinuxPackagingTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="youknow-linux-package-test-")
-        self.addCleanup(self.temporary.cleanup)
-        self.project = Path(self.temporary.name)
-        write(self.project / "build-dsp/CMakeCache.txt", version_cache())
-        self.artifacts = self.project / "build-dsp/YouKnow_artefacts/Release"
-        self.payload = {
-            "VST3/YouKnow.vst3/Contents/x86_64-linux/YouKnow.so": b"vst3 binary",
-            "Standalone/YouKnow": b"standalone binary",
-        }
-        for relative, contents in self.payload.items():
-            write(self.artifacts / relative, contents)
-        (self.artifacts / "Standalone/YouKnow").chmod(0o755)
-        self.documents = (
-            "LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md", "USER_GUIDE.md",
-            "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
-            "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
-        )
-        for relative in self.documents:
-            write(self.project / relative, relative.encode())
-        # Execute the actual inline CI packaging step without a YAML dependency.
-        workflow = (SCRIPTS.parent / ".github/workflows/ci.yml").read_text()
-        step = workflow.split("      - name: Package Linux VST3 and standalone\n", 1)[1]
-        run_block = step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
-        self.script = textwrap.dedent(run_block)
-        self.archive = self.project / f"build-dsp/dist/YouKnow-{DISTRIBUTION_VERSION}-Linux-x64.tar.gz"
-
-    def package(self):
-        # macOS tar adds AppleDouble files by default; the production step runs
-        # on Linux, so keep the local fixture archive equivalent to that output.
-        environment = os.environ.copy()
-        environment["COPYFILE_DISABLE"] = "1"
-        return subprocess.run(
-            ["bash", "-c", self.script], cwd=self.project,
-            env=environment,
-            capture_output=True, text=True, check=False,
-        )
-
-    def test_archive_preserves_binaries_and_includes_linked_documentation(self):
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        with tarfile.open(self.archive) as output:
-            files = {entry.name for entry in output.getmembers() if entry.isfile()}
-            expected = set(self.payload) | (set(self.documents) - {"USER_GUIDE.md"})
-            expected |= {"README.md", "JUCE-LICENSE.md"}
-            self.assertEqual(files, expected)
-            for relative, contents in self.payload.items():
-                self.assertEqual(output.extractfile(relative).read(), contents)
-            self.assertEqual(output.extractfile("README.md").read(), b"USER_GUIDE.md")
-            for relative in set(self.documents) - {"USER_GUIDE.md"}:
-                self.assertEqual(output.extractfile(relative).read(), relative.encode())
-            self.assertTrue(output.getmember("Standalone/YouKnow").mode & 0o111)
-        digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
-        self.assertEqual(
-            (self.archive.parent / "SHA256SUMS.txt").read_text(),
-            f"{digest}  {self.archive.name}\n",
-        )
-
-    def test_missing_or_empty_document_fails_before_archiving(self):
-        for relative in self.documents:
-            path = self.project / relative
-            original = path.read_bytes()
-            for empty in (False, True):
-                with self.subTest(document=relative, empty=empty):
-                    if empty:
-                        path.write_bytes(b"")
-                    else:
-                        path.unlink()
-                    result = self.package()
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertFalse(self.archive.exists())
-                    path.write_bytes(original)
-
-    def test_missing_or_empty_binary_preserves_previous_distribution(self):
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        old_archive = self.archive.read_bytes()
-        checksums = self.archive.parent / "SHA256SUMS.txt"
-        old_checksums = checksums.read_bytes()
-        # A subsequent build must fail before deleting the complete previous
-        # archive, even if its bundle folder and executable bits remain.
-        (self.project / "build-dsp/CMakeCache.txt").write_bytes(
-            version_cache().replace(BUILD_NUMBER.encode(), b"34393416911.2")
-        )
-        for relative in self.payload:
-            path = self.artifacts / relative
-            original = path.read_bytes()
-            mode = path.stat().st_mode
-            for empty in (False, True):
-                with self.subTest(binary=relative, empty=empty):
-                    if empty:
-                        path.write_bytes(b"")
-                    else:
-                        path.unlink()
-                    result = self.package()
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("missing or empty Linux x64 binary", result.stderr)
-                    self.assertEqual(self.archive.read_bytes(), old_archive)
-                    self.assertEqual(checksums.read_bytes(), old_checksums)
-                    self.assertEqual(list(self.archive.parent.glob("*.tar.gz")), [self.archive])
-                    path.write_bytes(original)
-                    path.chmod(mode)
-
-    def test_invalid_or_inconsistent_build_identity_fails_before_archiving(self):
-        for description, cache in invalid_build_caches():
-            with self.subTest(description=description):
-                (self.project / "build-dsp/CMakeCache.txt").write_bytes(cache)
-                result = self.package()
-                self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(self.archive.exists())
-
-    def test_new_build_replaces_old_archive_and_checksum(self):
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        dist = self.archive.parent
-        unrelated = dist / "keep.txt"
-        unrelated.write_text("preserve")
-        (self.project / "build-dsp/CMakeCache.txt").write_bytes(
-            version_cache().replace(BUILD_NUMBER.encode(), b"34393416911.2")
-        )
-        result = self.package()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        archive = dist / "YouKnow-1.2.3-build.34393416911.2-Linux-x64.tar.gz"
-        self.assertEqual(set(dist.iterdir()), {archive, dist / "SHA256SUMS.txt", unrelated})
-        self.assertEqual(unrelated.read_text(), "preserve")
-        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        self.assertEqual((dist / "SHA256SUMS.txt").read_text(), f"{digest}  {archive.name}\n")
-
-
 class PreviewPublicationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="youknow-preview-test-")
@@ -619,12 +354,15 @@ class PreviewPublicationTests(unittest.TestCase):
             sums = ""
             for name in archives:
                 contents = tag + name.encode()
-                files[f"dist/{platform}/{name}"] = contents
+                suffix = {"macos": "macOS-universal", "windows": "Windows-x64", "linux": "Linux-x64"}[platform]
+                files[f"dist/1.2.3/build.{build}/{suffix}/{name}"] = contents
                 sums += f"{hashlib.sha256(contents).hexdigest()}  {name}\n"
-            files[f"dist/{platform}/SHA256SUMS.txt"] = sums.encode()
+            files[f"dist/1.2.3/build.{build}/{suffix}/YouKnow-1.2.3-build.{build}-{suffix}-SHA256SUMS.txt"] = sums.encode()
         if write:
             for relative, contents in files.items():
-                write_path = self.dist / relative.removeprefix("dist/")
+                suffix = relative.split("/")[-2]
+                platform = {"macOS-universal": "macos", "Windows-x64": "windows", "Linux-x64": "linux"}[suffix]
+                write_path = self.dist / platform / Path(relative).name
                 write_path.parent.mkdir(parents=True, exist_ok=True)
                 write_path.write_bytes(contents)
         return files
@@ -706,15 +444,15 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertEqual(self.remote_contents("dist/youknow-standalone.png"),
                          self.rendered["Docs/screenshots/youknow-standalone.png"])
         self.assertEqual(self.remote_contents("dist/BUILD.txt"),
-                         f"source={head}\nversion=1.2.3-build.2.1\n".encode())
+                         f"source={head}\nversion=1.2.3-build.2.1\npath=dist/1.2.3/build.2.1\n".encode())
         tracked = self.remote_tracked()
         for relative in self.original_packages:
             if not relative.endswith("SHA256SUMS.txt"):
-                self.assertNotIn(relative, tracked)
+                self.assertIn(relative, tracked)
         self.assertEqual(self.remote_contents("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
         changed = self.git(self.remote, "diff-tree", "--no-commit-id", "--name-only", "-r", "main").stdout
         expected = set(self.rendered) | set(self.packages) | {"dist/youknow-standalone.png", "dist/BUILD.txt"}
-        expected |= {relative for relative in self.original_packages if not relative.endswith("SHA256SUMS.txt")}
+        expected -= set(self.original_packages)
         self.assertEqual(set(changed.splitlines()), expected)
 
     def test_corrupt_package_never_reaches_main(self):

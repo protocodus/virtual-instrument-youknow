@@ -57,6 +57,10 @@ if [[ -n "${JUCE_PATH:-}" ]]; then
     cmake_args+=("-DYOUKNOW_JUCE_PATH=${JUCE_PATH}")
 fi
 
+if [[ -n "${BUILD_NUMBER:-}" ]]; then
+    cmake_args+=("-DYOUKNOW_BUILD_NUMBER=${BUILD_NUMBER}")
+fi
+
 cmake "${cmake_args[@]}"
 cmake --build "${BUILD_DIR}" --config "${CONFIG}" --parallel
 ctest --test-dir "${BUILD_DIR}" -C "${CONFIG}" --output-on-failure

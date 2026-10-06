@@ -18,6 +18,8 @@ concurrency:
 
 jobs:
   dsp-tests:
+    outputs:
+      distribution: ${{ steps.linux-package.outputs.distribution }}
     name: DSP tests (JUCE-free, Linux)
     runs-on: ubuntu-24.04
     steps:
@@ -124,73 +126,25 @@ jobs:
           done
 
       - name: Package Linux VST3 and standalone
+        id: linux-package
         run: |
           set -euo pipefail
-          artefacts="build-dsp/YouKnow_artefacts/Release"
-          test -d "$artefacts/VST3/YouKnow.vst3"
-          # A bundle directory or executable bit survives an interrupted or
-          # truncated build; require both actual payloads before archiving.
-          for binary in VST3/YouKnow.vst3/Contents/x86_64-linux/YouKnow.so \
-            Standalone/YouKnow; do
-            if [[ ! -s "$artefacts/$binary" ]]; then
-              echo "error: missing or empty Linux x64 binary: $artefacts/$binary" >&2
-              exit 1
-            fi
-          done
-          test -x "$artefacts/Standalone/YouKnow"
-          cache="build-dsp/CMakeCache.txt"
-          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$cache")"
-          build_number="$(sed -n 's/^YOUKNOW_BUILD_NUMBER:STRING=//p' "$cache")"
-          distribution_version="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' "$cache")"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
-              || ! "$build_number" =~ ^[1-9][0-9]*(\.[1-9][0-9]*)?$ \
-              || "$distribution_version" != "$version-build.$build_number" ]]; then
-            echo "error: invalid or inconsistent build version metadata" >&2
-            exit 1
-          fi
-          dist="build-dsp/dist"
-          mkdir -p "$dist"
-          archive_name="YouKnow-${distribution_version}-Linux-x64.tar.gz"
-          archive="$dist/$archive_name"
-          # Ship the customer guide and its linked installation/privacy docs
-          # alongside the required licence and third-party notices.
-          contents=("VST3/YouKnow.vst3" "Standalone/YouKnow")
-          for document in LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md \
-            ThirdParty/JUCE-LICENSE.md ThirdParty/CLAP-LICENSE.md \
-            INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md; do
-            test -s "$document"
-            mkdir -p "$artefacts/$(dirname "$document")"
-            cp "$document" "$artefacts/$document"
-            contents+=("$document")
-          done
-          test -s USER_GUIDE.md
-          cp USER_GUIDE.md "$artefacts/README.md"
-          contents+=("README.md")
-          # Retain the licence filename shipped in earlier Linux archives.
-          cp ThirdParty/JUCE-LICENSE.md "$artefacts/JUCE-LICENSE.md"
-          contents+=("JUCE-LICENSE.md")
-          # Keep the upload glob and checksum set aligned when reusing a build.
-          # Only remove previous generated archives after validating the payload.
-          rm -f "$dist"/YouKnow-*-Linux-x64.tar.gz "$dist/YouKnow-Linux-x64.tar.gz"
-          tar -czf "$archive" -C "$artefacts" "${contents[@]}"
-          test -s "$archive"
-          tar -tzf "$archive" >/dev/null
-          (
-            cd "$dist"
-            shasum -a 256 "$archive_name" > SHA256SUMS.txt
-          )
+          python3 scripts/package-desktop.py --build-dir build-dsp --platform Linux
+          directory="$(python3 scripts/distribution.py --build-dir build-dsp --platform Linux --arch x64 --formats VST3 CLAP Standalone)"
+          echo "directory=$directory" >> "$GITHUB_OUTPUT"
 
+          echo "distribution=$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' build-dsp/CMakeCache.txt)" >> "$GITHUB_OUTPUT"
       - name: Upload Linux package
         uses: actions/upload-artifact@v4
         with:
-          name: ci-linux
-          path: |
-            build-dsp/dist/YouKnow-*-Linux-x64.tar.gz
-            build-dsp/dist/SHA256SUMS.txt
+          name: ci-linux-${{ steps.linux-package.outputs.distribution }}
+          path: ${{ steps.linux-package.outputs.directory }}/*
           if-no-files-found: error
           retention-days: 7
 
   plugin-macos:
+    outputs:
+      distribution: ${{ steps.macos-package.outputs.distribution }}
     name: Plug-in build and package (macOS)
     runs-on: macos-15
     steps:
@@ -256,35 +210,23 @@ jobs:
         run: ./scripts/sign-and-package-macos.sh
 
       - name: Verify macOS packages and write checksums
+        id: macos-package
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          cache="build-macos/CMakeCache.txt"
-          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$cache")"
-          build_number="$(sed -n 's/^YOUKNOW_BUILD_NUMBER:STRING=//p' "$cache")"
-          distribution_version="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' "$cache")"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
-              || ! "$build_number" =~ ^[1-9][0-9]*(\.[1-9][0-9]*)?$ \
-              || "$distribution_version" != "$version-build.$build_number" ]]; then
-            echo "error: invalid or inconsistent build version metadata" >&2
-            exit 1
-          fi
-          cd build-macos/dist
-          base="YouKnow-${distribution_version}-macOS-universal"
-          test -s "$base.zip"
-          test -s "$base.pkg"
-          unzip -tq "$base.zip"
-          shasum -a 256 "$base.zip" "$base.pkg" > SHA256SUMS.txt
+          directory="$(python3 scripts/distribution.py --build-dir build-macos --platform macOS --arch universal --formats VST3 AU CLAP Standalone)"
+          cd "$directory"
+          shasum -a 256 -c YouKnow-*-macOS-universal-SHA256SUMS.txt
+          unzip -tq YouKnow-*-macOS-universal.zip
+          echo "directory=$directory" >> "$GITHUB_OUTPUT"
 
+          echo "distribution=$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' "$GITHUB_WORKSPACE/build-macos/CMakeCache.txt")" >> "$GITHUB_OUTPUT"
       - name: Upload macOS packages
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: ci-macos
-          path: |
-            build-macos/dist/YouKnow-*-macOS-universal.zip
-            build-macos/dist/YouKnow-*-macOS-universal.pkg
-            build-macos/dist/SHA256SUMS.txt
+          name: ci-macos-${{ steps.macos-package.outputs.distribution }}
+          path: ${{ steps.macos-package.outputs.directory }}/*
           if-no-files-found: error
           retention-days: 30
 
@@ -321,19 +263,19 @@ jobs:
       - name: Download the macOS packages
         uses: actions/download-artifact@v4
         with:
-          name: ci-macos
+          name: ci-macos-${{ needs.plugin-macos.outputs.distribution }}
           path: ${{ runner.temp }}/youknow-dist/macos
 
       - name: Download the Windows package
         uses: actions/download-artifact@v4
         with:
-          name: ci-windows
+          name: ci-windows-${{ needs.dsp-tests-windows.outputs.distribution }}
           path: ${{ runner.temp }}/youknow-dist/windows
 
       - name: Download the Linux package
         uses: actions/download-artifact@v4
         with:
-          name: ci-linux
+          name: ci-linux-${{ needs.dsp-tests.outputs.distribution }}
           path: ${{ runner.temp }}/youknow-dist/linux
 
       - name: Commit the refreshed previews and packages if they changed
@@ -344,6 +286,8 @@ jobs:
         run: bash scripts/refresh-previews.sh
 
   dsp-tests-windows:
+    outputs:
+      distribution: ${{ steps.windows-package.outputs.distribution }}
     name: DSP tests and plug-in package (Windows x64)
     runs-on: windows-2025
     defaults:
@@ -386,14 +330,18 @@ jobs:
           done
 
       - name: Package Windows VST3, CLAP and standalone
-        run: python scripts/package-windows.py --build-dir build-win
+        id: windows-package
+        shell: bash
+        run: |
+          python scripts/package-windows.py --build-dir build-win
+          directory="$(python scripts/distribution.py --build-dir build-win --platform Windows --arch x64 --formats VST3 CLAP Standalone)"
+          echo "directory=$directory" >> "$GITHUB_OUTPUT"
 
+          echo "distribution=$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' build-win/CMakeCache.txt)" >> "$GITHUB_OUTPUT"
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: ci-windows
-          path: |
-            build-win/dist/YouKnow-*-Windows-x64.zip
-            build-win/dist/SHA256SUMS.txt
+          name: ci-windows-${{ steps.windows-package.outputs.distribution }}
+          path: ${{ steps.windows-package.outputs.directory }}/*
           if-no-files-found: error
           retention-days: 30

@@ -7,6 +7,9 @@ from pathlib import Path
 import re
 import tempfile
 import zipfile
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from distribution import identity, output_dir, manifest, require_new_destination
 
 
 def package(build_dir: Path) -> Path:
@@ -54,7 +57,9 @@ def package(build_dir: Path) -> Path:
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"Missing or empty distribution file: {path}")
 
-    dist = build_dir / "dist"
+    compiled = identity(build_dir, formats=("VST3", "CLAP", "Standalone"))
+    dist = output_dir(compiled, "Windows", "x64")
+    require_new_destination(dist)
     dist.mkdir(parents=True, exist_ok=True)
     archive = dist / f"YouKnow-{distribution_version}-Windows-x64.zip"
     # Complete and verify both files before replacing any previous package.
@@ -63,7 +68,7 @@ def package(build_dir: Path) -> Path:
     # the context also removes partial work on an exception.
     with tempfile.TemporaryDirectory(prefix=".youknow-package-", dir=dist) as work:
         staged_archive = Path(work) / archive.name
-        staged_checksums = Path(work) / "SHA256SUMS.txt"
+        staged_checksums = Path(work) / (archive.stem + "-SHA256SUMS.txt")
         with zipfile.ZipFile(staged_archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
             for relative, path in sorted(files.items()):
                 output.write(path, relative)
@@ -75,17 +80,10 @@ def package(build_dir: Path) -> Path:
         with staged_archive.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-        staged_checksums.write_text(
-            f"{digest.hexdigest()}  {archive.name}\n", encoding="utf-8"
-        )
-        staged_archive.replace(archive)
-        staged_checksums.replace(dist / "SHA256SUMS.txt")
+        manifest(compiled, Path(work), "Windows", "x64", [staged_archive])
+        for staged in Path(work).iterdir():
+            staged.replace(dist / staged.name)
 
-    # A reused build directory must not upload older builds alongside the new
-    # archive while its checksum file covers only the current build.
-    for previous in dist.glob("YouKnow-*-Windows-x64.zip"):
-        if previous != archive:
-            previous.unlink()
     return archive
 
 

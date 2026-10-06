@@ -12,7 +12,7 @@ APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:--}"
 INSTALLER_SIGN_IDENTITY="${INSTALLER_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 ARTIFACT_DIR="${BUILD_DIR}/YouKnow_artefacts/${CONFIG}"
-DIST_DIR="${BUILD_DIR}/dist"
+DIST_DIR=""
 PACKAGE_ROOT="${BUILD_DIR}/package-root"
 CACHE_FILE="${BUILD_DIR}/CMakeCache.txt"
 CMAKE_FILE="${PROJECT_DIR}/CMakeLists.txt"
@@ -47,18 +47,6 @@ if [[ "$#" -ne 0 ]]; then
     exit 1
 fi
 
-clear_distribution_artifacts() {
-    case "${DIST_DIR}" in
-        "${BUILD_DIR}"/*) ;;
-        *) echo "error: unsafe distribution path: ${DIST_DIR}" >&2; exit 1 ;;
-    esac
-    mkdir -p "${DIST_DIR}"
-    rm -f "${DIST_DIR}"/YouKnow-*-macOS-*.zip
-    rm -f "${DIST_DIR}"/YouKnow-*-macOS-*.pkg
-    rm -f "${DIST_DIR}"/YouKnow-*-macOS-*.manifest.txt
-    rm -f "${DIST_DIR}"/YouKnow-*-macOS-*-SHA256SUMS.txt
-    rm -f "${DIST_DIR}"/YouKnow-*-unsigned.pkg
-}
 
 case "${RELEASE_MODE}" in
     0|1) ;;
@@ -73,7 +61,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
-for tool in awk cmake cmp codesign ditto grep lipo mktemp pkgbuild plutil productbuild sed shasum xattr xcrun; do
+for tool in python3 awk cmake cmp codesign ditto grep lipo mktemp pkgbuild plutil productbuild sed shasum xattr xcrun; do
     command -v "${tool}" >/dev/null 2>&1 || {
         echo "error: required tool '${tool}' was not found" >&2
         exit 1
@@ -496,6 +484,11 @@ for executable in \
     done
 done
 
+identity_args=(--build-dir "${BUILD_DIR}" --config "${CONFIG}" --platform macOS
+    --arch "${ARTIFACT_ARCH}" --formats VST3 AU CLAP Standalone)
+DIST_DIR="$(python3 "${SCRIPT_DIR}/distribution.py" "${identity_args[@]}" --require-new)"
+mkdir -p "${DIST_DIR}"
+
 case "${PACKAGE_ROOT}" in
     "${BUILD_DIR}"/*) ;;
     *) echo "error: unsafe package staging path: ${PACKAGE_ROOT}" >&2; exit 1 ;;
@@ -621,8 +614,7 @@ ZIP_PATH="${DIST_DIR}/${ARTIFACT_BASE}.zip"
 MANIFEST_PATH="${DIST_DIR}/${ARTIFACT_BASE}.manifest.txt"
 CHECKSUM_PATH="${DIST_DIR}/${ARTIFACT_BASE}-SHA256SUMS.txt"
 
-# Avoid stale version or architecture names in wildcard-driven publication.
-clear_distribution_artifacts
+# Other versions and builds are retained. Only this exact identity is published.
 
 PACKAGE_WORK_DIR="$(mktemp -d "${BUILD_DIR}/package-work.XXXXXX")"
 cleanup() {
@@ -728,15 +720,8 @@ if [[ -f "${CUSTOMER_LICENSE_FILE}" ]]; then
     CUSTOMER_LICENSE_SHA256="$(shasum -a 256 "${CUSTOMER_LICENSE_FILE}" \
         | awk '{print $1}')"
 fi
-SOURCE_COMMIT="$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || printf 'unknown')"
-SOURCE_STATE="unavailable"
-if git -C "${PROJECT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    if [[ -n "$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=normal -- .)" ]]; then
-        SOURCE_STATE="dirty"
-    else
-        SOURCE_STATE="clean"
-    fi
-fi
+SOURCE_COMMIT="$(python3 "${SCRIPT_DIR}/distribution.py" "${identity_args[@]}" --field source_revision)"
+SOURCE_STATE="$(python3 "${SCRIPT_DIR}/distribution.py" "${identity_args[@]}" --field source_state)"
 
 {
     printf 'Product: %s\n' "${PRODUCT_NAME}"
