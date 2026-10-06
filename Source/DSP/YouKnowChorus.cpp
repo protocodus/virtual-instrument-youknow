@@ -2667,6 +2667,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     lineA_.reset(0x9e3779b9u);
     lineB_.reset(0x85ebca6bu);
     inputSupport_.reset();
+    wetPathFlushPending_ = false;
     lfoPhase_ = preserveLfoPhase ? continuingPhase : 0.0;
     const auto runningWhileMuted = settingsFor(ChorusMode::Off);
     wetGain_ = runningWhileMuted.wetGain;
