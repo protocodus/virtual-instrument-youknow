@@ -77,7 +77,8 @@ class DesktopPackageTests:
         else:self.documents+=['README.md','ThirdParty/CC0-1.0.txt','ThirdParty/Eastman-E1D-README.md','ThirdParty/Shinyguitar-README.txt','Assets/SampleBank/manifest.json']
         for name in self.documents:
             p=self.project/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(name)
-        self.env=os.environ.copy();self.env.pop('DIST_ROOT',None)
+        self.env=os.environ.copy()
+        for name in ('DIST_ROOT','BUILD_NUMBER','VERSION','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'):self.env.pop(name,None)
     def run_package(self):
         if self.platform=='Windows' and PRODUCT=='YouKnow':
             command=[sys.executable,str(self.scripts/'package-windows.py'),'--build-dir',str(self.build)]
@@ -111,6 +112,14 @@ class DesktopPackageTests:
         frozen_identity(self.build,self.formats,'34393416911.2')
         result=self.run_package();self.assertEqual(result.returncode,0,result.stderr);self.verify_set('34393416911.2')
         self.assertEqual(before,{p.name:p.read_bytes() for p in self.directory().iterdir()})
+    def test_packaging_environment_cannot_relabel_the_build(self):
+        for name,value in [('BUILD_NUMBER','42'),('VERSION','9.9.9'),('GITHUB_RUN_ID','42')]:
+            with self.subTest(name=name):
+                self.env[name]=value
+                result=self.run_package();self.assertNotEqual(result.returncode,0)
+                self.assertIn('disagrees',result.stderr)
+                self.assertFalse((self.project/'dist').exists());self.env.pop(name)
+
     def test_existing_identity_is_immutable(self):
         self.assertEqual(self.run_package().returncode,0)
         before={p.name:p.read_bytes() for p in self.directory().iterdir()}

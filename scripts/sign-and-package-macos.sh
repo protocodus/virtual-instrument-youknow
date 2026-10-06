@@ -6,6 +6,8 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${PROJECT_DIR}/build-macos}"
 CONFIG="${CONFIG:-Release}"
 VERSION_OVERRIDE="${VERSION:-}"
+BUILD_NUMBER_OVERRIDE="${BUILD_NUMBER:-}"
+BUILD_NUMBER_OVERRIDE_SET="${BUILD_NUMBER+x}"
 PROJECT_VERSION=""
 RELEASE_MODE="${RELEASE_MODE:-0}"
 APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:--}"
@@ -215,6 +217,9 @@ fi
 
 CONFIGURED_VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "${CACHE_FILE}")"
 BUILD_NUMBER="$(sed -n 's/^YOUKNOW_BUILD_NUMBER:STRING=//p' "${CACHE_FILE}")"
+if [[ "${BUILD_NUMBER_OVERRIDE_SET}" == x && "${BUILD_NUMBER_OVERRIDE}" != "${BUILD_NUMBER}" ]]; then
+    echo "error: BUILD_NUMBER disagrees with the configured build; rebuild before packaging" >&2; exit 1
+fi
 DISTRIBUTION_VERSION="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' "${CACHE_FILE}")"
 if [[ ! "${CONFIGURED_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "error: CMake cache must contain one valid project version" >&2

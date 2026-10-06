@@ -41,6 +41,14 @@ def identity(build, config="Release", formats=("VST3", "Standalone")):
         raise ValueError("CMake cache must contain one valid build number")
     if values["distribution_version"] != values["version"]+"-build."+values["build_number"]:
         raise ValueError("distribution version must match project version and build number")
+    if "BUILD_NUMBER" in os.environ and os.environ["BUILD_NUMBER"] != values["build_number"]:
+        raise ValueError("BUILD_NUMBER disagrees with the configured build; rebuild before packaging")
+    if "VERSION" in os.environ and os.environ["VERSION"] != values["version"]:
+        raise ValueError("VERSION disagrees with the configured version")
+    if "GITHUB_RUN_ID" in os.environ and "BUILD_NUMBER" not in os.environ:
+        requested = os.environ["GITHUB_RUN_ID"]+"."+os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+        if requested != values["build_number"]:
+            raise ValueError("CI run identity disagrees with the configured build")
     configured = json.loads((build / (PRODUCT+"-build-identity.json")).read_text())
     for key, value in {"product": PRODUCT, **values}.items():
         if configured.get(key) != value:
