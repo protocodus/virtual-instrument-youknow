@@ -117,6 +117,12 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-07
+
+- A11 Brass Set 1 receives a 0.38 dB output-volume trim to restore the factory
+  bank's loudness limit after the component-profile update. Its hardware tone
+  bytes are unchanged.
+
 ### Unreleased — 2026-10-05
 
 - The default component profile now includes a named +2.3 dB MN3009
@@ -2609,6 +2615,9 @@ The fixed filter-trim correction required small VR1 reductions for B14, B43,
 B52 and B76; their historical tone bytes and the level ceilings are unchanged.
 The 2026-09-17 chorus Mode I blend put A11 0.08 dB over the gated ceiling
 and lowered its VR1 position from 0.800 to 0.788.
+The 2026-10-05 component profile raised A11 above that ceiling again; the
+2026-10-07 correction lowers its volume position to 0.757, retaining its tone
+bytes and the same absolute level limits.
 The full audit after adopting filter/HPF B required a further reduction for
 B43 (0.521 to 0.517) and B52 (0.723 to 0.695) to retain the same ceilings.
 The [noise-level mismatch](Docs/hardware-validation.md) remains a fidelity gap.
