@@ -136,6 +136,10 @@ void require(bool ok, const char* message) {if (!ok) throw std::runtime_error(me
 // The original shape(...)*gain + noise(...) did not define which callback ran
 // first, so compiler-selected operand order cannot serve as the oracle. Use
 // the same prepared kernel to check batching against the original FIR design.
+// This test target disables optional floating-point contraction so the two
+// loop shapes use the same rounding policy. Exact callback-drive parity here
+// checks the arithmetic under that policy, not compiler-dependent contraction
+// choices in a default build. The linked DSP target keeps its production flags.
 struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
 {
     template <bool addNoise, bool withTemperature=false, class Shape, class OutputNoise>
@@ -386,7 +390,7 @@ void phaseBatchingBitEquivalence()
             }
         }
     require(allocations == 0, "VCA phase batching allocated");
-    std::cout << "VCA batched interpolation original bit/history/callback parity: "
+    std::cout << "VCA batched interpolation fixed-rounding bit/history/callback parity: "
               << compared << " random/hot/startup/reset/rate frames\n";
 }
 void linearResponseAndDelay()

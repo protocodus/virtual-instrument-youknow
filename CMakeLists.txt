@@ -895,6 +895,14 @@ if(BUILD_TESTING)
     set_tests_properties(YouKnow.Ba662TailNoise PROPERTIES TIMEOUT 180)
     add_executable(YouKnowVoiceVcaAntialiasTests Tests/YouKnowVoiceVcaAntialiasTests.cpp)
     target_link_libraries(YouKnowVoiceVcaAntialiasTests PRIVATE YouKnowDSP)
+    # The independent scalar and batched FIR loops need one rounding policy
+    # for bitwise arithmetic checks. Optional contraction can otherwise fuse
+    # only one loop (AppleClang 17), changing a double callback drive by 1 ULP.
+    # Keep this PRIVATE to the test; production DSP flags stay unchanged.
+    # MSVC retains its existing precise policy; /fp:fast is not enabled here.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        target_compile_options(YouKnowVoiceVcaAntialiasTests PRIVATE -ffp-contract=off)
+    endif()
     add_test(NAME YouKnow.VoiceVcaAntialias COMMAND YouKnowVoiceVcaAntialiasTests)
     set_tests_properties(YouKnow.VoiceVcaAntialias PROPERTIES TIMEOUT 180)
     add_executable(YouKnowOutputSummerAntialiasTests Tests/YouKnowOutputSummerAntialiasTests.cpp)
