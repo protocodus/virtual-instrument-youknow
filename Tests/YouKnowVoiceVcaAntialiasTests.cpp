@@ -132,8 +132,14 @@ namespace
 using namespace youknow;
 constexpr double pi = std::numbers::pi;
 void require(bool ok, const char* message) {if (!ok) throw std::runtime_error(message);}
-// Frozen pre-batching arithmetic and callback order. Use the same prepared
-// kernel so this checks the optimization, rather than a different FIR design.
+// Frozen pre-batching arithmetic with explicitly sequenced shape/noise calls.
+// The original shape(...)*gain + noise(...) did not define which callback ran
+// first, so compiler-selected operand order cannot serve as the oracle. Use
+// the same prepared kernel to check batching against the original FIR design.
+// This test target disables optional floating-point contraction so the two
+// loop shapes use the same rounding policy. Exact callback-drive parity here
+// checks the arithmetic under that policy, not compiler-dependent contraction
+// choices in a default build. The linked DSP target keeps its production flags.
 struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
 {
     template <bool addNoise, bool withTemperature=false, class Shape, class OutputNoise>
@@ -141,12 +147,14 @@ struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
         Shape&& shape, OutputNoise&& noise,float kelvin) noexcept
     {
         if (k.factor == 1) {
-            if constexpr (withTemperature)
-                return static_cast<float>(shape(input)*gain+noise(input,gain,kelvin));
-            if constexpr (addNoise)
-                if constexpr (!withTemperature)
-                    return static_cast<float>(shape(input) * gain + noise(input, gain));
-            return shape(input) * gain;
+            const auto shaped = shape(input);
+            if constexpr (withTemperature) {
+                const auto outputNoise = noise(input, gain, kelvin);
+                return static_cast<float>(shaped * gain + outputNoise);
+            } else if constexpr (addNoise) {
+                const auto outputNoise = noise(input, gain);
+                return static_cast<float>(shaped * gain + outputNoise);
+            } else return shaped * gain;
         }
         inputs[static_cast<std::size_t>(inputWrite)] = input;
         gains[static_cast<std::size_t>(inputWrite)] = gain;
@@ -182,15 +190,18 @@ struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
             // envelope or add a new circuit time constant.
             const double fraction = static_cast<double>(phase) / k.factor;
             const double g = g0 + fraction * (g1 - g0);
-            if constexpr (withTemperature)
-                outputs[static_cast<std::size_t>(outputWrite)]=static_cast<float>(
-                    shape(static_cast<float>(drive))*g+noise(drive,g,t0+fraction*(t1-t0)));
-            else if constexpr (addNoise)
-                outputs[static_cast<std::size_t>(outputWrite)] = static_cast<float>(
-                    shape(static_cast<float>(drive)) * g + noise(drive, g));
-            else
+            const auto shaped = shape(static_cast<float>(drive));
+            if constexpr (withTemperature) {
+                const auto outputNoise = noise(drive, g, t0 + fraction * (t1 - t0));
                 outputs[static_cast<std::size_t>(outputWrite)] =
-                    static_cast<float>(shape(static_cast<float>(drive)) * g);
+                    static_cast<float>(shaped * g + outputNoise);
+            } else if constexpr (addNoise) {
+                const auto outputNoise = noise(drive, g);
+                outputs[static_cast<std::size_t>(outputWrite)] =
+                    static_cast<float>(shaped * g + outputNoise);
+            } else
+                outputs[static_cast<std::size_t>(outputWrite)] =
+                    static_cast<float>(shaped * g);
             if (phase == 0)
             {
                 const int centre = (k.taps - 1) / 2;
@@ -353,6 +364,24 @@ void phaseBatchingBitEquivalence()
                 guardAllocation = false;
                 require(sameFloat(got, want), "VCA phase batching changed output bits");
                 require(sameHistory(candidate, reference), "VCA phase batching changed full FIR history");
+                const auto callsPerPhase = mode == 0 ? 1u : 2u;
+                require(actual.used == callsPerPhase * static_cast<unsigned>(kernel.factor),
+                    "VCA did not invoke callbacks once per phase");
+                for (std::size_t event = 0; event < actual.used; ++event)
+                    require(actual.events[event].kind == (event % callsPerPhase == 0 ? 1 : 2),
+                        "VCA noise callback must follow shape within each phase");
+                if (actual.used == expected.used)
+                    for (std::size_t event = 0; event < actual.used; ++event)
+                        if (!(actual.events[event] == expected.events[event])) {
+                            const auto& a = actual.events[event];
+                            const auto& b = expected.events[event];
+                            std::cerr << "VCA callback mismatch rate=" << rate << " mode=" << mode
+                                << " frame=" << frame << " event=" << event << " kinds="
+                                << a.kind << '/' << b.kind << " drive bits=" << a.drive << '/' << b.drive
+                                << " gain bits=" << a.gain << '/' << b.gain
+                                << " kelvin bits=" << a.kelvin << '/' << b.kelvin << '\n';
+                            break;
+                        }
                 require(actual.used == expected.used && actual.shapes == expected.shapes
                     && actual.noises == expected.noises && actual.noiseState == expected.noiseState
                     && std::equal(actual.events.begin(), actual.events.begin() + actual.used, expected.events.begin()),
@@ -361,7 +390,7 @@ void phaseBatchingBitEquivalence()
             }
         }
     require(allocations == 0, "VCA phase batching allocated");
-    std::cout << "VCA batched interpolation original bit/history/callback parity: "
+    std::cout << "VCA batched interpolation fixed-rounding bit/history/callback parity: "
               << compared << " random/hot/startup/reset/rate frames\n";
 }
 void linearResponseAndDelay()

@@ -1,6 +1,7 @@
 #include "YouKnowFirmwareSerialTrace.h"
 #include "YouKnowFirmwareSerialProgram.h"
 #include "YouKnowFirmwareProgram.h"
+#include "YouKnowFirmwareInstructionIndex.h"
 #include <algorithm>
 #include <limits>
 
@@ -10,7 +11,15 @@ using firmwareTraceDetail::Instruction;
 using firmwareTraceDetail::Op;
 using Stream = FirmwareSerialTrace;
 struct StreamCpu {
-    FirmwareControlTrace::Result result;
+    // Only completed entries are read, and completeInstruction resets count
+    // before each instruction. Do not clear the unused 512-event audit buffer
+    // on every audio interval; it is not persistent emulated machine state.
+    struct Scratch {
+        FirmwareControlTrace::State finalState;
+        std::array<FirmwareControlTrace::Event, 512> events;
+        std::size_t count = 0;
+        std::uint32_t states = 0;
+    } result;
     const FirmwareControlTrace::Tables &tables;
     const Stream::Tables *parameterTables = nullptr;
     unsigned a = 0, b = 0, c = 0, d = 0, e = 0, h = 0, l = 0, ea = 0, pa = 0xff, pb = 0, portc = 0, portf = 0;
@@ -665,19 +674,18 @@ struct StreamCpu {
 using Extra = firmwareSerialTraceDetail::Extra;
 using Decoded = firmwareSerialTraceDetail::Instruction;
 const Decoded *serialInstruction(unsigned address) {
-    const auto &program = firmwareSerialTraceDetail::program;
-    const auto found = std::lower_bound(program.begin(), program.end(), address,
-        [](const Decoded &instruction, unsigned value) {
-            return instruction.instruction.address < value;
-        });
-    return found != program.end() && found->instruction.address == address ? &*found : nullptr;
+    constexpr auto& program = firmwareSerialTraceDetail::program;
+    static constexpr auto index = firmwareTraceDetail::instructionIndex(
+        program, [](const Decoded& i) { return i.instruction.address; });
+    const auto offset = address < index.size() ? index[address] : 0;
+    return offset != 0 ? &program[offset - 1] : nullptr;
 }
 const Instruction *mainInstruction(unsigned address) {
-    // Prototype lookup only; final integration can share a prepared address map.
-    auto it = std::lower_bound(
-        firmwareTraceDetail::program.begin(), firmwareTraceDetail::program.end(), address,
-        [](const Instruction &instruction, unsigned value) { return instruction.address < value; });
-    return it != firmwareTraceDetail::program.end() && it->address == address ? &*it : nullptr;
+    constexpr auto& program = firmwareTraceDetail::program;
+    static constexpr auto index = firmwareTraceDetail::instructionIndex(
+        program, [](const Instruction& i) { return i.address; });
+    const auto offset = address < index.size() ? index[address] : 0;
+    return offset != 0 ? &program[offset - 1] : nullptr;
 }
 #define REGISTERS(X)                                                                               \
     X(a)                                                                                           \

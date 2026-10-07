@@ -117,6 +117,12 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-07
+
+- A11 Brass Set 1 receives a 0.38 dB output-volume trim to restore the factory
+  bank's loudness limit after the component-profile update. Its hardware tone
+  bytes are unchanged.
+
 ### Unreleased — 2026-10-05
 
 - The default component profile now includes a named +2.3 dB MN3009
@@ -2609,6 +2615,9 @@ The fixed filter-trim correction required small VR1 reductions for B14, B43,
 B52 and B76; their historical tone bytes and the level ceilings are unchanged.
 The 2026-09-17 chorus Mode I blend put A11 0.08 dB over the gated ceiling
 and lowered its VR1 position from 0.800 to 0.788.
+The 2026-10-05 component profile raised A11 above that ceiling again; the
+2026-10-07 correction lowers its volume position to 0.757, retaining its tone
+bytes and the same absolute level limits.
 The full audit after adopting filter/HPF B required a further reduction for
 B43 (0.521 to 0.517) and B52 (0.723 to 0.695) to retain the same ceilings.
 The [noise-level mismatch](Docs/hardware-validation.md) remains a fidelity gap.
@@ -2757,6 +2766,26 @@ Session loads reject non-finite parameter values before changing the current
 sound; successful loads notify the host to refresh its parameter display.
 
 ### Performance and quality
+
+The firmware interpreter indexes decoded instruction addresses directly and
+commits each instruction's RAM writes from its bounded event ledger, avoiding
+copies of the full patch bank. It also leaves unused event-buffer slots alone.
+These optimizations preserve the existing audio model, instruction timing and
+quality settings. They apply to Original timing and diagnostic firmware replay;
+normal Direct timing does not execute the optimized interpreters.
+
+On 2026-10-07, native arm64 Release measurements on an Apple M1 Max against
+`a5ae9c1` found **17.5–26.6% less DSP thread CPU time** at 48 kHz / 1× in
+Original mode, across seven idle, single-note and six-voice workloads. The
+six-voice full-mixer/chorus-II case fell from 400.529 ms to 330.439 ms per
+32,768 rendered frames (17.5%). Each workload used seven repetitions,
+256-frame blocks and a two-second preroll, paired serially as
+baseline/candidate/baseline and compared with the faster baseline median.
+All measured audio fingerprints matched. Separate control-transition renders
+also matched at 48 kHz (1×/2×/4×) and 44.1 kHz (1×). These are same-machine
+measurements, not a bound for other CPUs or host meters. The audit tool's
+`--original-cpu-benchmark` mode exercises Original timing;
+`--cpu-benchmark` retains Direct timing.
 
 The QUALITY selector offers a 1×/2×/4× internal-rate ladder applied as a
 ceiling against what the host rate needs; engine cost tracks the applied
