@@ -2758,6 +2758,26 @@ sound; successful loads notify the host to refresh its parameter display.
 
 ### Performance and quality
 
+The firmware interpreter indexes decoded instruction addresses directly and
+commits each instruction's RAM writes from its bounded event ledger, avoiding
+copies of the full patch bank. It also leaves unused event-buffer slots alone.
+These optimizations preserve the existing audio model, instruction timing and
+quality settings. They apply to Original timing and diagnostic firmware replay;
+normal Direct timing does not execute the optimized interpreters.
+
+On 2026-10-07, native arm64 Release measurements on an Apple M1 Max against
+`a5ae9c1` found **17.5–26.6% less DSP thread CPU time** at 48 kHz / 1× in
+Original mode, across seven idle, single-note and six-voice workloads. The
+six-voice full-mixer/chorus-II case fell from 400.529 ms to 330.439 ms per
+32,768 rendered frames (17.5%). Each workload used seven repetitions,
+256-frame blocks and a two-second preroll, paired serially as
+baseline/candidate/baseline and compared with the faster baseline median.
+All measured audio fingerprints matched. Separate control-transition renders
+also matched at 48 kHz (1×/2×/4×) and 44.1 kHz (1×). These are same-machine
+measurements, not a bound for other CPUs or host meters. The audit tool's
+`--original-cpu-benchmark` mode exercises Original timing;
+`--cpu-benchmark` retains Direct timing.
+
 The QUALITY selector offers a 1×/2×/4× internal-rate ladder applied as a
 ceiling against what the host rate needs; engine cost tracks the applied
 factor nearly linearly. An earlier six-voice resonant audit measured

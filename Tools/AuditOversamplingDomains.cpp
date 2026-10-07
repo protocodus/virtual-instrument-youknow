@@ -5,6 +5,16 @@
 // The work executable links a separately compiled YOUKNOW_WORK_AUDIT DSP
 // library and records deterministic semantic work.  Both expose the same
 // raw-float fingerprint mode so CTest can prove that observation is inert.
+//
+// CPU comparisons use the same tool source and Release/IPO flags against each
+// revision's own headers and DSP archive (engine layouts may differ). Run
+// baseline/candidate/baseline serially and compare against the faster baseline
+// median. --cpu-benchmark retains Direct timing for saved
+// sessions; --original-cpu-benchmark exercises the fresh plug-in's Original
+// firmware timing and its six physical voices. Neither mode changes quality.
+// Firmware health checks, snapshot copies, allocations and audio hashing stay
+// outside the timed interval. Each report includes raw-float fingerprints so
+// performance gains can be checked separately from numerical changes.
 
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowActiveProductFidelity.h"
@@ -225,6 +235,7 @@ struct PreparedSnapshot
 };
 
 enum class SnapshotProfile { Reference, Product };
+enum class PerformanceTiming { Direct, Original };
 
 PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
                                  int requestedFactor,
@@ -233,7 +244,8 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
                                      VcfFastEarlyMode::Hermite,
                                  VcfSolverMode solverMode =
                                      VcfSolverMode::MersonHalfSteps,
-                                 SnapshotProfile profile = SnapshotProfile::Reference)
+                                 SnapshotProfile profile = SnapshotProfile::Reference,
+                                 PerformanceTiming timing = PerformanceTiming::Direct)
 {
     PreparedSnapshot snapshot;
     if (profile == SnapshotProfile::Product)
@@ -253,6 +265,8 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
     }
     parameters.polyphony = std::max(parameters.polyphony, scenario.heldNotes);
     snapshot.engine.setParameters(parameters);
+    if (timing == PerformanceTiming::Original)
+        snapshot.engine.setOriginalPerformanceMode(true);
     for (int note = 0; note < scenario.heldNotes; ++note)
         snapshot.engine.noteOn(chordNotes[static_cast<std::size_t>(note)],
                                1.0f);
@@ -268,6 +282,9 @@ PreparedSnapshot prepareSnapshot(const Scenario& scenario, int sampleRate,
     }
 
     snapshot.factor = snapshot.engine.getOversamplingFactor();
+    if (snapshot.engine.originalPerformanceMode()
+        && !snapshot.engine.originalPerformanceHealthy())
+        throw std::runtime_error("Original performance failed during audit preroll");
     if (snapshot.engine.getActiveVoiceCount() != scenario.heldNotes)
         throw std::runtime_error("audit notes were not fully assigned");
     return snapshot;
@@ -414,6 +431,10 @@ TimedRun renderTimed(const PreparedSnapshot& snapshot, const CpuClock& clock)
         engine.process(left.data() + offset, right.data() + offset, blockSize);
     }
     const double end = clock.now();
+
+    if (engine.originalPerformanceMode()
+        && !engine.originalPerformanceHealthy())
+        throw std::runtime_error("Original performance failed during timed render");
 
     return { end - start, hashAudio(left, right) };
 }
@@ -588,7 +609,8 @@ int printFingerprints()
     return 0;
 }
 
-[[maybe_unused]] int printCpuTimingReport(int sampleRate, int requestedFactor)
+[[maybe_unused]] int printCpuTimingReport(int sampleRate, int requestedFactor,
+                                         PerformanceTiming timing)
 {
     const CpuClock clock;
     const double renderedSeconds = static_cast<double>(timingBlocks * blockSize)
@@ -596,7 +618,12 @@ int printFingerprints()
     std::cout << "protocol host_rate=" << sampleRate
               << " requested_quality=" << requestedFactor << "x"
               << " kernel=poly-zoned early=cubic solver=rk4-single"
-              << " fidelity=active-product converter=measured-chart aging=0.5"
+              << " fidelity=active-product timing="
+              << (timing == PerformanceTiming::Original ? "original" : "direct")
+              << " converter="
+              << (timing == PerformanceTiming::Original
+                    ? "firmware-serial-replay" : "measured-chart")
+              << " aging=0.5"
               << " block_size=" << blockSize
               << " preroll_seconds=" << preRollSeconds
               << " timed_blocks=" << timingBlocks
@@ -610,13 +637,17 @@ int printFingerprints()
 
     for (const auto& scenario : tanhScenarios)
     {
+        // The original firmware addresses only the six physical voice cards.
+        // Extended-polyphony workloads belong to the Direct timing report.
+        if (timing == PerformanceTiming::Original && scenario.heldNotes > 6)
+            continue;
         // Use the fresh plug-in's model and numerical defaults beneath each
         // declared scenario panel. Reference/fingerprint modes keep their
         // nominal physical profile and Exact/Hermite/Merson kernels.
         const auto snapshot = prepareSnapshot(
             scenario, sampleRate, requestedFactor, VcfTanhMode::PolyZoned,
             VcfFastEarlyMode::Cubic, VcfSolverMode::Rk4Single,
-            SnapshotProfile::Product);
+            SnapshotProfile::Product, timing);
         const std::string quality = std::to_string(snapshot.factor) + "x";
         std::vector<double> times;
         std::vector<std::uint64_t> hashes;
@@ -663,7 +694,8 @@ int printFingerprints()
                  " median min mad\n";
 
     // The numerical-kernel ladder retains its established Exact/Merson
-    // reference. Use --cpu-benchmark to measure the shipping defaults.
+    // reference. Use --original-cpu-benchmark for the fresh plug-in defaults,
+    // or --cpu-benchmark for the same product profile with Direct timing.
     struct KernelMode
     {
         VcfTanhMode tanh;
@@ -1364,6 +1396,10 @@ void printUsage(const char* executable)
                  "|--self-test|--dense-input-self-test|--help]\n"
               << "       " << executable
               << " --cpu-benchmark [sample-rate [factor]]\n"
+              << "       " << executable
+              << " --original-cpu-benchmark [sample-rate [factor]]\n"
+              << "CPU timing: --cpu-benchmark uses Direct; "
+                 "--original-cpu-benchmark uses Original (up to six voices).\n"
               << "CPU defaults: 48000 Hz, requested factor 1 (allowed: 1, 2, 4).\n";
 }
 
@@ -1381,10 +1417,11 @@ int main(int argc, char** argv)
         if (argc == 2 && std::string_view(argv[1]) == "--fingerprint")
             return printFingerprints();
         if (argc >= 2 && argc <= 4
-            && std::string_view(argv[1]) == "--cpu-benchmark")
+            && (std::string_view(argv[1]) == "--cpu-benchmark"
+                || std::string_view(argv[1]) == "--original-cpu-benchmark"))
         {
 #if defined(YOUKNOW_WORK_AUDIT)
-            std::cerr << "--cpu-benchmark requires YouKnowOversamplingAudit\n";
+            std::cerr << argv[1] << " requires YouKnowOversamplingAudit\n";
             return 2;
 #else
             const auto parseInteger = [](const char* argument) {
@@ -1403,7 +1440,9 @@ int main(int argc, char** argv)
                 || sampleRate > YouKnowEngine::maximumSupportedSampleRate
                 || (factor != 1 && factor != 2 && factor != 4))
                 throw std::invalid_argument("CPU benchmark rate or factor is unsupported");
-            return printCpuTimingReport(sampleRate, factor);
+            return printCpuTimingReport(sampleRate, factor,
+                std::string_view(argv[1]) == "--original-cpu-benchmark"
+                    ? PerformanceTiming::Original : PerformanceTiming::Direct);
 #endif
         }
         if (argc == 2 && std::string_view(argv[1]) == "--tanh-benchmark")

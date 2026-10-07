@@ -98,6 +98,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowEngine.h
     Source/DSP/YouKnowFirmwareTrace.h
     Source/DSP/YouKnowFirmwareProgram.h
+    Source/DSP/YouKnowFirmwareInstructionIndex.h
     Source/DSP/YouKnowFirmwareSerialTrace.h
     Source/DSP/YouKnowFirmwareSerialProgram.h
     Source/DSP/YouKnowFirmwareAssignerTrace.h

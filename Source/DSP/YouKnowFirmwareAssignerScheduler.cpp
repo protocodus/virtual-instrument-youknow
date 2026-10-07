@@ -1,5 +1,6 @@
 #include "YouKnowFirmwareAssignerScheduler.h"
 #include "YouKnowFirmwareAssignerSchedulerProgram.h"
+#include "YouKnowFirmwareInstructionIndex.h"
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -20,10 +21,11 @@ namespace Io = FirmwareAssignerIo;
 using firmwareAssignerSchedulerDetail::Instruction;
 using firmwareAssignerSchedulerDetail::Op;
 const Instruction *find(unsigned pc) noexcept {
-    const auto &p = firmwareAssignerSchedulerDetail::program;
-    const auto it = std::lower_bound(p.begin(), p.end(), pc,
-        [](const auto &i, unsigned address) { return i.pc < address; });
-    return it != p.end() && it->pc == pc ? &*it : nullptr;
+    constexpr auto& program = firmwareAssignerSchedulerDetail::program;
+    static constexpr auto index = firmwareTraceDetail::instructionIndex(
+        program, [](const Instruction& i) { return i.pc; });
+    const auto offset = pc < index.size() ? index[pc] : 0;
+    return offset != 0 ? &program[offset - 1] : nullptr;
 }
 unsigned pair(unsigned high, unsigned low) noexcept { return high * 256 + low; }
 void pairSet(unsigned &high, unsigned &low, unsigned value) noexcept {
@@ -39,29 +41,44 @@ void restorePsw(Trace::Registers &r, unsigned p) noexcept {
     r.halfCarry = (p & 16) != 0; r.skip = (p & 32) != 0; r.zero = (p & 64) != 0;
 }
 struct Completion {
-    Trace::State state;
+    Trace::ExecutionState state;
+    const Trace::State &source;
     const Trace::Configuration &configuration;
     const Trace::Tables &tables;
     const Io::Inputs &inputs;
-    std::array<Trace::Event, 8> events{};
+    std::array<Trace::Event, 8> events;
     unsigned count = 0;
     Trace::Status error = Trace::Status::ReachedTarget;
     bool txWrite = false, pcWrite = false;
     unsigned peripheralValue = 0;
     Completion(const Trace::State &s, const Trace::Configuration &c,
                const Trace::Tables &t, const Io::Inputs &in)
-        : state(s), configuration(c), tables(t), inputs(in) {}
+        : state(s), source(s), configuration(c), tables(t), inputs(in) {}
     void emit(Trace::EventKind kind, unsigned address, unsigned value) noexcept {
         if (count == events.size()) { error = Trace::Status::InvalidState; return; }
         events[count++] = {kind, state.now,
             static_cast<std::uint16_t>(state.pending.address),
             static_cast<std::uint16_t>(address), static_cast<std::uint16_t>(value)};
     }
+    unsigned memoryRead(unsigned address, unsigned backing) const noexcept {
+        // Observe this instruction's latest write if a later bus read aliases
+        // it. The same bounded events already define the atomic write ledger;
+        // no backing memory changes until every capacity/peripheral check passes.
+        for (unsigned i = count; i != 0; --i) {
+            const auto &event = events[i - 1];
+            if (event.address == address &&
+                (event.kind == Trace::EventKind::RamWrite ||
+                 event.kind == Trace::EventKind::StackWrite ||
+                 event.kind == Trace::EventKind::PatchWrite)) return event.value;
+        }
+        return backing;
+    }
     unsigned read(unsigned address) noexcept {
-        if (address >= 0xff00 && address <= 0xffff) return state.ram[address & 255];
+        if (address >= 0xff00 && address <= 0xffff)
+            return memoryRead(address, source.ram[address & 255]);
         if (address >= 0x2000 && address < 0x2800) {
             if (!state.patchRamAvailable) { error = Trace::Status::UnavailableMemory; return 0; }
-            return state.patchRam[address - 0x2000];
+            return memoryRead(address, source.patchRam[address - 0x2000]);
         }
         if (address >= 8 && address < 16) return 1u << (address - 8);
         if (address >= 16 && address < 24) return 255u ^ (1u << (address - 16));
@@ -75,7 +92,6 @@ struct Completion {
     void write(unsigned address, unsigned value, bool stack = false) noexcept {
         value &= 255;
         if (address >= 0xff00 && address <= 0xffff) {
-            state.ram[address & 255] = static_cast<std::uint8_t>(value);
             emit(stack ? Trace::EventKind::StackWrite : Trace::EventKind::RamWrite,
                  address, value);
         } else if (!stack && address == 0x1fff) {
@@ -86,7 +102,6 @@ struct Completion {
             emit(Trace::EventKind::MuxWrite, address, value);
         } else if (!stack && address >= 0x2000 && address < 0x2800) {
             if (!state.patchRamAvailable) { error = Trace::Status::UnavailableMemory; return; }
-            state.patchRam[address - 0x2000] = static_cast<std::uint8_t>(value);
             emit(Trace::EventKind::PatchWrite, address, value);
         } else error = Trace::Status::UnavailableMemory;
     }
@@ -428,8 +443,15 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
             if (writeStatus != Uart::Status::Ok) return finish(uartStatus(writeStatus));
             if (pending.kind == PendingKind::Instruction && !pending.skipped &&
                 find(pending.address)->op == Op::SKIT_FST) (void)Uart::testAndClearFst(uart);
-            state = commit.state;
-            for (unsigned i = 0; i < commit.count; ++i) events.entries[events.count++] = commit.events[i];
+            static_cast<ExecutionState &>(state) = commit.state;
+            for (unsigned i = 0; i < commit.count; ++i) {
+                const auto &event = commit.events[i];
+                if (event.kind == EventKind::RamWrite || event.kind == EventKind::StackWrite)
+                    state.ram[event.address & 255] = static_cast<std::uint8_t>(event.value);
+                else if (event.kind == EventKind::PatchWrite)
+                    state.patchRam[event.address - 0x2000] = static_cast<std::uint8_t>(event.value);
+                events.entries[events.count++] = event;
+            }
             state.pending = {};
             if (pending.kind == PendingKind::Instruction) {
                 ++result.completedInstructions;
