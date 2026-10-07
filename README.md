@@ -25,7 +25,7 @@ plug-in for your music host or a standalone instrument.
   notarized macOS `.pkg`, its `.manifest.txt` and `-SHA256SUMS.txt` on the
   [GitHub Releases page](https://github.com/protocodus/virtual-instrument-youknow/releases);
   Windows and Linux packages come from CI. No tagged release has been
-  published for 2.0.0 yet.
+  published for 1.3.0 yet.
 - **Local builds.** Packages use the same version/build layout in the primary
   checkout's `dist/`. Linked worktrees resolve the Git common directory and the
   project's repository-relative path, so their output has a stable location.
@@ -42,9 +42,9 @@ platform, so customers do not need a separate download for each plug-in format.
 
 | Platform | Artifact name for this version¹ | File to give customers | Included formats |
 | --- | --- | --- | --- |
-| macOS 11+, Apple silicon and Intel | `ci-macos-2.0.0-build.<number>` | `YouKnow-2.0.0-build.<number>-macOS-universal.pkg` | VST3, Audio Unit, CLAP, Standalone |
-| Windows x64 | `ci-windows-2.0.0-build.<number>` | `YouKnow-2.0.0-build.<number>-Windows-x64.zip` | VST3, CLAP, Standalone |
-| Linux x64 (optional) | `ci-linux-2.0.0-build.<number>` | `YouKnow-2.0.0-build.<number>-Linux-x64.tar.gz` | VST3, CLAP, Standalone |
+| macOS 11+, Apple silicon and Intel | `ci-macos-1.3.0-build.<number>` | `YouKnow-1.3.0-build.<number>-macOS-universal.pkg` | VST3, Audio Unit, CLAP, Standalone |
+| Windows x64 | `ci-windows-1.3.0-build.<number>` | `YouKnow-1.3.0-build.<number>-Windows-x64.zip` | VST3, CLAP, Standalone |
+| Linux x64 (optional) | `ci-linux-1.3.0-build.<number>` | `YouKnow-1.3.0-build.<number>-Linux-x64.tar.gz` | VST3, CLAP, Standalone |
 
 ¹ Open the **[latest successful package builds](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml?query=is%3Asuccess+-event%3Apull_request)**,
 select the newest passing run for the branch/commit you want, and download
@@ -53,17 +53,17 @@ for all platforms. When retrying a complete download set, rerun all jobs togethe
 so artifacts from different attempts are not mixed. GitHub sign-in is required.
 Extract the versioned `ci-macos-…`,
 `ci-windows-…` or `ci-linux-…` artifact ZIP once to get the customer file listed above.
-The macOS archive also contains `YouKnow-2.0.0-build.<number>-macOS-universal.zip` for optional
+The macOS archive also contains `YouKnow-1.3.0-build.<number>-macOS-universal.zip` for optional
 manual installation; the `.pkg` is the recommended customer download.
 
-Each build has its own version, such as `2.0.0-build.42.1`.
+Each build has its own version, such as `1.3.0-build.42.1`.
 For CI downloads, `<number>` is the GitHub run ID followed by its attempt
 number; rerunning a build increases the attempt. All platforms from the same
 run and attempt share this number. The instrument shows it in its About box.
 
 These are **development builds**. A manually dispatched build can come from
 a feature branch; check the run's branch and source commit before distributing.
-Version 2.0.0 is available as local development packages; CI packages for this
+Version 1.3.0 is available as local development packages; CI packages for this
 version require a passing run of the updated source. No tagged production
 release has been published. The CI macOS installer is unsigned, its bundles
 are ad-hoc signed and not notarized, and Windows binaries are unsigned.
@@ -100,12 +100,12 @@ contains all three package artifacts. Pull-request runs do not package macOS.
 ```sh
 gh run download RUN_ID \
   --repo protocodus/virtual-instrument-youknow \
-  --pattern 'ci-*-2.0.0-build.RUN_ID.ATTEMPT' \
+  --pattern 'ci-*-1.3.0-build.RUN_ID.ATTEMPT' \
   --dir out/distribution/ci-RUN_ID
 ```
 
 The CLI extracts the outer archives into their versioned artifact-name directories. The customer filenames remain as listed
-in the table. Local builds place them under `dist/2.0.0/build.<number>/macOS-universal/`,
+in the table. Local builds place them under `dist/1.3.0/build.<number>/macOS-universal/`,
 `Windows-x64/` and `Linux-x64/` in the primary checkout.
 
 For a signed and notarized macOS release, use the existing
@@ -117,11 +117,12 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
-### 2.0.0 — 2026-10-07 (development packages)
+### 1.3.0 — 2026-10-07 (development packages)
 
-This major version names the current component and firmware generation.
-The version change itself retains the DSP, preset bank, state format and
-plug-in identifiers.
+This minor version names the current component and firmware generation.
+It supersedes the mistaken, unpublished 2.0.0 local build designation. The
+version correction retains the DSP, preset bank, state format and plug-in
+identifiers; retained 2.0.0 packages are superseded and are not current downloads.
 
 - The default component profile now includes a named +2.3 dB MN3009
   insertion-gain estimate, temperature-dependent Tr20 envelope current and
@@ -3976,7 +3977,7 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `2.0.0-build.1`. To identify a local build, pass
+Local builds default to `1.3.0-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses `GITHUB_RUN_ID.GITHUB_RUN_ATTEMPT`; the configured
 number is saved in the build directory. The configured identity and source
@@ -3986,14 +3987,14 @@ bundles embed the build number.
 Packaging rejects a cache that disagrees with these records; renaming an archive
 cannot assign a new build number. Manifests report that built source revision,
 not whichever commit happens to be checked out at packaging time.
-The current host version is `2.0.0`,
-and its signed-release tag would be `youknow-v2.0.0`. Archive names and the
+The current host version is `1.3.0`,
+and its signed-release tag would be `youknow-v1.3.0`. Archive names and the
 About box include the build number; macOS bundle and installer build metadata
 carry it too.
 
 The current local universal packages are in
-`dist/2.0.0/build.1/macOS-universal/` in the primary checkout
-(`/Users/vojta/Dev/virtual-instrument-youknow/dist/2.0.0/build.1/macOS-universal/`): `YouKnow-2.0.0-build.1-macOS-universal.zip`,
+`dist/1.3.0/build.1/macOS-universal/` in the primary checkout
+(`/Users/vojta/Dev/virtual-instrument-youknow/dist/1.3.0/build.1/macOS-universal/`): `YouKnow-1.3.0-build.1-macOS-universal.zip`,
 the matching `.pkg`, `.manifest.txt` and `-SHA256SUMS.txt`. To rebuild only the
 product formats and package this identity:
 
@@ -4036,4 +4037,4 @@ tree, a dated release-history entry and a matching `youknow-v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-2.0.0 development packages remain distinct from a signed production release.
+1.3.0 development packages remain distinct from a signed production release.
