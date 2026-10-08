@@ -3139,6 +3139,11 @@ private:
         // Refreshed on the existing wall-clock control cadence, including
         // idle cards; host block boundaries never resample this coordinate.
         float johnsonTemperatureScale { 1.0f };
+        // Per-card OTA headroom and VCA thermal drive scale at the running
+        // warm-up fraction. Refreshed on temperature/parameter edits and warm-up
+        // steps to avoid re-evaluating physical formulas on every audio sample.
+        float dynamicOtaHeadroom { 0.0f };
+        float vcaThermalDriveScale { 1.0f };
         // Fixed FREQ adjustment at the declared service temperature. Removes
         // the pole spread and static thermal contribution already absorbed
         // by each card's trimmer, before adding its final trim residual.
@@ -3193,6 +3198,13 @@ private:
         float resonanceOtaOffset { 0.0f };
         // Signed, unbiased draw for each stage's integrating capacitor.
         std::array<float, 4> vcfStageGErrors {};
+        float vcaReferenceKelvin { 313.15f };
+    };
+
+    struct SteadyDcoCycle
+    {
+        double periodSeconds, resetSeconds, slopeVoltsPerSecond, peakVolts;
+        double troughVolts { 0.0 }, resetTargetVolts { 0.0 }, resetTauSeconds { 0.0 };
     };
 
     struct Voice
@@ -3354,6 +3366,29 @@ private:
         // regression reads it here rather than inferring it from the mix,
         // where three further couplings have already removed any DC.
         float vcaInputVolts { 0.0f };
+
+        // Cached steady DCO cycle metrics to avoid transcendentals (expm1, log)
+        // when voice pitch and ramp parameters are steady.
+        mutable bool steadyDcoCycleValid { false };
+        mutable bool steadyDcoCycleConstruction { false };
+        mutable double steadyDcoCyclePeriodSamples { -1.0e30 };
+        mutable double steadyDcoCycleMasterClockRatio { -1.0e30 };
+        mutable float steadyDcoCycleCv { -1.0e30f };
+        mutable float steadyDcoCycleRampScale { -1.0e30f };
+        mutable DcoRange steadyDcoCycleRange { DcoRange::Sixteen };
+        mutable float steadyDcoCycleCalibration { -1.0e30f };
+        mutable double steadyDcoCycleOversampledRate { -1.0e30 };
+        mutable bool steadyDcoCycleResetEnabled { false };
+        mutable SteadyDcoCycle cachedSteadyCycle {};
+        mutable float cachedSteadySawMean { 0.0f };
+
+        mutable bool steadyDcoPulseDutyValid { false };
+        mutable float steadyDcoPulseDutyThreshold { -1.0e30f };
+        mutable float cachedSteadyPulseDuty { 0.5f };
+
+        float pulseThresholdOffset { 0.0f };
+        float pulseThresholdOffsetScale { -1.0e30f };
+        float pulseThresholdOffsetCalibration { -1.0e30f };
     };
 
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
@@ -3625,11 +3660,6 @@ private:
     void addDcoSlope(Voice& voice, double slopeStep, double samplesAgo) noexcept;
     void addDcoResetCurvature(Voice& voice, double slopeAtStart,
                              double elapsed, double seconds) noexcept;
-    struct SteadyDcoCycle
-    {
-        double periodSeconds, resetSeconds, slopeVoltsPerSecond, peakVolts;
-        double troughVolts { 0.0 }, resetTargetVolts { 0.0 }, resetTauSeconds { 0.0 };
-    };
     [[nodiscard]] SteadyDcoCycle steadyDcoCycle(const Voice& voice) const noexcept;
     [[nodiscard]] float steadyDcoPulseDuty(const Voice& voice) const noexcept;
     [[nodiscard]] float steadyDcoSawMean(const Voice& voice) const noexcept;
