@@ -785,6 +785,15 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.EmbeddedHostAdapter COMMAND YouKnowEmbeddedHostAdapterTests)
     set_tests_properties(YouKnow.HostAdapter YouKnow.EmbeddedHostAdapter PROPERTIES TIMEOUT 60)
 
+    add_executable(YouKnowUnisonHardwareTests Tests/YouKnowUnisonHardwareTests.cpp)
+    target_link_libraries(YouKnowUnisonHardwareTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.UnisonHardware COMMAND YouKnowUnisonHardwareTests)
+    add_executable(YouKnowEmbeddedUnisonHardwareTests Tests/YouKnowUnisonHardwareTests.cpp)
+    target_link_libraries(YouKnowEmbeddedUnisonHardwareTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedUnisonHardwareTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedUnisonHardware COMMAND YouKnowEmbeddedUnisonHardwareTests)
+    set_tests_properties(YouKnow.UnisonHardware YouKnow.EmbeddedUnisonHardware PROPERTIES TIMEOUT 60)
+
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
         add_test(NAME YouKnow.DspPortability

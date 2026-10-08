@@ -7895,13 +7895,15 @@ void YouKnowEngine::initialiseVoice(Voice& voice, int slot, int midiNote,
         // behavior. The physical voice CPU powers up at MIDI 60: FF09 targets
         // are set to 0x3c and the first zero-coefficient pass copies them into
         // FF71 glide words before the coefficient ADC write (B-2 0280/03D7).
-        // Rack poly modes retain that word on a card's first assignment too.
-        // Reference, mono, Unison and extension cards keep first-note startup.
+        // Physical Unison cards retain that word by default: B-2 has no
+        // assign-mode branch that resets FF71 on Voice On. Direct Poly hosts
+        // may opt into the same rule. Mono and extension cards keep their
+        // product first-note startup policy.
         if (!wasSounding)
             voice.currentMidi = voice.hasVoicePitchHistory
-                              || (physicalVoicePowerOnGlide_
-                                  && slot < hardwareVoices && voiceLimit() > 1
-                                  && parameters.keyMode != KeyMode::Unison)
+                              || ((parameters.keyMode == KeyMode::Unison
+                                   || physicalVoicePowerOnGlide_)
+                                  && slot < hardwareVoices && voiceLimit() > 1)
                               ? voice.currentMidi : target;
     }
     else
@@ -8576,8 +8578,12 @@ void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
             const bool joiningWidenedStack = assignmentRescanPending_
                 && !rescanPreviousUnisonMembers_[static_cast<std::size_t>(slot)];
             const bool freshVoiceCpu = !voice.hasVoicePitchHistory;
+            const bool physicalGlideHistory = slot < hardwareVoices && limit > 1;
             initialiseVoice(voice, slot, midiNote, velocity);
-            if ((freshVoiceCpu || joiningWidenedStack) && haveStackMidi
+            // An unused physical card already owns its powered glide word.
+            // Only extra cards and explicit width expansion inherit
+            // another member's origin; changing key mode must not align cards.
+            if (((freshVoiceCpu && !physicalGlideHistory) || joiningWidenedStack) && haveStackMidi
                 && voice.glideSemitonesPerScan > 0.0f)
                 voice.currentMidi = stackMidi;
             voice.unisonMember = true;

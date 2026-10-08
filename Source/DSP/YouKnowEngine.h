@@ -856,9 +856,11 @@ public:
     // Before prepare only; retained across reset/prepare/quality changes.
     // The reference engine keeps the original no-steal/high-note policies.
     [[nodiscard]] bool configureSingleVoiceLastNotePriority(bool enabled) noexcept;
-    // Rack's physical six-card poly glide starts from the retained power-on
-    // word, even before a card has played. Before prepare only; retained across
-    // reset/prepare. Mono, Unison and extension cards keep first-note startup.
+    // Direct Poly hosts may retain each physical card's power-on glide word,
+    // even before it has played. Unison already does so in the core by default.
+    // Before prepare only; retained across reset/prepare. Mono and extra cards
+    // keep first-note startup; explicit widening of an established Unison stack
+    // keeps its inherited-origin policy.
     [[nodiscard]] bool configurePhysicalVoicePowerOnGlide(bool enabled) noexcept;
     // Rack source/resonance balance: scale the voiced source-to-filter transfer
     // and compensate at the final digital boundary, preserving internal VCF
