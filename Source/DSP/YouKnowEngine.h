@@ -3145,6 +3145,7 @@ private:
         float vcaServiceKelvin { 298.15f };
         float signalOtaHeadroom { 0.0f };
         float signalVcaDriveScale { 1.0f };
+        float signalTemperatureFraction { -1.0f };
         // Fixed FREQ adjustment at the declared service temperature. Removes
         // the pole spread and static thermal contribution already absorbed
         // by each card's trimmer, before adding its final trim residual.
@@ -3467,7 +3468,7 @@ private:
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
     void refreshVoiceCardThermalScales() noexcept;
-    void refreshVoiceCardSignalTemperature() noexcept;
+    void refreshVoiceCardSignalTemperature(int cardIndex) noexcept;
     void refreshCardJohnsonTemperatureScales() noexcept;
     void refreshVoiceCardServiceTrims() noexcept;
     void refreshVoiceVcaCoupling() noexcept;

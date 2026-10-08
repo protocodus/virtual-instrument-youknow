@@ -5935,24 +5935,26 @@ void YouKnowEngine::refreshVoiceCardThermalScales() noexcept
                                        thermalWarmupFraction_);
         cards_[static_cast<std::size_t>(index)].vcaServiceKelvin =
             voiceCardCelsius(activeParameters_, index, 1.0f) + 273.15f;
+        // Parameter edits can change the reference or enable switch even
+        // when the running fraction is unchanged. Refresh before next use.
+        cards_[static_cast<std::size_t>(index)].signalTemperatureFraction = -1.0f;
     }
-    refreshVoiceCardSignalTemperature();
     refreshCardJohnsonTemperatureScales();
 }
 
-void YouKnowEngine::refreshVoiceCardSignalTemperature() noexcept
+void YouKnowEngine::refreshVoiceCardSignalTemperature(int cardIndex) noexcept
 {
-    for (int index = 0; index < maxVoices; ++index)
-    {
-        auto& card = cards_[static_cast<std::size_t>(index)];
-        const float kelvin = voiceCardCelsius(
-            activeParameters_, index, thermalWarmupFraction_) + 273.15f;
-        // Preserve the existing float expression ordering in the OTA law.
-        const float thermalVolts = 0.026f * (kelvin / 298.15f);
-        card.signalOtaHeadroom = 2.0f * thermalVolts / stageAttenuation;
-        card.signalVcaDriveScale = activeParameters_.enableVoiceVcaTemperature
-            ? card.vcaServiceKelvin / kelvin : 1.0f;
-    }
+    auto& card = cards_[static_cast<std::size_t>(cardIndex)];
+    if (card.signalTemperatureFraction == thermalWarmupFraction_)
+        return;
+    const float kelvin = voiceCardCelsius(
+        activeParameters_, cardIndex, thermalWarmupFraction_) + 273.15f;
+    // Preserve the existing float expression ordering in the OTA law.
+    const float thermalVolts = 0.026f * (kelvin / 298.15f);
+    card.signalOtaHeadroom = 2.0f * thermalVolts / stageAttenuation;
+    card.signalVcaDriveScale = activeParameters_.enableVoiceVcaTemperature
+        ? card.vcaServiceKelvin / kelvin : 1.0f;
+    card.signalTemperatureFraction = thermalWarmupFraction_;
 }
 
 void YouKnowEngine::refreshCardJohnsonTemperatureScales() noexcept
@@ -9895,6 +9897,40 @@ YouKnowEngine::SteadyDcoCycle YouKnowEngine::steadyDcoCycle(
     // construction policy does not alter any PIT/CV write or running charge.
     const bool construction = voice.dco.pitState == Dco::PitState::stopped;
     const DcoRange range = dcoCircuitRange();
+    const auto calculate = [&] {
+        const double nominalPeriod = construction
+            ? 7675.0 / rangeClockHz(range)
+            : std::max(voice.dco.periodSamples / oversampledRate_, 1.0e-12);
+        const double reset = static_cast<double>(resetFraction(nominalPeriod))
+                           * nominalPeriod;
+        const double period = nominalPeriod / dcoMasterClockRatio_;
+        const double slope = 0.5 * static_cast<double>(rampAmplitudeVolts)
+            * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, range)
+            * voice.rampCurrentScale;
+        if (dcoResetCircuitEnabled_)
+        {
+            const double gate = std::min(dcoResetCalibration_.gateSeconds, period);
+            const auto& parts = cards_[static_cast<std::size_t>(voice.cardIndex)].dcoComponents;
+            const double tau = dcoResetCalibration_.dischargeOhms
+                             * parts.capacitance(activeParameters_.calibration);
+            const double target = dcoResetCalibration_.clampVolts + slope * tau;
+            const double loss = -std::expm1(-gate / tau);
+            // Periodic fixed point of discharge followed by constant-current
+            // charge. Gate overlap means continuously active reset. The supply
+            // bounds both the charging plateau and a high reset asymptote.
+            const double peak = std::min(15.0, target + slope * (period - gate) / loss);
+            const double trough = std::min(15.0,
+                DcoResetCircuit::voltage(peak, target, tau, gate));
+            return SteadyDcoCycle { period, gate, slope, peak, trough, target, tau };
+        }
+        return SteadyDcoCycle { period, reset, slope,
+                               std::min(15.0, slope * (period - reset)) };
+    };
+    // The compatibility reset uses only a few arithmetic operations. Cache
+    // the retained circuit's transcendental solution, keeping that cheap path
+    // direct while the warm-up clock or held converter CV is changing.
+    if (!dcoResetCircuitEnabled_)
+        return calculate();
     const SteadyDcoMemo::Inputs inputs {
         voice.dco.periodSamples, oversampledRate_, dcoMasterClockRatio_,
         voice.dcoCv, voice.rampCurrentScale, activeParameters_.calibration,
@@ -9906,35 +9942,7 @@ YouKnowEngine::SteadyDcoCycle YouKnowEngine::steadyDcoCycle(
     if (memo.valid && memo.inputs == inputs)
         return memo.cycle;
 
-    const double nominalPeriod = construction
-        ? 7675.0 / rangeClockHz(range)
-        : std::max(voice.dco.periodSamples / oversampledRate_, 1.0e-12);
-    const double reset = static_cast<double>(resetFraction(nominalPeriod))
-                       * nominalPeriod;
-    const double period = nominalPeriod / dcoMasterClockRatio_;
-    const double slope = 0.5 * static_cast<double>(rampAmplitudeVolts)
-        * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, range)
-        * voice.rampCurrentScale;
-    SteadyDcoCycle cycle {};
-    if (dcoResetCircuitEnabled_)
-    {
-        const double gate = std::min(dcoResetCalibration_.gateSeconds, period);
-        const auto& parts = cards_[static_cast<std::size_t>(voice.cardIndex)].dcoComponents;
-        const double tau = dcoResetCalibration_.dischargeOhms
-                         * parts.capacitance(activeParameters_.calibration);
-        const double target = dcoResetCalibration_.clampVolts + slope * tau;
-        const double loss = -std::expm1(-gate / tau);
-        // Periodic fixed point of discharge followed by constant-current
-        // charge. Gate overlap means continuously active reset. The supply
-        // bounds both the charging plateau and a high reset asymptote.
-        const double peak = std::min(15.0, target + slope * (period - gate) / loss);
-        const double trough = std::min(15.0,
-            DcoResetCircuit::voltage(peak, target, tau, gate));
-        cycle = { period, gate, slope, peak, trough, target, tau };
-    }
-    else
-        cycle = { period, reset, slope,
-                  std::min(15.0, slope * (period - reset)) };
+    const auto cycle = calculate();
     memo.inputs = inputs;
     memo.cycle = cycle;
     memo.valid = true;
@@ -9952,9 +9960,6 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
         return threshold <= 0.0f ? 1.0f : 0.0f;
     if (threshold > cycle.peakVolts)
         return 0.0f;
-    auto& memo = voice.steadyDcoMemo;
-    if (memo.dutyValid && memo.threshold == threshold)
-        return memo.duty;
     const auto calculate = [&] {
         if (dcoResetCircuitEnabled_)
         {
@@ -9976,6 +9981,11 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
         return static_cast<float>(std::clamp(
             highSeconds / cycle.periodSeconds, 0.0, 1.0));
     };
+    if (!dcoResetCircuitEnabled_)
+        return calculate();
+    auto& memo = voice.steadyDcoMemo;
+    if (memo.dutyValid && memo.threshold == threshold)
+        return memo.duty;
     memo.duty = calculate();
     memo.threshold = threshold;
     memo.dutyValid = true;
@@ -9985,9 +9995,6 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
 float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
 {
     const auto cycle = steadyDcoCycle(voice);
-    auto& memo = voice.steadyDcoMemo;
-    if (memo.meanValid)
-        return memo.mean;
     const auto calculate = [&] {
         if (dcoResetCircuitEnabled_)
         {
@@ -10013,6 +10020,11 @@ float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
         return static_cast<float>(sawMixVolts
             * (meanVolts / (0.5 * rampAmplitudeVolts) - 1.0));
     };
+    if (!dcoResetCircuitEnabled_)
+        return calculate();
+    auto& memo = voice.steadyDcoMemo;
+    if (memo.meanValid)
+        return memo.mean;
     memo.mean = calculate();
     memo.meanValid = true;
     return memo.mean;
@@ -10277,10 +10289,7 @@ void YouKnowEngine::advanceThermalWarmup() noexcept
         -static_cast<float>(thermalWarmupSeconds_)
             / static_cast<float>(thermalWarmupTimeConstantSeconds));
     if (fraction != thermalWarmupFraction_)
-    {
         thermalWarmupFraction_ = fraction;
-        refreshVoiceCardSignalTemperature();
-    }
 }
 
 float YouKnowEngine::railRipplePeakVolts() noexcept
@@ -11207,6 +11216,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     const float filterInput =
         compensatedDrive + microscopicNoise * noiseRateScale_;
     // V_t(T) = k * T / q, driven by the accelerated software temperature model.
+    refreshVoiceCardSignalTemperature(voice.cardIndex);
     const float dynamicHeadroom = card.signalOtaHeadroom;
     // The same gradient enters through the control path's coefficient. Its
     // static pitch contribution is absorbed by the per-card service trim;
@@ -11485,6 +11495,7 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     // after C59: scaling the capacitor's input would create a different
     // transient and incorrectly change the stored coupling voltage.
     const float trimmed = vcaInput * voice.vcaInputTrim;
+    refreshVoiceCardSignalTemperature(voice.cardIndex);
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const float drive = trimmed * card.signalVcaDriveScale;
     const bool evidenceVca = activeParameters_.enableEvidenceVcaCalibration;
