@@ -30,6 +30,7 @@ def main():
                        for name in members)
     fixture = r'''
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowFirmwareInstructionIndex.h"
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -38,6 +39,24 @@ def main():
 #include <numbers>
 #endif
 using namespace youknow;
+// These compile-time checks cover the embedded C++17 replacement for the
+// native consteval builder, including the invalid-program rejection flag.
+struct IndexedInstruction { unsigned address; };
+constexpr auto instructionAddress = [](const IndexedInstruction& i) { return i.address; };
+constexpr std::array<IndexedInstruction, 3> sparseProgram {{{ 0 }, { 42 }, { 4095 }}};
+constexpr auto sparseIndex = firmwareTraceDetail::instructionIndex(sparseProgram, instructionAddress);
+static_assert(sparseIndex.valid && sparseIndex.size() == 4096);
+static_assert(sparseIndex[0] == 1 && sparseIndex[42] == 2 && sparseIndex[4095] == 3);
+static_assert(sparseIndex[1] == 0 && sparseIndex[4094] == 0);
+constexpr std::array<IndexedInstruction, 0> emptyProgram {};
+constexpr auto emptyIndex = firmwareTraceDetail::instructionIndex(emptyProgram, instructionAddress);
+static_assert(emptyIndex.valid && emptyIndex[0] == 0 && emptyIndex[4095] == 0);
+constexpr std::array<IndexedInstruction, 2> duplicateProgram {{{ 42 }, { 42 }}};
+static_assert(!firmwareTraceDetail::instructionIndex(duplicateProgram, instructionAddress).valid);
+constexpr std::array<IndexedInstruction, 1> invalidProgram {{{ 4096 }}};
+static_assert(!firmwareTraceDetail::instructionIndex(invalidProgram, instructionAddress).valid);
+constexpr std::array<IndexedInstruction, 1> hugeProgram {{{ std::numeric_limits<unsigned>::max() }}};
+static_assert(!firmwareTraceDetail::instructionIndex(hugeProgram, instructionAddress).valid);
 void require(bool condition, const char* name) {
     if (!condition) { std::cerr << "Portability failure: " << name << '\n'; std::exit(1); }
 }

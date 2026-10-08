@@ -56,10 +56,10 @@ class FirmwareAssignerScheduler {
         std::uint8_t savedPsw = 0;
         bool skipped = false;
     };
-    struct State {
-        // Caller supplies a coherent warm snapshot. Zero RAM is not cold boot.
-        std::array<std::uint8_t, 256> ram{};
-        std::array<std::uint8_t, 2048> patchRam{}; //2000..27FF, mutable bus RAM
+    // Instruction transactions stage this small execution state separately
+    // from bus memory. RAM changes are committed from their bounded write
+    // ledger, so an arithmetic instruction never copies the 2 KiB patch bank.
+    struct ExecutionState {
         bool patchRamAvailable = false;
         Registers registers{};
         Pending pending{};
@@ -69,6 +69,11 @@ class FirmwareAssignerScheduler {
         bool interruptEnabled = true, fsr = false, receiveError = false;
         bool rxBufferFull = false;
         std::uint8_t rxBuffer = 0;
+    };
+    struct State : ExecutionState {
+        // Caller supplies a coherent warm snapshot. Zero RAM is not cold boot.
+        std::array<std::uint8_t, 256> ram{};
+        std::array<std::uint8_t, 2048> patchRam{}; //2000..27FF, mutable bus RAM
     };
     struct Configuration {
         FirmwareUartTrace::Configuration uart{};

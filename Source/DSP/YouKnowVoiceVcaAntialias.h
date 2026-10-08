@@ -123,7 +123,9 @@ struct VoiceVcaAntialias
     }
     // Additional output current/signal AFTER shape*gain, in the same output
     // coordinate. The callback receives the same reconstructed drive/gain
-    // timestamp and runs once per local-rate phase, including zero current.
+    // timestamp and runs after shape once per local-rate phase, including
+    // zero current. Separate statements make that callback order portable;
+    // the operands of shape(...)*gain + noise(...) are not sequenced by +.
     template <class Shape, class OutputNoise>
     [[nodiscard]] float processWithOutputNoise(float input, float gain,
         const Kernel& k, Shape&& shape, OutputNoise&& noise) noexcept
@@ -144,12 +146,14 @@ struct VoiceVcaAntialias
         Shape&& shape, OutputNoise&& noise,float kelvin) noexcept
     {
         if (k.factor == 1) {
-            if constexpr (withTemperature)
-                return static_cast<float>(shape(input)*gain+noise(input,gain,kelvin));
-            if constexpr (addNoise)
-                if constexpr (!withTemperature)
-                    return static_cast<float>(shape(input) * gain + noise(input, gain));
-            return shape(input) * gain;
+            const auto shaped = shape(input);
+            if constexpr (withTemperature) {
+                const auto outputNoise = noise(input, gain, kelvin);
+                return static_cast<float>(shaped * gain + outputNoise);
+            } else if constexpr (addNoise) {
+                const auto outputNoise = noise(input, gain);
+                return static_cast<float>(shaped * gain + outputNoise);
+            } else return shaped * gain;
         }
         inputs[static_cast<std::size_t>(inputWrite)] = input;
         gains[static_cast<std::size_t>(inputWrite)] = gain;
@@ -210,15 +214,18 @@ struct VoiceVcaAntialias
             // envelope or add a new circuit time constant.
             const double fraction = static_cast<double>(phase) / k.factor;
             const double g = g0 + fraction * (g1 - g0);
-            if constexpr (withTemperature)
-                outputs[static_cast<std::size_t>(outputWrite)]=static_cast<float>(
-                    shape(static_cast<float>(drive))*g+noise(drive,g,t0+fraction*(t1-t0)));
-            else if constexpr (addNoise)
-                outputs[static_cast<std::size_t>(outputWrite)] = static_cast<float>(
-                    shape(static_cast<float>(drive)) * g + noise(drive, g));
-            else
+            const auto shaped = shape(static_cast<float>(drive));
+            if constexpr (withTemperature) {
+                const auto outputNoise = noise(drive, g, t0 + fraction * (t1 - t0));
                 outputs[static_cast<std::size_t>(outputWrite)] =
-                    static_cast<float>(shape(static_cast<float>(drive)) * g);
+                    static_cast<float>(shaped * g + outputNoise);
+            } else if constexpr (addNoise) {
+                const auto outputNoise = noise(drive, g);
+                outputs[static_cast<std::size_t>(outputWrite)] =
+                    static_cast<float>(shaped * g + outputNoise);
+            } else
+                outputs[static_cast<std::size_t>(outputWrite)] =
+                    static_cast<float>(shaped * g);
             if (phase == 0)
             {
                 const int centre = (k.taps - 1) / 2;

@@ -17109,7 +17109,9 @@ void testInactiveLivePairsPreserveCardState()
         static_cast<void>(render(*initial, 256));
         for (const float omega : { .08f, 2.1f })
             expect(YouKnowTestAccess::compareInactiveLivePair(*initial, omega),
-                   "inactive coupled pair changed scalar card state/output through retrigger");
+                   "inactive coupled pair changed scalar card state/output through retrigger"
+                       " (character=" + std::to_string(character)
+                       + ", omega=" + std::to_string(omega) + ")");
     }
 
     // Independent whole-process scalar oracle with Early disabled. This does

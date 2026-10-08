@@ -371,8 +371,12 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 // programs 0.13-1.50 dB over the gated ceiling: A35, A56, A76, A81, B13, B14,
 // B25, B35, B43, B48, B52, B56, B68, B78 and B87. Their VR1 positions drop to
 // the same 0.05 dB target below it, tone bytes unchanged.
+// The 2026-10-05 component profile put A11 at -28.1767 dBFS in the existing
+// smoke score. The 2026-10-07 correction lowers only its
+// VR1 position from 0.788 to 0.757, targeting the same 0.05 dB margin through
+// the loaded output-pot law; its tone bytes, model and audit ceiling stay put.
 constexpr std::array<float, presetCount> factoryVolume {{
-    0.788f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
+    0.757f, 0.591f, 0.800f, 0.800f, 0.800f, 0.580f, 0.383f, 0.800f,
     0.446f, 0.547f, 0.800f, 0.769f, 0.800f, 0.800f, 0.800f, 0.800f,
     0.800f, 0.744f, 0.800f, 0.394f, 0.580f, 0.617f, 0.800f, 0.775f,
     0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.800f, 0.354f, 0.237f,

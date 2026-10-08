@@ -4487,6 +4487,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
 #define pairMultiplyScalar(value, scalar) vmulq_n_f64((value), (scalar))
 #define pairMultiplyAdd(addend, first, second) \
     vfmaq_f64((addend), (first), (second))
+#define pairMultiplySubtract(addend, first, second) \
+    vfmsq_f64((addend), (first), (second))
 #define pairMultiplyAddScalar(addend, value, scalar) \
     vfmaq_n_f64((addend), (value), (scalar))
 #elif defined(__x86_64__) && defined(__SSE2__)
@@ -4507,6 +4509,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     // scheduling.
 #define pairMultiplyAdd(addend, first, second) \
     _mm_add_pd((addend), _mm_mul_pd((first), (second)))
+#define pairMultiplySubtract(addend, first, second) \
+    _mm_sub_pd((addend), _mm_mul_pd((first), (second)))
 #define pairMultiplyAddScalar(addend, value, scalar) \
     _mm_add_pd((addend), _mm_mul_pd((value), _mm_set1_pd(scalar)))
 #endif
@@ -4570,9 +4574,12 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     const Pair inverseLoopHeadroom = pack(
         lanes[0].inverseLoopHeadroom, lanes[1].inverseLoopHeadroom);
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
+        // The scalar differential-input expression contracts its subtract
+        // and multiply on ARM. Match that single rounding here; separate
+        // SIMD operations diverge once compensation is nonzero. SSE2 keeps
+        // the scalar target's separate operations.
         const Pair feedbackArgument = pairMultiply(
-            pairAdd(pairSubtract(value[3],
-                                 pairMultiply(resonanceCompensation, drive)),
+            pairAdd(pairMultiplySubtract(value[3], resonanceCompensation, drive),
                     resonanceOffset),
             inverseLoopHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
@@ -4698,6 +4705,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
 #undef pairMultiply
 #undef pairMultiplyScalar
 #undef pairMultiplyAdd
+#undef pairMultiplySubtract
 #undef pairMultiplyAddScalar
 
     const auto finishLane = [](Lane& lane, float& output) {
@@ -4873,6 +4881,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
 #define pairMultiplyScalar(value, scalar) vmulq_n_f64((value), (scalar))
 #define pairMultiplyAdd(addend, first, second) \
     vfmaq_f64((addend), (first), (second))
+#define pairMultiplySubtract(addend, first, second) \
+    vfmsq_f64((addend), (first), (second))
 #define pairMultiplyAddScalar(addend, value, scalar) \
     vfmaq_n_f64((addend), (value), (scalar))
 #elif defined(__x86_64__) && defined(__SSE2__)
@@ -4893,6 +4903,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     // scheduling.
 #define pairMultiplyAdd(addend, first, second) \
     _mm_add_pd((addend), _mm_mul_pd((first), (second)))
+#define pairMultiplySubtract(addend, first, second) \
+    _mm_sub_pd((addend), _mm_mul_pd((first), (second)))
 #define pairMultiplyAddScalar(addend, value, scalar) \
     _mm_add_pd((addend), _mm_mul_pd((value), _mm_set1_pd(scalar)))
 #endif
@@ -4955,9 +4967,10 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     const Pair inverseLoopHeadroom = pack(
         lanes[0].inverseLoopHeadroom, lanes[1].inverseLoopHeadroom);
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
+        // As in the RK4 pair, match the scalar target's contraction of the
+        // differential-input subtraction when compensation is nonzero.
         const Pair feedbackArgument = pairMultiply(
-            pairAdd(pairSubtract(value[3],
-                                 pairMultiply(resonanceCompensation, drive)),
+            pairAdd(pairMultiplySubtract(value[3], resonanceCompensation, drive),
                     resonanceOffset),
             inverseLoopHeadroom);
         const Pair feedbackTanh = polyTanhPair(feedbackArgument);
@@ -5101,6 +5114,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
 #undef pairMultiply
 #undef pairMultiplyScalar
 #undef pairMultiplyAdd
+#undef pairMultiplySubtract
 #undef pairMultiplyAddScalar
 
     const auto finishLane = [](Lane& lane, float& output) {

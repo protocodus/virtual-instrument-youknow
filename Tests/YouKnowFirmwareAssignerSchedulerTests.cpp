@@ -615,6 +615,77 @@ void run() {
     }
     {
         Fixture f;
+        f.state.registers.pc = 0x0d2f; // actual patch STAX(HL+)
+        f.state.registers.h = 0x20;
+        f.state.registers.a = 73;
+        f.state.patchRamAvailable = true;
+        f.state.patchRam.fill(0xa5);
+        const auto originalRam = f.state.ram;
+        const auto originalPatch = f.state.patchRam;
+        f.events.count = f.events.entries.size();
+        check(f.run(7).status == S::Status::OutputFull,
+              "patch store waits for its complete CPU ledger slot");
+        check(f.state.ram == originalRam && f.state.patchRam == originalPatch &&
+                  f.state.registers.pc == 0x0d2f && f.state.registers.l == 0 &&
+                  f.state.pending.remaining == 0,
+              "backpressured patch store retains both memories and address registers");
+        f.events.count = 0;
+        check(f.run(7).status == S::Status::ReachedTarget && f.events.count == 1 &&
+                  f.state.patchRam[0] == 73 && f.state.ram == originalRam &&
+                  std::equal(f.state.patchRam.begin() + 1, f.state.patchRam.end(),
+                             originalPatch.begin() + 1),
+              "resumed sparse patch store changes only its addressed byte once");
+        // Supply a coherent warm snapshot at the original patch-load opcode.
+        f.state.pending = {};
+        f.state.registers.pc = 0x0cf5;
+        f.state.registers.l = 0;
+        f.state.registers.a = 0;
+        check(f.run(14).status == S::Status::ReachedTarget &&
+                  f.state.registers.a == 73 && f.state.registers.l == 1,
+              "subsequent patch read sees the committed sparse write");
+    }
+    {
+        Fixture f;
+        f.state.registers.pc = 0x099d; // PUSH BC
+        f.state.registers.b = 0x12;
+        f.state.registers.c = 0x34;
+        f.state.registers.sp = 0xff01;
+        f.state.ram[0] = 0xa5;
+        const auto originalRam = f.state.ram;
+        check(f.run(13).status == S::Status::InvalidState &&
+                  f.state.ram == originalRam && f.state.registers.sp == 0xff01 &&
+                  f.state.registers.pc == 0x099d && f.events.count == 0,
+              "second-byte stack failure discards the first staged write and SP change");
+        f.state.registers.sp = 0xffff;
+        check(f.run(13).status == S::Status::ReachedTarget && f.events.count == 2 &&
+                  f.state.ram[0xfe] == 0x12 && f.state.ram[0xfd] == 0x34,
+              "retried stack transaction commits both bytes in bus order");
+        f.state.pending = {};
+        f.state.registers.pc = 0x09bf; // POP BC
+        f.state.registers.b = f.state.registers.c = 0;
+        check(f.run(23).status == S::Status::ReachedTarget &&
+                  f.state.registers.b == 0x12 && f.state.registers.c == 0x34 &&
+                  f.state.registers.sp == 0xffff,
+              "subsequent stack reads observe both committed journal bytes");
+    }
+    {
+        Fixture f;
+        f.state.registers.pc = 0x0d2f; // STAX(HL+) at the matrix latch
+        f.state.registers.h = 0x1f;
+        f.state.registers.l = 0xff;
+        f.state.registers.a = 0; // unsupported simultaneous matrix-bank selection
+        const auto originalIo = schedulerScenarioRegression::peripheral(f.state.io);
+        check(f.run(7).status == S::Status::UnsupportedPath &&
+                  f.state.registers.pc == 0x0d2f && f.state.registers.h == 0x1f &&
+                  f.state.registers.l == 0xff && f.events.count == 0,
+              "unsupported device write rolls back staged address-register changes");
+        auto expectedIo = originalIo;
+        std::get<6>(expectedIo) -= 7; // elapsed time still reaches instruction completion
+        check(schedulerScenarioRegression::peripheral(f.state.io) == expectedIo,
+              "unsupported device write preserves peripheral state apart from elapsed time");
+    }
+    {
+        Fixture f;
         f.state.registers.pc = 0x0871;
         f.state.io.statesUntilConversion = 10;
         f.inputs.directAdc[0] = 177;
