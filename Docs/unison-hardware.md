@@ -147,6 +147,25 @@ timer counts remain equal and relative counter phase remains stable. This
 guards the distinction in the current core; it does not measure the audible
 spread or thermal behavior of a physical JUNO-106.
 
+## Requested Unison output trim
+
+The product applies a fixed **0.8 amplitude multiplier** (approximately
+−1.94 dB) while Unison is selected. This is a user-requested level convenience,
+not a claim that the original hardware attenuates its Unison mode. It applies
+after the complete circuit, chorus, latency and LINE/PHONES routing, so it
+preserves internal drive, saturation, voice summing and service test points.
+It scales both output channels, including release tails and circuit noise.
+Poly 1 and Poly 2 retain unity output gain.
+
+Loading or resetting in Unison primes the output directly to 0.8. Subsequent
+mode changes use a five-millisecond linear ramp, rounded up to a whole number
+of host samples, with exact endpoint landing. Rapid reversals start a new ramp
+from the current gain; changing between the two Poly modes does not restart
+an existing ramp to unity. Quality-only rebuilds preserve its state. The
+selected `activeParameters_.keyMode` drives this product policy in direct and
+OriginalPerformance operation, avoiding a block-dependent read of firmware
+state advanced ahead of the audio by the native adapter.
+
 ## Conservative residual estimates without hardware measurements
 
 At the user's request on 2026-10-08, the core uses a deliberately small

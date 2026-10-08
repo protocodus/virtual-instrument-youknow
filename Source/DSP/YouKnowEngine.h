@@ -2248,6 +2248,11 @@ public:
     static constexpr int hardwareVoices = 6;
     static constexpr int maxVoices = 16;
 
+    // Requested product output trim, not an original-hardware circuit law.
+    // Apply after the complete signal path so stacked voices keep their drive.
+    static constexpr float unisonOutputLevel = 0.8f;
+    static constexpr double unisonOutputTransitionSeconds = 0.005;
+
     // IC1a sums each voice through 33 kOhm against a 3.3 kOhm feedback
     // resistor before the shared HPF and VCA LEVEL circuit.
     static constexpr float voiceSummerGain = 3.3f / 33.0f;
@@ -3918,6 +3923,10 @@ private:
     // be a pot in the signal path.
     static constexpr float panelGlideSeconds = 0.005f;
     float glidedVolume_ { 0.8f };
+    float unisonOutputGain_ { 1.0f };
+    float unisonOutputTarget_ { 1.0f };
+    float unisonOutputStep_ { 0.0f };
+    int unisonOutputSamplesRemaining_ { 0 };
     // A glide needs somewhere to start. The first valid, positive-length
     // render after a reset takes the panel as it stands rather than sliding up
     // to it, or a startup snapshot would fade in when the transport rolled.

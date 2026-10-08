@@ -12356,10 +12356,26 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     const float chorusNoiseScale = parameters.chorusNoise
         * chorusNoiseCalibrationScale(parameters.chorusNoiseCalibrationProfile);
 
+    // This digital convenience follows the selected mode, including in the
+    // OriginalPerformance adapter; a firmware mirror can lag that selection.
+    // Slew at host rate, independently of block size and quality, and leave
+    // every nonlinear circuit's input voltage unchanged.
+    const float unisonOutputTarget = activeParameters_.keyMode == KeyMode::Unison
+        ? unisonOutputLevel : 1.0f;
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
+        unisonOutputGain_ = unisonOutputTarget_ = unisonOutputTarget;
+        unisonOutputSamplesRemaining_ = 0;
         panelGlidePrimed_ = true;
+    }
+    else if (unisonOutputTarget != unisonOutputTarget_)
+    {
+        unisonOutputTarget_ = unisonOutputTarget;
+        unisonOutputSamplesRemaining_ = std::max(1, static_cast<int>(
+            std::ceil(unisonOutputTransitionSeconds * sampleRate_)));
+        unisonOutputStep_ = (unisonOutputTarget_ - unisonOutputGain_)
+            / static_cast<float>(unisonOutputSamplesRemaining_);
     }
 
     // Each converter destination owns a separately named hold network. VCF,
@@ -13472,13 +13488,21 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             ++oversamplingIdleSamples_;
 
         const float transitionGain = rateTransitionGain_;
+        if (unisonOutputSamplesRemaining_ > 0)
+        {
+            // Count host samples and land exactly on the target. Accumulated
+            // float error must not extend a transition by another sample.
+            --unisonOutputSamplesRemaining_;
+            unisonOutputGain_ = unisonOutputSamplesRemaining_ == 0
+                ? unisonOutputTarget_ : unisonOutputGain_ + unisonOutputStep_;
+        }
         left[sample] = std::isfinite(outputLeft)
                      ? outputLeft * outputBoundaryScale
-                           * transitionGain
+                           * transitionGain * unisonOutputGain_
                      : 0.0f;
         right[sample] = std::isfinite(outputRight)
                       ? outputRight * outputBoundaryScale
-                            * transitionGain
+                            * transitionGain * unisonOutputGain_
                       : 0.0f;
 
         if (rateTransition_ == RateTransition::FadingOut)

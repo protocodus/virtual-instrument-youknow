@@ -1,0 +1,47 @@
+{
+  "completed_at_utc": "2026-10-08T10:17:58.092863+00:00",
+  "pass": true,
+  "assertions_per_build": 222852,
+  "source_sha256": {
+    "Tests/YouKnowUnisonOutputTests.cpp": "c15461be03a5f9cb926f69758d875562d5f9de15909fbcd9bc8f6804f27dae2b",
+    "CMakeLists.txt": "4abb39d928ea31c073e65c6807ae4aea74f97abfff51b7bf9a96f41d90800ba0",
+    "Source/DSP/YouKnowEngine.cpp": "6dbce7a866e4f3de8e95fc40d46bdc92bb9e6a4c0c584de46acd4e2e0dc5036b",
+    "Source/DSP/YouKnowEngine.h": "19135daf908a936def950c0d5d31ee9ccd59648e8ff5a6679c5d22bd96478185",
+    "Docs/unison-hardware.md": "5c7eb2e474c8b80f53ca9619dd5b8d6956cd4a824f8efa9278362c0b05981d48"
+  },
+  "binary_sha256": {
+    "UnisonOutput-native": "0db8f5ae2f858922f54605988f2bad97491313000009330f2824496651abec93",
+    "UnisonOutput-embedded": "5be9d52b76d57f14b1a75768d7a7d01f549880e3bba6cfc3e4fa367f28003da6"
+  },
+  "logs_sha256": {
+    "native.log": "210bb26a1c005ede741b51934b580c842833d8377add01c65e273cb66142c6c1",
+    "embedded.log": "210bb26a1c005ede741b51934b580c842833d8377add01c65e273cb66142c6c1"
+  },
+  "commands_reference": "commands.json",
+  "commands_sha256": "16119809ffbe92963d5624f9ad1403878e83d5c6a5b761f16e804544cd0e5973",
+  "raw_qualification_reference": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-output-20261008/canonical/qualification-summary.json",
+  "raw_qualification_sha256": "301d0993d01505ce854e41e17209df23c345e08a045da87cc42c7758d1b70ea9",
+  "cmake_registration": {
+    "native": "YouKnow.UnisonOutput",
+    "embedded": "YouKnow.EmbeddedUnisonOutput",
+    "cmake_targets": [
+      "YouKnowUnisonOutputTests",
+      "YouKnowEmbeddedUnisonOutputTests"
+    ],
+    "execution": "Direct compiled executables using rebuilt native13/core embedded11 objects; CTest registrations added but CMake configuration not rerun."
+  },
+  "coverage": [
+    "Natural one-voice Poly1/Poly2/Unison oracle: exact0.8 in both stereo channels, unchanged internal filter/timer",
+    "LINE and PHONES at44.1/48/96kHz with quality1x/2x/4x",
+    "Five-ms ceil sample boundaries at8/44.1/48/96/192kHz, factor1/2/4",
+    "Startup, reset and reprepare priming; unprepared, null, zero and negative calls",
+    "Mid-ramp reversal with bounded gain; same-target Poly1/Poly2 and quality request do not restart",
+    "Identical audio and gain across1/17/64/256-frame partitions",
+    "OriginalPerformance selected mode with explicitly retained alternate circuit mirror"
+  ],
+  "limits": [
+    "Requested product output policy, not an original-hardware circuit calibration.",
+    "Native and embedded executables were compiled and run directly; CMake registrations were inspected, not configured/executed through CTest.",
+    "OriginalPerformance mirror divergence is deliberately supplied by the fixture; no real firmware lag is inferred."
+  ]
+}
