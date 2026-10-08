@@ -359,6 +359,27 @@ if(YOUKNOW_BUILD_TOOLS)
     target_include_directories(YouKnowRenderPresetDemos PRIVATE Tools)
     target_compile_features(YouKnowRenderPresetDemos PRIVATE cxx_std_20)
 
+    add_executable(YouKnowRenderOriginalPresets Tools/RenderOriginalPresets.cpp)
+    target_link_libraries(YouKnowRenderOriginalPresets PRIVATE YouKnowDSP)
+    target_include_directories(YouKnowRenderOriginalPresets PRIVATE Tools)
+    target_compile_features(YouKnowRenderOriginalPresets PRIVATE cxx_std_20)
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        # Explicit generation keeps the high-quality original collection out
+        # of ordinary builds. The script additionally requires NumPy/FFmpeg.
+        add_custom_target(YouKnowRebuildOriginalPresetDemos
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Tools/MakeOriginalPresetDemos.py"
+                    --renderer "$<TARGET_FILE:YouKnowRenderOriginalPresets>"
+                    --output "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/youknow-originals"
+                    --scratch "${CMAKE_CURRENT_BINARY_DIR}/original-preset-demos"
+                    --jobs 2
+            DEPENDS YouKnowRenderOriginalPresets
+            COMMENT "Rendering original preset performances and listening page"
+            USES_TERMINAL)
+    endif()
+
     add_custom_target(YouKnowRebuildDemos ALL
         COMMAND YouKnowRenderDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
         COMMAND YouKnowRenderComposition "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
@@ -688,6 +709,7 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderShowcase PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderPresetDemos PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowRenderOriginalPresets PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderTanhAuditions
             PRIVATE /W4 /permissive-)
@@ -725,6 +747,8 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowRenderComposition PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderShowcase PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowRenderOriginalPresets PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderSota PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -1221,6 +1245,18 @@ if(BUILD_TESTING)
                  COMMAND YouKnowRenderPresetDemos --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/preset-demos-smoke")
         set_tests_properties(YouKnow.RenderPresetDemos PROPERTIES TIMEOUT 60)
+
+        add_test(NAME YouKnow.RenderOriginalPresets
+                 COMMAND YouKnowRenderOriginalPresets --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/original-presets-smoke")
+        set_tests_properties(YouKnow.RenderOriginalPresets PROPERTIES TIMEOUT 120)
+
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME YouKnow.OriginalPresetDemoTools
+                     COMMAND "${Python3_EXECUTABLE}"
+                             "${CMAKE_CURRENT_SOURCE_DIR}/Tests/OriginalPresetDemoToolsTests.py")
+            set_tests_properties(YouKnow.OriginalPresetDemoTools PROPERTIES TIMEOUT 120)
+        endif()
 
         # Proves the hardware-benchmark measures can see the differences they
         # exist to report: a render must compare equal to itself, and a known
