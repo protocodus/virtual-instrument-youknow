@@ -3139,6 +3139,13 @@ private:
         // Refreshed on the existing wall-clock control cadence, including
         // idle cards; host block boundaries never resample this coordinate.
         float johnsonTemperatureScale { 1.0f };
+        // Signal-path temperature values retain the exact per-sample warm-up
+        // law. The service reference changes with Character/gradient edits;
+        // the running values change whenever the float warm-up fraction does.
+        float vcaServiceKelvin { 298.15f };
+        float signalOtaHeadroom { 0.0f };
+        float signalVcaDriveScale { 1.0f };
+        float signalTemperatureFraction { -1.0f };
         // Fixed FREQ adjustment at the declared service temperature. Removes
         // the pole spread and static thermal contribution already absorbed
         // by each card's trimmer, before adding its final trim residual.
@@ -3193,6 +3200,32 @@ private:
         float resonanceOtaOffset { 0.0f };
         // Signed, unbiased draw for each stage's integrating capacitor.
         std::array<float, 4> vcfStageGErrors {};
+    };
+
+    struct SteadyDcoCycle
+    {
+        double periodSeconds, resetSeconds, slopeVoltsPerSecond, peakVolts;
+        double troughVolts { 0.0 }, resetTargetVolts { 0.0 }, resetTauSeconds { 0.0 };
+    };
+
+    struct SteadyDcoMemo
+    {
+        // These describe only the periodic mean/duty calculation. The live
+        // PIT edges, capacitor voltage and waveform corrections stay uncached.
+        struct Inputs
+        {
+            double periodSamples {}, sampleRate {}, clockRatio {};
+            float heldCv {}, rampScale {}, character {};
+            DcoRange range { DcoRange::Eight };
+            int card {};
+            bool stopped {}, physicalReset {};
+            double gateSeconds {}, dischargeOhms {}, clampVolts {};
+            bool operator==(const Inputs&) const noexcept = default;
+        };
+        Inputs inputs {};
+        SteadyDcoCycle cycle {};
+        bool valid {}, meanValid {}, dutyValid {};
+        float mean {}, threshold {}, duty {};
     };
 
     struct Voice
@@ -3354,6 +3387,12 @@ private:
         // regression reads it here rather than inferring it from the mix,
         // where three further couplings have already removed any DC.
         float vcaInputVolts { 0.0f };
+        mutable SteadyDcoMemo steadyDcoMemo {};
+        struct ComparatorTrim
+        {
+            float serviceScale {}, character {}, volts {};
+            int card { -1 };
+        } comparatorTrim {};
     };
 
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
@@ -3429,6 +3468,7 @@ private:
     // audio path.
     void refreshVoiceCardStageTrims() noexcept;
     void refreshVoiceCardThermalScales() noexcept;
+    void refreshVoiceCardSignalTemperature(int cardIndex) noexcept;
     void refreshCardJohnsonTemperatureScales() noexcept;
     void refreshVoiceCardServiceTrims() noexcept;
     void refreshVoiceVcaCoupling() noexcept;
@@ -3625,11 +3665,6 @@ private:
     void addDcoSlope(Voice& voice, double slopeStep, double samplesAgo) noexcept;
     void addDcoResetCurvature(Voice& voice, double slopeAtStart,
                              double elapsed, double seconds) noexcept;
-    struct SteadyDcoCycle
-    {
-        double periodSeconds, resetSeconds, slopeVoltsPerSecond, peakVolts;
-        double troughVolts { 0.0 }, resetTargetVolts { 0.0 }, resetTauSeconds { 0.0 };
-    };
     [[nodiscard]] SteadyDcoCycle steadyDcoCycle(const Voice& voice) const noexcept;
     [[nodiscard]] float steadyDcoPulseDuty(const Voice& voice) const noexcept;
     [[nodiscard]] float steadyDcoSawMean(const Voice& voice) const noexcept;

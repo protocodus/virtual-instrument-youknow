@@ -18,6 +18,7 @@ struct YouKnowTestAccess
     static void temperature(YouKnowEngine& engine, float fraction)
     {
         engine.thermalWarmupFraction_ = fraction;
+        engine.refreshVoiceCardThermalScales();
     }
     static double scale(const YouKnowEngine& engine, int card)
     {
@@ -26,6 +27,7 @@ struct YouKnowTestAccess
     static void switchThermal(YouKnowEngine& engine, bool enabled)
     {
         engine.activeParameters_.enableVoiceVcaTemperature = enabled;
+        engine.refreshVoiceCardThermalScales();
     }
     static void seed(YouKnowEngine& engine)
     {
@@ -91,13 +93,9 @@ double physicalRatio(double character, int card, double fraction, bool spatial)
     return (298.15 + character * (15.0 + gradient))
          / (298.15 + character * (15.0 + gradient) * fraction);
 }
-std::unique_ptr<YouKnowEngine> makeEngine(float character = 1.0f,
-    bool enabled = true, bool spatial = false, bool nonlinear = true,
-    double rate = 48000.0, int factor = 1, bool settled = false)
+EngineParameters makeParameters(float character, bool enabled,
+    bool spatial, bool nonlinear)
 {
-    auto engine = std::make_unique<YouKnowEngine>();
-    require(engine->configureThermalStart(settled), "thermal start rejected");
-    require(engine->configureServiceDerivedVcaCoupling(true), "nominal C59 rejected");
     EngineParameters parameters;
     parameters.calibration = character;
     parameters.aging = 0.0f;
@@ -112,7 +110,16 @@ std::unique_ptr<YouKnowEngine> makeEngine(float character = 1.0f,
     parameters.vcfTanhMode = youknow::VcfTanhMode::PolyZoned;
     parameters.vcfFastEarlyMode = youknow::VcfFastEarlyMode::Cubic;
     parameters.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
-    engine->setParameters(parameters);
+    return parameters;
+}
+std::unique_ptr<YouKnowEngine> makeEngine(float character = 1.0f,
+    bool enabled = true, bool spatial = false, bool nonlinear = true,
+    double rate = 48000.0, int factor = 1, bool settled = false)
+{
+    auto engine = std::make_unique<YouKnowEngine>();
+    require(engine->configureThermalStart(settled), "thermal start rejected");
+    require(engine->configureServiceDerivedVcaCoupling(true), "nominal C59 rejected");
+    engine->setParameters(makeParameters(character, enabled, spatial, nonlinear));
     engine->prepare(rate, 128, factor);
     return engine;
 }
@@ -262,6 +269,85 @@ void checkAudioBlockAndRate()
                      2e-7, "render rate or quality changed voice VCA warmup");
         }
 }
+
+void checkSettledSpatialSwitch()
+{
+    // A changed spatial gradient changes both the running card temperature
+    // and its settled service reference. Their ratio remains exactly unity
+    // here, including when the edit follows the first prepared interval.
+    constexpr int block = 128;
+    for (bool initialSpatial : { false, true })
+        for (int factor : { 1, 4 })
+        {
+            auto enabled = makeEngine(1.0f, true, initialSpatial, false,
+                                      48000.0, factor, true);
+            auto disabled = makeEngine(1.0f, false, initialSpatial, false,
+                                       48000.0, factor, true);
+            std::array<float, block> left {}, right {}, referenceLeft {}, referenceRight {};
+            enabled->process(left.data(), right.data(), 1);
+            disabled->process(referenceLeft.data(), referenceRight.data(), 1);
+            auto parameters = makeParameters(1.0f, true, !initialSpatial, false);
+            enabled->setParameters(parameters);
+            parameters.enableVoiceVcaTemperature = false;
+            disabled->setParameters(parameters);
+            enabled->noteOn(60, 1.0f);
+            disabled->noteOn(60, 1.0f);
+            double peak = 0.0;
+            for (int offset = 0; offset < 4096; offset += block)
+            {
+                enabled->process(left.data(), right.data(), block);
+                disabled->process(referenceLeft.data(), referenceRight.data(), block);
+                require(left == referenceLeft && right == referenceRight,
+                        "settled spatial edit left the VCA service reference stale");
+                for (float sample : left)
+                    peak = std::max(peak, std::abs(static_cast<double>(sample)));
+            }
+            require(peak > 1e-5, "settled spatial-switch probe was silent");
+        }
+}
+
+void checkImmediateThermalSwitch()
+{
+    // Give each pair the same audible history, then edit only one engine.
+    // At 48 kHz, 545 samples ends between the 375 Hz thermal-cache ticks.
+    // Allow the reported output latency before observing the public audio,
+    // while keeping the whole observation before the next thermal update.
+    constexpr int warmupSamples = 545;
+    for (bool initiallyEnabled : { false, true })
+    {
+        auto changed = makeEngine(1.0f, initiallyEnabled, false, false);
+        auto reference = makeEngine(1.0f, initiallyEnabled, false, false);
+        changed->noteOn(60, 1.0f);
+        reference->noteOn(60, 1.0f);
+        std::array<float, warmupSamples> left {}, right {}, referenceLeft {}, referenceRight {};
+        for (int offset = 0; offset < warmupSamples; offset += 128)
+        {
+            const int count = std::min(128, warmupSamples - offset);
+            changed->process(left.data() + offset, right.data() + offset, count);
+            reference->process(referenceLeft.data() + offset,
+                               referenceRight.data() + offset, count);
+        }
+        require(left == referenceLeft && right == referenceRight,
+                "thermal-switch fixtures did not share the same audio history");
+        require(changed->getDisplayTemperatureC() > 25.0f
+                    && changed->getDisplayTemperatureC() < 40.0f,
+                "thermal-switch probe did not run during warm-up");
+        auto parameters = makeParameters(1.0f, !initiallyEnabled, false, false);
+        changed->setParameters(parameters);
+        const int count = changed->getProcessingLatencySamples() + 1;
+        require(count < 640 - warmupSamples,
+                "thermal-switch probe reaches the next thermal-cache tick");
+        std::vector<float> nextLeft(count), nextRight(count);
+        std::vector<float> nextReferenceLeft(count), nextReferenceRight(count);
+        changed->process(nextLeft.data(), nextRight.data(), count);
+        reference->process(nextReferenceLeft.data(), nextReferenceRight.data(), count);
+        require(std::any_of(nextReferenceLeft.begin(), nextReferenceLeft.end(),
+                            [](float sample) { return std::abs(sample) > 1e-5f; }),
+                "immediate thermal-switch probe was silent");
+        require(nextLeft != nextReferenceLeft || nextRight != nextReferenceRight,
+                "VCA temperature switch waited for the next thermal-cache tick");
+    }
+}
 }
 
 int main()
@@ -272,6 +358,8 @@ int main()
         checkSignalPathAndContinuity();
         checkFixedCurrentGainAndDistortion();
         checkAudioBlockAndRate();
+        checkSettledSpatialSwitch();
+        checkImmediateThermalSwitch();
         std::cout << "Voice VCA temperature checks passed\n";
         return 0;
     }

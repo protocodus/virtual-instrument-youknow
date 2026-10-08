@@ -3565,6 +3565,36 @@ const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
 [[gnu::always_inline]] inline std::array<double, 4> polyZonedTanhBatch(
     const std::array<double, 4>& argument) noexcept
 {
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    const float64x2_t first = vld1q_f64(argument.data());
+    const float64x2_t second = vld1q_f64(argument.data() + 2);
+    const float64x2_t firstSquared = vmulq_f64(first, first);
+    const float64x2_t secondSquared = vmulq_f64(second, second);
+    const auto inZone = vandq_u64(
+        vcltq_f64(firstSquared, vdupq_n_f64(1.0)),
+        vcltq_f64(secondSquared, vdupq_n_f64(1.0)));
+    if (vgetq_lane_u64(inZone, 0) == UINT64_MAX
+        && vgetq_lane_u64(inZone, 1) == UINT64_MAX)
+    {
+        // Keep the scalar Estrin expression and coefficient ordering. Two
+        // independent pairs expose all four stage chains to the NEON unit.
+        const auto innerPair = [](float64x2_t value, float64x2_t u) {
+            const auto uSquared = vmulq_f64(u, u);
+            const auto top = vfmaq_f64(vdupq_n_f64(0.016720855179576926),
+                vdupq_n_f64(-0.00305822903759879), u);
+            const auto high = vfmaq_f64(vdupq_n_f64(0.1328072064598552),
+                vdupq_n_f64(-0.051585988404218436), u);
+            const auto low = vfmaq_f64(vdupq_n_f64(0.9999993948006496),
+                vdupq_n_f64(-0.3332895137021704), u);
+            return vmulq_f64(value,
+                vfmaq_f64(low, vfmaq_f64(high, top, uSquared), uSquared));
+        };
+        std::array<double, 4> result {};
+        vst1q_f64(result.data(), innerPair(first, firstSquared));
+        vst1q_f64(result.data() + 2, innerPair(second, secondSquared));
+        return result;
+    }
+#endif
     return { polyZonedTanhImpl(argument[0]),
              polyZonedTanhImpl(argument[1]),
              polyZonedTanhImpl(argument[2]),
@@ -3877,15 +3907,27 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // once per node, so the fast-reciprocal kernels keep their multiply.
     std::array<double, pointCount> loopHeadroomAt {};
     std::array<double, pointCount> inverseLoopHeadroomAt {};
-    for (std::size_t point = 0; point < pointCount; ++point)
-    {
-        if ((nodeMask >> point & 1u) == 0u)
-            continue;
-        loopHeadroomAt[point] = resonanceHeadroomFollowsStage
-            ? resonanceHeadroomFor(headroomAt[point])
+    const auto loopHeadroomForNode = [&](double headroom) {
+        return resonanceHeadroomFollowsStage
+            ? resonanceHeadroomFor(headroom)
             : static_cast<double>(
-                  VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
-        inverseLoopHeadroomAt[point] = 1.0 / loopHeadroomAt[point];
+                VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+    };
+    if (settledControls)
+    {
+        const double loopHeadroom = loopHeadroomForNode(settledHeadroom);
+        loopHeadroomAt.fill(loopHeadroom);
+        inverseLoopHeadroomAt.fill(1.0 / loopHeadroom);
+    }
+    else
+    {
+        for (std::size_t point = 0; point < pointCount; ++point)
+        {
+            if ((nodeMask >> point & 1u) == 0u)
+                continue;
+            loopHeadroomAt[point] = loopHeadroomForNode(headroomAt[point]);
+            inverseLoopHeadroomAt[point] = 1.0 / loopHeadroomAt[point];
+        }
     }
 
     const auto advanceOne = [](const std::array<double, 4>& origin,
@@ -3946,12 +3988,22 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                     + stageNoiseAt[point][stage];
     }
     std::array<std::array<double, 4>, pointCount> stageOmegaAt {};
-    for (std::size_t point = 0; point < pointCount; ++point)
+    if (settledControls)
     {
-        if ((nodeMask >> point & 1u) == 0u)
-            continue;
-        for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
-            stageOmegaAt[point][stage] = omegaAt[point] * stageScale[stage];
+        std::array<double, 4> rates {};
+        for (std::size_t stage = 0; stage < rates.size(); ++stage)
+            rates[stage] = currentOmega * stageScale[stage];
+        stageOmegaAt.fill(rates);
+    }
+    else
+    {
+        for (std::size_t point = 0; point < pointCount; ++point)
+        {
+            if ((nodeMask >> point & 1u) == 0u)
+                continue;
+            for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
+                stageOmegaAt[point][stage] = omegaAt[point] * stageScale[stage];
+        }
     }
 
     // The tableau walks are shared by every right-hand side: they advance
@@ -4028,13 +4080,21 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // Character-on path, those reciprocals replace 90 RHS divisions per card
     // interval on the default rung. Exact keeps the established division
     // expressions and their frozen rounding behavior.
+    const auto headroomReciprocals = [&] {
+        std::array<double, pointCount> values {};
+        if (settledControls)
+            values.fill(1.0 / settledHeadroom);
+        else
+            for (std::size_t point = 0; point < pointCount; ++point)
+                if ((nodeMask >> point & 1u) != 0u)
+                    values[point] = 1.0 / headroomAt[point];
+        return values;
+    };
     const auto integrate = [&]<bool useReciprocal, Tableau tableau>(
                                const auto& nonlinear) {
         std::array<double, pointCount> inverseHeadroomAt {};
         if constexpr (useReciprocal)
-            for (std::size_t point = 0; point < pointCount; ++point)
-                if ((tableauNodeMask(tableau) >> point & 1u) != 0u)
-                    inverseHeadroomAt[point] = 1.0 / headroomAt[point];
+            inverseHeadroomAt = headroomReciprocals();
 
         // Four doubles are an arm64 HFA: by value keeps RK states in d0-d3;
         // a const reference forces every temporary through addressable memory.
@@ -4102,10 +4162,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // tables. The feedback return stays scalar: stage zero's argument needs
     // its result.
     const auto integratePoly = [&]<Tableau tableau> {
-        std::array<double, pointCount> inverseHeadroomAt {};
-        for (std::size_t point = 0; point < pointCount; ++point)
-            if ((tableauNodeMask(tableau) >> point & 1u) != 0u)
-                inverseHeadroomAt[point] = 1.0 / headroomAt[point];
+        const auto inverseHeadroomAt = headroomReciprocals();
 
         const auto derivative = [&](std::array<double, 4> value,
                                     double drive, std::size_t point) {
@@ -5872,10 +5929,32 @@ void YouKnowEngine::refreshVoiceCardStageTrims() noexcept
 void YouKnowEngine::refreshVoiceCardThermalScales() noexcept
 {
     for (int index = 0; index < maxVoices; ++index)
+    {
         cards_[static_cast<std::size_t>(index)].thermalFilterOmegaScale =
             thermalFilterOmegaScaleFor(activeParameters_, index,
                                        thermalWarmupFraction_);
+        cards_[static_cast<std::size_t>(index)].vcaServiceKelvin =
+            voiceCardCelsius(activeParameters_, index, 1.0f) + 273.15f;
+        // Parameter edits can change the reference or enable switch even
+        // when the running fraction is unchanged. Refresh before next use.
+        cards_[static_cast<std::size_t>(index)].signalTemperatureFraction = -1.0f;
+    }
     refreshCardJohnsonTemperatureScales();
+}
+
+void YouKnowEngine::refreshVoiceCardSignalTemperature(int cardIndex) noexcept
+{
+    auto& card = cards_[static_cast<std::size_t>(cardIndex)];
+    if (card.signalTemperatureFraction == thermalWarmupFraction_)
+        return;
+    const float kelvin = voiceCardCelsius(
+        activeParameters_, cardIndex, thermalWarmupFraction_) + 273.15f;
+    // Preserve the existing float expression ordering in the OTA law.
+    const float thermalVolts = 0.026f * (kelvin / 298.15f);
+    card.signalOtaHeadroom = 2.0f * thermalVolts / stageAttenuation;
+    card.signalVcaDriveScale = activeParameters_.enableVoiceVcaTemperature
+        ? card.vcaServiceKelvin / kelvin : 1.0f;
+    card.signalTemperatureFraction = thermalWarmupFraction_;
 }
 
 void YouKnowEngine::refreshCardJohnsonTemperatureScales() noexcept
@@ -7162,6 +7241,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
         || next.useBa662AResonanceOffsetEstimate
                != activeParameters_.useBa662AResonanceOffsetEstimate;
     const bool thermalScalesChanged = startupSnapshot
+        || next.enableVoiceVcaTemperature != activeParameters_.enableVoiceVcaTemperature
         || next.enableVoiceVcaJunctionTemperature != activeParameters_.enableVoiceVcaJunctionTemperature
         || next.enableEvidenceVcaCalibration != activeParameters_.enableEvidenceVcaCalibration
         || next.calibration != activeParameters_.calibration
@@ -9767,17 +9847,25 @@ void YouKnowEngine::updatePulseComparator(
     // At the second service point, D(.6V) = D(6V) + .45/serviceScale.
     // Draw inside the intersection of BOTH acceptance windows. The bounded
     // deterministic population is a product prior, not measured statistics.
-    const float halfWidth = pwmDutyAcceptanceHalfWidth * parameters.calibration;
-    const float lowerResidual = std::max(-halfWidth, 0.45f - halfWidth - 0.45f / cardCurrent);
-    const float upperResidual = std::min(halfWidth, 0.45f + halfWidth - 0.45f / cardCurrent);
-    const float netDuty = voice.cardIndex == 0 ? 0.0f
-        : lowerResidual + (0.5f + 0.5f * card.comparatorOffset)
-                            * (upperResidual - lowerResidual);
-    // duty = 1 - V_th / (12 V * scale) at the 6 V hold, so the threshold
-    // that lands 0.5 + netDuty is 6 V * scale * (1 - 2 netDuty).
-    const float thresholdOffset =
-        0.5f * rampAmplitudeVolts * (cardCurrent * (1.0f - 2.0f * netDuty) - 1.0f);
-    const float threshold = static_cast<float>(pwmVolts_) + thresholdOffset;
+    auto& trim = voice.comparatorTrim;
+    if (trim.card != voice.cardIndex || trim.serviceScale != cardCurrent
+        || trim.character != parameters.calibration)
+    {
+        const float halfWidth = pwmDutyAcceptanceHalfWidth * parameters.calibration;
+        const float lowerResidual = std::max(-halfWidth, 0.45f - halfWidth - 0.45f / cardCurrent);
+        const float upperResidual = std::min(halfWidth, 0.45f + halfWidth - 0.45f / cardCurrent);
+        const float netDuty = voice.cardIndex == 0 ? 0.0f
+            : lowerResidual + (0.5f + 0.5f * card.comparatorOffset)
+                                * (upperResidual - lowerResidual);
+        // duty = 1 - V_th / (12 V * scale) at the 6 V hold, so the threshold
+        // that lands 0.5 + netDuty is 6 V * scale * (1 - 2 netDuty).
+        trim.volts = 0.5f * rampAmplitudeVolts
+            * (cardCurrent * (1.0f - 2.0f * netDuty) - 1.0f);
+        trim.card = voice.cardIndex;
+        trim.serviceScale = cardCurrent;
+        trim.character = parameters.calibration;
+    }
+    const float threshold = static_cast<float>(pwmVolts_) + trim.volts;
     voice.pulseThresholdVolts = sanitised(threshold, 6.0f);
     voice.pulsePinnedHigh = voice.pulseThresholdVolts < 0.0f;
     // The event walk crosses this threshold as it stands, so the duty it
@@ -9808,33 +9896,58 @@ YouKnowEngine::SteadyDcoCycle YouKnowEngine::steadyDcoCycle(
     // as a tiny ramp and charging C56 from a fabricated near-DC step. This
     // construction policy does not alter any PIT/CV write or running charge.
     const bool construction = voice.dco.pitState == Dco::PitState::stopped;
-    const double nominalPeriod = construction
-        ? 7675.0 / rangeClockHz(dcoCircuitRange())
-        : std::max(voice.dco.periodSamples / oversampledRate_, 1.0e-12);
-    const double reset = static_cast<double>(resetFraction(nominalPeriod))
-                       * nominalPeriod;
-    const double period = nominalPeriod / dcoMasterClockRatio_;
-    const double slope = 0.5 * static_cast<double>(rampAmplitudeVolts)
-        * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, dcoCircuitRange())
-        * voice.rampCurrentScale;
-    if (dcoResetCircuitEnabled_)
-    {
-        const double gate = std::min(dcoResetCalibration_.gateSeconds, period);
-        const auto& parts = cards_[static_cast<std::size_t>(voice.cardIndex)].dcoComponents;
-        const double tau = dcoResetCalibration_.dischargeOhms
-                         * parts.capacitance(activeParameters_.calibration);
-        const double target = dcoResetCalibration_.clampVolts + slope * tau;
-        const double loss = -std::expm1(-gate / tau);
-        // Periodic fixed point of discharge followed by constant-current
-        // charge. Gate overlap means continuously active reset. The supply
-        // bounds both the charging plateau and a high reset asymptote.
-        const double peak = std::min(15.0, target + slope * (period - gate) / loss);
-        const double trough = std::min(15.0,
-            DcoResetCircuit::voltage(peak, target, tau, gate));
-        return { period, gate, slope, peak, trough, target, tau };
-    }
-    return { period, reset, slope,
-             std::min(15.0, slope * (period - reset)) };
+    const DcoRange range = dcoCircuitRange();
+    const auto calculate = [&] {
+        const double nominalPeriod = construction
+            ? 7675.0 / rangeClockHz(range)
+            : std::max(voice.dco.periodSamples / oversampledRate_, 1.0e-12);
+        const double reset = static_cast<double>(resetFraction(nominalPeriod))
+                           * nominalPeriod;
+        const double period = nominalPeriod / dcoMasterClockRatio_;
+        const double slope = 0.5 * static_cast<double>(rampAmplitudeVolts)
+            * dcoChargingSlope(construction ? 256.0f : voice.dcoCv, range)
+            * voice.rampCurrentScale;
+        if (dcoResetCircuitEnabled_)
+        {
+            const double gate = std::min(dcoResetCalibration_.gateSeconds, period);
+            const auto& parts = cards_[static_cast<std::size_t>(voice.cardIndex)].dcoComponents;
+            const double tau = dcoResetCalibration_.dischargeOhms
+                             * parts.capacitance(activeParameters_.calibration);
+            const double target = dcoResetCalibration_.clampVolts + slope * tau;
+            const double loss = -std::expm1(-gate / tau);
+            // Periodic fixed point of discharge followed by constant-current
+            // charge. Gate overlap means continuously active reset. The supply
+            // bounds both the charging plateau and a high reset asymptote.
+            const double peak = std::min(15.0, target + slope * (period - gate) / loss);
+            const double trough = std::min(15.0,
+                DcoResetCircuit::voltage(peak, target, tau, gate));
+            return SteadyDcoCycle { period, gate, slope, peak, trough, target, tau };
+        }
+        return SteadyDcoCycle { period, reset, slope,
+                               std::min(15.0, slope * (period - reset)) };
+    };
+    // The compatibility reset uses only a few arithmetic operations. Cache
+    // the retained circuit's transcendental solution, keeping that cheap path
+    // direct while the warm-up clock or held converter CV is changing.
+    if (!dcoResetCircuitEnabled_)
+        return calculate();
+    const SteadyDcoMemo::Inputs inputs {
+        voice.dco.periodSamples, oversampledRate_, dcoMasterClockRatio_,
+        voice.dcoCv, voice.rampCurrentScale, activeParameters_.calibration,
+        range, voice.cardIndex, construction, dcoResetCircuitEnabled_,
+        dcoResetCalibration_.gateSeconds, dcoResetCalibration_.dischargeOhms,
+        dcoResetCalibration_.clampVolts
+    };
+    auto& memo = voice.steadyDcoMemo;
+    if (memo.valid && memo.inputs == inputs)
+        return memo.cycle;
+
+    const auto cycle = calculate();
+    memo.inputs = inputs;
+    memo.cycle = cycle;
+    memo.valid = true;
+    memo.meanValid = memo.dutyValid = false;
+    return cycle;
 }
 
 float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
@@ -9847,53 +9960,74 @@ float YouKnowEngine::steadyDcoPulseDuty(const Voice& voice) const noexcept
         return threshold <= 0.0f ? 1.0f : 0.0f;
     if (threshold > cycle.peakVolts)
         return 0.0f;
-    if (dcoResetCircuitEnabled_)
-    {
-        const double rise = cycle.periodSeconds - cycle.resetSeconds;
-        const double highRise = cycle.slopeVoltsPerSecond > 0.0
-            ? std::clamp(rise - (threshold - cycle.troughVolts)
-                                    / cycle.slopeVoltsPerSecond, 0.0, rise)
-            : (threshold <= cycle.troughVolts ? rise : 0.0);
-        double highReset = cycle.resetSeconds;
-        if (threshold > cycle.troughVolts)
-            highReset = std::clamp(cycle.resetTauSeconds * std::log(
-                (cycle.peakVolts - cycle.resetTargetVolts)
-                / (threshold - cycle.resetTargetVolts)), 0.0, cycle.resetSeconds);
-        return static_cast<float>((highRise + highReset) / cycle.periodSeconds);
-    }
-    const double highSeconds = std::max(0.0, cycle.periodSeconds
-        - cycle.resetSeconds - threshold / cycle.slopeVoltsPerSecond)
-        + cycle.resetSeconds * (1.0 - threshold / cycle.peakVolts);
-    return static_cast<float>(std::clamp(
-        highSeconds / cycle.periodSeconds, 0.0, 1.0));
+    const auto calculate = [&] {
+        if (dcoResetCircuitEnabled_)
+        {
+            const double rise = cycle.periodSeconds - cycle.resetSeconds;
+            const double highRise = cycle.slopeVoltsPerSecond > 0.0
+                ? std::clamp(rise - (threshold - cycle.troughVolts)
+                                        / cycle.slopeVoltsPerSecond, 0.0, rise)
+                : (threshold <= cycle.troughVolts ? rise : 0.0);
+            double highReset = cycle.resetSeconds;
+            if (threshold > cycle.troughVolts)
+                highReset = std::clamp(cycle.resetTauSeconds * std::log(
+                    (cycle.peakVolts - cycle.resetTargetVolts)
+                    / (threshold - cycle.resetTargetVolts)), 0.0, cycle.resetSeconds);
+            return static_cast<float>((highRise + highReset) / cycle.periodSeconds);
+        }
+        const double highSeconds = std::max(0.0, cycle.periodSeconds
+            - cycle.resetSeconds - threshold / cycle.slopeVoltsPerSecond)
+            + cycle.resetSeconds * (1.0 - threshold / cycle.peakVolts);
+        return static_cast<float>(std::clamp(
+            highSeconds / cycle.periodSeconds, 0.0, 1.0));
+    };
+    if (!dcoResetCircuitEnabled_)
+        return calculate();
+    auto& memo = voice.steadyDcoMemo;
+    if (memo.dutyValid && memo.threshold == threshold)
+        return memo.duty;
+    memo.duty = calculate();
+    memo.threshold = threshold;
+    memo.dutyValid = true;
+    return memo.duty;
 }
 
 float YouKnowEngine::steadyDcoSawMean(const Voice& voice) const noexcept
 {
     const auto cycle = steadyDcoCycle(voice);
-    if (dcoResetCircuitEnabled_)
-    {
-        const double rise = cycle.periodSeconds - cycle.resetSeconds;
-        const double charging = cycle.slopeVoltsPerSecond > 0.0
-            ? std::clamp((cycle.peakVolts - cycle.troughVolts)
-                            / cycle.slopeVoltsPerSecond, 0.0, rise) : 0.0;
-        const double riseArea = 0.5 * (cycle.troughVolts + cycle.peakVolts) * charging
-                              + cycle.peakVolts * (rise - charging);
-        const double resetArea = cycle.troughVolts == cycle.peakVolts
-            ? cycle.peakVolts * cycle.resetSeconds
-            : DcoResetCircuit::integral(cycle.peakVolts, cycle.resetTargetVolts,
-                                       cycle.resetTauSeconds, cycle.resetSeconds);
+    const auto calculate = [&] {
+        if (dcoResetCircuitEnabled_)
+        {
+            const double rise = cycle.periodSeconds - cycle.resetSeconds;
+            const double charging = cycle.slopeVoltsPerSecond > 0.0
+                ? std::clamp((cycle.peakVolts - cycle.troughVolts)
+                                / cycle.slopeVoltsPerSecond, 0.0, rise) : 0.0;
+            const double riseArea = 0.5 * (cycle.troughVolts + cycle.peakVolts) * charging
+                                  + cycle.peakVolts * (rise - charging);
+            const double resetArea = cycle.troughVolts == cycle.peakVolts
+                ? cycle.peakVolts * cycle.resetSeconds
+                : DcoResetCircuit::integral(cycle.peakVolts, cycle.resetTargetVolts,
+                                           cycle.resetTauSeconds, cycle.resetSeconds);
+            return static_cast<float>(sawMixVolts
+                * ((riseArea + resetArea) / (cycle.periodSeconds * 6.0) - 1.0));
+        }
+        if (!(cycle.slopeVoltsPerSecond > 0.0))
+            return -sawMixVolts;
+        const double riseSeconds = cycle.peakVolts / cycle.slopeVoltsPerSecond;
+        // Triangle rise + finite linear fall + any supply-held plateau.
+        const double meanVolts = cycle.peakVolts * (1.0
+            - 0.5 * (riseSeconds + cycle.resetSeconds) / cycle.periodSeconds);
         return static_cast<float>(sawMixVolts
-            * ((riseArea + resetArea) / (cycle.periodSeconds * 6.0) - 1.0));
-    }
-    if (!(cycle.slopeVoltsPerSecond > 0.0))
-        return -sawMixVolts;
-    const double riseSeconds = cycle.peakVolts / cycle.slopeVoltsPerSecond;
-    // Triangle rise + finite linear fall + any supply-held plateau.
-    const double meanVolts = cycle.peakVolts * (1.0
-        - 0.5 * (riseSeconds + cycle.resetSeconds) / cycle.periodSeconds);
-    return static_cast<float>(sawMixVolts
-        * (meanVolts / (0.5 * rampAmplitudeVolts) - 1.0));
+            * (meanVolts / (0.5 * rampAmplitudeVolts) - 1.0));
+    };
+    if (!dcoResetCircuitEnabled_)
+        return calculate();
+    auto& memo = voice.steadyDcoMemo;
+    if (memo.meanValid)
+        return memo.mean;
+    memo.mean = calculate();
+    memo.meanValid = true;
+    return memo.mean;
 }
 
 float YouKnowEngine::sawWaveNodeOffset(
@@ -10149,10 +10283,13 @@ void YouKnowEngine::advanceThermalWarmup() noexcept
     // timer it derives from. Six voices asking six times per internal sample
     // for the same exponential of the same elapsed time is the same answer at
     // six times the price.
-    thermalWarmupFraction_ =
-        thermalStartsSettled_ ? 1.0f
-            : 1.0f - std::exp(-static_cast<float>(thermalWarmupSeconds_)
-                / static_cast<float>(thermalWarmupTimeConstantSeconds));
+    if (thermalStartsSettled_)
+        return;
+    const float fraction = 1.0f - std::exp(
+        -static_cast<float>(thermalWarmupSeconds_)
+            / static_cast<float>(thermalWarmupTimeConstantSeconds));
+    if (fraction != thermalWarmupFraction_)
+        thermalWarmupFraction_ = fraction;
 }
 
 float YouKnowEngine::railRipplePeakVolts() noexcept
@@ -11079,8 +11216,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     const float filterInput =
         compensatedDrive + microscopicNoise * noiseRateScale_;
     // V_t(T) = k * T / q, driven by the accelerated software temperature model.
-    const float dynamicHeadroom =
-        dynamicOtaHeadroomVolts(parameters, voice.cardIndex);
+    refreshVoiceCardSignalTemperature(voice.cardIndex);
+    const float dynamicHeadroom = card.signalOtaHeadroom;
     // The same gradient enters through the control path's coefficient. Its
     // static pitch contribution is absorbed by the per-card service trim;
     // thermal headroom still evolves with the running warm-up clock.
@@ -11358,11 +11495,11 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     // after C59: scaling the capacitor's input would create a different
     // transient and incorrectly change the stored coupling voltage.
     const float trimmed = vcaInput * voice.vcaInputTrim;
-    const float drive = trimmed
-        * voiceVcaThermalDriveScale(activeParameters_, voice.cardIndex);
+    refreshVoiceCardSignalTemperature(voice.cardIndex);
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    const float drive = trimmed * card.signalVcaDriveScale;
     const bool evidenceVca = activeParameters_.enableEvidenceVcaCalibration;
     const bool junctionTemperature = voiceVcaJunctionTemperatureEnabled(activeParameters_);
-    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const double headroom = junctionTemperature ? card.vcaJunctionHeadroomVolts
         : evidenceVca ? evidenceVcaCalibration().headroomVolts()
         : static_cast<double>(VoiceVcaSignalLaw::headroomVolts);

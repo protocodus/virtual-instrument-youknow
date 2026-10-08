@@ -427,6 +427,14 @@ on the deepest oversampling rung. Hear the sounds together in one arrangement;
 fifteen well-known factory presets, exploring the distinct character of each
 sound; [the preset list](#factory-preset-demos) details each take.
 
+**[Original YouKnow preset sessions](Docs/audio/youknow-originals/index.html)** —
+sixteen individual performances for the eight YB basses and eight YP polyphonic
+presets, rendered through the current product circuit profile at maximum quality.
+The collection includes 24-bit/96 kHz stereo WAVs, matching MIDI performances,
+a [playlist](Docs/audio/youknow-originals/YouKnow-Original-Presets.m3u) and
+[render details](Docs/audio/youknow-originals/manifest.json). Open the listening
+page beside its audio files, and select the named preset before playing its MIDI.
+
 Or hear one mechanism at a time:
 [chorus pad](Docs/audio/01-chorus-pad.wav) ·
 [16′ bass](Docs/audio/03-sixteen-foot-bass.wav) ·
@@ -3935,6 +3943,25 @@ ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/YouKnowRenderShowcase Docs/audio
 ./build-dsp/YouKnowRenderPresetDemos Docs/audio
 ```
+
+The original YouKnow bank has a separate collection generator. With Python 3,
+NumPy and FFmpeg installed, build the renderer and generate all sixteen takes:
+
+```bash
+cmake --build build-dsp --target YouKnowRenderOriginalPresets
+python3 Tools/MakeOriginalPresetDemos.py \
+  --renderer build-dsp/YouKnowRenderOriginalPresets --jobs 2
+```
+
+For a Windows multi-configuration build, pass
+`build-win/Release/YouKnowRenderOriginalPresets.exe` to `--renderer`.
+`--only YB1 YP1` renders selected takes for
+audition; `--package-only` rebuilds the listening page, manifest and archive from
+previously rendered takes. The generator records source and score hashes,
+applies static gain and gentle file-edge fades, and writes matching MIDI
+without Program Change messages. The original collection is refreshed explicitly
+with this command. CTest exercises short smoke checks; full collection generation
+remains explicit.
 
 The same build produces the audit tools whose numbers this README quotes —
 oversampling-domain, BBD, VCF, noise-source, high-pass, passive-hold, DCO-scan
