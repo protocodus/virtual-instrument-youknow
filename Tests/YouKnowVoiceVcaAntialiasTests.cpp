@@ -68,7 +68,10 @@ struct YouKnowTestAccess
         e.setParameters(p);
     }
     static void warmup(YouKnowEngine& e, double fraction)
-    { e.thermalWarmupFraction_ = static_cast<float>(fraction); }
+    {
+        e.thermalWarmupFraction_ = static_cast<float>(fraction);
+        e.refreshVoiceCardThermalScales();
+    }
     static float energy(const YouKnowEngine& e) { return e.voices_[0].energy; }
     static bool allInactive(const YouKnowEngine& e)
     { return std::all_of(e.voices_.begin(), e.voices_.end(), [](const auto& v) {return !v.active;}); }
