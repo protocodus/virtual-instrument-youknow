@@ -9700,32 +9700,36 @@ void testVcfTrimResidualHonoursPrintedWindows()
 {
     // Roland's p. 19 acceptance bounds the two trim CHECK POINTS at
     // +/-10 cents each (procedures 7/8, repeated jointly); the model draws
-    // each point inside its window and takes the line through them, so a
-    // full-scale draw contributes exactly ten cents at its own point, zero
+    // each point inside one quarter of its window, taking the line through
+    // them. A full draw contributes 2.5 cents at its own point, zero
     // at the other, and half at the midpoint. The former voiced form
     // multiplied total counts and overshot the printed window 2.7x at the
     // very point the procedure checks.
     constexpr float anchor = 6272.0f;
     constexpr float span = 2.0f * 1143.0f;
-    constexpr float tenCents = 10.0f / 1200.0f * 1143.0f;
+    constexpr float residualCounts = 2.5f / 1200.0f * 1143.0f;
     const auto residual = [](float counts, float offsetDraw, float widthDraw) {
         return YouKnowTestAccess::trimmedAnalogCounts(counts, offsetDraw,
                                                          widthDraw)
              - counts;
     };
-    expectNear(residual(anchor, 1.0f, 0.0f), tenCents, 1.0e-3,
-               "a full offset draw misses ten cents at the FREQ check point");
+    expectNear(residual(anchor, 1.0f, 0.0f), residualCounts, 1.0e-3,
+               "a full offset draw misses the 2.5-cent estimate at the FREQ check point");
     expectNear(residual(anchor + span, 1.0f, 0.0f), 0.0, 1.0e-3,
                "the offset draw leaks into the WIDTH check point");
     expectNear(residual(anchor, 0.0f, 1.0f), 0.0, 1.0e-3,
                "the width draw leaks into the FREQ check point");
-    expectNear(residual(anchor + span, 0.0f, 1.0f), tenCents, 1.0e-3,
-               "a full width draw misses ten cents at the WIDTH check point");
-    expectNear(residual(anchor + 0.5f * span, 1.0f, 0.0f), 0.5f * tenCents,
+    expectNear(residual(anchor + span, 0.0f, 1.0f), residualCounts, 1.0e-3,
+               "a full width draw misses the 2.5-cent estimate at the WIDTH check point");
+    expectNear(residual(anchor + 0.5f * span, 1.0f, 0.0f), 0.5f * residualCounts,
                1.0e-3, "the residual between the check points is not the "
                        "line through them");
-    expectNear(residual(anchor, -1.0f, 1.0f), -tenCents, 1.0e-3,
+    expectNear(residual(anchor, -1.0f, 1.0f), -residualCounts, 1.0e-3,
                "opposed draws do not stay inside their own windows");
+    for (float draw : { -1.0f, 1.0f })
+        for (float point : { anchor, anchor + span })
+            expect(std::abs(residual(point, draw, draw)) <= 10.0f / 1200.0f * 1143.0f,
+                   "the conservative residual escaped the independent service acceptance");
 }
 
 void testCompleteVoiceHonoursServiceFrequencyWindows()
@@ -16036,11 +16040,11 @@ void testSpatialThermalScaleCacheTracksLiveDependencies()
                 // cache is refreshed on the ~375 Hz control cadence rather
                 // than only on edits, and between refreshes the direct law
                 // walks ahead of it by at most the cadence interval's share
-                // of the warm-up: 0.0033/C * 2 * 2.6 C * (1/375 s)/(3 s),
-                // under 2e-5 of the step. A stale cache after an edit,
+                // of the warm-up: 0.00033/C * 2 * 2.6 C * (1/375 s)/(3 s),
+                // under 2e-6 of the step. A stale cache after an edit,
                 // reset or rate change is orders larger than that.
                 expect(std::abs(values[0] - values[1])
-                           <= 2.0e-5f * std::max(1.0e-6f, values[1]),
+                           <= 2.0e-6f * std::max(1.0e-6f, values[1]),
                        std::string("the cached thermal cutoff scale is stale ")
                            + when + " on card " + std::to_string(card));
             }
@@ -17439,6 +17443,22 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW_VOICE_RESIDUAL_TESTS_ONLY") != nullptr)
+    {
+        testVcfTrimResidualHonoursPrintedWindows();
+        testResonanceAdjustmentPinsTheWarmLimitCycle();
+        testCompleteVoiceHonoursServiceFrequencyWindows();
+        testVoicesRetireWithComponentToleranceApplied();
+        testSpatialThermalScaleCacheTracksLiveDependencies();
+        if (failures != 0)
+        {
+            std::cerr << failures << " voice residual check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All voice residual/service checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW_DCO_FIXTURE_TESTS_ONLY") != nullptr)
     {
         testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();

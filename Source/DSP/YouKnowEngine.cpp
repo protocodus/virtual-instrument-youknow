@@ -6022,7 +6022,7 @@ void YouKnowEngine::refreshVoiceVcaCoupling() noexcept
         const float serviceKelvin =
             voiceCardCelsius(activeParameters_, index, 1.0f) + 273.15f;
         const float inputTrim = 1.0f
-            + card.vcaGainError * 0.03f * activeParameters_.calibration;
+            + card.vcaGainError * VoiceResidualEstimates::vcaInputTrimFraction * activeParameters_.calibration;
         const double referenceThermalVolts = activeParameters_.enableEvidenceVcaCalibration
             ? EvidenceVcaCalibration::thermalVolts : static_cast<double>(thermalVoltage);
         const double referenceHeadroom = junctionTemperature ? card.vcaJunctionHeadroomVolts
@@ -8462,7 +8462,7 @@ float YouKnowEngine::firmwareConverterTarget(const ConverterWrite& write) const 
         const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         return clamp01(code / 4095.0f * velocityGain(activeParameters_, voice)
-            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+            + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * activeParameters_.calibration);
     }
     return code / 4095.0f;
 }
@@ -9060,7 +9060,7 @@ void YouKnowEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
 {
     // A voiced residual wander of the analogue control chain, independent of
     // the temperature state. At 375 Hz this AR(1) prior has a 3.332 s
-    // correlation time and about 2.425 cents RMS cutoff movement at Character
+    // correlation time and about 0.485 cents RMS cutoff movement at Character
     // 1. Neither number is measured Juno thermal behavior. Do not add a second
     // thermal wander on top without separating compensated cutoff response
     // from this existing prior. The DCOs have a separate, shared clock.
@@ -9340,7 +9340,7 @@ float YouKnowEngine::voiceVcaTarget(
                         : (voice.envelope.running ? 1.0f : 0.0f);
     return clamp01(
         control * velocityGain(parameters, voice)
-        + card.vcaControlOffset * 0.004f * tolerance);
+        + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * tolerance);
 }
 
 float YouKnowEngine::velocityGain(const EngineParameters& parameters,
@@ -9985,14 +9985,15 @@ float YouKnowEngine::resonanceFeedbackFor(
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
     // spread.
-    // Voiced, and back to being voiced. The service procedure trims each loop
+    // The conservative residual is an additive normalized CV coordinate,
+    // not a loop-gain percentage. The service procedure trims each loop
     // to a 4.8 Vpp self-oscillation peak but states no tolerance on the result,
     // so what spread survives the adjustment is documented nowhere located. A
     // revision briefly anchored 5% to a source describing the *untrimmed*
     // component class, which is a different question: a trimmed mechanism's
     // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv
-        + card.resonanceError * 0.02f * calibration);
+        + card.resonanceError * VoiceResidualEstimates::resonanceControlFraction * calibration);
     const float loopGain = circuitDerivedShape
              ? (softJunction
                     ? CircuitDerivedResonanceProfile::junctionLoopGain(resonancePanel)
@@ -10016,7 +10017,8 @@ float YouKnowEngine::cutoffAnalogCounts(
     // one scales the control voltage, one offsets it -- imperfectly set, and
     // the voiced residual wander, all riding below the converter's own
     // resolution on the slewed digital value. The final residual draws sit
-    // within the service windows; their distribution remains voiced.
+    // within one quarter of the service windows; their distribution is an
+    // engineering prior, not a measured population.
     // A sagging rail pulls the cutoff reference down with it, and the
     // rectifier ripple riding on the rail (advanceRailRipple) lifts and
     // lowers it 120 times a second through this same transfer. `calibration`
@@ -10027,8 +10029,9 @@ float YouKnowEngine::cutoffAnalogCounts(
         -powerSupplyDroop * railToCutoffCountsPerVolt * calibration;
     // The trim residual is bounded by Roland's own printed acceptance
     // (p. 19 procedures 7/8: repeat "until within +/-10 cents" at both check
-    // points): one +/-10-cent draw at the code-6272 FREQ point, one at the
-    // WIDTH point two octaves up, the line through them elsewhere. The
+    // points). The conservative prior uses +/-2.5-cent estimates at the
+    // code-6272 FREQ point and WIDTH point two octaves up, and the line
+    // through them elsewhere. The
     // former +/-0.07 octave and +/-5%-of-total-counts here were voiced with
     // no bounding source; a freshly calibrated card cannot legitimately
     // disperse past what the service procedure accepts at the points it
@@ -10042,7 +10045,7 @@ float YouKnowEngine::cutoffAnalogCounts(
         * vcfTrimResidualOctaves * vcfCountsPerOctave * calibration;
     return cutoffCounts
         + trimResidualCounts
-        + card.driftValue * 40.0f * calibration
+        + card.driftValue * VoiceResidualEstimates::cutoffWanderCounts * calibration
         + psuCutoffShift
         + card.vcfServiceTrimCounts
         + card.agingCutoffCounts;
@@ -10195,7 +10198,7 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     // The card's VCA GAIN spread is VR27's setting, and VR27 sits on the
     // input. Keeping it here rather than on the output leaves the small-signal
     // product identical and lets a hot card drive its own pair harder.
-    voice.vcaInputTrim = 1.0f + card.vcaGainError * 0.03f * tolerance;
+    voice.vcaInputTrim = 1.0f + card.vcaGainError * VoiceResidualEstimates::vcaInputTrimFraction * tolerance;
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
     // from values that never change. They now live in
@@ -13843,7 +13846,7 @@ float YouKnowEngine::firmwareSerialDacTarget(const ConverterWrite& write, unsign
         const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         return clamp01(static_cast<float>(code) / 4095.0f
-            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+            + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * activeParameters_.calibration);
     }
     return static_cast<float>(code) / 4095.0f;
 }

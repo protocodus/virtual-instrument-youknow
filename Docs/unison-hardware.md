@@ -136,9 +136,9 @@ unit trajectories. MC5534A reset-pulse duration, discharge resistance and
 clamp voltage are also uncalibrated; `YouKnowDcoReset.h` provides a comparison
 circuit requiring explicit values, rather than establishing an installed
 part's behavior. These gaps call for per-card measurements, including warm-up
-and post-service checks, before adding or tuning further variation mechanisms.
-This audit establishes no missing mechanism that justifies synthetic DCO
-detune.
+and post-service checks to identify a particular instrument. Without those
+measurements, the conservative estimates below limit existing residuals; they
+do not identify a new mechanism that justifies synthetic DCO detune.
 
 `Tests/YouKnowUnisonPhaseTests.cpp` now also exercises the active product
 circuit profile at Character/Aging pairs `(0, 0)`, `(1, 0.5)` and `(2, 1)`.
@@ -146,6 +146,49 @@ It checks that analogue ramp scales disperse with Character while settled
 timer counts remain equal and relative counter phase remains stable. This
 guards the distinction in the current core; it does not measure the audible
 spread or thermal behavior of a physical JUNO-106.
+
+## Conservative residual estimates without hardware measurements
+
+At the user's request on 2026-10-08, the core uses a deliberately small
+serviced-unit variation budget, centralized in
+`Source/DSP/YouKnowVoiceResidualEstimates.h`. These are engineering priors,
+not measured distributions, confidence intervals, or guaranteed limits on
+original instruments. They apply at Unit Character 1; Character above 1 is
+an explicit exaggeration and Aging remains a separate product extension.
+
+| Residual | Previous model | Conservative estimate | Basis and limits |
+| --- | --- | --- | --- |
+| VCF FREQ/WIDTH endpoint draw | ±10 cents | ±2.5 cents | One quarter of the printed ±10-cent acceptance window. The wider window remains the complete-filter acceptance gate; drawing a smaller residual does not prove a measured population spread. |
+| Slow VCF cutoff wander | About 2.425 cents RMS | About 0.485 cents RMS | The existing converter-count multiplier changes 40 → 8. The AR(1) process, cadence and correlation are unchanged. This is filter movement, not oscillator detune. |
+| Resonance trim residual | ±0.02 normalized CV | ±0.002 normalized CV | Applied before the nonlinear resonance law and clamp. It is not a percentage of loop gain. The existing endpoint clipping remains. |
+| VCA input trim | ±3% | ±1% | About ±0.087 dB. The same estimate drives the input gain and coupling calculation; it is separate from raw resistor tolerances. |
+| Aggregate VCA control offset | ±0.004 normalized control | ±0.001 normalized control | A small residual after service adjustment, shared by all processing routes. It does not model an additional audio-input thump null. |
+| Compensated VCF temperature coefficient | 0.0033/°C | 0.00033/°C | Retain 10% of the reference part's typical coefficient as an explicit 90%-compensation estimate. No original-card temperature curve establishes this number. |
+
+For the retained random process, `x[n] = 0.9992 x[n-1] + 0.004 u[n]`,
+with independent uniform `u` on [-1, 1], the stationary standard deviation is
+`0.004 / sqrt(3 (1 - 0.9992²)) = 0.0577466`. Multiplying by eight converter
+counts and 1200/1143 cents per count yields about 0.485 cents RMS. At 375 Hz
+the correlation time is `-1 / (375 log(0.9992)) ≈ 3.332 s`. These are
+mathematical properties of the chosen software process, not recorded hardware
+statistics. Startup, Character and deterministic card draws can alter the
+finite-window observation.
+
+The temperature reference is the replacement
+[AS3109 datasheet](https://www.alfatriode.lv/eng/sc/AS3109.pdf), while the
+original module's compensation is visible in the
+[service schematic, p. 13](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=13).
+Neither establishes a residual population for original 80017A cards. The
+existing 15°C common rise, 4°C spatial gradient and previously user-selected
+three-second software warm-up remain explicit model choices. Under this
+model the gradient-only cold/service difference falls from about 19.73 to
+1.98 cents; this is a calculation for the model, not a physical warm-up test.
+
+Raw marked component classes, inherent circuit noise, common master-clock
+behavior, six-card phase histories and the calibrated nonlinear filter solve
+remain in place. Independent steady DCO detune remains zero. A self-oscillating
+VCF can still differ in pitch between cards. Fixed card differences repeat
+deterministically instead of being redrawn on every note.
 
 ## Host boundaries and verification limits
 

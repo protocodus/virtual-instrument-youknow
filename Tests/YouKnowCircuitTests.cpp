@@ -2059,8 +2059,9 @@ void testEnvelopeAndAmplifierLaws()
                "the voice VCA does not shut below its declared deadband");
         // A card sitting at the largest control offset the Unit Character
         // ceiling can present must still count as shut, or its voice never
-        // retires. 0.004 per unit of Unit Character, bounded at two.
-        expect(VoiceVcaLaw::gain(2.0f * 0.004f) < VoiceVcaLaw::silenceGain,
+        // retires. The conservative control prior is 0.001 per Character,
+        // whose product ceiling is two.
+        expect(VoiceVcaLaw::gain(2.0f * 0.001f) < VoiceVcaLaw::silenceGain,
                "the worst card control offset escapes the silence threshold");
     }
 

@@ -22,6 +22,7 @@
 #include "YouKnowFirmwareSerialTrace.h"
 #include "YouKnowDcoTemperature.h"
 #include "YouKnowDcoComponents.h"
+#include "YouKnowVoiceResidualEstimates.h"
 #include "YouKnowEnvelopeHold.h"
 #include "YouKnowDcoReset.h"
 #include "YouKnowOriginalPerformance.h"
@@ -2481,15 +2482,18 @@ private:
     // is obtained (within +/-10 cents on the tuner)" -- the procedure bounds
     // the two CHECK POINTS, not an offset and a slope separately, and the
     // note that the procedures interact means both windows hold jointly on a
-    // passing card. The model therefore draws each check point's residual
-    // independently inside +/-10 cents and takes the line through them:
+    // passing card. The conservative prior draws each check point's residual
+    // independently inside +/-2.5 cents and takes the line through them:
     // `cutoffOffsetError` is the C4-point draw, `cutoffScaleError` the
     // C6-point draw, interpolated in counts about the anchored code-6272
     // trim point (extrapolation beyond the checked span is unbounded, as the
     // procedure leaves it). Anchored acceptance windows (2026-08-20 pass),
     // replacing the former voiced +/-0.07 octave and +/-5% magnitudes that
     // no source bounded. Field drift beyond the windows belongs to `aging`.
-    static constexpr float vcfTrimResidualOctaves = 10.0f / 1200.0f;
+    static constexpr float vcfTrimAcceptanceCents =
+        VoiceResidualEstimates::vcfServiceAcceptanceCents;
+    static constexpr float vcfTrimResidualOctaves =
+        VoiceResidualEstimates::vcfServiceResidualCents / 1200.0f;
     static constexpr float vcfFreqTrimAnchorCounts = 6272.0f;
     static constexpr float vcfWidthTrimSpanCounts = 2.0f * vcfCountsPerOctave;
     // The aged-unit lead's two magnitudes (see EngineParameters::aging):
@@ -2506,7 +2510,7 @@ private:
     // enough to hear as odd-harmonic grit on every resonant sweep.
     static constexpr float otaEarlyVoltage = 100.0f;
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
-    // Voiced thermal-character coordinate retained from the AS3109's typical
+    // Conservative residual estimated from the AS3109's typical
     // 0.33%/degC "Tempco of frequency control" row. That replacement-IC row
     // has no min/max and concerns the control coefficient: it does not bound
     // an original 80017A's residual cutoff drift at a fixed installed CV.
@@ -2514,10 +2518,12 @@ private:
     //
     // The module board also carries R111, a 560 Ohm positor --
     // a PTC thermistor, listed as such in the parts legend -- returning the CV
-    // divider node to ground for compensation. This model's use of the clone
-    // coefficient is a sound-design prior, not an upper bound or a measured
-    // residual. Installed compensated behavior and its statistics are OQ-10.
-    static constexpr float vcfCutoffTempcoPerCelsius = 0.0033f;
+    // divider node to ground for compensation. Retaining 10% of the proxy
+    // coefficient assumes 90% compensation; that is an engineering estimate,
+    // not an upper bound or a measured residual. Installed compensated
+    // behavior and its statistics remain unknown.
+    static constexpr float vcfCutoffTempcoPerCelsius =
+        VoiceResidualEstimates::vcfResidualTempcoPerCelsius;
     // Card-to-card thermal gradient across the chassis, in degrees Celsius at
     // the card nearest the supply, falling exponentially with the card index.
     // Shared by the headroom and cutoff paths so the two cannot disagree.

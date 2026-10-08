@@ -113,6 +113,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowFirmwareSerialPinDecoder.h
     Source/DSP/YouKnowDcoTemperature.h
     Source/DSP/YouKnowDcoComponents.h
+    Source/DSP/YouKnowVoiceResidualEstimates.h
     Source/DSP/YouKnowDcoReset.h
     Source/DSP/YouKnowControlDac.h
     Source/DSP/YouKnowEnvelopeHold.h
@@ -793,6 +794,15 @@ if(BUILD_TESTING)
     set_target_properties(YouKnowEmbeddedUnisonHardwareTests PROPERTIES CXX_STANDARD 17)
     add_test(NAME YouKnow.EmbeddedUnisonHardware COMMAND YouKnowEmbeddedUnisonHardwareTests)
     set_tests_properties(YouKnow.UnisonHardware YouKnow.EmbeddedUnisonHardware PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowVoiceResidualTests Tests/YouKnowVoiceResidualTests.cpp)
+    target_link_libraries(YouKnowVoiceResidualTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VoiceResidual COMMAND YouKnowVoiceResidualTests)
+    add_executable(YouKnowEmbeddedVoiceResidualTests Tests/YouKnowVoiceResidualTests.cpp)
+    target_link_libraries(YouKnowEmbeddedVoiceResidualTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedVoiceResidualTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedVoiceResidual COMMAND YouKnowEmbeddedVoiceResidualTests)
+    set_tests_properties(YouKnow.VoiceResidual YouKnow.EmbeddedVoiceResidual PROPERTIES TIMEOUT 60)
 
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
