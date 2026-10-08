@@ -409,6 +409,14 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Audio demos
 
+**[Original Preset Sessions](Docs/audio/youknow-originals/index.html)** — sixteen
+new short compositions, one for each original YouKnow bass and pad, rendered
+at maximum quality to 24-bit/96 kHz stereo. The collection includes matching
+MIDI, a playlist and measured render details. Each performance uses its saved
+preset, with natural releases, static level adjustment and file-edge fades.
+Recreate the set by building `YouKnowRenderOriginalPresets` and running
+`python3 Tools/MakeOriginalPresetDemos.py` (Python with NumPy and FFmpeg required).
+
 **Five musical showcases, at maximum quality, 24-bit/96 kHz stereo:**
 [bass](Docs/audio/showcase-01-bass-midnight-drive.wav) ·
 [lead](Docs/audio/showcase-02-lead-signal-fire.wav) ·

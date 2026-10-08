@@ -359,6 +359,10 @@ if(YOUKNOW_BUILD_TOOLS)
     target_include_directories(YouKnowRenderPresetDemos PRIVATE Tools)
     target_compile_features(YouKnowRenderPresetDemos PRIVATE cxx_std_20)
 
+    add_executable(YouKnowRenderOriginalPresets Tools/RenderOriginalPresets.cpp)
+    target_link_libraries(YouKnowRenderOriginalPresets PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderOriginalPresets PRIVATE cxx_std_20)
+
     add_custom_target(YouKnowRebuildDemos ALL
         COMMAND YouKnowRenderDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
         COMMAND YouKnowRenderComposition "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
