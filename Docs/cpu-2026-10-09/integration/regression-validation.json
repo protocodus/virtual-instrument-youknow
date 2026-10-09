@@ -1,0 +1,28 @@
+{
+  "tested_revision": "9b9fdff5d36a3b9237940b7100784a93b5a5b730",
+  "build_directory": "/workspace/.cloud-setup/builds/youknow",
+  "configuration": {
+    "BUILD_TESTING": "ON",
+    "CMAKE_BUILD_TYPE": "Release",
+    "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+    "YOUKNOW_BUILD_PLUGIN": "OFF",
+    "YOUKNOW_BUILD_TOOLS": "ON",
+    "YOUKNOW_HARDWARE_REALISM_CANDIDATE": "ON"
+  },
+  "focused_tests": 10,
+  "focused_passed": true,
+  "focused_duration_seconds": 41.59,
+  "focused_log": "focused-tests.txt",
+  "source_sha256": "source-sha256.txt",
+  "compiler_version": "g++ (Debian 14.2.0-19) 14.2.0",
+  "source_hashes_verified_after_tests": true,
+  "full_engine_regression": {
+    "passed": true,
+    "duration_seconds": 823.48,
+    "timeout_seconds": 1200,
+    "log": "full-engine-test.txt",
+    "ctest_filter": "^YouKnow\\.Engine$"
+  },
+  "focused_ctest_filter": "^YouKnow\\.(ChorusNonlinear|ChorusDenseInput|ChorusOutputRecovery|FirmwareAssignerScheduler|OriginalPerformance|FirmwareLiveAssignerAudio|VcaJunctionTemperature|HardwareRealismProfile|VcaTemperature|VoiceVcaAntialias)$",
+  "scope": "Native Linux x86-64 integration regression; ARM NEON paths are not exercised."
+}

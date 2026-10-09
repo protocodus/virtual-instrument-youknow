@@ -1,0 +1,26 @@
+Internal ctest changing into directory: /workspace/.cloud-setup/builds/youknow
+Test project /workspace/.cloud-setup/builds/youknow
+      Start  9: YouKnow.ChorusNonlinear
+      Start 14: YouKnow.ChorusDenseInput
+ 1/10 Test #14: YouKnow.ChorusDenseInput ............   Passed    1.89 sec
+      Start 15: YouKnow.ChorusOutputRecovery
+ 2/10 Test #15: YouKnow.ChorusOutputRecovery ........   Passed    3.75 sec
+      Start 29: YouKnow.VoiceVcaAntialias
+ 3/10 Test #29: YouKnow.VoiceVcaAntialias ...........   Passed    1.67 sec
+      Start 45: YouKnow.FirmwareAssignerScheduler
+ 4/10 Test #45: YouKnow.FirmwareAssignerScheduler ...   Passed    0.02 sec
+      Start 48: YouKnow.OriginalPerformance
+ 5/10 Test #48: YouKnow.OriginalPerformance .........   Passed   11.21 sec
+      Start 49: YouKnow.FirmwareLiveAssignerAudio
+ 6/10 Test #49: YouKnow.FirmwareLiveAssignerAudio ...   Passed   13.03 sec
+      Start 56: YouKnow.VcaJunctionTemperature
+ 7/10 Test #56: YouKnow.VcaJunctionTemperature ......   Passed    5.94 sec
+      Start 57: YouKnow.HardwareRealismProfile
+ 8/10 Test #57: YouKnow.HardwareRealismProfile ......   Passed    1.34 sec
+      Start 72: YouKnow.VcaTemperature
+ 9/10 Test #72: YouKnow.VcaTemperature ..............   Passed    0.42 sec
+10/10 Test  #9: YouKnow.ChorusNonlinear .............   Passed   41.58 sec
+
+100% tests passed, 0 tests failed out of 10
+
+Total Test time (real) =  41.59 sec

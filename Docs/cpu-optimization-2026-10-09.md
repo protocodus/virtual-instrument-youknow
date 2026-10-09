@@ -1,5 +1,18 @@
 # YouKnow CPU optimization — 2026-10-09
 
+The measurements in this report describe the optimization on baseline
+`a0c6b08c0375b325f169e4dae7ece776081395b5`. Before publication, the change was
+rebased onto main at `964ad6e`, which also contains independent thermal and
+oscillator optimizations. The [integration record](cpu-2026-10-09/integration/validation.json)
+identifies that combined source and its checks. The percentages below remain
+the original comparison against `a0c6b08`; they do not measure the incremental
+gain over the newer main.
+
+The integrated source passed ten focused regressions and the full engine suite
+(823.48 seconds). Its twenty audio renders also match the original frozen
+baseline byte for byte. These integration checks cover native Linux x86-64;
+the upstream ARM NEON path is outside this host's coverage.
+
 At 48 kHz/1×, median CPU savings across the steady-state workloads are
 **7.12% in Original mode and 8.65% in Direct mode**. Thirteen of fifteen
 workloads exceed 5%; the complete range is 2.99–9.95%. All measured audio
@@ -113,7 +126,8 @@ See the [validation record](cpu-2026-10-09/validation.json),
 [focused test log](cpu-2026-10-09/regression-tests.txt) and
 [sanitizer log](cpu-2026-10-09/sanitizer-tests.txt). The full
 [engine regression](cpu-2026-10-09/full-engine-test.txt) also passed on the
-final source in 827.54 seconds. Windows/macOS binaries,
+measured source before integration with newer main in 827.54 seconds.
+Windows/macOS binaries,
 interactive DAW performance and the Reason Rack Extension package were not
 tested by this pass. Changes are in the canonical instrument source; packaged
 releases are separate from these native measurements.

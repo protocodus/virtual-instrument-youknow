@@ -1,6 +1,11 @@
 Build both revisions with the same compiler, Release flags and IPO policy.
 The recorded baseline is a0c6b08c0375b325f169e4dae7ece776081395b5. The candidate
-is the source change accompanying this report; its DSP hashes are in manifest.json.
+is the source change accompanying this report applied to that original baseline;
+its DSP hashes are in manifest.json. The published change was subsequently
+rebased over independent main-branch optimizations. Its combined source hashes
+and validation are recorded separately in integration/validation.json. Applying
+the DSP portion of this optimization's commit to a0c6b08 recreates the measured
+candidate; verify the manifest hashes before comparing historical results.
 Use separate source/build directories so each executable uses its own headers.
 
 cmake -S /path/to/source -B /path/to/build -G Ninja \
