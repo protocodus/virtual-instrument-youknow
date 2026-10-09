@@ -58,17 +58,10 @@ constexpr std::array<int, 6> chord { 48, 55, 60, 64, 67, 72 };
 void require(bool condition, const char* message)
 { if (!condition) throw std::runtime_error(message); }
 
-// The accepted B profile is the product default, including consumers that
-// include the active header without CMake definitions. An explicit 0 remains
-// the controlled previous-profile comparison. Keep this independent of the
-// combined hardware-profile audio checks below, which run in both builds.
-#if !defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) || YOUKNOW_HARDWARE_REALISM_CANDIDATE
-using ExpectedActiveProfile = ProductHardwareRealismProfile;
-#else
-using ExpectedActiveProfile = ProductFidelityProfile;
-#endif
-static_assert(std::is_same_v<ActiveProductFidelityProfile, ExpectedActiveProfile>,
-              "Active product profile no longer follows accepted-B/default and explicit-0 policy");
+// The accepted B profile is the product configuration, including consumers
+// that include the active header without CMake definitions.
+static_assert(std::is_same_v<ActiveProductFidelityProfile, ProductHardwareRealismProfile>,
+              "Active product profile no longer selects the accepted circuits");
 
 void activeProductPromotion()
 {
@@ -85,7 +78,6 @@ void activeProductPromotion()
     const auto applied = Probe::parameters(*active);
     require(applied.volume == 0.37f && applied.resonance == 0.52f,
             "active Engine setup rewrote stored panel controls");
-#if !defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) || YOUKNOW_HARDWARE_REALISM_CANDIDATE
     require(Probe::coupledMixer(*active)
             && Probe::chorusTransfer(*active) == ChorusBbdTransferProfile::ServicedBiasEstimate
             && Probe::chorusInsertion(*active) == ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate
@@ -93,14 +85,6 @@ void activeProductPromotion()
             && applied.enableEvidenceVcaCalibration && applied.useOriginalCardVcfCalibration
             && applied.enableVoiceVcaJunctionTemperature && applied.useBa662AResonanceOffsetEstimate,
             "active product setup lost an accepted-B circuit selection");
-#else
-    require(!Probe::coupledMixer(*active)
-            && Probe::chorusTransfer(*active) == ChorusBbdTransferProfile::Legacy
-            && applied.chorusTimingProfile == ChorusTimingProfile::OwnerBlend
-            && !applied.enableEvidenceVcaCalibration && !applied.useOriginalCardVcfCalibration
-            && applied.useServiced439522VcfCalibration,
-            "explicit-0 product setup no longer selects the previous circuits");
-#endif
 }
 
 void selections(const YouKnowEngine& engine)

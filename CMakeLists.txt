@@ -70,8 +70,6 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(YOUKNOW_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
-option(YOUKNOW_HARDWARE_REALISM_CANDIDATE
-    "Use the current hardware component profile; OFF retains the prior reference sound" ON)
 option(YOUKNOW_BUILD_CLAP "Build the CLAP plug-in alongside the JUCE formats" ON)
 set(YOUKNOW_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
@@ -147,8 +145,6 @@ add_library(YouKnowDSP STATIC
 target_include_directories(YouKnowDSP
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
 target_compile_features(YouKnowDSP PUBLIC cxx_std_20)
-target_compile_definitions(YouKnowDSP PUBLIC
-    YOUKNOW_HARDWARE_REALISM_CANDIDATE=$<BOOL:${YOUKNOW_HARDWARE_REALISM_CANDIDATE}>)
 set_target_properties(YouKnowDSP PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
@@ -323,26 +319,23 @@ if(YOUKNOW_BUILD_TOOLS)
         set_tests_properties(YouKnow.HighPassSwitch PROPERTIES TIMEOUT 60)
     endif()
 
-    add_executable(YouKnowRenderVcaControlComparison Tools/RenderVcaControlComparison.cpp)
-    target_link_libraries(YouKnowRenderVcaControlComparison PRIVATE YouKnowDSP)
-
-    add_executable(YouKnowRenderHardwareFidelity Tools/RenderHardwareFidelity.cpp)
-    target_link_libraries(YouKnowRenderHardwareFidelity PRIVATE YouKnowDSP)
-
     add_executable(YouKnowDcoFirmwareTimingAudit Tools/AuditDcoFirmwareTiming.cpp)
     target_link_libraries(YouKnowDcoFirmwareTimingAudit PRIVATE YouKnowDSP)
     target_compile_features(YouKnowDcoFirmwareTimingAudit PRIVATE cxx_std_20)
 
+    # Reusable cross-revision fixtures: raw product audio and complete
+    # firmware event/state ledgers. These run only when explicitly invoked.
+    add_executable(YouKnowRenderProductValidation Tools/RenderProductValidation.cpp)
+    target_link_libraries(YouKnowRenderProductValidation PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderProductValidation PRIVATE cxx_std_20)
+
+    add_executable(YouKnowAuditSchedulerLedger Tools/AuditSchedulerLedger.cpp)
+    target_link_libraries(YouKnowAuditSchedulerLedger PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowAuditSchedulerLedger PRIVATE cxx_std_20)
+
     add_executable(YouKnowRenderDemos Tools/RenderDemos.cpp)
     target_link_libraries(YouKnowRenderDemos PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderDemos PRIVATE cxx_std_20)
-
-    add_executable(YouKnowBenchmarkReference
-        Tools/BenchmarkReference.cpp
-        Tools/OversamplingQualitySupport.h)
-    target_link_libraries(YouKnowBenchmarkReference PRIVATE YouKnowDSP)
-    target_include_directories(YouKnowBenchmarkReference PRIVATE Tools)
-    target_compile_features(YouKnowBenchmarkReference PRIVATE cxx_std_20)
 
     add_executable(YouKnowRenderComposition Tools/RenderComposition.cpp)
     target_link_libraries(YouKnowRenderComposition PRIVATE YouKnowDSP Threads::Threads)
@@ -380,7 +373,9 @@ if(YOUKNOW_BUILD_TOOLS)
             USES_TERMINAL)
     endif()
 
-    add_custom_target(YouKnowRebuildDemos ALL
+    # Refresh tracked previews only on request; CI invokes this target
+    # explicitly before publishing the current demo collection.
+    add_custom_target(YouKnowRebuildDemos
         COMMAND YouKnowRenderDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
         COMMAND YouKnowRenderComposition "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
         COMMAND YouKnowRenderShowcase "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
@@ -388,24 +383,6 @@ if(YOUKNOW_BUILD_TOOLS)
         DEPENDS YouKnowRenderDemos YouKnowRenderComposition YouKnowRenderShowcase YouKnowRenderPresetDemos
         COMMENT "Rebuilding all audio demos and updating README.md tables"
         USES_TERMINAL)
-
-    add_executable(YouKnowRenderSota Tools/RenderSotaComparisons.cpp)
-    target_link_libraries(YouKnowRenderSota PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderSota PRIVATE cxx_std_20)
-
-    add_executable(YouKnowRenderTanhAuditions
-        Tools/RenderTanhAuditions.cpp
-        Tools/RealismComparisonSupport.h)
-    target_link_libraries(YouKnowRenderTanhAuditions PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderTanhAuditions PRIVATE cxx_std_20)
-
-    add_executable(YouKnowRenderFidelityFixes Tools/RenderFidelityFixes.cpp)
-    target_link_libraries(YouKnowRenderFidelityFixes PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderFidelityFixes PRIVATE cxx_std_20)
-
-    add_executable(YouKnowRenderChorusMute Tools/RenderChorusMute.cpp)
-    target_link_libraries(YouKnowRenderChorusMute PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderChorusMute PRIVATE cxx_std_20)
 
     add_executable(YouKnowMeasureChorusSupport Tools/MeasureChorusSupport.cpp)
     target_link_libraries(YouKnowMeasureChorusSupport PRIVATE YouKnowDSP)
@@ -415,14 +392,9 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowChorusNoiseAudit PRIVATE YouKnowDSP)
     target_compile_features(YouKnowChorusNoiseAudit PRIVATE cxx_std_20)
 
-    add_executable(YouKnowRenderRealismFixes Tools/RenderRealismFixes.cpp)
-    target_link_libraries(YouKnowRenderRealismFixes PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderRealismFixes PRIVATE cxx_std_20)
-
-    # Focused build-to-build comparisons keep their raw float32 baseline and
-    # identify the exact DSP source set used to compile each side. Reconfigure
-    # when any fingerprinted source changes so a normal `cmake --build` cannot
-    # leave stale source metadata in an after manifest.
+    # Circuit comparison renders identify the exact DSP sources used to
+    # compile them. Reconfigure when a fingerprinted source changes so a
+    # normal build cannot leave stale source metadata in a rendered report.
     set(YOUKNOW_DSP_FINGERPRINT_INPUT "")
     set(YOUKNOW_DSP_FINGERPRINT_FILES
         ${YOUKNOW_DSP_SOURCES}
@@ -436,118 +408,6 @@ if(YOUKNOW_BUILD_TOOLS)
     endforeach()
     string(SHA256 YOUKNOW_DSP_SOURCE_SHA256
         "${YOUKNOW_DSP_FINGERPRINT_INPUT}")
-
-    add_executable(YouKnowRenderRealismComparison
-        Tools/RenderRealismComparison.cpp
-        Tools/RealismComparisonSupport.h)
-    target_link_libraries(YouKnowRenderRealismComparison
-        PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderRealismComparison PRIVATE cxx_std_20)
-    target_compile_definitions(YouKnowRenderRealismComparison PRIVATE
-        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
-        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
-        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
-
-    add_executable(YouKnowRenderRealismReview Tools/RenderRealismReview.cpp)
-    target_link_libraries(YouKnowRenderRealismReview PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderRealismReview PRIVATE cxx_std_20)
-    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismReview.cpp"
-        YOUKNOW_REVIEW_SOURCE_SHA256)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismReview.cpp")
-    target_compile_definitions(YouKnowRenderRealismReview PRIVATE
-        "YOUKNOW_REVIEW_SOURCE_SHA256=\"${YOUKNOW_REVIEW_SOURCE_SHA256}\""
-        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
-        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
-        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
-
-    # The same round-two score can be compiled against archived headers/lib.
-    # Capabilities are explicit build metadata: baseline omits unavailable
-    # APIs; final renders request the new physical connections/performance.
-    add_executable(YouKnowRenderRealismRound2 Tools/RenderRealismRound2.cpp)
-    target_link_libraries(YouKnowRenderRealismRound2 PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderRealismRound2 PRIVATE cxx_std_20)
-    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismRound2.cpp"
-        YOUKNOW_ROUND2_SOURCE_SHA256)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/Source/DSP/YouKnowEngine.h" YOUKNOW_ROUND2_ENGINE_HEADER)
-    foreach(feature CABLE ORIGINAL VCA)
-        set(YOUKNOW_ROUND2_HAVE_${feature} 0)
-    endforeach()
-    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "outputCapacitancePf")
-        set(YOUKNOW_ROUND2_HAVE_CABLE 1)
-    endif()
-    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "setOriginalPerformanceMode")
-        set(YOUKNOW_ROUND2_HAVE_ORIGINAL 1)
-    endif()
-    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "enableVoiceVcaAntialias")
-        set(YOUKNOW_ROUND2_HAVE_VCA 1)
-    endif()
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderRealismRound2.cpp")
-    target_compile_definitions(YouKnowRenderRealismRound2 PRIVATE
-        "YOUKNOW_ROUND2_SOURCE_SHA256=\"${YOUKNOW_ROUND2_SOURCE_SHA256}\""
-        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
-        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
-        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\""
-        YOUKNOW_ROUND2_HAVE_CABLE=${YOUKNOW_ROUND2_HAVE_CABLE}
-        YOUKNOW_ROUND2_HAVE_ORIGINAL=${YOUKNOW_ROUND2_HAVE_ORIGINAL}
-        YOUKNOW_ROUND2_HAVE_VCA=${YOUKNOW_ROUND2_HAVE_VCA})
-
-    add_executable(YouKnowRenderElectronics Tools/RenderElectronics.cpp)
-    target_link_libraries(YouKnowRenderElectronics PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderElectronics PRIVATE cxx_std_20)
-    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderElectronics.cpp"
-        YOUKNOW_ELECTRONICS_SOURCE_SHA256)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderElectronics.cpp")
-    foreach(feature RESONANCE OTA PHONES)
-        set(YOUKNOW_ELECTRONICS_HAVE_${feature} 0)
-    endforeach()
-    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "enableResonanceSoftJunction")
-        set(YOUKNOW_ELECTRONICS_HAVE_RESONANCE 1)
-    endif()
-    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "enableOtaShotNoise")
-        set(YOUKNOW_ELECTRONICS_HAVE_OTA 1)
-    endif()
-    if(YOUKNOW_ROUND2_ENGINE_HEADER MATCHES "headphoneLoadOhms")
-        set(YOUKNOW_ELECTRONICS_HAVE_PHONES 1)
-    endif()
-    target_compile_definitions(YouKnowRenderElectronics PRIVATE
-        "YOUKNOW_ELECTRONICS_SOURCE_SHA256=\"${YOUKNOW_ELECTRONICS_SOURCE_SHA256}\""
-        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
-        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
-        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\""
-        YOUKNOW_ELECTRONICS_HAVE_RESONANCE=${YOUKNOW_ELECTRONICS_HAVE_RESONANCE}
-        YOUKNOW_ELECTRONICS_HAVE_OTA=${YOUKNOW_ELECTRONICS_HAVE_OTA}
-        YOUKNOW_ELECTRONICS_HAVE_PHONES=${YOUKNOW_ELECTRONICS_HAVE_PHONES})
-
-    add_executable(YouKnowRenderHardwareRealism Tools/RenderHardwareRealism.cpp)
-    target_link_libraries(YouKnowRenderHardwareRealism PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderHardwareRealism PRIVATE cxx_std_20)
-    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderHardwareRealism.cpp"
-        YOUKNOW_HARDWARE_REALISM_SOURCE_SHA256)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderHardwareRealism.cpp")
-    target_compile_definitions(YouKnowRenderHardwareRealism PRIVATE
-        YOUKNOW_HARDWARE_REALISM_AVAILABLE=1
-        "YOUKNOW_HARDWARE_REALISM_SOURCE_SHA256=\"${YOUKNOW_HARDWARE_REALISM_SOURCE_SHA256}\""
-        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
-        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
-        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
-
-    add_executable(YouKnowRenderNextHardwareRealism Tools/RenderNextHardwareRealism.cpp)
-    target_link_libraries(YouKnowRenderNextHardwareRealism PRIVATE YouKnowDSP)
-    target_compile_features(YouKnowRenderNextHardwareRealism PRIVATE cxx_std_20)
-    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderNextHardwareRealism.cpp"
-        YOUKNOW_NEXT_HARDWARE_REALISM_SOURCE_SHA256)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Tools/RenderNextHardwareRealism.cpp")
-    target_compile_definitions(YouKnowRenderNextHardwareRealism PRIVATE
-        YOUKNOW_NEXT_HARDWARE_REALISM_AVAILABLE=1
-        "YOUKNOW_NEXT_HARDWARE_REALISM_SOURCE_SHA256=\"${YOUKNOW_NEXT_HARDWARE_REALISM_SOURCE_SHA256}\""
-        "YOUKNOW_DSP_SOURCE_SHA256=\"${YOUKNOW_DSP_SOURCE_SHA256}\""
-        "YOUKNOW_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
-        "YOUKNOW_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
 
     add_executable(YouKnowRenderPresetScore Tools/RenderPresetScore.cpp)
     target_link_libraries(YouKnowRenderPresetScore
@@ -603,8 +463,7 @@ if(YOUKNOW_BUILD_TOOLS)
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Tools")
     target_compile_features(YouKnowDSPWorkAudit PUBLIC cxx_std_20)
     target_compile_definitions(YouKnowDSPWorkAudit
-        PRIVATE YOUKNOW_WORK_AUDIT=1
-        PUBLIC YOUKNOW_HARDWARE_REALISM_CANDIDATE=$<BOOL:${YOUKNOW_HARDWARE_REALISM_CANDIDATE}>)
+        PRIVATE YOUKNOW_WORK_AUDIT=1)
     set_target_properties(YouKnowDSPWorkAudit PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 
@@ -704,19 +563,13 @@ if(YOUKNOW_BUILD_TOOLS)
     endif()
 
     if(MSVC)
+        target_compile_options(YouKnowRenderProductValidation PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnowAuditSchedulerLedger PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderDemos PRIVATE /W4 /permissive-)
-        target_compile_options(YouKnowBenchmarkReference PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderShowcase PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderPresetDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderOriginalPresets PRIVATE /W4 /permissive-)
-        target_compile_options(YouKnowRenderSota PRIVATE /W4 /permissive-)
-        target_compile_options(YouKnowRenderTanhAuditions
-            PRIVATE /W4 /permissive-)
-        target_compile_options(YouKnowRenderFidelityFixes PRIVATE /W4 /permissive-)
-        target_compile_options(YouKnowRenderRealismFixes PRIVATE /W4 /permissive-)
-        target_compile_options(YouKnowRenderRealismComparison
-            PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowAuditFactoryPresets PRIVATE
             /W4 /permissive-)
         target_compile_options(YouKnowOversamplingAudit
@@ -740,25 +593,17 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowNoiseSourceQualityAudit
             PRIVATE /W4 /permissive-)
     else()
-        target_compile_options(YouKnowRenderDemos PRIVATE
+        target_compile_options(YouKnowRenderProductValidation PRIVATE
             -Wall -Wextra -Wpedantic)
-        target_compile_options(YouKnowBenchmarkReference PRIVATE
+        target_compile_options(YouKnowAuditSchedulerLedger PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowRenderDemos PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderComposition PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderShowcase PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowRenderOriginalPresets PRIVATE
-            -Wall -Wextra -Wpedantic)
-        target_compile_options(YouKnowRenderSota PRIVATE
-            -Wall -Wextra -Wpedantic)
-        target_compile_options(YouKnowRenderTanhAuditions PRIVATE
-            -Wall -Wextra -Wpedantic)
-        target_compile_options(YouKnowRenderFidelityFixes PRIVATE
-            -Wall -Wextra -Wpedantic)
-        target_compile_options(YouKnowRenderRealismFixes PRIVATE
-            -Wall -Wextra -Wpedantic)
-        target_compile_options(YouKnowRenderRealismComparison PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowAuditFactoryPresets PRIVATE
             -Wall -Wextra -Wpedantic)
@@ -794,17 +639,6 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.ResonatorProxy
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/AnalyzeResonatorProxy.py" --self-test)
-        execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import numpy, scipy"
-            RESULT_VARIABLE YOUKNOW_REVIEW_PYTHON_IMPORT_RESULT
-            OUTPUT_QUIET ERROR_QUIET)
-        if(YOUKNOW_REVIEW_PYTHON_IMPORT_RESULT EQUAL 0)
-            add_test(NAME YouKnow.HardwareRealismPackage
-                COMMAND "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/Tools/PackageHardwareRealism.py" --self-test)
-            add_test(NAME YouKnow.NextHardwareRealismPackage
-                COMMAND "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/Tools/PackageNextHardwareRealism.py" --self-test)
-        endif()
     endif()
 
     add_executable(YouKnowChorusInputLoadingTests Tests/YouKnowChorusInputLoadingTests.cpp)
@@ -1258,17 +1092,6 @@ if(BUILD_TESTING)
             set_tests_properties(YouKnow.OriginalPresetDemoTools PROPERTIES TIMEOUT 120)
         endif()
 
-        # Proves the hardware-benchmark measures can see the differences they
-        # exist to report: a render must compare equal to itself, and a known
-        # detune, a closed filter, a slowed attack, a known lag and a known
-        # level trim must each be recovered. It runs whether or not any capture
-        # is committed, because a table of small errors from measures that
-        # cannot see anything looks exactly like agreement.
-        add_test(NAME YouKnow.BenchmarkReference
-                 COMMAND YouKnowBenchmarkReference --self-test)
-        # Eleven renders at the deepest rung, which is minutes on a slow runner.
-        set_tests_properties(YouKnow.BenchmarkReference PROPERTIES TIMEOUT 900)
-
         # Fast integration coverage for the long-form factory gain auditor. It
         # uses the same mappings, meters, ownership guard and fixed preview
         # path as a full run, with a two-preset shortened score.
@@ -1279,24 +1102,6 @@ if(BUILD_TESTING)
         # also covers sixteen original-program scores and took 131 s during
         # the promotion checks. Allow shared-runner margin without a new oracle.
         set_tests_properties(YouKnow.AuditFactoryPresets PROPERTIES TIMEOUT 240)
-
-        # A same-length WAV is not sufficient evidence for a build-to-build
-        # claim. The strict BBD comparison must bind its baseline audio hash,
-        # protocol and pre-change DSP fingerprint to the archived manifest.
-        add_test(NAME YouKnow.RealismComparisonContract
-                 COMMAND YouKnowRenderRealismComparison
-                         --self-test-baseline-contract)
-        set_tests_properties(YouKnow.RealismComparisonContract
-                             PROPERTIES TIMEOUT 30)
-        add_test(NAME YouKnow.RealismReviewManifest
-                 COMMAND YouKnowRenderRealismReview --self-test)
-        set_tests_properties(YouKnow.RealismReviewManifest PROPERTIES TIMEOUT 10)
-        add_test(NAME YouKnow.RealismRound2Manifest
-                 COMMAND YouKnowRenderRealismRound2 --self-test)
-        set_tests_properties(YouKnow.RealismRound2Manifest PROPERTIES TIMEOUT 10)
-        add_test(NAME YouKnow.ElectronicsManifest
-                 COMMAND YouKnowRenderElectronics --self-test)
-        set_tests_properties(YouKnow.ElectronicsManifest PROPERTIES TIMEOUT 10)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity

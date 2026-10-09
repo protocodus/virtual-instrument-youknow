@@ -1109,8 +1109,7 @@ int runDenseInputCounterAudit()
     stopped.prepare(stoppedRate);
     const auto processStopped = [&](ChorusMode mode) {
         float left {}, right {};
-        stopped.process(0.1f, mode, 0.0f, left, right, false, false, 1.0f,
-                        false, true, true, false,
+        stopped.process(0.1f, mode, 0.0f, left, right, 1.0f, true, true, false,
                         youknow::ChorusTimingProfile::OwnerBlend, true);
     };
     processStopped(ChorusMode::One);

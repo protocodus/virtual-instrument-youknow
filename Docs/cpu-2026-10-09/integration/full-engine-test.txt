@@ -1,8 +1,0 @@
-Internal ctest changing into directory: /workspace/.cloud-setup/builds/youknow
-Test project /workspace/.cloud-setup/builds/youknow
-    Start 73: YouKnow.Engine
-1/1 Test #73: YouKnow.Engine ...................   Passed  823.48 sec
-
-100% tests passed, 0 tests failed out of 1
-
-Total Test time (real) = 823.48 sec

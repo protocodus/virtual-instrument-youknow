@@ -363,34 +363,6 @@ struct YouKnowTestAccess
             && std::isfinite(line.exactOutputPrevious3);
     }
 
-    static std::array<float, 2> correlatedChorusNoiseStep(
-        std::uint32_t& commonState, std::uint32_t& orthogonalState,
-        float correlation) noexcept
-    {
-        const auto sample = Chorus::correlatedRandomStep(
-            commonState, orthogonalState, correlation);
-        return { sample.lineA, sample.lineB };
-    }
-
-    static float chorusToneStep(double& phase, float frequencyHz,
-                                float sampleRate) noexcept
-    {
-        return Chorus::deterministicToneStep(phase, frequencyHz, sampleRate);
-    }
-
-    static void configureOptionalChorusNoise(
-        Chorus& chorus, float commonAmplitude, float correlation,
-        float humAmplitude, float humFrequencyHz,
-        float clockSpurAmplitude, float clockSpurHarmonic) noexcept
-    {
-        chorus.optionalNoise_.commonRandomAmplitude = commonAmplitude;
-        chorus.optionalNoise_.commonRandomCorrelation = correlation;
-        chorus.optionalNoise_.humAmplitude = humAmplitude;
-        chorus.optionalNoise_.humFrequencyHz = humFrequencyHz;
-        chorus.optionalNoise_.clockSpurAmplitude = clockSpurAmplitude;
-        chorus.optionalNoise_.clockSpurHarmonic = clockSpurHarmonic;
-    }
-
     static float chorusWetGain(const Chorus& chorus) noexcept
     {
         return chorus.wetGain_;
@@ -406,10 +378,6 @@ struct YouKnowTestAccess
         std::uint32_t lineNoiseA { 0u };
         double lfoPhase { 0.0 };
         float wetGain { 0.0f };
-        std::uint32_t commonNoise { 0u };
-        std::uint32_t orthogonalNoise { 0u };
-        double humPhase { 0.0 };
-        double clockSpurPhaseA { 0.0 };
         bool primed { false };
 
         bool operator==(const ChorusPhysicalState&) const = default;
@@ -426,10 +394,6 @@ struct YouKnowTestAccess
                  chorus.lineA_.noiseState,
                  chorus.lfoPhase_,
                  chorus.wetGain_,
-                 chorus.commonNoiseState_,
-                 chorus.orthogonalNoiseState_,
-                 chorus.humPhase_,
-                 chorus.clockSpurPhaseA_,
                  chorus.primed_ };
     }
 
@@ -2062,20 +2026,6 @@ void testEnvelopeAndAmplifierLaws()
         // retires. 0.004 per unit of Unit Character, bounded at two.
         expect(VoiceVcaLaw::gain(2.0f * 0.004f) < VoiceVcaLaw::silenceGain,
                "the worst card control offset escapes the silence threshold");
-    }
-
-    // The comparison switch restores the former softplus stand-in to the bit:
-    // the same float expression, evaluated here in the same order.
-    for (int step = 1; step <= 20; ++step)
-    {
-        const float control = static_cast<float>(step) / 20.0f;
-        const float x = (control - VoiceVcaLaw::softplusTurnOn) / VoiceVcaLaw::knee;
-        const float softplus = x > 30.0f ? x : std::log1p(std::exp(x));
-        const float expected =
-            VoiceVcaLaw::knee * softplus / (1.0f - VoiceVcaLaw::softplusTurnOn);
-        expect(VoiceVcaLaw::softplusGain(control) == expected,
-               "the softplus comparison path is not bit-exact at control "
-                   + std::to_string(control));
     }
 
     // The same amplifier's signal law: a bare BA662 pair driven as hard as
@@ -3727,11 +3677,9 @@ void testJuno60FallbackBucketBrigadeTiming()
             float narrowLeft = 0.0f, narrowRight = 0.0f;
             float wideLeft = 0.0f, wideRight = 0.0f;
             narrow.process(input, ChorusMode::OneTwo, 0.0f,
-                           narrowLeft, narrowRight,
-                           false, false, 1.0f, false, true);
+                           narrowLeft, narrowRight, 1.0f, true);
             wide.process(input, ChorusMode::OneTwo, 0.0f,
-                         wideLeft, wideRight,
-                         false, false, 1.0f, false, false);
+                         wideLeft, wideRight, 1.0f, false);
             maximumNarrowSide = std::max(
                 maximumNarrowSide,
                 std::abs(static_cast<double>(narrowLeft - narrowRight)));
@@ -3914,48 +3862,6 @@ private:
     double gain_ = 1.0;
 };
 
-void testChorusRateProportionalNoiseGainMatchesTheDerivedRatio()
-{
-    // `Chorus::rateProportionalNoiseGain` is the causal alternative to the
-    // empirical 3.95 dB mode-II calibration: process() substitutes it whole
-    // rather than multiplying the two, and its header comment states its
-    // exact contract -- it "predicts exactly 20*log10(modeRateRatio())". No
-    // test called this public static function directly before now; the only
-    // existing coverage (testChorusNoiseProfilesReproduceTheMeasuredModeDelta
-    // in the engine suite) measures the resulting audio energy through a full
-    // engine render across a whole modulation cycle, which is close enough to
-    // catch a badly broken hypothesis but cannot distinguish "close to the
-    // formula" from "exactly the formula" the way a direct call can.
-    const auto one = Chorus::settingsFor(ChorusMode::One);
-    const auto two = Chorus::settingsFor(ChorusMode::Two);
-
-    // Mode I is the reference leg: process() documents that both noise
-    // profiles "reference mode I and therefore preserve its established floor
-    // exactly", so its own rate must map to exactly unity gain, not merely
-    // something close to it.
-    expectNear(Chorus::rateProportionalNoiseGain(one.rateHz), 1.0, 1.0e-9,
-               "mode I's own rate did not stay the hypothesis's unity "
-               "reference");
-    expectNear(Chorus::rateProportionalNoiseGain(two.rateHz),
-               Chorus::modeRateRatio(), 1.0e-6,
-               "mode II's rate-proportional gain no longer carries the "
-               "schematic's own mode-rate ratio");
-
-    // The function is a public static entry point that process() always
-    // calls with a positive, finite rate -- but nothing stops another caller
-    // from passing it something else, and the implementation's own guard
-    // exists precisely to fall back to unity rather than dividing by, or
-    // returning, something non-finite. None of these three inputs reach the
-    // guard through process(), so it had no direct coverage of its own.
-    expect(Chorus::rateProportionalNoiseGain(0.0f) == 1.0f,
-           "a zero rate did not fall back to unity gain");
-    expect(Chorus::rateProportionalNoiseGain(-1.0f) == 1.0f,
-           "a negative rate did not fall back to unity gain");
-    expect(Chorus::rateProportionalNoiseGain(
-               std::numeric_limits<float>::quiet_NaN()) == 1.0f,
-           "a NaN rate did not fall back to unity gain");
-}
-
 void testChorusNoiseMeasurementPointsAndProductPolicy()
 {
     // Panasonic's 0.2 mVrms row is a MAXIMUM at the part output with a
@@ -4132,364 +4038,17 @@ void testChorusNoiseComponents()
     expect(independentEnergy > 0.0,
            "the preserved independent wet-line component is silent");
 
-    // Explicit zeroes for every new component are the production default.
-    // Keep this as an exact comparison so merely splitting the architecture
-    // cannot alter compatibility renders through an extra add or multiply.
-    Chorus explicitZero;
-    Chorus implicitZero;
-    explicitZero.prepare(sampleRate);
-    implicitZero.prepare(sampleRate);
-    YouKnowTestAccess::configureOptionalChorusNoise(
-        explicitZero, 0.0f, -0.75f, 0.0f, 60.0f, 0.0f, 2.0f);
-    bool zeroProfileIsTransparent = true;
-    for (int index = 0; index < 4096; ++index)
-    {
-        const float input = static_cast<float>(
-            0.1 * std::sin(2.0 * pi * 173.0 * index / sampleRate));
-        float explicitLeft = 0.0f;
-        float explicitRight = 0.0f;
-        float implicitLeft = 0.0f;
-        float implicitRight = 0.0f;
-        explicitZero.process(input, ChorusMode::One, 1.0f,
-                             explicitLeft, explicitRight);
-        implicitZero.process(input, ChorusMode::One, 1.0f,
-                             implicitLeft, implicitRight);
-        zeroProfileIsTransparent = zeroProfileIsTransparent
-            && explicitLeft == implicitLeft && explicitRight == implicitRight;
-    }
-    expect(zeroProfileIsTransparent,
-           "disabled optional chorus-noise components changed the render");
-
-    // A single master still defeats independent, common, hum and clock-spur
-    // hypotheses together.  The non-zero values below are synthetic fixtures,
-    // explicitly not hardware calibration.
-    Chorus masterMuted;
-    masterMuted.prepare(sampleRate);
-    YouKnowTestAccess::configureOptionalChorusNoise(
-        masterMuted, 0.01f, 0.4f, 0.01f, 50.0f, 0.01f, 1.0f);
-    bool masterSilencesEverything = true;
+    // The Chorus Noise master removes the retained physical line noise.
+    Chorus muted;
+    muted.prepare(sampleRate);
     for (int index = 0; index < 2048; ++index)
     {
         float left = 0.0f;
         float right = 0.0f;
-        masterMuted.process(0.0f, ChorusMode::Two, 0.0f, left, right);
-        masterSilencesEverything = masterSilencesEverything
-            && left == 0.0f && right == 0.0f;
+        muted.process(0.0f, ChorusMode::Two, 0.0f, left, right);
+        expect(left == 0.0f && right == 0.0f,
+               "noiseScale no longer mutes chorus noise");
     }
-    expect(masterSilencesEverything,
-           "noiseScale no longer mutes every declared chorus-noise component");
-
-    // Including the heterodyne clock bleed, which the loop above cannot reach:
-    // it passes the default sixth argument, so enableClockBleed is false.
-    // A revision scaled the bleed by max(noiseScale, 0.1f), leaving a tenth of
-    // it alive at zero and contradicting this class's own contract.
-    Chorus bleedMuted;
-    bleedMuted.prepare(sampleRate);
-    YouKnowTestAccess::configureOptionalChorusNoise(
-        bleedMuted, 0.01f, 0.4f, 0.01f, 50.0f, 0.01f, 1.0f);
-    bool bleedIsMutedToo = true;
-    for (int index = 0; index < 2048; ++index)
-    {
-        float left = 0.0f;
-        float right = 0.0f;
-        bleedMuted.process(0.0f, ChorusMode::Two, 0.0f, left, right, true);
-        bleedIsMutedToo = bleedIsMutedToo && left == 0.0f && right == 0.0f;
-    }
-    expect(bleedIsMutedToo,
-           "the Chorus Noise master no longer defeats the clock bleed");
-
-    // The bleed and the optional clock-spur hypothesis are separate mechanisms
-    // at the same modulated clock. They kept one phase accumulator between
-    // them, so enabling both advanced it twice a sample and doubled each
-    // tone's frequency. Enabling the bleed must not move the spur.
-    const auto spurOnly = [&](bool withBleed) {
-        Chorus chorus;
-        chorus.prepare(sampleRate);
-        YouKnowTestAccess::configureOptionalChorusNoise(
-            chorus, 0.0f, 0.0f, 0.0f, 50.0f, 0.02f, 1.0f);
-        std::vector<float> captured(1024);
-        for (std::size_t index = 0; index < captured.size(); ++index)
-        {
-            float left = 0.0f;
-            float right = 0.0f;
-            chorus.process(0.0f, ChorusMode::Two, 1.0f, left, right, withBleed);
-            // Subtract the bleed's own contribution by taking the difference
-            // of the two channels, which the spur and bleed both drive but
-            // with independent clocks -- any doubling shows as a mismatch.
-            captured[index] = left;
-        }
-        return captured;
-    };
-    const auto withoutBleed = spurOnly(false);
-    const auto withBleed = spurOnly(true);
-    double spurDrift = 0.0;
-    for (std::size_t index = 0; index < withoutBleed.size(); ++index)
-        spurDrift = std::max(spurDrift,
-                             std::abs(static_cast<double>(withBleed[index])
-                                    - static_cast<double>(withoutBleed[index])));
-    // The bleed itself is 0.005 at full scale, so anything much beyond that
-    // means the spur's own frequency moved rather than a tone being added.
-    expect(spurDrift < 0.02,
-           "enabling the clock bleed displaced the optional clock spur by "
-               + std::to_string(spurDrift)
-               + ", so the two are sharing a phase accumulator again");
-
-    // The common layer is built from one common and one orthogonal seeded
-    // process. rho=+1 duplicates channels exactly; rho=-1 changes only sign.
-    constexpr std::size_t syntheticLength = 2048;
-    std::vector<float> positiveA(syntheticLength);
-    std::vector<float> positiveB(syntheticLength);
-    std::uint32_t commonOne = 0xd1b54a35u;
-    std::uint32_t orthogonalOne = 0x94d049bbu;
-    std::uint32_t commonReplay = commonOne;
-    std::uint32_t orthogonalReplay = orthogonalOne;
-    bool replayedExactly = true;
-    bool duplicatedExactly = true;
-    for (std::size_t index = 0; index < syntheticLength; ++index)
-    {
-        const auto sample = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonOne, orthogonalOne, 1.0f);
-        const auto replay = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonReplay, orthogonalReplay, 1.0f);
-        positiveA[index] = sample[0];
-        positiveB[index] = sample[1];
-        replayedExactly = replayedExactly
-            && sample[0] == replay[0] && sample[1] == replay[1];
-        duplicatedExactly = duplicatedExactly && sample[0] == sample[1];
-    }
-    expect(replayedExactly,
-           "the synthetic common component did not replay from fixed seeds");
-    expect(duplicatedExactly,
-           "rho=+1 did not duplicate the synthetic common component");
-
-    std::uint32_t commonNegative = 0xd1b54a35u;
-    std::uint32_t orthogonalNegative = 0x94d049bbu;
-    bool invertedExactly = true;
-    for (std::size_t index = 0; index < syntheticLength; ++index)
-    {
-        const auto sample = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonNegative, orthogonalNegative, -1.0f);
-        invertedExactly = invertedExactly && sample[1] == -sample[0];
-    }
-    expect(invertedExactly,
-           "rho=-1 did not invert the synthetic common component");
-
-    // Coherence is averaged over independent DFT blocks, rather than using a
-    // single-block identity that would read one for any two non-zero vectors.
-    constexpr int blockLength = 256;
-    constexpr int blockCount = 8;
-    constexpr int coherenceBin = 23;
-    double autoA = 0.0;
-    double autoB = 0.0;
-    std::complex<double> cross {};
-    for (int block = 0; block < blockCount; ++block)
-    {
-        std::complex<double> spectrumA {};
-        std::complex<double> spectrumB {};
-        for (int index = 0; index < blockLength; ++index)
-        {
-            const double angle = -2.0 * pi * coherenceBin * index / blockLength;
-            const auto rotation = std::exp(std::complex<double>(0.0, angle));
-            const auto offset = static_cast<std::size_t>(block * blockLength + index);
-            spectrumA += static_cast<double>(positiveA[offset]) * rotation;
-            spectrumB += static_cast<double>(positiveB[offset]) * rotation;
-        }
-        autoA += std::norm(spectrumA);
-        autoB += std::norm(spectrumB);
-        cross += spectrumA * std::conj(spectrumB);
-    }
-    const double coherence = std::norm(cross) / (autoA * autoB);
-    expectNear(coherence, 1.0, 1.0e-12,
-               "duplicated synthetic channels do not have coherence one");
-
-    // Establish the A/B cross-spectrum convention explicitly.  Swapping the
-    // line labels exchanges their individual spectra and conjugates A*conj(B).
-    std::uint32_t commonMixed = 0x243f6a89u;
-    std::uint32_t orthogonalMixed = 0xb7e15163u;
-    std::vector<float> mixedA(4096);
-    std::vector<float> mixedB(4096);
-    for (std::size_t index = 0; index < mixedA.size(); ++index)
-    {
-        const auto sample = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonMixed, orthogonalMixed, 0.35f);
-        mixedA[index] = sample[0];
-        mixedB[index] = sample[1];
-    }
-    for (const int bin : { 19, 113, 509 })
-    {
-        std::complex<double> spectrumA {};
-        std::complex<double> spectrumB {};
-        for (std::size_t index = 0; index < mixedA.size(); ++index)
-        {
-            const double angle = -2.0 * pi * bin * index / mixedA.size();
-            const auto rotation = std::exp(std::complex<double>(0.0, angle));
-            spectrumA += static_cast<double>(mixedA[index]) * rotation;
-            spectrumB += static_cast<double>(mixedB[index]) * rotation;
-        }
-        const auto originalCross = spectrumA * std::conj(spectrumB);
-        const auto swappedCross = spectrumB * std::conj(spectrumA);
-        const double originalPowerA = std::norm(spectrumA);
-        const double originalPowerB = std::norm(spectrumB);
-        const double swappedPowerA = std::norm(spectrumB);
-        const double swappedPowerB = std::norm(spectrumA);
-        expectNear(swappedPowerA, originalPowerB, 0.0,
-                   "line swap changed B's individual spectrum");
-        expectNear(swappedPowerB, originalPowerA, 0.0,
-                   "line swap changed A's individual spectrum");
-        expectNear(swappedCross.real(), std::conj(originalCross).real(), 1.0e-9,
-                   "line swap changed cross-spectrum magnitude");
-        expectNear(swappedCross.imag(), std::conj(originalCross).imag(), 1.0e-9,
-                   "line swap did not conjugate the cross-spectrum");
-    }
-
-    // Hum and clock feedthrough are deterministic oscillators even though
-    // their production amplitudes are zero and their frequencies are unknown.
-    double tonePhase = 0.0;
-    double replayPhase = 0.0;
-    bool toneReplayed = true;
-    double toneEnergy = 0.0;
-    for (int index = 0; index < 2048; ++index)
-    {
-        const float tone = YouKnowTestAccess::chorusToneStep(
-            tonePhase, 997.0f, sampleRate);
-        const float replay = YouKnowTestAccess::chorusToneStep(
-            replayPhase, 997.0f, sampleRate);
-        toneReplayed = toneReplayed && tone == replay;
-        toneEnergy += static_cast<double>(tone) * tone;
-    }
-    expect(toneReplayed && toneEnergy > 100.0,
-           "the deterministic hum/clock-spur oscillator is not reproducible");
-}
-
-void testChorusToneStepFallbackGuard()
-{
-    // Both production call sites hand `deterministicToneStep` sampleRate_
-    // (fixed positive by `prepare()`) and a finite frequency -- a configured
-    // hum frequency or a clock rate times a harmonic multiplier, never
-    // user-facing values that could carry a NaN or an infinity. So the
-    // fixture above, and every full-engine render, only ever exercises this
-    // function's ordinary path; the non-finite/non-positive-rate fallback
-    // guard has never fired outside a test. Poison each argument in turn and
-    // confirm the guard reports silence and leaves the caller's phase alone,
-    // then confirm one clean call afterwards still advances normally instead
-    // of continuing to propagate the poison.
-    constexpr float sampleRate = 48000.0f;
-    double phase = 0.25;
-
-    expect(YouKnowTestAccess::chorusToneStep(
-               phase, std::numeric_limits<float>::quiet_NaN(), sampleRate)
-               == 0.0f,
-           "deterministicToneStep did not fall back to silence for a NaN frequency");
-    expect(phase == 0.25,
-           "deterministicToneStep advanced phase despite a NaN frequency");
-
-    expect(YouKnowTestAccess::chorusToneStep(
-               phase, std::numeric_limits<float>::infinity(), sampleRate)
-               == 0.0f,
-           "deterministicToneStep did not fall back to silence for an infinite frequency");
-    expect(phase == 0.25,
-           "deterministicToneStep advanced phase despite an infinite frequency");
-
-    expect(YouKnowTestAccess::chorusToneStep(
-               phase, 997.0f, std::numeric_limits<float>::quiet_NaN())
-               == 0.0f,
-           "deterministicToneStep did not fall back to silence for a NaN sample rate");
-    expect(YouKnowTestAccess::chorusToneStep(phase, 997.0f, 0.0f) == 0.0f,
-           "deterministicToneStep did not fall back to silence for a zero sample rate");
-    expect(YouKnowTestAccess::chorusToneStep(phase, 997.0f, -sampleRate)
-               == 0.0f,
-           "deterministicToneStep did not fall back to silence for a negative sample rate");
-    expect(phase == 0.25,
-           "deterministicToneStep advanced phase despite a non-positive sample rate");
-
-    const float recovered =
-        YouKnowTestAccess::chorusToneStep(phase, 997.0f, sampleRate);
-    expect(std::isfinite(recovered) && phase != 0.25,
-           "deterministicToneStep did not recover ordinary operation after "
-           "repeated fallback calls");
-}
-
-void testCorrelatedRandomStepCorrelationGuard()
-{
-    // correlatedRandomStep's own `rho` line falls back to 0.0f (fully
-    // uncorrelated) whenever `correlation` is not finite, and otherwise
-    // clamps it to [-1, 1]. The only production call site always passes
-    // `optionalNoise_.commonRandomCorrelation`, which has no setter reachable
-    // from panel, preset or SysEx code and so stays fixed at its 1.0f default
-    // member initialiser for the lifetime of every Chorus instance; every
-    // fixture above this one, including the correlation sweep in
-    // testChorusNoiseComponents(), only ever drives finite in-range values
-    // (1.0f, -1.0f, 0.35f) through the friend seam directly. Neither branch
-    // has fired outside a test before now.
-    std::uint32_t commonNaN = 0x243f6a89u;
-    std::uint32_t orthogonalNaN = 0xb7e15163u;
-    std::uint32_t commonZero = 0x243f6a89u;
-    std::uint32_t orthogonalZero = 0xb7e15163u;
-    bool nanMatchedZeroCorrelation = true;
-    for (int index = 0; index < 64; ++index)
-    {
-        const auto viaNaN = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonNaN, orthogonalNaN,
-            std::numeric_limits<float>::quiet_NaN());
-        const auto viaZero = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonZero, orthogonalZero, 0.0f);
-        nanMatchedZeroCorrelation = nanMatchedZeroCorrelation
-            && viaNaN[0] == viaZero[0] && viaNaN[1] == viaZero[1];
-    }
-    expect(nanMatchedZeroCorrelation,
-           "correlatedRandomStep did not fall back to zero correlation for "
-           "a NaN correlation");
-
-    std::uint32_t commonPosInf = 0xd1b54a35u;
-    std::uint32_t orthogonalPosInf = 0x94d049bbu;
-    std::uint32_t commonNegInf = 0xd1b54a35u;
-    std::uint32_t orthogonalNegInf = 0x94d049bbu;
-    std::uint32_t commonReference = 0xd1b54a35u;
-    std::uint32_t orthogonalReference = 0x94d049bbu;
-    bool infinitiesMatchedZeroCorrelation = true;
-    for (int index = 0; index < 64; ++index)
-    {
-        const auto viaPosInf = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonPosInf, orthogonalPosInf,
-            std::numeric_limits<float>::infinity());
-        const auto viaNegInf = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonNegInf, orthogonalNegInf,
-            -std::numeric_limits<float>::infinity());
-        const auto viaZero = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonReference, orthogonalReference, 0.0f);
-        infinitiesMatchedZeroCorrelation = infinitiesMatchedZeroCorrelation
-            && viaPosInf[0] == viaZero[0] && viaPosInf[1] == viaZero[1]
-            && viaNegInf[0] == viaZero[0] && viaNegInf[1] == viaZero[1];
-    }
-    expect(infinitiesMatchedZeroCorrelation,
-           "correlatedRandomStep did not fall back to zero correlation for "
-           "positive/negative infinite correlation");
-
-    // Out-of-range but finite correlation is clamped rather than substituted:
-    // 2.0 must behave exactly like the already-covered rho=+1 case (channels
-    // duplicated), and -2.0 exactly like rho=-1 (channels inverted).
-    std::uint32_t commonAboveOne = 0x243f6a89u;
-    std::uint32_t orthogonalAboveOne = 0xb7e15163u;
-    bool aboveOneDuplicatedExactly = true;
-    std::uint32_t commonBelowNegativeOne = 0x243f6a89u;
-    std::uint32_t orthogonalBelowNegativeOne = 0xb7e15163u;
-    bool belowNegativeOneInvertedExactly = true;
-    for (int index = 0; index < 64; ++index)
-    {
-        const auto above = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonAboveOne, orthogonalAboveOne, 2.0f);
-        aboveOneDuplicatedExactly =
-            aboveOneDuplicatedExactly && above[0] == above[1];
-
-        const auto below = YouKnowTestAccess::correlatedChorusNoiseStep(
-            commonBelowNegativeOne, orthogonalBelowNegativeOne, -2.0f);
-        belowNegativeOneInvertedExactly =
-            belowNegativeOneInvertedExactly && below[1] == -below[0];
-    }
-    expect(aboveOneDuplicatedExactly,
-           "correlatedRandomStep did not clamp an above-range correlation to +1");
-    expect(belowNegativeOneInvertedExactly,
-           "correlatedRandomStep did not clamp a below-range correlation to -1");
 }
 
 void testChorusBypassStateAndWetMuteTiming()
@@ -4619,8 +4178,6 @@ void testChorusRateChangePreservesPhysicalState()
 {
     Chorus chorus;
     chorus.prepare(192000.0);
-    YouKnowTestAccess::configureOptionalChorusNoise(
-        chorus, 1.0e-4f, 0.3f, 1.0e-4f, 50.0f, 1.0e-4f, 1.0f);
     float left = 0.0f;
     float right = 0.0f;
     for (int sample = 0; sample < 8192; ++sample)
@@ -5588,8 +5145,7 @@ void testChorusMuteDriveFollowsItsDrawnTiming()
     float left = 0.0f;
     float right = 0.0f;
     const auto step = [&](ChorusMode mode) {
-        chorus.process(0.0f, mode, 0.0f, left, right, false, false, 1.0f,
-                       false, true, true, false);
+        chorus.process(0.0f, mode, 0.0f, left, right, 1.0f, true, true, false);
     };
     // Primed on: no start-up delay for a patch loaded with the effect on.
     step(ChorusMode::One);
@@ -5653,8 +5209,7 @@ void testChorusOutputLoadingFollowsTheMuteTransistors()
             const float input = static_cast<float>(
                 0.25 * std::sin(2.0 * pi * 31.0 * index / rate));
             float delayedLeft, delayedRight, switchedLeft, switchedRight;
-            delayed.process(input, command, 0.0f, delayedLeft, delayedRight,
-                            false, false, 1.0f, false, true,
+            delayed.process(input, command, 0.0f, delayedLeft, delayedRight, 1.0f, true,
                             defaults.enableChorusMuteDrive, false);
             const bool muted = delayed.muteDriveMuted();
             const auto physicalMode = muted ? ChorusMode::Off : ChorusMode::One;
@@ -5710,10 +5265,10 @@ void testChorusLineGainSpreadIsRelativeOnly()
             const float input = static_cast<float>(
                 0.2 * std::sin(2.0 * pi * 440.0 * index / rate));
             float l1 = 0.0f, r1 = 0.0f, l2 = 0.0f, r2 = 0.0f;
-            spread.process(input, ChorusMode::One, 0.0f, l1, r1, false, false,
-                           calibration, false, true, false, true);
-            flat.process(input, ChorusMode::One, 0.0f, l2, r2, false, false,
-                         calibration, false, true, false, false);
+            spread.process(input, ChorusMode::One, 0.0f, l1, r1,
+                           calibration, true, false, true);
+            flat.process(input, ChorusMode::One, 0.0f, l2, r2,
+                         calibration, true, false, false);
             if (index >= 12000)
             {
                 const double dry = Chorus::dryMixGain * input;
@@ -7286,11 +6841,8 @@ int main()
     testComparatorEdgesSitOnOneThreshold();
     testChorusIsAtItsSettingFromTheFirstSample();
     testJuno60FallbackBucketBrigadeTiming();
-    testChorusRateProportionalNoiseGainMatchesTheDerivedRatio();
     testChorusNoiseMeasurementPointsAndProductPolicy();
     testChorusNoiseComponents();
-    testCorrelatedRandomStepCorrelationGuard();
-    testChorusToneStepFallbackGuard();
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();

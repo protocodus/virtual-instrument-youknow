@@ -59,7 +59,7 @@ void integrate(State& x,bool off,double dt,bool finite=true,double maxDt=2e-6,do
     for(int j=0;j<n;++j){auto a=currents(x,off,finite,beta),b=currents(add(x,a,dt/2),off,finite,beta),c=currents(add(x,b,dt/2),off,finite,beta),d=currents(add(x,c,dt),off,finite,beta);for(int i=0;i<3;++i)x[i]+=dt*(a[i]+2*b[i]+2*c[i]+d[i])/6;}
 }
 void process(Chorus& c,ChorusMode mode,bool finite=true) {
-    float l,r;c.process(0,mode,0,l,r,false,false,1,false,true,true,false,
+    float l,r;c.process(0,mode,0,l,r,1,true,true,false,
                        ChorusTimingProfile::Shipping,true,true,false,0,1,finite);
 }
 double gate(double h) {
@@ -138,7 +138,7 @@ void sensitivity() {
 }
 void stoppedBucketMemory() {
     auto c=std::make_unique<Chorus>();c->prepare(48000);process(*c,ChorusMode::One);
-    for(int n=0;n<4800;++n){float l,r;c->process(.2f*std::sin(n*.031f),ChorusMode::One,.3f,l,r,false,false,1,false,true,true,false,ChorusTimingProfile::Shipping,true,true,false,0,1,true);}
+    for(int n=0;n<4800;++n){float l,r;c->process(.2f*std::sin(n*.031f),ChorusMode::One,.3f,l,r,1,true,true,false,ChorusTimingProfile::Shipping,true,true,false,0,1,true);}
     for(int n=0;n<48000;++n)process(*c,ChorusMode::Off);
     require(c->clocksStopped(),"finite drive never stopped the physical clocks");
     const auto buckets=YouKnowTestAccess::buckets(*c);const auto rng=YouKnowTestAccess::rng(*c);

@@ -62,7 +62,7 @@ double channelOracle(double gate) {
     const double g=gate<=-1.8?0:2*.0028/1.8*(1+gate/1.8);
     return g==0?0:39000/(39000+1/g);
 }
-void prime(Chorus& c,ChorusMode mode,bool finite=true) {float l,r;c.process(0,mode,0,l,r,false,false,1,false,true,true,false,ChorusTimingProfile::Shipping,true,finite);}
+void prime(Chorus& c,ChorusMode mode,bool finite=true) {float l,r;c.process(0,mode,0,l,r,1,true,true,false,ChorusTimingProfile::Shipping,true,finite);}
 void components() {
     for(double h=-15;h<=10;h+=.00031){double g=gateOracle(h);require(std::abs(ChorusMuteDrive::gateVolts(h)-g)<3e-12,"Tr4 collector/base KCL disagrees with independent oracle");require(std::abs(ChorusMuteDrive::conductanceRatio(g)-channelOracle(g))<2e-15,"JFET channel divider disagrees with independent square law");}
     std::cout<<"Nominal on wet attenuation "<<20*std::log10(channelOracle(0))<<" dB\n";

@@ -642,9 +642,6 @@ struct YouKnowTestAccess
             voice.filter.parameterHistoryPrimed = true;
             voice.filterOmegaStep = static_cast<float>(endpoint.omega);
             voice.feedback = static_cast<float>(endpoint.feedback);
-            voice.inputCompensation =
-                YouKnowEngine::VoicedResonanceCompatibilityProfile::
-                    inputCompensation(voice.feedback);
 
             ControlTrajectory trajectory;
             for (std::size_t point = 0;

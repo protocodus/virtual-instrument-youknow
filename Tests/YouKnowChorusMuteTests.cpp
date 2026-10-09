@@ -101,8 +101,7 @@ void check(double rate)
     chorus.prepareSupportRates(48000.0);
     chorus.prepare(rate);
     float left {}, right {};
-    chorus.process(0.0f, youknow::ChorusMode::One, 0.0f, left, right,
-                   false, false, 1.0f, false, true, true);
+    chorus.process(0.0f, youknow::ChorusMode::One, 0.0f, left, right, 1.0f, true, true);
     State reference = conductingEquilibrium();
     State finer = reference;
     // A settled Off/On pair followed by interrupted charging in both
@@ -205,8 +204,7 @@ void checkRateInvariance()
     {
         chorus[i].prepare(rates[i]);
         float left {}, right {};
-        chorus[i].process(0.0f, youknow::ChorusMode::One, 0.0f, left, right,
-                          false, false, 1.0f, false, true, true);
+        chorus[i].process(0.0f, youknow::ChorusMode::One, 0.0f, left, right, 1.0f, true, true);
     }
     constexpr std::array<std::pair<bool, double>, 5> sequence {{
         { true, 0.0875 }, { false, 0.0125 }, { true, 0.225 },
@@ -323,11 +321,11 @@ void checkEffectiveProfileIsolation()
         {
             const float input = static_cast<float>(0.1 * std::sin(2.0 * 3.141592653589793 * 173.0 * frame / 48000.0));
             float leftA {}, rightA {}, leftB {}, rightB {};
-            ordinary.process(input, mode, 0.0f, leftA, rightA, false, false,
-                             1.0f, false, true, true, true,
+            ordinary.process(input, mode, 0.0f, leftA, rightA,
+                             1.0f, true, true, true,
                              ChorusTimingProfile::Shipping);
-            candidate.process(input, mode, 0.0f, leftB, rightB, false, false,
-                              1.0f, false, true, true, true,
+            candidate.process(input, mode, 0.0f, leftB, rightB,
+                              1.0f, true, true, true,
                               ChorusTimingProfile::A11Spectral);
             require(ordinary.muteDriveMuted() == candidate.muteDriveMuted(),
                     "timing-profile comparison changed the mute circuit state");

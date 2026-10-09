@@ -12,8 +12,8 @@ namespace youknow
 // coordinates are explicitly named schematic/component estimates, not a new
 // original-card calibration. ProductFidelityProfile remains the earlier
 // reference configuration for frozen comparisons and diagnostic fixtures.
-// See the circuit helpers for provenance and Tools/RenderHardwareRealism.cpp
-// for the frozen comparison protocol.
+// See the circuit helpers for component provenance and Docs/decisions.md
+// for the accepted comparison and its limits.
 struct ProductHardwareRealismProfile
 {
     static void configureBeforePrepare(YouKnowEngine& engine)

@@ -616,7 +616,6 @@ void testProductFidelitySurvivesHostLifecycle()
                     "cannot configure the explicit HPF B reference");
         expect (references[index]->configureDcoTemperatureProxy (true, 25.0),
                 "cannot configure the explicit product temperature reference");
-#if defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) && YOUKNOW_HARDWARE_REALISM_CANDIDATE
         expect (references[index]->configureCoupledMixer (
                     CoupledSubMixer::evidenceCalibration()),
                 "cannot configure the explicit candidate WAVE reference");
@@ -626,14 +625,6 @@ void testProductFidelitySurvivesHostLifecycle()
         expect (references[index]->configureChorusBbdInsertionGainProfile (
                     ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate),
                 "cannot configure the explicit candidate BBD insertion reference");
-#else
-        // Independently derive the adopted C56 input-load reduction. Keep
-        // it common to all references so the two other circuit contrasts
-        // remain isolated throughout preset/session/quality transitions.
-        expect (references[index]->configureModuleInputCouplingResistanceOhms (
-                    1.0 / (1.0 / 4700.0 + 1.0 / 25500.0)),
-                "cannot configure the explicit product C56 reference");
-#endif
         // C59 follows each card's fixed service input trim in the product.
         // Select it explicitly here so this independent lifecycle reference
         // catches a missing profile selection or a reset to the raw 82k path.
@@ -642,14 +633,6 @@ void testProductFidelitySurvivesHostLifecycle()
         expect (references[index]->configureChorusSupport (
                     youknow::ChorusSupportProfile::Nominal2SA1015Nonlinear),
                 "cannot configure the explicit product chorus support reference");
-#if !defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) || !YOUKNOW_HARDWARE_REALISM_CANDIDATE
-        // The chosen oscillator level (Docs/decisions.md, 2026-09-22) is
-        // common to all three for the same reason.
-        expect (references[index]->configureOscillatorLevelScale (0.738f),
-                "cannot configure the explicit product oscillator level");
-        expect (references[index]->configurePulseLevelScale (0.857f),
-                "cannot configure the explicit product pulse balance");
-#endif
         references[index]->selectConverterTimingProfile (
             YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     }
@@ -658,12 +641,8 @@ void testProductFidelitySurvivesHostLifecycle()
         auto result = fidelityReferenceParameters (processor);
         if (index == 1)
         {
-#if defined(YOUKNOW_HARDWARE_REALISM_CANDIDATE) && YOUKNOW_HARDWARE_REALISM_CANDIDATE
             result.useOriginalCardVcfCalibration = false;
             result.useServiced439522VcfCalibration = true;
-#else
-            result.useServiced439522VcfCalibration = false;
-#endif
         }
         return result;
     };

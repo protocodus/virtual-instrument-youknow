@@ -135,7 +135,6 @@ struct YouKnowTestAccess
         voice.pulseThresholdPrimed = true;
         voice.feedback = 0.0f;
         voice.filterOmegaStep = 0.0f;
-        voice.inputCompensation = 1.0f;
         voice.moduleCoupling.reset();
         engine.subCv_ = waveform == Waveform::Sub ? 1.0 : 0.0;
         engine.subCvTarget_ = engine.subCv_;

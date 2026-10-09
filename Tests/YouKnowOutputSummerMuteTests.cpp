@@ -59,8 +59,7 @@ void componentOracle()
 void prime(Chorus& chorus, ChorusMode mode)
 {
     float left {}, right {};
-    chorus.process(0, mode, 0, left, right, false, false, 1,
-                   false, true, true, false, ChorusTimingProfile::Shipping, true);
+    chorus.process(0, mode, 0, left, right, 1, true, true, false, ChorusTimingProfile::Shipping, true);
 }
 
 void delayedGate()

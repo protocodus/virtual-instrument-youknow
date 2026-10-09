@@ -1,7 +1,36 @@
-// Deterministic current-product audio fixture; compile the SAME source against
-// each revision's own headers and DSP library. CPU timing covers process only.
-// Usage: RenderComparison OUTPUT.f32 original|direct RATE FACTOR [BLOCK=173]
-// Four seconds, raw native-endian interleaved stereo float32; no normalization.
+// Deterministic current-product validation, built as YouKnowRenderProductValidation.
+// Usage: YouKnowRenderProductValidation OUTPUT.f32 original|direct RATE FACTOR [BLOCK=173]
+//
+// For cross-revision comparisons, compile this SAME source against each revision's
+// own Source headers and matching Release DSP library. Use the library's compiler,
+// architecture and IPO flags; never mix one revision's headers with another's
+// archive. With CMake, enable YOUKNOW_BUILD_TOOLS and build this target. For an
+// older source tree without the target, an equivalent GCC Release/IPO command is:
+// g++ -std=c++20 -O3 -DNDEBUG -flto -I /path/to/revision/Source Tools/RenderProductValidation.cpp /path/to/build/libYouKnowDSP.a -o /tmp/render
+//
+// Four seconds exercise idle, single/six-voice notes, sustain/release, chorus
+// Off/I/II, cutoff/resonance, Character/Aging, pitch/modulation, cold reset,
+// host-stop reset, local keyboard and panic/restart. Both timing modes select the
+// active product profile, Poly/Cubic/Normal kernels, and the measured converter
+// chart. Events land at floor(tick * rate / 8), including at 44.1 kHz. The output
+// has exactly 4 * rate * 2 * sizeof(float) bytes of native-endian, interleaved
+// stereo float32, without normalization, silence trimming or latency alignment.
+// Existing files are refused; failed runs can leave incomplete output. Only a
+// complete=true record with finite audio, six active voices and nonzero energy
+// qualifies. Original firmware health is checked after every callback.
+//
+// process_cpu_seconds and max_callback_cpu_us use std::clock around process().
+// POSIX supplies process CPU time; MSVC supplies elapsed wall time, so on Windows
+// these historical field names carry wall-clock diagnostics only. The transition
+// CPU benchmark requires POSIX; raw-audio comparison is valid on either platform.
+// Preparation, synchronous event/control delivery, validation and I/O are outside
+// those intervals. Clock overhead is not subtracted; process CPU can include
+// other threads and is not a DAW callback-deadline measurement. Use matching
+// callback sizes and serial, quiet-machine baseline/candidate/baseline brackets.
+// CompareProductAudio.py checks the 20-case audio matrix; BenchmarkTransitions.py
+// runs the fixed transition CPU protocol. Keep source/binary hashes alongside
+// results. The historical protocol identifier and diagnostic tag remain stable
+// so previously captured evidence remains comparable after this file's move.
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowActiveProductFidelity.h"
 #include <algorithm>

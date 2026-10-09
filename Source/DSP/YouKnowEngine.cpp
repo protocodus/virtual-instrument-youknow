@@ -2033,23 +2033,6 @@ float YouKnowEngine::VoiceVcaControlLaw::gain(float control) noexcept
     return table[at] + (table[at + 1] - table[at]) * fraction;
 }
 
-float YouKnowEngine::VoiceVcaControlLaw::softplusGain(float control) noexcept
-{
-    // The former stand-in: a smooth approximation to the grounded-base
-    // stage's shape, normalised so full control is unity gain, with the same
-    // exponential tail as the exact law and a slightly fuller knee. Kept
-    // verbatim so the comparison switch is bit-exact.
-    const float level = clamp01(sanitised(control, 0.0f));
-    if (level <= deadband)
-        return 0.0f;
-    const float x = (level - softplusTurnOn) / knee;
-    // log1p(exp(x)) is x to the last bit long before x reaches thirty, and the
-    // exponential would overflow well after that; take the limit early so the
-    // linear region costs one comparison rather than two transcendentals.
-    const float softplus = x > 30.0f ? x : std::log1p(std::exp(x));
-    return knee * softplus / (1.0f - softplusTurnOn);
-}
-
 float YouKnowEngine::commonVcaControlVolts(float dacFraction) noexcept
 {
     const float position = clamp01(dacFraction);
@@ -2336,11 +2319,6 @@ float YouKnowEngine::outputJackCornerHz(float volumePosition) noexcept
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
-
-double YouKnowEngine::midiToHz(double midiNote) noexcept
-{
-    return 440.0 * std::pow(2.0, (midiNote - 69.0) / 12.0);
-}
 
 std::uint32_t YouKnowEngine::hash32(std::uint32_t value) noexcept
 {
@@ -7518,14 +7496,6 @@ bool YouKnowEngine::anyVoiceRunning() const noexcept
     return false;
 }
 
-bool YouKnowEngine::anyVoiceSounding() const noexcept
-{
-    for (const auto& voice : voices_)
-        if (voice.active)
-            return true;
-    return false;
-}
-
 void YouKnowEngine::beginVoiceAssignmentRescan() noexcept
 {
     // The POLY-button handler gates every current assignment and clears the
@@ -8152,14 +8122,15 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
             std::lround(voice.currentMidi * 256.0f), 0L, 65535L)));
         putWord(0x27 + 2 * card, env.level);
     }
-    ram[0x5c] = firmwareAdcSnapshot_.upperBank ? 8 : 0;
+    // This no-interrupt profile freezes the lower ADC bank with zero raw
+    // and previous samples and its conversion-complete flag clear.
+    ram[0x5c] = 0;
     for (std::size_t i = 0; i < 4; ++i)
     {
-        ram[0x5d + i] = firmwareAdcSnapshot_.raw[i];
-        ram[0x80 + (firmwareAdcSnapshot_.upperBank ? 4 : 0) + i] =
-            firmwareAdcSnapshot_.previous[i];
+        ram[0x5d + i] = 0;
+        ram[0x80 + i] = 0;
     }
-    firmwareControlState_.adcComplete = firmwareAdcSnapshot_.conversionComplete;
+    firmwareControlState_.adcComplete = false;
     firmwarePassResetMask_ = ram[0];
     firmwareControlTrace_ = FirmwareControlTrace::run(firmwareControlState_, tables);
     firmwareControlTraceValid_ = firmwareControlTrace_.valid;
@@ -9736,17 +9707,13 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     voice.feedback = resonanceFeedbackFor(
         resonanceCv_, card, tolerance,
         parameters.useCircuitDerivedResonanceShape, parameters.enableResonanceSoftJunction);
-    voice.inputCompensation =
-        VoicedResonanceCompatibilityProfile::inputCompensation(
-            voice.feedback, parameters.resonanceCompensationShape);
-    // The differential form carries the same coefficient inside the pair's
-    // own tanh instead of ahead of it, so the cascade needs c rather than
-    // 1 + c*k. Zero leaves the cascade arithmetic bit-identical to the split.
+    // The resonance BA662 is one differential pair: VCF IN through R5/R2
+    // on the non-inverting input and VCF OUT through R3/R1 on the inverting
+    // input (JUNO-6/60 CPU BOARD p. 9). Apply the compensation coefficient
+    // inside the single tanh of their difference.
     voice.filter.inputCompensationCoefficient =
-        parameters.enableDifferentialResonanceInput
-            ? VoicedResonanceCompatibilityProfile::compensationCoefficient(
-                  parameters.resonanceCompensationShape)
-            : 0.0f;
+        VoicedResonanceCompatibilityProfile::compensationCoefficient(
+            parameters.resonanceCompensationShape);
     voice.filter.resonanceHeadroomFollowsStage =
         parameters.enableResonanceHeadroomTemperature;
 
@@ -9809,8 +9776,6 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     }
     else voice.vcaGain = parameters.enableEvidenceVcaCalibration
                         ? evidenceVcaCalibration().gain(vcaControl)
-                        : parameters.useSoftplusVoiceVcaCompatibilityLaw
-                        ? VoiceVcaControlLaw::softplusGain(vcaControl)
                         : VoiceVcaControlLaw::gain(vcaControl);
     voice.vca = voice.vcaGain;
     // The card's VCA GAIN spread is VR27's setting, and VR27 sits on the
@@ -11207,13 +11172,9 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
             mixed, moduleCouplingG_, 0.0f, 1.0f);
     // Resistor noise enters the four OTA nodes after this coupling capacitor.
     // Only the retired voiced comparison seed still enters the signal input.
-    // With the differential form the compensation rides inside the resonance
-    // pair's tanh, so the drive reaching the cascade is the plain coupled
-    // node; the split form keeps the feedforward multiply it always had.
-    const float compensatedDrive =
-        activeParameters_.enableDifferentialResonanceInput
-            ? coupled * filterInputAttenuation
-            : coupled * filterInputAttenuation * voice.inputCompensation;
+    // Compensation acts inside the resonance pair's tanh, so the cascade
+    // receives the coupled node through its input divider.
+    const float compensatedDrive = coupled * filterInputAttenuation;
     const float filterInput =
         compensatedDrive + microscopicNoise * noiseRateScale_;
     // V_t(T) = k * T / q, driven by the accelerated software temperature model.
@@ -12801,64 +12762,49 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // following it, because what the high-pass removes is what the
             // resonance would otherwise have had to work on.
             const float busIn = voiceBusInput(mono);
-            float effectiveCouplingG = voiceBusCouplingG_;
-            if (parameters.enableElectrolyticC14Nonlinearity && parameters.calibration > 0.0f)
-            {
-                const float inputMagnitude = std::abs(busIn);
-                const float capMod = 1.0f + 0.15f * (inputMagnitude / (1.0f + inputMagnitude))
-                                   * parameters.calibration;
-                effectiveCouplingG *= capMod;
-            }
             const float coupled = voiceBusCoupling_.process(
-                busIn, effectiveCouplingG, 0.0f, 1.0f);
+                busIn, voiceBusCouplingG_, 0.0f, 1.0f);
             // IC3 selects which leg IC4a's summing node is driven from, but
             // it does not disconnect the leg it just left: that leg's 47 kOhm
             // is unswitched, so its capacitor keeps discharging through its
-            // own 1 MOhm bleed into the same summing node. The shared filter
-            // still runs every sample whichever leg is selected so the legacy
-            // switch below stays bit-identical; with the physical legs on,
-            // Boost is rendered by its own three-capacitor branch and One is
-            // a bare wire, so the shared state is only read on the legacy path.
+            // own 1 MOhm bleed into the same summing node. Boost has its own
+            // three-capacitor branch; One reads the shared filter's bare wire.
             const float sharedLeg = highPass_.process(coupled,
                                                       highPassG_,
                                                       highPassShelf_,
                                                       highPassHigh_);
-            float shaped = sharedLeg;
-            if (parameters.enableHighPassDepartingLegTail)
-            {
-                const bool twoActive =
-                    parameters.highPass == HighPassMode::Two;
-                const bool threeActive =
-                    parameters.highPass == HighPassMode::Three;
-                const bool boostActive =
-                    parameters.highPass == HighPassMode::Boost;
-                // Runs in both configurations: driven while selected, and
-                // discharging its stored charge into the same summing node
-                // while not. Its selected output replaces the shelf.
-                const float boostLeg = processBoostBranch(coupled, boostActive);
-                const float twoLeg = twoActive
-                    ? highPassTwoLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
-                    : highPassTwoLeg_.process(0.0f, highPassTwoDepartG_,
-                                              1.0f, 0.0f);
-                const float threeLeg = threeActive
-                    ? highPassThreeLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
-                    : highPassThreeLeg_.process(0.0f, highPassThreeDepartG_,
-                                                1.0f, 0.0f);
-                shaped = twoActive ? twoLeg
-                       : threeActive ? threeLeg
-                       : boostActive ? boostLeg
-                       : sharedLeg;
-                // output = +R29 * i and the departing current is
-                // i = -Vc / (R_bleed + R_sum), hence the sign.
-                if (!twoActive)
-                    shaped -= highPassDepartRatio * twoLeg;
-                if (!threeActive)
-                    shaped -= highPassDepartRatio * threeLeg;
-                // The boost branch's node voltages already carry their own
-                // sign into the summing node, selected or not.
-                if (!boostActive)
-                    shaped += boostLeg;
-            }
+            const bool twoActive =
+                parameters.highPass == HighPassMode::Two;
+            const bool threeActive =
+                parameters.highPass == HighPassMode::Three;
+            const bool boostActive =
+                parameters.highPass == HighPassMode::Boost;
+            // Runs in both configurations: driven while selected, and
+            // discharging its stored charge into the same summing node
+            // while not. Its selected output replaces the shelf.
+            const float boostLeg = processBoostBranch(coupled, boostActive);
+            const float twoLeg = twoActive
+                ? highPassTwoLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
+                : highPassTwoLeg_.process(0.0f, highPassTwoDepartG_,
+                                          1.0f, 0.0f);
+            const float threeLeg = threeActive
+                ? highPassThreeLeg_.process(coupled, highPassG_, 0.0f, 1.0f)
+                : highPassThreeLeg_.process(0.0f, highPassThreeDepartG_,
+                                            1.0f, 0.0f);
+            float shaped = twoActive ? twoLeg
+                         : threeActive ? threeLeg
+                         : boostActive ? boostLeg
+                         : sharedLeg;
+            // output = +R29 * i and the departing current is
+            // i = -Vc / (R_bleed + R_sum), hence the sign.
+            if (!twoActive)
+                shaped -= highPassDepartRatio * twoLeg;
+            if (!threeActive)
+                shaped -= highPassDepartRatio * threeLeg;
+            // The boost branch's node voltages already carry their own
+            // sign into the summing node, selected or not.
+            if (!boostActive)
+                shaped += boostLeg;
 
             if (highPassSwitchResistance_ > 0)
                 shaped = static_cast<float>(highPassSwitch_.process(
@@ -12935,13 +12881,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 chorus_.process(levelled, parameters.chorus,
                                 chorusNoiseScale,
                                 wetLeft, wetRight,
-                                parameters.enableChorusClockBleed,
-                                parameters.enableChorusHyperbolicSweep,
                                 parameters.calibration,
-                                parameters.useChorusRateNoiseHypothesis,
                                 parameters.enableNarrowOneTwoChorus,
                                 parameters.enableChorusMuteDrive,
-                                parameters.enableChorusLineGainSpread,
+                                true, // fixed MN3009 insertion-gain spread
                                 parameters.chorusTimingProfile,
                                 parameters.enableChorusClockMuteCircuit,
                                 parameters.enableChorusFiniteMuteDrive,

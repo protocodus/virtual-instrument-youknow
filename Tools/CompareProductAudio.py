@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
-"""Render and compare the 20-case raw-float audio matrix (requires NumPy)."""
+"""Compare the 20-case current-product raw-float audio matrix (requires NumPy).
+
+Compile the same Tools/RenderProductValidation.cpp against each revision's own
+headers and DSP archive, using matching compiler, architecture, Release and IPO
+settings. Pass those two renderer binaries and a new output directory. Existing
+files are never overwritten; raw audio, command output and binary/audio hashes
+are retained. There are Original/Direct x 44.1/48/96 kHz x 1/2/4x cases at 173-frame
+callbacks, plus both modes at 48 kHz/1x with 64-frame callbacks.
+
+Every take is four seconds of native-endian stereo float32 without normalization
+or time alignment. Validate metadata, length and finite samples before comparing;
+report exact identity and raw-sample peak/RMS errors. The acceptance limits are
+peak <= 1e-6 and RMS <= 1e-8, not a listening claim for arbitrary changed audio.
+The recorded baseline RMS allows relative-error interpretation. Renderer CPU
+metadata is diagnostic here; use BenchmarkTransitions.py on a quiet machine for
+timing. Both binaries must implement the same versioned fixture protocol.
+
+Example: python3 Tools/CompareProductAudio.py --baseline /tmp/render-baseline
+  --candidate /tmp/render-candidate --output /tmp/audio-comparison
+"""
 import argparse
 import hashlib
 import itertools

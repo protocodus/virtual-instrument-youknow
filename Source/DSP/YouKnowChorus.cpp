@@ -1389,34 +1389,6 @@ double triangle(double phase) noexcept
 
 } // namespace
 
-Chorus::StereoNoiseSample Chorus::correlatedRandomStep(
-    std::uint32_t& commonState, std::uint32_t& orthogonalState,
-    float correlation) noexcept
-{
-    commonState = nextNoiseState(commonState);
-    orthogonalState = nextNoiseState(orthogonalState);
-
-    const float common = noiseFromState(commonState);
-    const float orthogonal = noiseFromState(orthogonalState);
-    const float rho = std::isfinite(correlation)
-        ? std::clamp(correlation, -1.0f, 1.0f) : 0.0f;
-    const float orthogonalGain = std::sqrt(std::max(0.0f, 1.0f - rho * rho));
-    return { common, rho * common + orthogonalGain * orthogonal };
-}
-
-float Chorus::deterministicToneStep(double& phase, float frequencyHz,
-                                    float sampleRate) noexcept
-{
-    if (!std::isfinite(frequencyHz) || !std::isfinite(sampleRate)
-        || sampleRate <= 0.0f)
-        return 0.0f;
-
-    phase += static_cast<double>(std::max(frequencyHz, 0.0f))
-           / static_cast<double>(sampleRate);
-    phase -= std::floor(phase);
-    return static_cast<float>(std::sin(2.0 * pi * phase));
-}
-
 Chorus::ModeSettings Chorus::settingsFor(
     ChorusMode mode, ChorusTimingProfile timingProfile) noexcept
 {
@@ -2659,13 +2631,6 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     rateHz_ = runningWhileMuted.rateHz;
     sweep_ = runningWhileMuted.sweepSeconds;
     centreDelay_ = runningWhileMuted.centreDelaySeconds;
-    commonNoiseState_ = 0xd1b54a35u;
-    orthogonalNoiseState_ = 0x94d049bbu;
-    humPhase_ = 0.0;
-    clockSpurPhaseA_ = 0.0;
-    clockSpurPhaseB_ = 0.0;
-    optionalSpurPhaseA_ = 0.0;
-    optionalSpurPhaseB_ = 0.0;
     runningMode_ = ChorusMode::One;
     hardwareModeSelection_ = ChorusMode::Off;
     // A patch loaded with the effect switched on is not a player reaching for
@@ -2695,14 +2660,6 @@ float Chorus::lineInsertionGainDraw() noexcept
     std::uint32_t x = 0x9e3779b9u;
     x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
     return static_cast<float>(x & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
-}
-
-float Chorus::rateProportionalNoiseGain(float rateHz) noexcept
-{
-    const float reference = static_cast<float>(derivedRateHz(true));
-    if (!(rateHz > 0.0f) || !(reference > 0.0f))
-        return 1.0f;
-    return rateHz / reference;
 }
 
 bool Chorus::processBypassedWhenSettled(float input, float& left,
@@ -2934,10 +2891,7 @@ void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
 
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
-                     bool enableClockBleed,
-                     bool enableHyperbolicSweep,
                      float calibration,
-                     bool useRateProportionalNoiseHypothesis,
                      bool enableNarrowOneTwo,
                      bool enableMuteDrive,
                      bool enableLineGainSpread,
@@ -2962,8 +2916,6 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lineA_.reset(0x9e3779b9u);
         lineB_.reset(0x85ebca6bu);
         inputSupport_.reset();
-        clockSpurPhaseA_ = 0.0;
-        clockSpurPhaseB_ = 0.0;
     }
 
     const auto target = settingsFor(mode, timingProfile);
@@ -3065,41 +3017,13 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // derivation. It also renders the instrument's fixed-detune character: a
     // linear delay flank is a constant pitch offset, where a bent flank
     // slides through it.
-    //
-    // The path behind `enableHyperbolicSweep` is a comparison hypothesis that
-    // does not describe this board: a current-modulated oscillator whose
-    // clock is linear in the control voltage, hence a bending delay. It is
-    // kept for A/B renders only. When it engages it bends about the clock's
-    // own endpoints, not the delay's centre: an earlier centre-relative
-    // revision rendered a 38%-too-wide 2.30-7.40 ms range at Unit Character
-    // 1.0 instead of the then-shipped 1.66-5.35 ms, which OQ-01 records.
-    // Bending about the endpoint clocks keeps both endpoints exact at every
-    // blend amount, so the two laws differ only in the trajectory between
-    // them.
     const auto clockAtPhase = [&](double phase) noexcept
     {
         phase -= std::floor(phase);
         const double modulation = triangle(phase);
-        double nominalDelayA = centreDelay_ + sweep_ * modulation;
-        double nominalDelayB = centreDelay_ - sweep_ * modulation;
+        const double nominalDelayA = centreDelay_ + sweep_ * modulation;
+        const double nominalDelayB = centreDelay_ - sweep_ * modulation;
 
-        if (enableHyperbolicSweep && calibration > 0.0f && centreDelay_ > 1.0e-5f)
-        {
-            const double maxDelay = static_cast<double>(centreDelay_) + sweep_;
-            const double minDelay = std::max(
-                static_cast<double>(centreDelay_) - sweep_, 1.0e-5);
-            const double clockAtMinDelay = cellPairs / minDelay;
-            const double clockAtMaxDelay = cellPairs / maxDelay;
-            const double clockMid = 0.5 * (clockAtMinDelay + clockAtMaxDelay);
-            const double clockSpread = 0.5 * (clockAtMinDelay - clockAtMaxDelay);
-            const double hypDelayA = cellPairs / (clockMid - clockSpread * modulation);
-            const double hypDelayB = cellPairs / (clockMid + clockSpread * modulation);
-            // Retain the comparison law and its bounded blend. Only the
-            // numerical clock-integration point changes for this hypothesis.
-            const double blend = std::clamp(static_cast<double>(calibration), 0.0, 1.0);
-            nominalDelayA += (hypDelayA - nominalDelayA) * blend;
-            nominalDelayB += (hypDelayB - nominalDelayB) * blend;
-        }
         return std::array<double, 2> {{
             std::clamp(cellPairs / std::max(nominalDelayA, 1.0e-4),
                        static_cast<double>(minimumClockHz), static_cast<double>(maximumClockHz)),
@@ -3156,15 +3080,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const auto& wetOutputTransition = finiteMuteDriveEnabled_
         ? finiteWetTransition()
         : (muteDriveMuted_ ? support_.exactOutputMuted : support_.exactOutputConnected);
-    // The relative real-instrument calibration and its alternative causal
-    // hypothesis act on the lines' random floor only. Neither is a claim that
-    // a standalone mode-II MN3009 exceeds its datasheet row: the observation
+    // The relative real-instrument calibration acts on the lines' random
+    // floor only. This is not a claim that a standalone mode-II MN3009
+    // exceeds its datasheet row: the observation
     // was made at the completed instrument's output, and the exact physical
-    // insertion point remains OQ-03. The optional common/hum/spur layers below
-    // stay on the plain Chorus Noise master.
-    const float modeNoiseGain = useRateProportionalNoiseHypothesis
-        ? rateProportionalNoiseGain(rateHz_)
-        : measuredModeNoiseGain(runningMode_);
+    // insertion point remains OQ-03.
+    const float modeNoiseGain = measuredModeNoiseGain(runningMode_);
     const float lineNoiseScale = noiseScale * modeNoiseGain;
     // One input support network for both wet branches; only the clock differs
     // between them. See `InputSupport` for why that is the model rather than
@@ -3185,80 +3106,6 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                                 wetOutputTransition, lineNoiseScale, true, capture);
     float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
                                 wetOutputTransition, lineNoiseScale, true, capture);
-
-    if (enableClockBleed && !clocksStopped_)
-    {
-        clockSpurPhaseA_ += static_cast<double>(clockA) * inverseSampleRate_;
-        clockSpurPhaseB_ += static_cast<double>(clockB) * inverseSampleRate_;
-        clockSpurPhaseA_ -= std::floor(clockSpurPhaseA_);
-        clockSpurPhaseB_ -= std::floor(clockSpurPhaseB_);
-        // Scaled by the one Chorus Noise master with no floor. A revision
-        // clamped this to `max(noiseScale, 0.1f)`, which left a tenth of the
-        // bleed tone alive at noiseScale 0 and broke this class's own
-        // contract -- process() documents 0.0 as removing every declared
-        // chorus-noise component, and the bleed is one of them.
-        const float bleedScale = 0.005f * noiseScale;
-        const float heterodyneBleedA = bleedScale * static_cast<float>(std::sin(2.0 * pi * clockSpurPhaseA_));
-        const float heterodyneBleedB = bleedScale * static_cast<float>(std::sin(2.0 * pi * clockSpurPhaseB_));
-        wetA += heterodyneBleedA;
-        wetB += heterodyneBleedB;
-    }
-
-    // These mechanisms are deliberately separate from the compatibility hiss
-    // above.  Their insertion point, spectra, levels and stereo correlation
-    // are all voiced/unknown pending the calibrated OQ-03 capture.  Zero is
-    // therefore the production default, and this branch leaves the old render
-    // bit-identical when no optional component has been configured.
-    const bool hasOptionalNoise = optionalNoise_.commonRandomAmplitude != 0.0f
-        || optionalNoise_.humAmplitude != 0.0f
-        || optionalNoise_.clockSpurAmplitude != 0.0f;
-    if (hasOptionalNoise)
-    {
-        float optionalA = 0.0f;
-        float optionalB = 0.0f;
-
-        if (optionalNoise_.commonRandomAmplitude != 0.0f)
-        {
-            const auto common = correlatedRandomStep(
-                commonNoiseState_, orthogonalNoiseState_,
-                optionalNoise_.commonRandomCorrelation);
-            optionalA += optionalNoise_.commonRandomAmplitude * common.lineA;
-            optionalB += optionalNoise_.commonRandomAmplitude * common.lineB;
-        }
-
-        if (optionalNoise_.humAmplitude != 0.0f)
-        {
-            // A common deterministic term is the smallest useful hypothesis;
-            // polarity and channel imbalance remain unknown.
-            const float hum = optionalNoise_.humAmplitude
-                * deterministicToneStep(humPhase_, optionalNoise_.humFrequencyHz,
-                                        sampleRate_);
-            optionalA += hum;
-            optionalB += hum;
-        }
-
-        if (optionalNoise_.clockSpurAmplitude != 0.0f && !clocksStopped_)
-        {
-            // Each candidate spur follows its own modulated BBD clock, on its
-            // own accumulator.  The harmonic and post-line insertion level are
-            // disabled hypotheses, not claims about a measured unit.
-            // `deterministicToneStep` advances the phase it is handed, and the
-            // heterodyne bleed above already advances clockSpurPhaseA_/B_ by
-            // the same clock: sharing them made each tone run at twice its
-            // intended frequency whenever both were enabled together.
-            optionalA += optionalNoise_.clockSpurAmplitude
-                * deterministicToneStep(
-                    optionalSpurPhaseA_, clockA * optionalNoise_.clockSpurHarmonic,
-                    sampleRate_);
-            optionalB += optionalNoise_.clockSpurAmplitude
-                * deterministicToneStep(
-                    optionalSpurPhaseB_, clockB * optionalNoise_.clockSpurHarmonic,
-                    sampleRate_);
-        }
-
-        wetA += optionalA * noiseScale;
-        wetB += optionalB * noiseScale;
-    }
 
     // Both ordinary modes carry dry plus one wet line per channel. The I+II
     // product extension uses the owner's chosen narrow colour: equal mid

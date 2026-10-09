@@ -197,8 +197,7 @@ void render(const presets::Preset& preset, const Score& score,
         << ",\"tail_seconds\":" << tail << ",\"active_voice_peak\":" << activePeak
         << ",\"raw_peak_dbfs\":" << 20.0 * std::log10(peak)
         << ",\"raw_rms_dbfs\":" << 10.0 * std::log10(energy / (2.0 * frames))
-        << ",\"engine_profile\":" << std::quoted(YOUKNOW_HARDWARE_REALISM_CANDIDATE
-            ? "ProductHardwareRealismProfile" : "ProductFidelityProfile")
+        << ",\"engine_profile\":\"ProductHardwareRealismProfile\""
         << ",\"performance_timing\":\"Direct / MeasuredChartGeometry\"}\n";
 }
 

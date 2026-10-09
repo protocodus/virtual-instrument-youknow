@@ -14,7 +14,8 @@ the named Tr20/BA662 quiet-current model, nominal original-hybrid VCF
 frequency coordinates, the coupled WAVE/SUB/D6/C56 mixer, and the
 serviced-bias MN3009 transfer estimate. This licenses selecting the complete
 B profile for the plug-in and maintained product renders. The former
-product profile remains available through the explicit OFF audit build.
+product profile remains available to explicit `ProductFidelityProfile` diagnostic
+fixtures; the former OFF build switch has since been retired.
 The joint mixer solve and continuous six-card processing increase CPU cost,
 including while idle; acceptance includes that model tradeoff, with no
 general cost bound established by the listening comparison.
@@ -1253,8 +1254,9 @@ does not close OQ-09, which still owns the coefficient's value.
 Paired native benchmark: -0.53 %, +1.69 %, +2.72 %, +0.35 % across the four
 audit scenarios -- the largest CPU cost of this pass, and one extra multiply and
 subtract per node in the hot feedback path is what it buys. Full suite 15/15.
-`EngineParameters::enableDifferentialResonanceInput` restores the split
-bit-exactly for comparison renders.
+At the time, `EngineParameters::enableDifferentialResonanceInput` restored the
+split bit-exactly for comparison renders. That comparison switch has since
+been retired; the differential circuit solve is unconditional.
 
 ## 2026-09-02 — Resonance input compensation: off a voiced value, on to a bracket
 
@@ -1450,8 +1452,9 @@ convention that the exact law's tail coincides with the former softplus's. That
 convention is a convention, not a derivation — the other defensible placement
 (emitter current equal to Vt/R at the turn-on) moves the −45 dB region by about
 9 dB, several times the 2.5 dB the shape itself changes — so OQ-19's measured
-gain sweep owns placement. The former softplus remains available behind the
-internal comparison switch `useSoftplusVoiceVcaCompatibilityLaw`, bit-exact.
+gain sweep owns placement. At the time, the former softplus remained available
+behind the internal comparison switch `useSoftplusVoiceVcaCompatibilityLaw`,
+bit-exact. That superseded comparison implementation has since been retired.
 CPU: one table index and lerp per voice per internal sample in place of the
 softplus; the repo's paired A/B benchmark at the shipping Poly/Cubic/RK4
 4x 48 kHz defaults read, over three runs, idle 77.65 → 78.04 ms (+0.50 %),

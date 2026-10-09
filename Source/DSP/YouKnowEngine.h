@@ -374,32 +374,12 @@ struct EngineParameters
     // raw comparison retains its ideal collector drive. This selects the
     // complete three-capacitor circuit whenever enableChorusMuteDrive is on.
     bool enableChorusFiniteTr5Drive { false };
-    // On by default: each MN3009 line carries its own fixed-seed insertion
-    // gain inside Panasonic's +/-4 dB row, scaled by Unit Character. False
-    // keeps the two returns identical for controlled A/B renders.
-    bool enableChorusLineGainSpread { true };
     // Comparison-only: which of OQ-01's Mode I timing candidates the chorus
     // runs on (Chorus::settingsFor). Shipping is the default and the only one
     // a product build selects. The engine still uses its ordinary gains,
     // noise, mute circuit and other chorus modes whichever is chosen. Not a
     // host parameter and not a saved factory setting.
     ChorusTimingProfile chorusTimingProfile { ChorusTimingProfile::Shipping };
-    // Only the heterodyne clock-bleed tone is implemented (see
-    // Chorus::process); no Thiran fractional-delay filter exists. Off by
-    // default -- its amplitude is an unvalidated placeholder pending OQ-03.
-    bool enableChorusClockBleed { false };
-    // Comparison-only, off by default. The shipped linear-in-time delay is
-    // derived from the p. 15 threshold oscillator (a fixed Tr19 charge current
-    // into C53 against an LFO-set threshold gives a clock period affine in
-    // the triangle), corroborated by KR-106's click-timing series; this
-    // switch substitutes a current-modulated oscillator the board does not
-    // have, for A/B renders only.
-    bool enableChorusHyperbolicSweep { false };
-    // The reported approximately 3.95 dB II-I output-floor delta ships as the
-    // empirical default. This internal switch substitutes the rate-proportional
-    // 4.21 dB causal hypothesis for controlled comparisons; it does not
-    // multiply the two profiles. OQ-03 still owns absolute level and causality.
-    bool useChorusRateNoiseHypothesis { false };
     // Effective output-packet transfer/storage covariance family. Source
     // strengths and weakened correlation are explicit internal research
     // inputs, not host parameters or inferred microscopic BBD constants.
@@ -407,34 +387,6 @@ struct EngineParameters
     bool enableChorusCorrelatedNoise { false };
     float chorusNoiseTransferFraction { 0.0f };
     float chorusNoiseTransferCorrelation { 1.0f };
-    // Comparison-only. The former default used an unmeasured 0.15 voltage
-    // coefficient, driven from the bus rather than the voltage across C14.
-    // Current aluminum-electrolytic manufacturer guidance says voltage bias
-    // does not change capacitance; leave the candidate off until an installed
-    // 10 uF non-polar part is measured under the OQ-21 conditions.
-    bool enableElectrolyticC14Nonlinearity { false };
-    // On by default: the switched HPF's departing cut leg keeps discharging
-    // its own capacitor -- C10 15 nF behind R21, C11 4.7 nF behind R23 --
-    // through its own 1 MOhm bleed and its own always-connected 47 kOhm into
-    // IC4a's summing node, instead of vanishing the instant IC3 points
-    // elsewhere. IC3 selects which leg the node is DRIVEN from; it does not
-    // disconnect the leg it just left. The tail is R29/(R21+R26) = 0.0448902,
-    // or -26.96 dB, of the stored capacitor voltage, decaying with 15.71 ms
-    // leaving Two and 4.92 ms leaving Three. False restores the former
-    // single-shared-state swap for controlled A/B renders; with the selector
-    // held still the two cut paths are bit-identical either way.
-    //
-    // The same switch also runs the Boost leg as its own three-capacitor
-    // network (C9, C8, C6 -- see BoostBranch) instead of the collapsed
-    // single-corner shelf: while Boost is selected the two agree to 0.016 dB,
-    // and what the physical states add is the leg's departing tail (C8
-    // discharging through R22||C9 and R25 into the summing node while IC4b
-    // keeps amplifying it -- the undriven pair's eigenmodes are 0.37 and
-    // 2.77 ms, so the earlier 940 us single-pole reading was short),
-    // the charge redistribution between C9 and C8 on re-entry, and IC4b's
-    // finite swing on its x11 low band. OQ-21 still owns the TC4052's own
-    // on-resistance and charge injection.
-    bool enableHighPassDepartingLegTail { true };
     // On by default: uses CircuitDerivedResonanceProfile's
     // linear-above-onset byte-to-loop-gain shape (drawn control chain plus
     // BA662-family linear gm, 2026-08-20) instead of the voiced quadratic-then-
@@ -469,21 +421,6 @@ struct EngineParameters
     // serialised, like the rest of this family.
     ResonanceCompensationShape resonanceCompensationShape {
         ResonanceCompensationShape::Reconstruction };
-    // On by default: the resonance BA662 is one differential pair, so it takes
-    // a single tanh of the difference of its two divided inputs -- VCF IN
-    // through R5/R2 on the non-inverting side, VCF OUT through R3/R1 on the
-    // inverting one (JUNO-6/60 CPU BOARD p. 9). The model used to split that
-    // into a linear feedforward at the filter input and a separate tanh on the
-    // feedback return, which agrees only while both are small. False restores
-    // that split bit-exactly for controlled A/B renders. The two forms are
-    // identical at zero drive, so the 4.8 Vp-p self-oscillation trim and the
-    // maximumFeedback solve behind it are untouched either way.
-    bool enableDifferentialResonanceInput { true };
-    // Comparison-only. Restores the former softplus envelope-to-gain stand-in
-    // (turn-on 0.015, knee 0.0026) bit-exactly for A/B renders; the default
-    // solves the traced Tr20 grounded-base stage's own junction law, see
-    // VoiceVcaControlLaw. Not serialised.
-    bool useSoftplusVoiceVcaCompatibilityLaw { false };
     // On by default: the common uPC1252H2's NEC-typical -94 dBV output noise
     // (installed test-circuit conditions) joins the bus ahead of the chorus
     // split as a flat floor; comparison-only switch. Scaled by Unit Character
@@ -1558,15 +1495,6 @@ public:
     [[nodiscard]] double firmwareSerialAudioStates() const noexcept
     { return firmwareSerialAudioStates_; }
 
-    // The selected ADC bank is frozen for this no-interrupt profile. Supply
-    // captured raw/previous bytes to explore its exact main-loop branches;
-    // the default is lower bank, zero samples, conversion flag clear.
-    struct FirmwareAdcSnapshot {
-        std::array<std::uint8_t, 4> raw {}, previous {};
-        bool upperBank { false }, conversionComplete { false };
-    };
-    void configureFirmwareAdcSnapshot(const FirmwareAdcSnapshot& input) noexcept
-    { firmwareAdcSnapshot_ = input; }
     [[nodiscard]] bool firmwareControlTraceValid() const noexcept
     { return firmwareControlTraceValid_; }
     [[nodiscard]] std::uint32_t firmwareControlPassStates() const noexcept
@@ -1575,7 +1503,7 @@ public:
 
     // Comparison-only, before prepare(): solve the literal C14/IC3/HPF
     // network with an explicit finite switch resistance (50..1000 ohms).
-    // This supersedes the legacy C14/HPF approximation switches. No installed
+    // This supersedes the separate C14/HPF approximation. No installed
     // Ron or signal-dependent switching law is implied; host state is unchanged.
     bool configureHighPassSwitch(double onResistanceOhms) noexcept;
 
@@ -1820,11 +1748,7 @@ public:
     // (see `turnOn`). What is still not measured is where that knee sits and
     // the BA662's own gm-versus-I_abc below about 10 uA (OQ-19).
     //
-    // gain() solves the law; the former softplus stand-in with the same
-    // exponential tail stays bit-exact behind
-    // `useSoftplusVoiceVcaCompatibilityLaw`. That stand-in had replaced a much
-    // wider voiced knee that put 13-15 dB more attenuation on the bottom of
-    // the renderer's envelopes.
+    // gain() solves the grounded-base junction law.
     //
     // A published teardown infers the opposite -- "the envelope generators are
     // linear and generated by the CPU, so the VCA response must be
@@ -1873,19 +1797,11 @@ public:
         // plausible small-signal PNP figure and nothing more.
         // Preserve the existing voiced knee in VOLTS while correcting the
         // envelope's full-scale span. This is a coordinate correction, not
-        // a new transistor fit or a change to the archived softplus option.
-        static constexpr float softplusTurnOn = 0.015f;
-        static constexpr double turnOnVolts = static_cast<double>(softplusTurnOn)
+        // a new transistor fit. Preserve the original float-rounded coordinate.
+        static constexpr double turnOnVolts = static_cast<double>(0.015f)
             * 9.921875; // Historical code4064 coordinate: preserve this prior.
         static constexpr float turnOn = static_cast<float>(
             turnOnVolts / controlFullScaleVolts);
-        // Legacy softplus scale, comparison path only: ideal-BJT kT/q on the
-        // converter span, rounded. The exact law uses the derived
-        // thermalVoltage / controlFullScaleVolts = 0.026 / 10.1029956 = 0.0025735.
-        static constexpr float knee = 0.0026f;
-        // R106 10k + R105 22k, p. 13. Documentation: it cancels in the
-        // normalised law and only sets the implied Is above.
-        static constexpr float emitterResistanceOhms = 32000.0f;
         // Below this the modelled leakage is more than 95 dB down, so the
         // model returns an exact zero rather than a denormal tail. Product
         // policy, not a measured off-isolation figure.
@@ -1907,8 +1823,6 @@ public:
         // above the knee, not by any claim of exactness at each DAC code.
         static constexpr int tableSteps = 4096;
         [[nodiscard]] static float gain(float control) noexcept;
-        // The former stand-in, verbatim, for `useSoftplusVoiceVcaCompatibilityLaw`.
-        [[nodiscard]] static float softplusGain(float control) noexcept;
         [[nodiscard]] static const std::array<float, tableSteps + 1>&
         exactGainTable();
     };
@@ -2329,7 +2243,6 @@ private:
     // thousand -- the 0.005 the modelling notes state. A revision used 0.08
     // here, sixteen times that, which is a signal-dependent cutoff shift large
     // enough to hear as odd-harmonic grit on every resonant sweep.
-    static constexpr float otaEarlyVoltage = 100.0f;
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
     // Voiced thermal-character coordinate retained from the AS3109's typical
     // 0.33%/degC "Tempco of frequency control" row. That replacement-IC row
@@ -2370,17 +2283,6 @@ private:
     // endpoint rather than inventing a knee and asymptote.
     static constexpr float vcfSafetyCapHz = 50000.0f;
 
-    // Modulation budgets, in converter counts, taken from the instrument's own
-    // control tables. 1143 counts is one octave.
-    // The maximum of vcfLfoCountsWord: depth byte 253 (2 * 127 * 255 >> 8)
-    // against the full 8191 accumulator, 253 * 8191 >> 9. The live term is
-    // that integer law, not a fraction of this figure.
-    static constexpr float vcfLfoCounts = 4047.0f;
-    // The maximum of vcfBendCountsWord: bend byte 255 (2 * 127 + 1) times
-    // sensitivity 255, shifted right four times -- just over three and a half
-    // octaves each way. An earlier account claimed the whole cutoff range;
-    // the firmware arithmetic settles it. The live term is that integer law.
-    static constexpr float vcfBenderCounts = 4064.0f;
     // Hold-capacitor slew after the converter. VCF and voice-VCA use the
     // 522us VCF value and retained 687us linear VCA reference. The default VCA
     // instead couples C58 to Tr20's current-dependent incremental resistance
@@ -3326,7 +3228,6 @@ private:
         std::uint16_t decayMultiplier { 0x8000u };
         std::uint16_t releaseMultiplier { 0x8000u };
         float feedback { 0.0f };
-        float inputCompensation { 1.0f };
         float vca { 0.0f };
         // VoiceVcaControlLaw::gain(vcaControl) alone, before updateVoiceAudio
         // folds in the per-card gain error to produce `vca` above. The main
@@ -3397,7 +3298,6 @@ private:
     };
 
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
-    static double midiToHz(double midiNote) noexcept;
     static std::uint32_t hash32(std::uint32_t value) noexcept;
     static float hashBipolar(std::uint32_t value) noexcept;
     // The xorshift32 step shared by the shared noise generator, each card's
@@ -3535,7 +3435,6 @@ private:
                          float velocity) noexcept;
     void silenceVoice(Voice& voice) noexcept;
     [[nodiscard]] bool anyVoiceRunning() const noexcept;
-    [[nodiscard]] bool anyVoiceSounding() const noexcept;
     void rearmLfoDelay() noexcept;
     // Empties only the blocks whose state depends on the internal processing
     // rate. The final host-rate coupling capacitors survive an HQ rebuild.
@@ -3856,7 +3755,6 @@ private:
     std::array<double, converterWritesPerPass> converterInhibitPhases_ {};
     bool voiceBoardCommandReplayRequested_ { false };
     bool voiceBoardCommandReplayActive_ { false };
-    FirmwareAdcSnapshot firmwareAdcSnapshot_ {};
     FirmwareControlTrace::State firmwareControlState_ {};
     FirmwareControlTrace::Result firmwareControlTrace_ {};
     std::array<std::uint16_t, converterWritesPerPass> firmwareConverterCodes_ {};
@@ -4060,7 +3958,7 @@ private:
     // passband corner -- highPassG_ already is that corner -- so its state is
     // exactly the capacitor voltage. While it is not, it is fed silence at its
     // own much slower undriven corner, and its residual current still reaches
-    // the summing node through its 47 kOhm. See the switch above.
+    // the summing node through its 47 kOhm.
     HighPass highPassTwoLeg_ {};
     HighPass highPassThreeLeg_ {};
     float highPassTwoDepartG_ { 0.001f };

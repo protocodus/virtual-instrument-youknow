@@ -1,9 +1,30 @@
 #!/usr/bin/env python3
-"""Time the four-second transition fixture in serial baseline/candidate brackets."""
+"""Time the product transition fixture in serial baseline/candidate brackets.
+
+Compile the same Tools/RenderProductValidation.cpp against each revision's own
+headers and DSP archive, using matching compiler, architecture, Release and IPO
+settings. The fixed protocol runs three baseline/candidate/baseline brackets per
+Original/Direct mode at 48 kHz, 1x quality and 173-frame callbacks. It requires
+identical fixture metadata and audio, checks binary hashes, and reports the median
+of three candidate reductions against each bracket's faster baseline.
+
+Requires POSIX, where the renderer's std::clock measures process CPU; MSVC's
+elapsed wall clock cannot support this CPU comparison. CPU covers process() only,
+excluding preparation, synchronous event/control delivery, validation and I/O.
+Clock overhead is not subtracted; these are process-CPU measurements, not a DAW
+callback deadline guarantee. Stop other builds/tests first. Use a new output
+directory and retain the emitted raw audio,
+logs and summary. Optional --cpu selects an allowed Linux taskset CPU; omit on
+other POSIX platforms. The fixture's historical protocol identifier remains stable.
+
+Example: python3 Tools/BenchmarkTransitions.py --baseline /tmp/render-baseline
+  --candidate /tmp/render-candidate --output /tmp/transition-comparison --cpu 0
+"""
 import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import statistics
 import subprocess
@@ -20,6 +41,9 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--cpu', type=int)
     args = parser.parse_args()
+    if os.name != 'posix':
+        parser.error('transition CPU benchmarking requires POSIX std::clock; '
+                     'MSVC std::clock measures elapsed wall time')
     args.output.mkdir(parents=True, exist_ok=False)
     binaries = {'baseline': args.baseline.resolve(), 'candidate': args.candidate.resolve()}
     hashes = {name: digest(path) for name, path in binaries.items()}

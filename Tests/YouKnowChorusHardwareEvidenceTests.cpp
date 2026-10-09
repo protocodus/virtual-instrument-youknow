@@ -375,10 +375,8 @@ void insertionNoiseAndLifecycle()
             "reset or processing-rate change lost insertion-gain selection");
     auto unity = insertionDevice(384000.0, unityInsertion, ChorusSupportProfile::IdealFollowers);
     float left {}, right {};
-    unity->process(.02f, ChorusMode::One, 0.0f, left, right,
-                   false, false, .75f, false, true, false, true);
-    candidate->process(.02f, ChorusMode::One, 0.0f, left, right,
-                       false, false, .75f, false, true, false, true);
+    unity->process(.02f, ChorusMode::One, 0.0f, left, right, .75f, true, false, true);
+    candidate->process(.02f, ChorusMode::One, 0.0f, left, right, .75f, true, false, true);
     require(Probe::relativeLineGains(*unity) == Probe::relativeLineGains(*candidate),
             "absolute insertion gain reinterprets the existing line-relative gain");
 }

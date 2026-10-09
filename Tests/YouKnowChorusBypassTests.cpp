@@ -59,8 +59,7 @@ void checkControlContinuity(float rate, bool enableMuteDrive)
         {
             float exactLeft {}, exactRight {}, skippedLeft {}, skippedRight {};
             const auto fullStep = [&](Chorus& chorus, float& left, float& right) {
-                chorus.process(0.0f, interval.mode, 0.0f, left, right,
-                               false, false, 1.0f, false, true,
+                chorus.process(0.0f, interval.mode, 0.0f, left, right, 1.0f, true,
                                enableMuteDrive, false);
             };
             fullStep(exact, exactLeft, exactRight);
@@ -116,8 +115,7 @@ void checkSettledSkipEngagesWithoutFlushToZero(float rate, bool enableMuteDrive)
         for (int frame = 0; frame < frames; ++frame)
         {
             float left {}, right {};
-            chorus.process(0.0f, mode, 0.0f, left, right,
-                           false, false, 1.0f, false, true,
+            chorus.process(0.0f, mode, 0.0f, left, right, 1.0f, true,
                            enableMuteDrive, false);
         }
     };

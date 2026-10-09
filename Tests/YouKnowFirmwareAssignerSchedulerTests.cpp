@@ -756,4 +756,5 @@ int main() {
     schedulerCoreRegression::run(check);
     schedulerBoundaryRegression::run();
     std::printf("PASS %u scheduler regression assertions\n", assertions);
+    return 0;
 }

@@ -1930,7 +1930,7 @@ struct YouKnowTestAccess
                 voice.dcoPitchTransactionColdStart,
                 voice.dcoPitchTransactionCvTarget, voice.attackIncrement,
                 voice.decayMultiplier, voice.releaseMultiplier, voice.feedback,
-                voice.inputCompensation, voice.vca, voice.vcaGain,
+                voice.vca, voice.vcaGain,
                 voice.vcaInputTrim, voice.pulseDuty, voice.pulseThresholdVolts,
                 voice.pulsePinnedHigh, voice.rampCurrentScale,
                 voice.rampServiceScale, voice.previousPulseThresholdVolts,
@@ -9168,77 +9168,6 @@ void testDoublePassiveHoldStatesDoNotStallAtHighRate()
            "the double PWM second node stalled at 768 kHz");
 }
 
-void testVoiceVcaJunctionLawShortensReleaseTails()
-{
-    // One released note rendered twice, identical in everything but the
-    // voice-VCA control law: A the former softplus stand-in, B the exact
-    // Tr20 emitter law. Both share the sub-knee tail and the full-scale
-    // point, so the difference lives between them -- the exact law sits up to
-    // about 2.5 dB under the softplus where the envelope has fallen 25 to
-    // 50 dB, and nowhere above it in that region. More than 90 dB down the
-    // two tails cross again by a fraction of a decibel, so the never-louder
-    // bound is asserted over the 50 dB the change is about. The mid release
-    // byte reaches that region inside six seconds; the slowest one takes over
-    // twenty.
-    constexpr double sampleRate = 48000.0;
-    constexpr int holdSamples = 24000;
-    constexpr int tailSamples = 264000;
-    constexpr int window = 2400;
-    auto parameters = plainPatch();
-    parameters.release = 64.0f / 127.0f;
-
-    const auto windowRms = [](const std::vector<float>& audio, std::size_t offset)
-    {
-        double sumOfSquares = 0.0;
-        for (int index = 0; index < window; ++index)
-        {
-            const double value = audio[offset + static_cast<std::size_t>(index)];
-            sumOfSquares += value * value;
-        }
-        return std::sqrt(sumOfSquares / window);
-    };
-    const auto renderRelease = [&](bool softplus)
-    {
-        YouKnowEngine engine;
-        engine.prepare(sampleRate, blockSize, true);
-        auto law = parameters;
-        law.useSoftplusVoiceVcaCompatibilityLaw = softplus;
-        engine.setParameters(law);
-        engine.noteOn(60, 1.0f);
-        const auto held = renderExact(engine, holdSamples);
-        engine.noteOff(60);
-        return std::pair { windowRms(held.left, holdSamples - window),
-                           renderExact(engine, tailSamples) };
-    };
-    const auto [sustainA, tailA] = renderRelease(true);
-    const auto [sustainB, tailB] = renderRelease(false);
-    // The sustain hold sits a hair under full scale, where the exact law is
-    // about a thousandth of a decibel under the softplus.
-    expectNear(sustainB / sustainA, 1.0, 1.0e-3,
-               "the junction law moved the sustained level");
-
-    double deepest = 0.0;
-    double loudest = -100.0;
-    for (std::size_t offset = 0; offset + window <= tailA.left.size();
-         offset += window)
-    {
-        const double rmsA = windowRms(tailA.left, offset);
-        if (rmsA < sustainA * 3.16e-3)
-            break;
-        const double ratio = 20.0 * std::log10(windowRms(tailB.left, offset) / rmsA);
-        deepest = std::min(deepest, ratio);
-        loudest = std::max(loudest, ratio);
-    }
-    expect(loudest <= 0.05,
-           "the junction law is louder than the softplus by "
-               + std::to_string(loudest) + " dB within 50 dB of sustain");
-    // The static law difference peaks at -2.54 dB; the rendered window reads
-    // -2.65 dB at 4x.
-    expect(deepest > -3.0 && deepest < -1.3,
-           "the junction law's release tail sits " + std::to_string(deepest)
-               + " dB under the softplus at its deepest, not -1.3 to -3.0");
-}
-
 void testPulseOffPinsComparatorWithoutResettingTheDco()
 {
     YouKnowEngine engine;
@@ -14292,74 +14221,11 @@ void testGlideKeepsTheRampContinuous()
            "gliding steps the rendered ramp beyond the pitch staircase");
 }
 
-void testChorusSweepTrajectoryDefault()
-{
-    // The linear-in-delay trajectory ships: the one delay-trajectory
-    // measurement on record (KR-106's click-timing series, 16 us RMS residual
-    // against a straight line) reads the 106's sweep as linear in time, so
-    // the frequency-linear hypothesis waits behind the switch instead of
-    // shipping as the default.
-    EngineParameters defaults;
-    expect(!defaults.enableChorusHyperbolicSweep,
-           "the frequency-linear sweep hypothesis became the default again");
-
-    // The retained hypothesis has to stay alive behind the switch, and its
-    // blend has to answer to Unit Character: at full character the two laws
-    // render different mid-flank trajectories, and at zero character the
-    // switch must do nothing at all.
-    constexpr float sampleRate = 48000.0f;
-    const auto render = [&](bool hyperbolic, float calibration) {
-        Chorus chorus;
-        chorus.prepare(sampleRate);
-        double sum = 0.0;
-        for (int index = 0; index < 48000; ++index)
-        {
-            const float input = std::sin(
-                2.0f * 3.14159265f * 1000.0f * static_cast<float>(index)
-                / sampleRate);
-            float left = 0.0f;
-            float right = 0.0f;
-            chorus.process(input, ChorusMode::One, 0.0f, left, right,
-                           false, hyperbolic, calibration);
-            sum += std::abs(static_cast<double>(left - right));
-        }
-        return sum;
-    };
-    const double linear = render(false, 1.0f);
-    const double bent = render(true, 1.0f);
-    expect(std::abs(linear - bent) > 1.0e-3,
-           "the retained hyperbolic path no longer changes the trajectory");
-    const double bentAtZero = render(true, 0.0f);
-    expectNear(bentAtZero, render(false, 0.0f), 1.0e-9,
-               "the hyperbolic switch acted at zero Unit Character");
-}
-
-void testElectrolyticC14VoltageCoefficientIsComparisonOnly()
-{
-    // The old 0.15 law had no part measurement behind it and used the bus
-    // voltage rather than the voltage across C14. Aluminum-electrolytic
-    // current manufacturer guidance does not support a generic voltage-bias
-    // capacitance shift. Keep the candidate available to the comparison
-    // renderer, but do not let it silently become part of the shipping
-    // instrument again.
-    const EngineParameters defaults;
-    expect(!defaults.enableElectrolyticC14Nonlinearity,
-           "the unsupported C14 voltage coefficient became a default again");
-}
-
-void testChorusNoiseProfilesReproduceTheMeasuredModeDelta()
+void testChorusNoiseReproducesTheMeasuredModeDelta()
 {
     // A real 106's chorus floor was reported about 3.95 dB higher in mode II:
     // the printed Panasonic and Xvive pairs give 3.96 and 3.95 dB (OQ-03).
-    // The settled topology gives both modes the same sweep depth and
-    // the same clock range, so the only thing the mode line changes is the
-    // modulation rate -- and this instrument's own timing network puts that
-    // ratio at 1.6234799, which is 4.21 dB. Noise proportional to that rate is
-    // therefore a useful causal hypothesis, not the empirical calibration.
-    //
-    // The measured delta now ships by default; the internal switch substitutes
-    // the rate-law hypothesis so it remains falsifiable. What this fence holds
-    // is that both profiles do exactly what they claim without moving mode I.
+    // Check the empirical calibration through the complete signal path.
     constexpr double sampleRate = 48000.0;
 
     // Each line draws one noise sample per new composite output hold, so its
@@ -14367,12 +14233,11 @@ void testChorusNoiseProfilesReproduceTheMeasuredModeDelta()
     // a whole number of modulation cycles or the modes are compared over different
     // parts of their own sweeps. In a diagnostic with both mode factors divided
     // out, a fixed window alone makes mode II read 0.69 dB hot.
-    const auto idleFloor = [&](ChorusMode mode, bool rateHypothesis) {
+    const auto idleFloor = [&](ChorusMode mode) {
         YouKnowEngine engine;
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
         parameters.chorus = mode;
-        parameters.useChorusRateNoiseHypothesis = rateHypothesis;
         engine.setParameters(parameters);
         // Past the wet-mute glide and the support filters' own settling.
         render(engine, static_cast<int>(sampleRate * 0.5));
@@ -14390,14 +14255,10 @@ void testChorusNoiseProfilesReproduceTheMeasuredModeDelta()
             energy / static_cast<double>(rendered.left.size()) + 1.0e-30);
     };
 
-    const auto empiricalOneRender = idleFloor(ChorusMode::One, false);
-    const auto empiricalTwoRender = idleFloor(ChorusMode::Two, false);
-    const auto rateOneRender = idleFloor(ChorusMode::One, true);
-    const auto rateTwoRender = idleFloor(ChorusMode::Two, true);
+    const auto empiricalOneRender = idleFloor(ChorusMode::One);
+    const auto empiricalTwoRender = idleFloor(ChorusMode::Two);
     const double empiricalOne = floorDb(empiricalOneRender);
     const double empiricalTwo = floorDb(empiricalTwoRender);
-    const double rateOne = floorDb(rateOneRender);
-    const double rateTwo = floorDb(rateTwoRender);
 
     expectNear(20.0 * std::log10(Chorus::measuredModeTwoNoiseGain),
                Chorus::measuredModeTwoNoiseDeltaDb, 1.0e-6,
@@ -14407,39 +14268,18 @@ void testChorusNoiseProfilesReproduceTheMeasuredModeDelta()
            "the default profile raises mode II by "
                + std::to_string(empiricalTwo - empiricalOne)
                + " dB, not the reported 3.95 dB calibration");
-    // Mode I is the reference leg, so substituting the causal hypothesis must
-    // leave every rendered sample exactly where the empirical default has it.
-    const auto sameBits = [](const std::vector<float>& first,
-                             const std::vector<float>& second) {
-        return first.size() == second.size()
-            && std::memcmp(first.data(), second.data(),
-                           first.size() * sizeof(float)) == 0;
-    };
-    expect(sameBits(rateOneRender.left, empiricalOneRender.left)
-               && sameBits(rateOneRender.right, empiricalOneRender.right),
-           "selecting the rate-noise hypothesis changed mode I's samples");
-
-    const double predicted =
-        20.0 * std::log10(Chorus::modeRateRatio());
-    expect(std::abs(predicted - 4.21) < 0.01,
-           "the mode-rate ratio no longer predicts 4.21 dB");
-    expect(std::abs((rateTwo - rateOne) - predicted) < 0.10,
-           "the rate-noise hypothesis raises mode II by "
-               + std::to_string(rateTwo - rateOne) + " dB, not the predicted "
-               + std::to_string(predicted));
 }
 
 void testChorusNoiseIsPresentAndDefeatable()
 {
     constexpr double sampleRate = 48000.0;
 
-    const auto idleNoise = [&](float scale, bool rateHypothesis) {
+    const auto idleNoise = [&](float scale) {
         YouKnowEngine engine;
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
         parameters.chorus = ChorusMode::Two;
         parameters.chorusNoise = scale;
-        parameters.useChorusRateNoiseHypothesis = rateHypothesis;
         engine.setParameters(parameters);
         const auto rendered = render(engine, static_cast<int>(sampleRate));
         double energy = 0.0;
@@ -14449,13 +14289,11 @@ void testChorusNoiseIsPresentAndDefeatable()
         return 10.0 * std::log10(energy / (rendered.left.size() / 2) + 1.0e-30);
     };
 
-    const double modelled = idleNoise(1.0f, false);
+    const double modelled = idleNoise(1.0f);
     expect(modelled > -85.0 && modelled < -55.0,
            "the product-normalized delay-line floor escaped its guard band");
-    expect(idleNoise(0.0f, false) < -120.0,
+    expect(idleNoise(0.0f) < -120.0,
            "the empirical profile still hisses with Chorus Noise at zero");
-    expect(idleNoise(0.0f, true) < -120.0,
-           "the rate-law profile still hisses with Chorus Noise at zero");
 }
 
 void testIdleOutputFloorCarriesTheHissProductPolicy()
@@ -17677,7 +17515,6 @@ int main()
     testFractionalPwmHoldIsHostBlockPartitionInvariant();
     testPitchAndNoiseRemainSampleGridWrites();
     testDoublePassiveHoldStatesDoNotStallAtHighRate();
-    testVoiceVcaJunctionLawShortensReleaseTails();
     testPulseOffPinsComparatorWithoutResettingTheDco();
     testPulseOffCouplingSettlesWhileFastCardsFreewheel();
     testMovingPwmComparatorDoesNotMissThresholdCrossings();
@@ -17756,12 +17593,10 @@ int main()
     testEnvelopeAndGateModes();
     testChorusWidthAndSilence();
     testGlideKeepsTheRampContinuous();
-    testChorusSweepTrajectoryDefault();
-    testElectrolyticC14VoltageCoefficientIsComparisonOnly();
     testChorusNoiseIsPresentAndDefeatable();
     testIdleOutputFloorCarriesTheHissProductPolicy();
     testCommonVcaCarriesItsDatasheetNoiseFloor();
-    testChorusNoiseProfilesReproduceTheMeasuredModeDelta();
+    testChorusNoiseReproducesTheMeasuredModeDelta();
     testMainNoiseSourceIsGaussianAcrossQualityRungs();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();

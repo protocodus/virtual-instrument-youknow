@@ -57,8 +57,6 @@ public:
         voltage_.fill(0); feedbackVoltage_ = 0; previousMode_ = -1;
         switchRemainingSeconds_ = 0;
     }
-    [[nodiscard]] const State& capacitorVoltages() const noexcept { return voltage_; }
-    [[nodiscard]] double feedbackVoltage() const noexcept { return feedbackVoltage_; }
 
     template <typename Clip>
     double process(double input, int mode, Clip clip) noexcept

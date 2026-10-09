@@ -64,7 +64,7 @@ Integral integrateClock(double phase,double rate,double dt,double centre,double 
  return result;
 }
 void process(Chorus& c,float input,ChorusMode mode,ChorusTimingProfile timing,bool stop=false) {
- float l,r;c.process(input,mode,0,l,r,false,false,1,false,true,stop,false,timing,stop);
+ float l,r;c.process(input,mode,0,l,r,1,true,stop,false,timing,stop);
  require(std::isfinite(l)&&std::isfinite(r),"clock process produced nonfinite output");
 }
 void phaseOracle() {

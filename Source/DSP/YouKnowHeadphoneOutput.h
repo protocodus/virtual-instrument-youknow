@@ -110,7 +110,6 @@ public:
     // even while LINE is selected. Not a stored tone/session parameter.
     void setAmplifierDynamics(bool enabled) noexcept { amplifierDynamics_ = enabled; }
     void setIntrinsicNoise(bool enabled) noexcept { intrinsicNoise_ = enabled; }
-    [[nodiscard]] bool amplifierDynamics() const noexcept { return amplifierDynamics_; }
     [[nodiscard]] std::array<double,2> amplifierVoltages() const noexcept
     { return {channels_[0].amplifierOutput,channels_[1].amplifierOutput}; }
     void reset() noexcept { channels_ = {}; }

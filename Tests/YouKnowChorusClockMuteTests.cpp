@@ -55,8 +55,8 @@ void require(bool pass, const char* message)
 
 void process(Chorus& c, float input, ChorusMode mode, float& left, float& right)
 {
-    c.process(input, mode, 1.0f, left, right, false, false, 1.0f,
-              false, true, true, false, youknow::ChorusTimingProfile::Shipping, true);
+    c.process(input, mode, 1.0f, left, right, 1.0f, true, true, false,
+              youknow::ChorusTimingProfile::Shipping, true);
 }
 
 State equilibrium(bool muted)
@@ -332,8 +332,8 @@ void checkSteadyIsolation()
         {
             const float input=0.2f*std::sin(n*0.031f);
             float la{},ra{},lb{},rb{};
-            legacy.process(input,mode,1.0f,la,ra,false,false,1.0f,
-                           false,true,true,false,youknow::ChorusTimingProfile::Shipping);
+            legacy.process(input,mode,1.0f,la,ra,1.0f,true,true,false,
+                           youknow::ChorusTimingProfile::Shipping);
             process(candidate,input,mode,lb,rb);
             require(la==lb && ra==rb,"clock-mute candidate changed steady engaged tone/noise");
         }

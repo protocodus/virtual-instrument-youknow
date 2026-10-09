@@ -692,7 +692,6 @@ struct YouKnowTestAccess
         // diode/mixer probe; its period is not used as a PWM duty reference.
         voice.dco.renderScale = 1.0f;
         voice.moduleCoupling.reset();
-        voice.inputCompensation = 1.0f;
         const double before = voice.moduleCoupling.state;
         (void) engine.renderVoice(voice, parameters, 0.0f);
         const double after = voice.moduleCoupling.state;

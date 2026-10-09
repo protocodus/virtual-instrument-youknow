@@ -342,10 +342,10 @@ public:
     void reset(bool preserveLfoPhase = false) noexcept;
 
     // Advances one sample. `noiseScale` is the single master for every
-    // declared chorus-noise component; 1.0 preserves the compatibility hiss
-    // and 0.0 removes all of them. A calibrated hardware noise reference
-    // exists for one original chorus board; the optional common/hum/spur
-    // source strengths remain unidentified, so their amplitudes are zero.
+    // declared chorus-noise component; 1.0 preserves the calibrated floor
+    // and 0.0 removes it. A calibrated hardware noise reference exists for
+    // one original chorus board; common/hum/spur source strengths remain
+    // unidentified and are not synthesized.
     //
     // There is deliberately no separate storage-capacitance term. The MN3009's
     // C_gs is voltage dependent, but what that produces is distortion and a
@@ -378,10 +378,7 @@ public:
 
     void process(float input, ChorusMode mode, float noiseScale,
                  float& left, float& right,
-                 bool enableClockBleed = false,
-                 bool enableHyperbolicSweep = false,
                  float calibration = 1.0f,
-                 bool useRateProportionalNoiseHypothesis = false,
                  bool enableNarrowOneTwo = true,
                  bool enableMuteDrive = false,
                  bool enableLineGainSpread = false,
@@ -474,8 +471,6 @@ public:
         muteDriveHoldFarads
         * (muteDriveSeriesOhms * (muteDriveBaseOhms + muteDriveEmitterOhms)
            / (muteDriveSeriesOhms + muteDriveBaseOhms + muteDriveEmitterOhms));
-    static constexpr float muteDriveNodeSeconds =
-        muteDrivePullUpOhms * muteDriveNodeFarads;                // 22 ms
     // With Tr5 open, R50, R48, R49 and R42 form one series DC path.
     // C16 therefore rests below +15 V: treating it as an ideal +15 V
     // source would overcharge C13 and delay the next return opening.
@@ -552,6 +547,10 @@ public:
     // leaving mode I's explicit recovered-wet-line product normalization
     // untouched. The I+II product extension retains the mode-II noise profile
     // as a compatibility choice, not an original JUNO-106 noise calibration.
+    // A same-chain capture at a third, artificial modulation rate could test
+    // whether the lift follows sweep slope or comes from the mode-switch
+    // network. No component mechanism currently supports scaling noise with
+    // LFO rate, so the empirical mode factor remains the only implemented law.
     static constexpr float measuredModeTwoNoiseDeltaDb = 3.95f;
     static constexpr float measuredModeTwoNoiseGain = 1.57579602f;
     [[nodiscard]] static constexpr float measuredModeNoiseGain(
@@ -559,20 +558,6 @@ public:
     {
         return chorusTwoEngaged(mode) ? measuredModeTwoNoiseGain : 1.0f;
     }
-
-    // The settled topology gives the two modes identical sweep depth and
-    // clock range -- the mode line changes the modulation *rate* and nothing
-    // else -- so a noise mechanism proportional to that rate, equivalently to
-    // the sweep's own slope d(delay)/dt, predicts exactly
-    // 20*log10(modeRateRatio()) = 4.21 dB. This remains a causal hypothesis,
-    // not the default calibration: OQ-03's same-chain capture at a third,
-    // artificial rate is still needed to distinguish it from noise in the
-    // mode-switch network.
-    //
-    // Selecting the hypothesis replaces, rather than multiplies, the empirical
-    // factor. Both profiles reference mode I and therefore preserve its
-    // established floor exactly.
-    [[nodiscard]] static float rateProportionalNoiseGain(float rateHz) noexcept;
 
     // The nominal (unmodulated) delay in seconds for a clock frequency.
     [[nodiscard]] static constexpr float delaySecondsForClock(float clockHz) noexcept
@@ -910,42 +895,6 @@ private:
     void updateWetGate() noexcept;
     [[nodiscard]] const SupportChain::ExactTransition& finiteWetTransition() noexcept;
 
-    // OQ-03 keeps the compatibility hiss and the still-unknown mechanisms as
-    // distinct components.  Every number in this profile is voiced/unknown,
-    // not a JUNO-106 measurement.  The optional amplitudes therefore default
-    // to zero; `noiseScale` in process() remains the one master applied to all
-    // of them when future evidence supplies defensible values.
-    struct OptionalNoiseComponents
-    {
-        float commonRandomAmplitude { 0.0f };
-        // Desired stereo correlation of the synthetic common layer.  The
-        // default is a voiced placeholder and is inaudible while its amplitude
-        // is zero.
-        float commonRandomCorrelation { 1.0f };
-        float humAmplitude { 0.0f };
-        // A voiced placeholder for deterministic tests only: mains frequency
-        // is market/unit dependent and has not been measured at this node.
-        float humFrequencyHz { 50.0f };
-        float clockSpurAmplitude { 0.0f };
-        // The spur follows each modulated BBD clock.  Which harmonic dominates
-        // is unknown, so unity is only a disabled, voiced placeholder.
-        float clockSpurHarmonic { 1.0f };
-    };
-
-    struct StereoNoiseSample
-    {
-        float lineA { 0.0f };
-        float lineB { 0.0f };
-    };
-
-    // Pure deterministic component steps.  They are private implementation
-    // details, with a narrow friend seam for regression fixtures.
-    [[nodiscard]] static StereoNoiseSample correlatedRandomStep(
-        std::uint32_t& commonState, std::uint32_t& orthogonalState,
-        float correlation) noexcept;
-    [[nodiscard]] static float deterministicToneStep(
-        double& phase, float frequencyHz, float sampleRate) noexcept;
-
     // The two parasitic mechanisms inside the BBD, kept as separate pure
     // steps so the circuit suite can check them against the part's distortion
     // and frequency-response figures without the support filters obscuring the
@@ -1106,18 +1055,6 @@ private:
     // engaged process() rebuilds the wet path from silence before use.
     bool wetPathFlushPending_ { false };
     const std::array<double, noiseMomentIntervals + 1>* noiseCosineMoments_ { nullptr };
-    OptionalNoiseComponents optionalNoise_ {};
-    std::uint32_t commonNoiseState_ { 0xd1b54a35u };
-    std::uint32_t orthogonalNoiseState_ { 0x94d049bbu };
-    double humPhase_ { 0.0 };
-    // The heterodyne clock bleed's own accumulators.
-    double clockSpurPhaseA_ { 0.0 };
-    double clockSpurPhaseB_ { 0.0 };
-    // The optional clock-spur hypothesis keeps separate ones: both mechanisms
-    // run at the same modulated clock, so sharing a phase advanced it twice
-    // per sample and doubled each tone's frequency when both were enabled.
-    double optionalSpurPhaseA_ { 0.0 };
-    double optionalSpurPhaseB_ { 0.0 };
     // Bypass mutes the wet return but retains the last-selected I/II noise
     // profile, matching the clock-program behaviour this model already had.
     ChorusMode runningMode_ { ChorusMode::One };

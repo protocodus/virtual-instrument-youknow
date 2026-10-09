@@ -1,7 +1,17 @@
-// Emit the qualified scheduler scenarios' complete ledgers and final states.
-// The renamed test entry point is deliberately unused; call its suites below.
+// Emit complete scheduler event/wire ledgers and final states for cross-revision
+// comparison. Build YouKnowAuditSchedulerLedger separately against each revision's
+// own headers and DSP library, then redirect stdout and compare the two files.
+// There are 60 runs: note/parameter streams x three UART grid phases x five chunk
+// lengths x output-backpressure on/off. Before emitting, run the qualified
+// scheduler assertions. A nonzero exit invalidates any partially emitted output.
+//
+// This intentionally reuses the scheduler test fixtures and their state-field
+// tuples: the assertion suite checks current invariants while this utility makes
+// every observed event and final state available for an exact revision comparison.
+// Keep the fixture source and protocol identical across both builds. The renamed
+// test entry point is deliberately unused; call its suites below.
 #define main qualifiedSchedulerTestMain
-#include "../../Tests/YouKnowFirmwareAssignerSchedulerTests.cpp"
+#include "../Tests/YouKnowFirmwareAssignerSchedulerTests.cpp"
 #undef main
 #include <iostream>
 

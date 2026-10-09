@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Serial baseline/candidate/baseline CPU comparison using the product audit."""
+"""Compare current-product CPU usage in serial baseline/candidate/baseline runs.
+
+Pass two YouKnowOversamplingAudit binaries, each built from its own revision with
+matching compiler, architecture, Release and IPO settings. The tool runs Original
+then Direct at the requested rate and quality, validates protocol/scenario/quality
+identity, and reports candidate median CPU against the faster bracketing baseline
+median. The audit owns warm-up, repetitions and scenario definitions; raw stdout
+and stderr are retained, and binary hashes must remain unchanged throughout.
+
+Example: python3 Tools/CompareCpu.py --baseline /tmp/base/YouKnowOversamplingAudit
+  --candidate /tmp/new/YouKnowOversamplingAudit --output /tmp/cpu-comparison
+
+Use a new output directory. Stop other builds/tests before timing; optional --cpu
+selects an allowed Linux taskset CPU. Omit it on other platforms. Fingerprint
+differences are reported, not silently accepted as equivalent audio; investigate
+them with the independent product audio comparison before claiming transparency.
+"""
 import argparse
 import hashlib
 import json
