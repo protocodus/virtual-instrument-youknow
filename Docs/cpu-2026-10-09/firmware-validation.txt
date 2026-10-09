@@ -1,0 +1,70 @@
+Firmware validation receipt — 2026-10-09
+
+These results were captured before the final whole-engine timing window.
+Archiving this receipt and the ledger driver did not rerun either executable.
+Compiler: GCC 14.2.0; -std=c++20 -O3 -DNDEBUG; no LTO or fast-math.
+
+Standalone bridge test command, from the instrument repository:
+g++ -std=c++20 -O3 -DNDEBUG -I Source/DSP \
+  Tests/YouKnowFirmwareAssignerAudioBridgeTests.cpp \
+  Source/DSP/YouKnowFirmwareAssignerAudioBridge.cpp \
+  Source/DSP/YouKnowFirmwareAssignerScheduler.cpp \
+  Source/DSP/YouKnowFirmwareUartTrace.cpp \
+  Source/DSP/YouKnowFirmwareSerialPinDecoder.cpp -o /tmp/bridge-test
+/tmp/bridge-test
+
+Captured stdout:
+PASS 46288 bridge assertions
+
+This suite includes independent scheduler/baud byte-time anchors, partitions
+from one state through 40000 states, one-byte/zero-byte output pressure and a
+same-time CPU route-write/receiver frame-end collision. It checks complete
+retained source/receiver state and guards against heap allocation.
+
+The separate scheduler ledger comparison used the task-start implementation
+(commit a0c6b08c0375b325f169e4dae7ece776081395b5) and the optimized Scheduler.cpp.
+Scheduler headers, decoded program, instruction index and UART sources are
+unchanged between those revisions. Both binaries use the same regression test
+source and ledger driver. Only the scheduler implementation differs. The driver
+first runs all scheduler assertions, including the independent raw-ROM anchors
+and the new UART/CPU coincidence test; that test passes both implementations.
+
+Ledger matrix: 3 UART phases (0/37/127) x 5 target partitions
+(1/7/83/4096/40006 states) x 2 output-capacity conditions x 2 input sequences
+(note/running-status note-off, SysEx cutoff) = 60 cases, each through state 40006.
+Every CPU and UART event field, output-pressure count and serialized final CPU,
+memory/stack, ADC and UART state is emitted. Patch-RAM availability remains
+false in every authored case; the complete fixed-size RAM arrays are emitted.
+
+Reproduction, from the candidate repository; choose a new evidence directory:
+mkdir /tmp/youknow-ledger-review
+git show a0c6b08c0375b325f169e4dae7ece776081395b5:Source/DSP/YouKnowFirmwareAssignerScheduler.cpp \
+  > /tmp/youknow-ledger-review/scheduler-baseline.cpp
+g++ -std=c++20 -O3 -DNDEBUG -Wno-return-type -I Source/DSP \
+  Docs/cpu-2026-10-09/SchedulerLedger.cpp \
+  /tmp/youknow-ledger-review/scheduler-baseline.cpp \
+  Source/DSP/YouKnowFirmwareUartTrace.cpp -o /tmp/youknow-ledger-review/baseline
+g++ -std=c++20 -O3 -DNDEBUG -Wno-return-type -I Source/DSP \
+  Docs/cpu-2026-10-09/SchedulerLedger.cpp \
+  Source/DSP/YouKnowFirmwareAssignerScheduler.cpp \
+  Source/DSP/YouKnowFirmwareUartTrace.cpp -o /tmp/youknow-ledger-review/candidate
+/tmp/youknow-ledger-review/baseline > /tmp/youknow-ledger-review/baseline.txt
+/tmp/youknow-ledger-review/candidate > /tmp/youknow-ledger-review/candidate.txt
+cmp /tmp/youknow-ledger-review/baseline.txt /tmp/youknow-ledger-review/candidate.txt
+wc -l -c /tmp/youknow-ledger-review/baseline.txt
+sha256sum /tmp/youknow-ledger-review/baseline.txt /tmp/youknow-ledger-review/candidate.txt
+
+The return-type warning suppression concerns only the imported test's renamed,
+unused main function. Its regression suites are called directly by the driver.
+The retained driver changes only the original temporary driver's absolute
+test-source include to the repository-relative equivalent, plus comments.
+
+Captured results:
+Scheduler assertions before ledger emission: 112759 (first output line)
+cmp: exit 0, no differences
+Each ledger: 209941 lines; 1911968 bytes
+Both SHA-256: 81041e28ce0032eaf72ed832003fa18dcd514eb7c5a3fa947b9c9ba3548eb7e2
+
+The raw ledgers remain local at /tmp/youknow-firmware-candidate/ledger-baseline.txt
+and ledger-candidate.txt. The generator, commands and digest are retained here
+to reproduce them without committing two redundant 1.9 MB text files.

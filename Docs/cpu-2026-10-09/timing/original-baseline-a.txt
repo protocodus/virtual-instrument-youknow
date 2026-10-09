@@ -1,0 +1,17 @@
+protocol host_rate=48000 requested_quality=1x kernel=poly-zoned early=cubic solver=rk4-single fidelity=active-product timing=original converter=firmware-serial-replay aging=0.5 block_size=256 preroll_seconds=2 timed_blocks=128 repetitions=7 snapshot_copy=outside-timer clock=thread-cpu comparison=external-a-b-a hash=fnv1a64-raw-interleaved-f32
+schema cpu_timing scenario quality fingerprint median_cpu_ms min_cpu_ms mad_cpu_ms median_cpu_x_realtime
+schema cpu_runs_cpu_ms scenario quality repetitions...
+cpu_timing idle-dry 1x 5db2198d7b19a37f 388.362 386.189 0.918 0.569
+cpu_runs_cpu_ms idle-dry 1x 387.427 389.280 391.327 388.336 388.362 389.161 386.189
+cpu_timing single-voice-plain-dry 1x 7f4d4022d8617b02 395.193 391.856 1.605 0.579
+cpu_runs_cpu_ms single-voice-plain-dry 1x 402.175 395.470 391.910 396.798 395.193 391.856 393.859
+cpu_timing six-voice-low-cutoff-dry 1x 0de17750c57f0ee3 424.583 424.192 0.306 0.622
+cpu_runs_cpu_ms six-voice-low-cutoff-dry 1x 424.583 424.337 424.811 425.531 425.194 424.192 424.277
+cpu_timing six-voice-plain-dry 1x 2afff01386d64de1 435.499 434.507 0.430 0.638
+cpu_runs_cpu_ms six-voice-plain-dry 1x 434.507 435.069 435.499 435.561 435.037 435.561 437.809
+cpu_timing single-voice-resonant-dry 1x c68de9efdc965765 472.719 471.539 0.344 0.692
+cpu_runs_cpu_ms single-voice-resonant-dry 1x 471.539 472.719 473.171 472.852 472.375 475.596 472.492
+cpu_timing six-voice-resonant-dry 1x 31777305d3ea2264 519.819 517.911 0.954 0.761
+cpu_runs_cpu_ms six-voice-resonant-dry 1x 522.456 519.133 517.911 519.086 519.819 520.773 521.898
+cpu_timing six-voice-full-mixer-chorus-ii 1x 04d059b4d8882bd3 644.498 643.533 0.902 0.944
+cpu_runs_cpu_ms six-voice-full-mixer-chorus-ii 1x 645.529 643.533 644.498 644.153 643.596 654.247 644.762

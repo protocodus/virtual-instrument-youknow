@@ -1,0 +1,588 @@
+{
+  "rate": 48000,
+  "factor": 1,
+  "affinity_cpu": 0,
+  "statistic": "1 - candidate median / faster bracketing baseline median",
+  "binary_sha256": {
+    "baseline": "e67c37e6380514374f0ee62116aebcd54c2d3c438c4e5e7d4cb406a9937f7ae1",
+    "candidate": "ff39393168ee483ce4a4fbd5d084c1f67a8823000a3e33d74448d3dd10d72628"
+  },
+  "runs": [
+    {
+      "mode": "original",
+      "label": "baseline-a",
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "/tmp/youknow-cpu-baseline/build/YouKnowOversamplingAudit",
+        "--original-cpu-benchmark",
+        "48000",
+        "1"
+      ],
+      "scenarios": {
+        "idle-dry": {
+          "quality": "1x",
+          "fingerprint": "5db2198d7b19a37f",
+          "median_cpu_ms": 388.362,
+          "minimum_cpu_ms": 386.189,
+          "mad_cpu_ms": 0.918,
+          "cpu_realtime_ratio": 0.569
+        },
+        "single-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "7f4d4022d8617b02",
+          "median_cpu_ms": 395.193,
+          "minimum_cpu_ms": 391.856,
+          "mad_cpu_ms": 1.605,
+          "cpu_realtime_ratio": 0.579
+        },
+        "six-voice-low-cutoff-dry": {
+          "quality": "1x",
+          "fingerprint": "0de17750c57f0ee3",
+          "median_cpu_ms": 424.583,
+          "minimum_cpu_ms": 424.192,
+          "mad_cpu_ms": 0.306,
+          "cpu_realtime_ratio": 0.622
+        },
+        "six-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "2afff01386d64de1",
+          "median_cpu_ms": 435.499,
+          "minimum_cpu_ms": 434.507,
+          "mad_cpu_ms": 0.43,
+          "cpu_realtime_ratio": 0.638
+        },
+        "single-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "c68de9efdc965765",
+          "median_cpu_ms": 472.719,
+          "minimum_cpu_ms": 471.539,
+          "mad_cpu_ms": 0.344,
+          "cpu_realtime_ratio": 0.692
+        },
+        "six-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "31777305d3ea2264",
+          "median_cpu_ms": 519.819,
+          "minimum_cpu_ms": 517.911,
+          "mad_cpu_ms": 0.954,
+          "cpu_realtime_ratio": 0.761
+        },
+        "six-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "04d059b4d8882bd3",
+          "median_cpu_ms": 644.498,
+          "minimum_cpu_ms": 643.533,
+          "mad_cpu_ms": 0.902,
+          "cpu_realtime_ratio": 0.944
+        }
+      }
+    },
+    {
+      "mode": "original",
+      "label": "candidate",
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "/tmp/youknow-cpu-candidate/YouKnowOversamplingAudit",
+        "--original-cpu-benchmark",
+        "48000",
+        "1"
+      ],
+      "scenarios": {
+        "idle-dry": {
+          "quality": "1x",
+          "fingerprint": "5db2198d7b19a37f",
+          "median_cpu_ms": 353.167,
+          "minimum_cpu_ms": 352.458,
+          "mad_cpu_ms": 0.63,
+          "cpu_realtime_ratio": 0.517
+        },
+        "single-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "7f4d4022d8617b02",
+          "median_cpu_ms": 356.368,
+          "minimum_cpu_ms": 356.094,
+          "mad_cpu_ms": 0.023,
+          "cpu_realtime_ratio": 0.522
+        },
+        "six-voice-low-cutoff-dry": {
+          "quality": "1x",
+          "fingerprint": "0de17750c57f0ee3",
+          "median_cpu_ms": 394.348,
+          "minimum_cpu_ms": 388.619,
+          "mad_cpu_ms": 5.729,
+          "cpu_realtime_ratio": 0.578
+        },
+        "six-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "2afff01386d64de1",
+          "median_cpu_ms": 403.693,
+          "minimum_cpu_ms": 400.801,
+          "mad_cpu_ms": 2.044,
+          "cpu_realtime_ratio": 0.591
+        },
+        "single-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "c68de9efdc965765",
+          "median_cpu_ms": 439.178,
+          "minimum_cpu_ms": 437.946,
+          "mad_cpu_ms": 1.232,
+          "cpu_realtime_ratio": 0.643
+        },
+        "six-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "31777305d3ea2264",
+          "median_cpu_ms": 487.825,
+          "minimum_cpu_ms": 485.367,
+          "mad_cpu_ms": 1.505,
+          "cpu_realtime_ratio": 0.715
+        },
+        "six-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "04d059b4d8882bd3",
+          "median_cpu_ms": 609.232,
+          "minimum_cpu_ms": 605.066,
+          "mad_cpu_ms": 2.004,
+          "cpu_realtime_ratio": 0.892
+        }
+      }
+    },
+    {
+      "mode": "original",
+      "label": "baseline-b",
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "/tmp/youknow-cpu-baseline/build/YouKnowOversamplingAudit",
+        "--original-cpu-benchmark",
+        "48000",
+        "1"
+      ],
+      "scenarios": {
+        "idle-dry": {
+          "quality": "1x",
+          "fingerprint": "5db2198d7b19a37f",
+          "median_cpu_ms": 390.623,
+          "minimum_cpu_ms": 388.821,
+          "mad_cpu_ms": 1.174,
+          "cpu_realtime_ratio": 0.572
+        },
+        "single-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "7f4d4022d8617b02",
+          "median_cpu_ms": 391.575,
+          "minimum_cpu_ms": 390.995,
+          "mad_cpu_ms": 0.175,
+          "cpu_realtime_ratio": 0.574
+        },
+        "six-voice-low-cutoff-dry": {
+          "quality": "1x",
+          "fingerprint": "0de17750c57f0ee3",
+          "median_cpu_ms": 426.594,
+          "minimum_cpu_ms": 425.607,
+          "mad_cpu_ms": 0.781,
+          "cpu_realtime_ratio": 0.625
+        },
+        "six-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "2afff01386d64de1",
+          "median_cpu_ms": 437.095,
+          "minimum_cpu_ms": 436.033,
+          "mad_cpu_ms": 0.885,
+          "cpu_realtime_ratio": 0.64
+        },
+        "single-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "c68de9efdc965765",
+          "median_cpu_ms": 469.529,
+          "minimum_cpu_ms": 467.335,
+          "mad_cpu_ms": 2.181,
+          "cpu_realtime_ratio": 0.688
+        },
+        "six-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "31777305d3ea2264",
+          "median_cpu_ms": 514.311,
+          "minimum_cpu_ms": 514.016,
+          "mad_cpu_ms": 0.257,
+          "cpu_realtime_ratio": 0.753
+        },
+        "six-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "04d059b4d8882bd3",
+          "median_cpu_ms": 636.725,
+          "minimum_cpu_ms": 636.204,
+          "mad_cpu_ms": 0.463,
+          "cpu_realtime_ratio": 0.933
+        }
+      }
+    },
+    {
+      "mode": "direct",
+      "label": "baseline-a",
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "/tmp/youknow-cpu-baseline/build/YouKnowOversamplingAudit",
+        "--cpu-benchmark",
+        "48000",
+        "1"
+      ],
+      "scenarios": {
+        "idle-dry": {
+          "quality": "1x",
+          "fingerprint": "7f0f862c808a2c38",
+          "median_cpu_ms": 329.358,
+          "minimum_cpu_ms": 328.955,
+          "mad_cpu_ms": 0.145,
+          "cpu_realtime_ratio": 0.482
+        },
+        "single-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "32e45f89a467ff11",
+          "median_cpu_ms": 334.62,
+          "minimum_cpu_ms": 334.034,
+          "mad_cpu_ms": 0.586,
+          "cpu_realtime_ratio": 0.49
+        },
+        "six-voice-low-cutoff-dry": {
+          "quality": "1x",
+          "fingerprint": "27eb1fcfb2745165",
+          "median_cpu_ms": 366.747,
+          "minimum_cpu_ms": 366.392,
+          "mad_cpu_ms": 0.204,
+          "cpu_realtime_ratio": 0.537
+        },
+        "six-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "5ddc386f6ac975af",
+          "median_cpu_ms": 378.502,
+          "minimum_cpu_ms": 377.548,
+          "mad_cpu_ms": 0.373,
+          "cpu_realtime_ratio": 0.554
+        },
+        "single-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "72a61a9c9cf2f531",
+          "median_cpu_ms": 417.844,
+          "minimum_cpu_ms": 414.341,
+          "mad_cpu_ms": 0.887,
+          "cpu_realtime_ratio": 0.612
+        },
+        "six-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "c20a2fc060443e9e",
+          "median_cpu_ms": 459.978,
+          "minimum_cpu_ms": 458.61,
+          "mad_cpu_ms": 0.691,
+          "cpu_realtime_ratio": 0.674
+        },
+        "six-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "2c766390ac8b4c81",
+          "median_cpu_ms": 589.619,
+          "minimum_cpu_ms": 585.891,
+          "mad_cpu_ms": 2.417,
+          "cpu_realtime_ratio": 0.864
+        },
+        "sixteen-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "82da669e14270f09",
+          "median_cpu_ms": 1368.423,
+          "minimum_cpu_ms": 1364.61,
+          "mad_cpu_ms": 3.813,
+          "cpu_realtime_ratio": 2.005
+        }
+      }
+    },
+    {
+      "mode": "direct",
+      "label": "candidate",
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "/tmp/youknow-cpu-candidate/YouKnowOversamplingAudit",
+        "--cpu-benchmark",
+        "48000",
+        "1"
+      ],
+      "scenarios": {
+        "idle-dry": {
+          "quality": "1x",
+          "fingerprint": "7f0f862c808a2c38",
+          "median_cpu_ms": 297.231,
+          "minimum_cpu_ms": 295.774,
+          "mad_cpu_ms": 0.654,
+          "cpu_realtime_ratio": 0.435
+        },
+        "single-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "32e45f89a467ff11",
+          "median_cpu_ms": 301.337,
+          "minimum_cpu_ms": 300.833,
+          "mad_cpu_ms": 0.424,
+          "cpu_realtime_ratio": 0.441
+        },
+        "six-voice-low-cutoff-dry": {
+          "quality": "1x",
+          "fingerprint": "27eb1fcfb2745165",
+          "median_cpu_ms": 333.524,
+          "minimum_cpu_ms": 331.194,
+          "mad_cpu_ms": 2.131,
+          "cpu_realtime_ratio": 0.489
+        },
+        "six-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "5ddc386f6ac975af",
+          "median_cpu_ms": 346.547,
+          "minimum_cpu_ms": 343.59,
+          "mad_cpu_ms": 1.614,
+          "cpu_realtime_ratio": 0.508
+        },
+        "single-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "72a61a9c9cf2f531",
+          "median_cpu_ms": 380.826,
+          "minimum_cpu_ms": 379.289,
+          "mad_cpu_ms": 1.536,
+          "cpu_realtime_ratio": 0.558
+        },
+        "six-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "c20a2fc060443e9e",
+          "median_cpu_ms": 428.552,
+          "minimum_cpu_ms": 424.57,
+          "mad_cpu_ms": 1.459,
+          "cpu_realtime_ratio": 0.628
+        },
+        "six-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "2c766390ac8b4c81",
+          "median_cpu_ms": 549.518,
+          "minimum_cpu_ms": 548.595,
+          "mad_cpu_ms": 0.923,
+          "cpu_realtime_ratio": 0.805
+        },
+        "sixteen-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "82da669e14270f09",
+          "median_cpu_ms": 1327.564,
+          "minimum_cpu_ms": 1325.722,
+          "mad_cpu_ms": 1.843,
+          "cpu_realtime_ratio": 1.945
+        }
+      }
+    },
+    {
+      "mode": "direct",
+      "label": "baseline-b",
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "/tmp/youknow-cpu-baseline/build/YouKnowOversamplingAudit",
+        "--cpu-benchmark",
+        "48000",
+        "1"
+      ],
+      "scenarios": {
+        "idle-dry": {
+          "quality": "1x",
+          "fingerprint": "7f0f862c808a2c38",
+          "median_cpu_ms": 330.613,
+          "minimum_cpu_ms": 329.76,
+          "mad_cpu_ms": 0.464,
+          "cpu_realtime_ratio": 0.484
+        },
+        "single-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "32e45f89a467ff11",
+          "median_cpu_ms": 335.81,
+          "minimum_cpu_ms": 335.51,
+          "mad_cpu_ms": 0.3,
+          "cpu_realtime_ratio": 0.492
+        },
+        "six-voice-low-cutoff-dry": {
+          "quality": "1x",
+          "fingerprint": "27eb1fcfb2745165",
+          "median_cpu_ms": 369.785,
+          "minimum_cpu_ms": 366.231,
+          "mad_cpu_ms": 2.912,
+          "cpu_realtime_ratio": 0.542
+        },
+        "six-voice-plain-dry": {
+          "quality": "1x",
+          "fingerprint": "5ddc386f6ac975af",
+          "median_cpu_ms": 381.069,
+          "minimum_cpu_ms": 378.034,
+          "mad_cpu_ms": 1.814,
+          "cpu_realtime_ratio": 0.558
+        },
+        "single-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "72a61a9c9cf2f531",
+          "median_cpu_ms": 426.471,
+          "minimum_cpu_ms": 414.136,
+          "mad_cpu_ms": 9.815,
+          "cpu_realtime_ratio": 0.625
+        },
+        "six-voice-resonant-dry": {
+          "quality": "1x",
+          "fingerprint": "c20a2fc060443e9e",
+          "median_cpu_ms": 467.887,
+          "minimum_cpu_ms": 460.066,
+          "mad_cpu_ms": 3.212,
+          "cpu_realtime_ratio": 0.685
+        },
+        "six-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "2c766390ac8b4c81",
+          "median_cpu_ms": 584.526,
+          "minimum_cpu_ms": 583.538,
+          "mad_cpu_ms": 0.624,
+          "cpu_realtime_ratio": 0.856
+        },
+        "sixteen-voice-full-mixer-chorus-ii": {
+          "quality": "1x",
+          "fingerprint": "82da669e14270f09",
+          "median_cpu_ms": 1388.281,
+          "minimum_cpu_ms": 1365.7,
+          "mad_cpu_ms": 12.941,
+          "cpu_realtime_ratio": 2.034
+        }
+      }
+    }
+  ],
+  "summary": [
+    {
+      "mode": "original",
+      "scenario": "idle-dry",
+      "baseline_cpu_ms": 388.362,
+      "candidate_cpu_ms": 353.167,
+      "reduction_percent": 9.06242114316026,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "original",
+      "scenario": "single-voice-plain-dry",
+      "baseline_cpu_ms": 391.575,
+      "candidate_cpu_ms": 356.368,
+      "reduction_percent": 8.991125582583159,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "original",
+      "scenario": "six-voice-low-cutoff-dry",
+      "baseline_cpu_ms": 424.583,
+      "candidate_cpu_ms": 394.348,
+      "reduction_percent": 7.121104707442361,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "original",
+      "scenario": "six-voice-plain-dry",
+      "baseline_cpu_ms": 435.499,
+      "candidate_cpu_ms": 403.693,
+      "reduction_percent": 7.303346276340483,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "original",
+      "scenario": "single-voice-resonant-dry",
+      "baseline_cpu_ms": 469.529,
+      "candidate_cpu_ms": 439.178,
+      "reduction_percent": 6.464137465417474,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "original",
+      "scenario": "six-voice-resonant-dry",
+      "baseline_cpu_ms": 514.311,
+      "candidate_cpu_ms": 487.825,
+      "reduction_percent": 5.149802356939681,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "original",
+      "scenario": "six-voice-full-mixer-chorus-ii",
+      "baseline_cpu_ms": 636.725,
+      "candidate_cpu_ms": 609.232,
+      "reduction_percent": 4.31787663433979,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "idle-dry",
+      "baseline_cpu_ms": 329.358,
+      "candidate_cpu_ms": 297.231,
+      "reduction_percent": 9.75443134825934,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "single-voice-plain-dry",
+      "baseline_cpu_ms": 334.62,
+      "candidate_cpu_ms": 301.337,
+      "reduction_percent": 9.946506484968031,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "six-voice-low-cutoff-dry",
+      "baseline_cpu_ms": 366.747,
+      "candidate_cpu_ms": 333.524,
+      "reduction_percent": 9.058833473757122,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "six-voice-plain-dry",
+      "baseline_cpu_ms": 378.502,
+      "candidate_cpu_ms": 346.547,
+      "reduction_percent": 8.44249171734891,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "single-voice-resonant-dry",
+      "baseline_cpu_ms": 417.844,
+      "candidate_cpu_ms": 380.826,
+      "reduction_percent": 8.859287198093057,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "six-voice-resonant-dry",
+      "baseline_cpu_ms": 459.978,
+      "candidate_cpu_ms": 428.552,
+      "reduction_percent": 6.83206588141172,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "six-voice-full-mixer-chorus-ii",
+      "baseline_cpu_ms": 584.526,
+      "candidate_cpu_ms": 549.518,
+      "reduction_percent": 5.989126232194963,
+      "fingerprints_match": true
+    },
+    {
+      "mode": "direct",
+      "scenario": "sixteen-voice-full-mixer-chorus-ii",
+      "baseline_cpu_ms": 1368.423,
+      "candidate_cpu_ms": 1327.564,
+      "reduction_percent": 2.9858457509118086,
+      "fingerprints_match": true
+    }
+  ],
+  "median_reduction_by_mode": {
+    "original": 7.121104707442361,
+    "direct": 8.650889457720982
+  }
+}

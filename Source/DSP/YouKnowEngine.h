@@ -3309,6 +3309,7 @@ private:
         // temperature-dependent equivalent settled CV above.
         double vcaJunctionCharge { 0.0 };
         bool vcaJunctionChargeInitialised { false };
+        VcaJunctionTemperatureCircuit::CurrentCache vcaJunctionCurrentCache {};
         // Oscillator compensation hold in the firmware's unshifted 12-bit DAC
         // code. Ideal acquisition occurs at the physical converter timestamp;
         // its current changes immediately while capacitor voltage is retained.

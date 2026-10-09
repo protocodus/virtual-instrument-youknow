@@ -34,6 +34,8 @@ void *operator new(std::size_t size) {
 void *operator new[](std::size_t size) { return ::operator new(size); }
 void operator delete(void *value) noexcept { std::free(value); }
 void operator delete[](void *value) noexcept { std::free(value); }
+void operator delete(void *value, std::size_t) noexcept { std::free(value); }
+void operator delete[](void *value, std::size_t) noexcept { std::free(value); }
 static void check(bool condition, const char *message) {
     ++assertions;
     if (!condition) {
@@ -612,6 +614,44 @@ void run() {
         check(f.uart.txBufferFull && f.uart.txBuffer == 0x95 && f.events.count == 1 &&
                   f.output.count == 1,
               "one CPU and one UART TXB ledger event");
+    }
+    {
+        Fixture f;
+        // The declared UART grid launches at128. An actual MOV PC,A takes
+        // ten states, so starting at118 makes its route write coincide with
+        // that launch. Four wire slots admit the launch but not the CPU write.
+        check(U::writeTxBuffer(f.uart, f.configuration.uart, 0xa6, f.output) == U::Status::Ok,
+              "coincident UART fixture queues its byte");
+        check(U::advanceTo(f.uart, f.configuration.uart, 118, f.output) == U::Status::Ok,
+              "coincident UART fixture reaches instruction start");
+        f.state.now = 118;
+        f.state.registers.pc = 0x07d7;
+        f.state.registers.a = 0xf9;
+        f.output.count = 0;
+        f.output.capacity = 4;
+        check(f.run(128).status == S::Status::OutputFull && f.state.now == 128 &&
+                  f.state.pending.remaining == 0 && f.state.registers.pc == 0x07d7 &&
+                  f.uart.portC == 0xfd && f.uart.frameOrdinal == 1 &&
+                  f.uart.frameStart == 128 && f.output.count == 4 && f.events.count == 0,
+              "UART launch precedes and survives a backpressured same-time CPU route write");
+        constexpr std::array<U::EventKind, 4> launch{
+            U::EventKind::TxBufferEmpty, U::EventKind::FrameBegin,
+            U::EventKind::PinLevels, U::EventKind::BitBegin};
+        for (std::size_t i = 0; i < launch.size(); ++i)
+            check(f.wire[i].kind == launch[i] && f.wire[i].states == 128 &&
+                      f.wire[i].frameOrdinal == 1,
+                  "launch event order follows the UART transaction before CPU routing");
+        check(f.wire[2].pinLevels == 4 && f.wire[3].value == 0,
+              "start bit first reaches the previously selected module branch");
+        f.output.count = 0;
+        f.output.capacity = f.wire.size();
+        check(f.run(128).status == S::Status::ReachedTarget && f.output.count == 2 &&
+                  f.events.count == 1 && f.uart.portC == 0xf9 && f.uart.frameOrdinal == 1,
+              "same-frontier retry commits only the retained CPU write");
+        check(f.wire[0].kind == U::EventKind::PortCWrite && f.wire[0].states == 128 &&
+                  f.wire[1].kind == U::EventKind::PinLevels && f.wire[1].states == 128 &&
+                  f.wire[1].pinLevels == 2 && f.events.entries[0].kind == S::EventKind::PortCWrite,
+              "retry emits exact same-time route events without replaying the UART launch");
     }
     {
         Fixture f;

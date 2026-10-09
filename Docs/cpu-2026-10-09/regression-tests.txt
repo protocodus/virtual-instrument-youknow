@@ -1,0 +1,22 @@
+Internal ctest changing into directory: /tmp/youknow-cpu-candidate
+Test project /tmp/youknow-cpu-candidate
+    Start  9: YouKnow.ChorusNonlinear
+    Start 49: YouKnow.FirmwareLiveAssignerAudio
+1/8 Test #49: YouKnow.FirmwareLiveAssignerAudio ...   Passed   13.28 sec
+    Start 48: YouKnow.OriginalPerformance
+2/8 Test #48: YouKnow.OriginalPerformance .........   Passed   11.41 sec
+    Start 56: YouKnow.VcaJunctionTemperature
+3/8 Test #56: YouKnow.VcaJunctionTemperature ......   Passed    5.93 sec
+    Start 15: YouKnow.ChorusOutputRecovery
+4/8 Test #15: YouKnow.ChorusOutputRecovery ........   Passed    3.71 sec
+    Start 14: YouKnow.ChorusDenseInput
+5/8 Test #14: YouKnow.ChorusDenseInput ............   Passed    1.87 sec
+    Start 57: YouKnow.HardwareRealismProfile
+6/8 Test #57: YouKnow.HardwareRealismProfile ......   Passed    1.35 sec
+    Start 45: YouKnow.FirmwareAssignerScheduler
+7/8 Test #45: YouKnow.FirmwareAssignerScheduler ...   Passed    0.02 sec
+8/8 Test  #9: YouKnow.ChorusNonlinear .............   Passed   42.27 sec
+
+100% tests passed, 0 tests failed out of 8
+
+Total Test time (real) =  42.28 sec

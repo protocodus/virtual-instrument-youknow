@@ -117,6 +117,13 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-09
+
+- Reduced CPU usage by reusing temperature-interpolated voice-amplifier
+  table cells, simplifying near-zero chorus calculations, and removing
+  redundant firmware UART work. Existing circuit, timing and quality settings
+  are preserved. See the [CPU measurements and audio comparisons](Docs/cpu-optimization-2026-10-09.md).
+
 ### Unreleased — 2026-10-07
 
 - A11 Brass Set 1 receives a 0.38 dB output-volume trim to restore the factory

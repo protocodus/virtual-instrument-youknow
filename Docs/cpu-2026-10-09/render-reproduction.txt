@@ -1,0 +1,64 @@
+Compile the same RenderComparison.cpp file against each frozen revision's own
+Source directory and matching Release/IPO libYouKnowDSP.a, using that library's
+compiler and link flags. Do not combine one revision's headers with another's
+archive. Example for a GCC Release/LTO build, from this repository:
+
+g++ -std=c++20 -O3 -DNDEBUG -flto -I /path/to/baseline/Source \
+  Docs/cpu-2026-10-09/RenderComparison.cpp /path/to/baseline-build/libYouKnowDSP.a \
+  -o /tmp/render-baseline
+g++ -std=c++20 -O3 -DNDEBUG -flto -I /path/to/candidate/Source \
+  Docs/cpu-2026-10-09/RenderComparison.cpp /path/to/candidate-build/libYouKnowDSP.a \
+  -o /tmp/render-candidate
+
+/tmp/render-baseline /tmp/baseline-original-48000-1.f32 original 48000 1
+/tmp/render-candidate /tmp/candidate-original-48000-1.f32 original 48000 1
+cmp /tmp/baseline-original-48000-1.f32 /tmp/candidate-original-48000-1.f32
+
+Repeat for original/direct, 44100/48000/96000 Hz and requested factors 1/2/4.
+The engine caps the applied factor at high host rates; metadata records both.
+The optional sixth CLI argument changes callback frames (1..256, default 173).
+Keep identical CLI arguments when comparing revisions. At 44.1 kHz, event times
+are floor(tick * rate / 8) host frames; every render contains exactly 4 * rate
+frames. Files are native-endian IEEE float32, stereo L/R interleaved. Each file
+must contain 4 * rate * 2 * 4 bytes. There is no normalization or output trimming.
+
+This four-second control-transition fixture includes idle, single/six-voice
+notes, sustain and releases, Off/I/II chorus edits, cutoff/resonance changes,
+Unit Character/Aging changes, pitch/modulation input, cold reset, host-stop
+reset, local-keyboard input and panic/restart. Both timing modes use the current
+product profile and Poly/Cubic/Normal kernels. Original firmware health and
+finite output are checked after every callback; success also requires reaching
+six active voices and nonzero output. The final stdout line records completion,
+configuration, peak/RMS and observed voice/temperature coverage. A failed render
+can leave a partial file; do not use it as evidence. Existing files are refused.
+
+Metadata also reports process_cpu_seconds and max_callback_cpu_us, measured by
+std::clock immediately around engine.process calls. Preparation, event/control
+delivery, audio validation and file writes are outside those intervals. Clock
+read overhead is not subtracted; process CPU time includes any other threads
+in the renderer process and is not a DAW deadline measurement. Compare the same
+callback size and quiet-machine baseline/candidate/baseline runs. Audio data and
+the authored score are unchanged by this additional diagnostic metadata.
+
+For intentional floating-point reassociation, report peak and RMS differences
+in raw sample units and relative to baseline RMS; exact cmp failure alone does
+not establish audibility. Keep matching builds on the same architecture, retain
+source/binary hashes and do not run these renders during CPU timing windows.
+
+The complete audio matrix can be reproduced with NumPy installed:
+
+python3 Docs/cpu-2026-10-09/compare-audio.py \
+  --baseline /tmp/render-baseline --candidate /tmp/render-candidate \
+  --output /tmp/new-audio-comparison
+
+For the separate transition CPU comparison, stop other builds and tests first:
+
+python3 Docs/cpu-2026-10-09/benchmark-transitions.py \
+  --baseline /tmp/render-baseline --candidate /tmp/render-candidate \
+  --output /tmp/new-transition-timing --cpu 0
+
+Use an allowed Linux CPU number, or omit --cpu on other platforms. The driver
+runs three serial baseline/candidate/baseline brackets per timing mode at
+48 kHz, requested/applied 1x quality and 173-frame callbacks. It compares each
+candidate's process CPU against the faster baseline in its bracket, verifies
+identical audio and reports the median of the three relative reductions.

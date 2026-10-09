@@ -120,6 +120,12 @@ public:
     static constexpr double minimumCharge = -.01;
     static constexpr double maximumCharge = 1.01;
     static constexpr double capacitanceFarads = .1e-6;
+    struct CurrentCache
+    {
+        double celsius {}, span {}, first {}, difference {};
+        std::size_t index {};
+        bool valid {};
+    };
 
     explicit VcaJunctionTemperatureCircuit(double span) noexcept : span_(span)
     {
@@ -162,9 +168,10 @@ public:
             }
         }
     }
-    [[nodiscard]] double emitterAmpsAtCharge(double charge, double celsius) const noexcept
+    [[nodiscard]] double emitterAmpsAtCharge(double charge, double celsius,
+                                            CurrentCache* cache = nullptr) const noexcept
     {
-        return sample(charge, celsius, true);
+        return cache ? sampleCached(charge, celsius, *cache) : sample(charge, celsius, true);
     }
     [[nodiscard]] double emitterAmpsAtControl(double control, double celsius) const noexcept
     {
@@ -175,21 +182,23 @@ public:
         return control - EvidenceVcaCalibration::inputOhms
             * emitterAmpsAtControl(control, celsius) / span_;
     }
-    [[nodiscard]] double controlAtCharge(double charge, double celsius) const noexcept
+    [[nodiscard]] double controlAtCharge(double charge, double celsius,
+                                         CurrentCache* cache = nullptr) const noexcept
     {
         return charge + EvidenceVcaCalibration::inputOhms
-            * emitterAmpsAtCharge(charge, celsius) / span_;
+            * emitterAmpsAtCharge(charge, celsius, cache) / span_;
     }
     template<class Drive>
     [[nodiscard]] double advanceDriven(double charge, double seconds, double celsius,
-                                        const Drive& drive, int steps) const noexcept
+                                        const Drive& drive, int steps,
+                                        CurrentCache* cache = nullptr) const noexcept
     {
         if (!(seconds > 0.0)) return charge;
         const double dt = seconds / std::max(steps, 1);
         const auto derivative = [&](double q, double target) noexcept {
             return (std::clamp(target, 0.0, 1.0) - q)
                        / (EvidenceVcaCalibration::inputOhms * capacitanceFarads)
-                - emitterAmpsAtCharge(q, celsius) / (span_ * capacitanceFarads);
+                - emitterAmpsAtCharge(q, celsius, cache) / (span_ * capacitanceFarads);
         };
         for (int step = 0; step < std::max(steps, 1); ++step)
         {
@@ -204,7 +213,7 @@ public:
         return charge;
     }
     [[nodiscard]] double advance(double charge, double target, double seconds,
-                                 double celsius) const noexcept
+                                 double celsius, CurrentCache* cache = nullptr) const noexcept
     {
         const double thermal = EvidenceVcaCalibration::thermalVolts
             * ((std::clamp(celsius, 25.0, 64.0) + 273.15) / 298.15);
@@ -213,7 +222,7 @@ public:
                 / (EvidenceVcaCalibration::inputOhms * capacitanceFarads)
                     > .5 * thermal / span_ ? 8 : 1;
         return advanceDriven(charge, seconds, celsius,
-            [target](double) noexcept { return target; }, steps);
+            [target](double) noexcept { return target; }, steps, cache);
     }
 private:
     static double solveEmitter(double supply, double series, double thermal, double logIs) noexcept
@@ -236,6 +245,36 @@ private:
         std::array<float, tableSteps + 1> capacitorTemperatureSlope {};
         std::array<float, tableSteps + 1> controlTemperatureSlope {};
     };
+    [[nodiscard]] double sampleCached(double charge, double celsius, CurrentCache& cache) const noexcept
+    {
+        constexpr double inverseChargeSpan = 1.0 / (maximumCharge - minimumCharge);
+        const double normalized = (charge - minimumCharge) * inverseChargeSpan;
+        const double position = std::clamp(normalized, 0.0, 1.0) * tableSteps;
+        const auto index = static_cast<std::size_t>(std::min(static_cast<int>(position), tableSteps - 1));
+        if (!cache.valid || cache.index != index || cache.celsius != celsius || cache.span != span_)
+        {
+            const double temperature = std::clamp(celsius,
+                static_cast<double>(minimumCelsius), static_cast<double>(maximumCelsius)) - minimumCelsius;
+            const auto low = static_cast<std::size_t>(std::min(static_cast<int>(temperature),
+                maximumCelsius - minimumCelsius - 1));
+            const double fraction = temperature - low;
+            const auto knot = [&](std::size_t at) {
+                const double first = rows_[low].capacitor[at];
+                const double difference = rows_[low+1].capacitor[at] - first;
+                return first + fraction * difference + fraction * (1-fraction)
+                    * ((1-fraction) * rows_[low].capacitorTemperatureSlope[at]
+                        - fraction * rows_[low+1].capacitorTemperatureSlope[at]
+                        + (2*fraction-1) * difference);
+            };
+            const double first = knot(index);
+            cache = {celsius, span_, first, knot(index+1)-first, index, true};
+        }
+        // Temperature interpolation and charge interpolation commute. Cache
+        // only the two knots of the current cell, preserving all 8192 cells,
+        // every RK4 evaluation and the exact temperature. This reassociation
+        // changes double rounding only; no control is quantized or held.
+        return cache.first + (position-index) * cache.difference;
+    }
     [[nodiscard]] double sample(double coordinate, double celsius, bool capacitor) const noexcept
     {
         const double temperature = std::clamp(celsius,

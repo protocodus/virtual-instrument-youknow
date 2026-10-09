@@ -1154,11 +1154,30 @@ bool followerResidualCurrent(
         // trials are shortened, and failure falls back to the linear interval.
         if (!std::isfinite(y) || y > 80.0)
             return false;
-        const double exponentialMinusOne = std::expm1(y);
-        const double remainder = std::abs(y) < 1.0e-3
-            ? y * y * (0.5 + y * (1.0 / 6.0 + y * (1.0 / 24.0
-                + y * (1.0 / 120.0 + y / 720.0))))
-            : exponentialMinusOne - y;
+        double exponentialMinusOne;
+        double remainder;
+        if (std::abs(y) <= 0.25)
+        {
+            // Both Newton terms share exp(y)-1-y. Evaluate that residual
+            // directly near the bias point, avoiding cancellation and a
+            // libm call for each port. Taylor degree 12 has absolute
+            // truncation error <3.1e-18 over this interval, below double
+            // rounding at its endpoints and far below the solve tolerance.
+            // Pair even/odd coefficients to shorten the dependency chain.
+            const double squared = y * y;
+            remainder = squared * ((0.5 + y * (1.0 / 6.0))
+                + squared * ((1.0 / 24.0 + y * (1.0 / 120.0))
+                + squared * ((1.0 / 720.0 + y * (1.0 / 5040.0))
+                + squared * ((1.0 / 40320.0 + y * (1.0 / 362880.0))
+                + squared * ((1.0 / 3628800.0 + y * (1.0 / 39916800.0))
+                + squared * (1.0 / 479001600.0))))));
+            exponentialMinusOne = y + remainder;
+        }
+        else
+        {
+            exponentialMinusOne = std::expm1(y);
+            remainder = exponentialMinusOne - y;
+        }
         const double scale = collectorCurrent[port] / Chorus::nodeVoltsPerUnit;
         current[port] = scale * remainder;
         derivative[port] = scale * exponentialMinusOne;

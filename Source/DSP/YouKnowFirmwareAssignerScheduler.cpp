@@ -395,9 +395,14 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
         previous = event.states;
     }
     const auto finish = [&](Status status) { result.status = status; return result; };
+    // Validate and drain the caller's current UART frontier once, including
+    // retries after output pressure. The advance at the bottom of the loop
+    // already drains each subsequent endpoint before ADC/input/CPU work.
+    // CPU writes emit their same-time pin changes directly and can schedule
+    // only future UART launches, so repeating this advance would do no work.
+    const auto peripheral = Uart::advanceTo(uart, configuration.uart, state.now, uartEvents);
+    if (peripheral != Uart::Status::Ok) return finish(uartStatus(peripheral));
     for (;;) {
-        const auto peripheral = Uart::advanceTo(uart, configuration.uart, state.now, uartEvents);
-        if (peripheral != Uart::Status::Ok) return finish(uartStatus(peripheral));
         if (state.io.statesUntilConversion == 0) {
             if (events.count == events.entries.size()) return finish(Status::OutputFull);
             Io::Conversion conversion;

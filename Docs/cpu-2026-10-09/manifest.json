@@ -1,0 +1,39 @@
+{
+  "baseline_commit": "a0c6b08c0375b325f169e4dae7ece776081395b5",
+  "compiler": "g++ (Debian 14.2.0-19) 14.2.0",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "cpu_model": "AMD EPYC 7763 64-Core Processor",
+  "affinity_cpu": 0,
+  "source_hashes": {
+    "baseline": {
+      "Source/DSP/YouKnowEngine.cpp": "9d8892087b4f069fe6c373230ffad866bd2fd1d0aad15190e024eca14fc06890",
+      "Source/DSP/YouKnowEngine.h": "ed5b0419aa5101f8a9d5c7a94bfce758808268cfea516c15dbdd7a8f748541dc",
+      "Source/DSP/YouKnowEvidenceVca.h": "0a72a72866cd078353cb65bba7e33c99483ff926228b42ad7dd79b9f1cc09e93",
+      "Source/DSP/YouKnowChorus.cpp": "18e3e2e89f349da50185c53cb037ccf61f7e03b84ecfd801e5526f040c5f2dd4",
+      "Source/DSP/YouKnowFirmwareAssignerScheduler.cpp": "f167becf32ff3b9c5eb5e0960034b8bb277f14ddde26195397aacedf192d67d2",
+      "Tools/AuditOversamplingDomains.cpp": "ae25e9d19dc7a957ef01f724ec3acfd9d0696a3b7ed3a4f799f4fea84fa5e55e"
+    },
+    "candidate": {
+      "Source/DSP/YouKnowEngine.cpp": "1bdeabbb3c97100f202dc59ae8b56845bf0740df409788b8348c5a8e8a0c91dd",
+      "Source/DSP/YouKnowEngine.h": "3f34fa0dc21851ece0a5e8f4e3d57c1a7130b7c2ad53609983a0f83e54a08394",
+      "Source/DSP/YouKnowEvidenceVca.h": "23d8445c2f322686efd74849a264b6999ce4c419c98f4c8fdc3d405f734cb80d",
+      "Source/DSP/YouKnowChorus.cpp": "b31a9a528da7e54c14176323e5c101968b83f5c3452d64493d6189ca9279aba7",
+      "Source/DSP/YouKnowFirmwareAssignerScheduler.cpp": "04c037f5bf03b2c11411195a582eb06d9770ab2292bd6250fb72b79d5a8fc693",
+      "Tools/AuditOversamplingDomains.cpp": "ae25e9d19dc7a957ef01f724ec3acfd9d0696a3b7ed3a4f799f4fea84fa5e55e"
+    }
+  },
+  "binary_hashes": {
+    "baseline": "e67c37e6380514374f0ee62116aebcd54c2d3c438c4e5e7d4cb406a9937f7ae1",
+    "candidate": "ff39393168ee483ce4a4fbd5d084c1f67a8823000a3e33d74448d3dd10d72628"
+  },
+  "dsp_compile_command": "/usr/bin/g++ -DYOUKNOW_HARDWARE_REALISM_CANDIDATE=1 -I/workspace/virtual-instrument-youknow/Source -O3 -DNDEBUG -std=c++20 -flto=auto -fno-fat-lto-objects -fPIC -Wall -Wextra -Wpedantic -o CMakeFiles/YouKnowDSP.dir/Source/DSP/YouKnowEngine.cpp.o -c /workspace/virtual-instrument-youknow/Source/DSP/YouKnowEngine.cpp",
+  "renderer_sha256": {
+    "baseline": "7b74596f12b29288816de8d43b8263c56f71e891375c6d9b1412f7a97d5eece0",
+    "candidate": "750e3c5c256a92828f664330e02b12bd46cf0340d51c2618ad91fa6bb273b9a1"
+  },
+  "renderer_source_sha256": "b4ecf0bfea2718388b9eb3e9db45d8ec49f6c84c312a5c3daf24c54b85656825",
+  "renderer_link_commands": {
+    "baseline": "g++ -std=c++20 -O3 -DNDEBUG -flto -I /tmp/youknow-cpu-baseline/Source Docs/cpu-2026-10-09/RenderComparison.cpp /tmp/youknow-cpu-baseline/build/libYouKnowDSP.a -o /tmp/youknow-cpu-evidence/render-baseline-timed",
+    "candidate": "g++ -std=c++20 -O3 -DNDEBUG -flto -I /workspace/virtual-instrument-youknow/Source Docs/cpu-2026-10-09/RenderComparison.cpp /tmp/youknow-cpu-candidate/libYouKnowDSP.a -o /tmp/youknow-cpu-evidence/render-candidate-final"
+  }
+}

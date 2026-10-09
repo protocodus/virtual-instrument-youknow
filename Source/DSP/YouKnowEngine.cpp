@@ -9798,7 +9798,8 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
         const auto& circuit = voiceVcaJunctionCircuit();
         const double emitter = parameters.enableCoupledVoiceVcaControl
             && voice.vcaJunctionChargeInitialised
-            ? circuit.emitterAmpsAtCharge(voice.vcaJunctionCharge, card.vcaJunctionCelsius)
+            ? circuit.emitterAmpsAtCharge(voice.vcaJunctionCharge, card.vcaJunctionCelsius,
+                &voice.vcaJunctionCurrentCache)
             : circuit.emitterAmpsAtControl(voice.vcaControl, card.vcaJunctionCelsius);
         // Preserve the existing declared off-current/retirement boundary.
         // The denominator is the fixed warm service current, never the
@@ -12556,13 +12557,16 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                         if (voiceVcaEvent)
                         {
                             voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
-                                physicalHoldEvent.previousTarget, dt * physicalHoldEvent.position, temperature);
+                                physicalHoldEvent.previousTarget, dt * physicalHoldEvent.position, temperature,
+                                &voice.vcaJunctionCurrentCache);
                             voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
-                                physicalHoldEvent.target, dt * (1.0 - physicalHoldEvent.position), temperature);
+                                physicalHoldEvent.target, dt * (1.0 - physicalHoldEvent.position), temperature,
+                                &voice.vcaJunctionCurrentCache);
                         }
                         else voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
-                            voice.vcaControlTarget, dt, temperature);
-                        voice.vcaControl = circuit.controlAtCharge(voice.vcaJunctionCharge, temperature);
+                            voice.vcaControlTarget, dt, temperature, &voice.vcaJunctionCurrentCache);
+                        voice.vcaControl = circuit.controlAtCharge(voice.vcaJunctionCharge, temperature,
+                            &voice.vcaJunctionCurrentCache);
                     }
                     else
                     {

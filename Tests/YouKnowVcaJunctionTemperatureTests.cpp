@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <stdexcept>
@@ -172,6 +173,125 @@ void checkPreparedCurrentAccuracy()
     }
     std::cout << "Tr20 prepared-grid maximum relative current error " << maximumRelative << '\n';
 }
+void checkCachedCurrentAccuracy()
+{
+    using Circuit = youknow::VcaJunctionTemperatureCircuit;
+    const auto& circuit = Probe::circuit();
+    Circuit::CurrentCache cache;
+    double maximumRelative = 0;
+    const auto check = [&](const Circuit& selected, double charge, double temperature,
+                           Circuit::CurrentCache& selectedCache) {
+        const double expected = selected.emitterAmpsAtCharge(charge, temperature);
+        const double actual = selected.emitterAmpsAtCharge(charge, temperature, &selectedCache);
+        maximumRelative = std::max(maximumRelative, std::abs(actual - expected) / expected);
+        // This checks numerical reuse against the unchanged interpolation,
+        // separately from the physical-junction oracle above. Its budget is
+        // double rounding, not the prepared grid's physical error allowance.
+        near(actual, expected, std::abs(expected) * 4e-15,
+             "cached C58 current changed the prepared interpolation");
+        const double expectedControl = selected.controlAtCharge(charge, temperature);
+        near(selected.controlAtCharge(charge, temperature, &selectedCache), expectedControl,
+             4e-15 * std::max(1.0, std::abs(expectedControl)),
+             "cached C58 current changed the control coordinate");
+    };
+    const std::array temperatures {24.0, 25.0, std::nextafter(25.0, 26.0), 25.37,
+        std::nextafter(26.0, 25.0), 26.0, std::nextafter(26.0, 27.0),
+        39.73, 40.0, 63.7, std::nextafter(64.0, 63.0), 64.0, 65.0};
+    constexpr double width = (Circuit::maximumCharge - Circuit::minimumCharge)
+                           / Circuit::tableSteps;
+    for (double temperature : temperatures)
+    {
+        // Repeated calls within a cell must retain charge interpolation;
+        // crossing either side of every knot must refresh the cached pair.
+        for (int cell = 0; cell <= Circuit::tableSteps; ++cell)
+        {
+            const double knot = Circuit::minimumCharge + cell * width;
+            for (double charge : {std::nextafter(knot, -std::numeric_limits<double>::infinity()),
+                                  knot, std::nextafter(knot, std::numeric_limits<double>::infinity()),
+                                  knot + .125 * width, knot + .875 * width})
+                check(circuit, charge, temperature, cache);
+        }
+        for (double charge : {-1.0, Circuit::minimumCharge, Circuit::maximumCharge, 2.0})
+            check(circuit, charge, temperature, cache);
+    }
+    // Revisit one charge cell while crossing all temperature boundaries.
+    // A warm cache is copied just as a voice/engine snapshot copies it.
+    for (double temperature : temperatures)
+    {
+        check(circuit, .02003, temperature, cache);
+        auto copied = cache;
+        check(circuit, .02006, temperature, copied);
+        check(circuit, .02003, 63.7, copied);
+        check(circuit, .02003, temperature, copied);
+    }
+    // Identical indices and temperatures in a different immutable circuit
+    // are insufficient: the DAC voltage span changes the prepared currents.
+    const auto other = std::make_unique<Circuit>(static_cast<double>(span) * 1.02);
+    for (double temperature : {25.0, 25.37, 40.0, 63.7, 64.0})
+        for (double charge : {Circuit::minimumCharge, 0.0, .02003, .5, Circuit::maximumCharge})
+        {
+            check(circuit, charge, temperature, cache);
+            auto copied = cache;
+            check(*other, charge, temperature, copied);
+            check(circuit, charge, temperature, copied);
+            check(*other, charge, temperature, cache);
+            check(circuit, charge, temperature, cache);
+        }
+    std::cout << "Tr20 cached-grid maximum relative current difference " << maximumRelative << '\n';
+}
+void checkCachedCapacitorTrajectories()
+{
+    using Circuit = youknow::VcaJunctionTemperatureCircuit;
+    const auto& circuit = Probe::circuit();
+    double maximumChargeDifference = 0;
+    constexpr std::array targets {0.0, .005, .02, 1.0, .05, -.2, 1.2};
+    constexpr std::array temperatures {25.0, 25.37, 40.0, 63.7, 64.0, 24.0, 65.0};
+    constexpr std::array fractions {1.0, .5, .03125, 0.0};
+    for (double rate : {8000.0, 44100.0, 48000.0, 192000.0, 768000.0})
+        for (double initial : {-.02, Circuit::minimumCharge, 0.0, .02, .07999,
+                               .08, .5, Circuit::maximumCharge, 1.02})
+        {
+            Circuit::CurrentCache cache;
+            double actual = initial, expected = initial;
+            for (int sample = 0; sample < 420; ++sample)
+            {
+                const double target = targets[static_cast<std::size_t>(sample / 17) % targets.size()];
+                const double temperature = temperatures[static_cast<std::size_t>(sample / 13) % temperatures.size()];
+                const double dt = fractions[static_cast<std::size_t>(sample) % fractions.size()] / rate;
+                if (sample % 3 == 0)
+                {
+                    // Exercise the same cache across varying drive times and
+                    // multiple RK4 substeps, as physical hold acquisition does.
+                    const auto drive = [target, dt](double t) {
+                        return target + .3 * (dt > 0.0 ? t / dt : 0.0);
+                    };
+                    expected = circuit.advanceDriven(expected, dt, temperature, drive, 8);
+                    actual = circuit.advanceDriven(actual, dt, temperature, drive, 8, &cache);
+                }
+                else
+                {
+                    expected = circuit.advance(expected, target, dt, temperature);
+                    actual = circuit.advance(actual, target, dt, temperature, &cache);
+                }
+                maximumChargeDifference = std::max(maximumChargeDifference, std::abs(actual - expected));
+                near(actual, expected, 4e-15,
+                     "cached C58 integration changed the uncached trajectory");
+                near(circuit.controlAtCharge(actual, temperature, &cache),
+                     circuit.controlAtCharge(expected, temperature), 8e-15,
+                     "cached C58 integration changed the output control");
+                if (sample == 97)
+                {
+                    auto copied = cache;
+                    // Unrelated gain/control reads may replace the cached
+                    // cell or temperature between successive integration calls.
+                    (void)circuit.emitterAmpsAtCharge(.91, 52.25, &copied);
+                    cache = copied;
+                }
+            }
+        }
+    std::cout << "Tr20 cached-grid maximum charge trajectory difference "
+              << maximumChargeDifference << '\n';
+}
 void checkPhysicalCapacitorTrajectory()
 {
     const auto& circuit=Probe::circuit();
@@ -310,6 +430,8 @@ int main()
     try
     {
         checkPreparedCurrentAccuracy();
+        checkCachedCurrentAccuracy();
+        checkCachedCapacitorTrajectories();
         checkPhysicalCapacitorTrajectory();
         checkFixedServiceAndPhysicalPair();
         checkChargeAndLifecycle();

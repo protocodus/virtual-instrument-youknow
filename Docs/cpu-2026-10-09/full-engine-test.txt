@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /tmp/youknow-cpu-candidate
+Test project /tmp/youknow-cpu-candidate
+    Start 73: YouKnow.Engine
+1/1 Test #73: YouKnow.Engine ...................   Passed  827.54 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) = 827.54 sec
