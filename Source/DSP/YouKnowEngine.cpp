@@ -4382,6 +4382,12 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
 }
 
 #if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
+// GCC drops the SIMD types' may_alias attribute from std::array's template
+// argument and warns. These arrays never type-pun, so the attribute is moot.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-attributes"
+#endif
 bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     OtaCascade& first, float firstInput, float firstOmegaStep,
     float firstFeedback, float firstHeadroom,
@@ -5604,6 +5610,9 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
     return true;
 }
 #undef YOUKNOW_MERSON_NOINLINE
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #endif
 
 void YouKnowEngine::HighPass::reset() noexcept

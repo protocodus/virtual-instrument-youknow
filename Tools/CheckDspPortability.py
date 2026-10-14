@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 
@@ -99,6 +100,12 @@ int main() {
 '''.replace("    PARAMETER_CHECKS", checks)
     common = [args.cxx, "-Wall", "-Wextra", "-Wpedantic", "-Werror",
               "-pedantic-errors", "-I", str(source)]
+    if sys.platform == "darwin":
+        # Xcode builds hand over the toolchain's raw clang++, which finds the
+        # standard headers only through an SDK sysroot.
+        sdk = subprocess.run(["xcrun", "--show-sdk-path"], check=True,
+                             capture_output=True, text=True).stdout.strip()
+        common += ["-isysroot", sdk]
     sources = sorted(dsp.glob("*.cpp"))
     subprocess.run(common + ["-std=c++17", "-fsyntax-only"]
                    + [str(path) for path in sources], check=True)
