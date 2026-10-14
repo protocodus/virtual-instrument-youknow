@@ -651,6 +651,10 @@ if(BUILD_TESTING)
     if(NOT MSVC)
         target_compile_options(YouKnowEmbeddedDSP PRIVATE
             -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
+    else()
+        # MSVC's legacy C++17 lambda processor rejects constexpr locals used as
+        # constants inside lambdas; its C++20 mode already uses the conforming one.
+        target_compile_options(YouKnowEmbeddedDSP PUBLIC /Zc:lambda)
     endif()
     add_executable(YouKnowHostAdapterTests Tests/YouKnowHostAdapterTests.cpp)
     target_link_libraries(YouKnowHostAdapterTests PRIVATE YouKnowDSP)
