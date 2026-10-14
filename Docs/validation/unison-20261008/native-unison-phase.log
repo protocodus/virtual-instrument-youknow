@@ -1,0 +1,8 @@
+/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-unison-phase-tests
+steady Character 0: relative-phase error 7.77156e-16 cycles; finite-window Hz spread 2.84217e-14
+steady Character 1: relative-phase error 4.55191e-15 cycles; finite-window Hz spread 6.4452e-05
+shared LFO: CH1/CH6 lag span 0.0217717 cycles; transient active-count spread 12.8959 cents; differing samples 13532/48000
+glide: CH1/CH6 lag span 0.0352839 cycles; transient active-count spread 4.04967 cents; differing samples 3216/48000
+product Character 0 Aging 0: ramp-scale range 1..1; relative-phase error 9.99201e-16 cycles
+product Character 1 Aging 0.5: ramp-scale range 0.997861..1.00808; relative-phase error 4.44089e-15 cycles
+product Character 2 Aging 1: ramp-scale range 0.995838..1.01635; relative-phase error 2.88658e-15 cycles

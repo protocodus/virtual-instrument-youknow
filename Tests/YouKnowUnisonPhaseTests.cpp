@@ -1,4 +1,5 @@
 #include "DSP/YouKnowEngine.h"
+#include "DSP/YouKnowActiveProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -55,6 +56,14 @@ struct YouKnowTestAccess
             if (engine.voices_[slot].dcoResetPending != expected)
                 return false;
         return true;
+    }
+
+    static std::array<float, 6> rampScales(const YouKnowEngine& engine)
+    {
+        std::array<float, 6> result {};
+        for (std::size_t slot = 0; slot < result.size(); ++slot)
+            result[slot] = engine.voices_[slot].rampCurrentScale;
+        return result;
     }
 };
 }
@@ -259,6 +268,44 @@ void checkSharedModulation()
     }
 }
 
+void checkProductVariationDoesNotDetuneDcos()
+{
+    // The original common clock / equal integer counts is the frequency
+    // oracle. C54 and resistor tolerances alter ramp voltage, while Character
+    // and Aging also affect the analogue cards; none may invent six clocks.
+    struct Scenario { float character, aging; };
+    for (const auto scenario : { Scenario { 0.0f, 0.0f },
+                                 Scenario { 1.0f, 0.5f },
+                                 Scenario { 2.0f, 1.0f } })
+    {
+        auto engine = std::make_unique<YouKnowEngine>();
+        require(youknow::ActiveProductFidelityProfile::tryConfigureBeforePrepare(*engine),
+                "active product circuit configuration rejected");
+        engine->selectConverterTimingProfile(timing);
+        auto parameters = patch(scenario.character);
+        youknow::ActiveProductFidelityProfile::applyTo(parameters);
+        parameters.aging = scenario.aging;
+        parameters.vcfSolverMode = youknow::VcfSolverMode::Rk4Single;
+        engine->setParameters(parameters);
+        engine->prepare(rate, 128, 1);
+        engine->noteOn(57, 1.0f);
+        render(*engine, 12000);
+        const auto observation = observe(*engine, 12000, true);
+        require(observation.maximumSteadyPhaseError < 2e-10,
+                "product card variation introduced independent DCO detuning");
+        const auto scales = Probe::rampScales(*engine);
+        const auto bounds = std::minmax_element(scales.begin(), scales.end());
+        require(scenario.character == 0.0f ? *bounds.first == *bounds.second
+                                          : *bounds.first < *bounds.second,
+                "analogue ramp dispersion no longer follows Character");
+        std::cout << "product Character " << scenario.character
+                  << " Aging " << scenario.aging << ": ramp-scale range "
+                  << *bounds.first << ".." << *bounds.second
+                  << "; relative-phase error "
+                  << observation.maximumSteadyPhaseError << " cycles\n";
+    }
+}
+
 void checkPriorHistoryAndLegato()
 {
     auto engine = std::make_unique<YouKnowEngine>();
@@ -339,6 +386,7 @@ int main()
     {
         checkSteadyAndCommonWarmup();
         checkSharedModulation();
+        checkProductVariationDoesNotDetuneDcos();
         checkPriorHistoryAndLegato();
         checkResetPolicyAndBlocks();
         return 0;

@@ -4190,11 +4190,13 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             // is selected, which makes this the former argument exactly.
             const double differentialInput =
                 value[3] - resonanceCompensation * drive + resonanceOffset;
-            const double feedbackArgument = [&] {
-                if constexpr (useReciprocal)
-                    return differentialInput * inverseLoopHeadroomAt[point];
-                return differentialInput / loopHeadroomAt[point];
-            }();
+            // Not an immediately invoked lambda: MSVC loses the implicit
+            // capture of process() locals three lambdas deep under if constexpr.
+            double feedbackArgument;
+            if constexpr (useReciprocal)
+                feedbackArgument = differentialInput * inverseLoopHeadroomAt[point];
+            else
+                feedbackArgument = differentialInput / loopHeadroomAt[point];
             double previous = drive - feedbackAt[point] * loopHeadroomAt[point]
                 * nonlinear(feedbackArgument);
             for (std::size_t stage = 0; stage < result.size(); ++stage)
@@ -4382,6 +4384,12 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
 }
 
 #if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
+// GCC drops the SIMD types' may_alias attribute from std::array's template
+// argument and warns. These arrays never type-pun, so the attribute is moot.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-attributes"
+#endif
 bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     OtaCascade& first, float firstInput, float firstOmegaStep,
     float firstFeedback, float firstHeadroom,
@@ -5604,6 +5612,9 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
     return true;
 }
 #undef YOUKNOW_MERSON_NOINLINE
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #endif
 
 void YouKnowEngine::HighPass::reset() noexcept
@@ -6077,7 +6088,7 @@ void YouKnowEngine::refreshVoiceVcaCoupling() noexcept
         const float serviceKelvin =
             voiceCardCelsius(activeParameters_, index, 1.0f) + 273.15f;
         const float inputTrim = 1.0f
-            + card.vcaGainError * 0.03f * activeParameters_.calibration;
+            + card.vcaGainError * VoiceResidualEstimates::vcaInputTrimFraction * activeParameters_.calibration;
         const double referenceThermalVolts = activeParameters_.enableEvidenceVcaCalibration
             ? EvidenceVcaCalibration::thermalVolts : static_cast<double>(thermalVoltage);
         const double referenceHeadroom = junctionTemperature ? card.vcaJunctionHeadroomVolts
@@ -7945,13 +7956,15 @@ void YouKnowEngine::initialiseVoice(Voice& voice, int slot, int midiNote,
         // behavior. The physical voice CPU powers up at MIDI 60: FF09 targets
         // are set to 0x3c and the first zero-coefficient pass copies them into
         // FF71 glide words before the coefficient ADC write (B-2 0280/03D7).
-        // Rack poly modes retain that word on a card's first assignment too.
-        // Reference, mono, Unison and extension cards keep first-note startup.
+        // Physical Unison cards retain that word by default: B-2 has no
+        // assign-mode branch that resets FF71 on Voice On. Direct Poly hosts
+        // may opt into the same rule. Mono and extension cards keep their
+        // product first-note startup policy.
         if (!wasSounding)
             voice.currentMidi = voice.hasVoicePitchHistory
-                              || (physicalVoicePowerOnGlide_
-                                  && slot < hardwareVoices && voiceLimit() > 1
-                                  && parameters.keyMode != KeyMode::Unison)
+                              || ((parameters.keyMode == KeyMode::Unison
+                                   || physicalVoicePowerOnGlide_)
+                                  && slot < hardwareVoices && voiceLimit() > 1)
                               ? voice.currentMidi : target;
     }
     else
@@ -8511,7 +8524,7 @@ float YouKnowEngine::firmwareConverterTarget(const ConverterWrite& write) const 
         const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         return clamp01(code / 4095.0f * velocityGain(activeParameters_, voice)
-            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+            + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * activeParameters_.calibration);
     }
     return code / 4095.0f;
 }
@@ -8627,8 +8640,12 @@ void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
             const bool joiningWidenedStack = assignmentRescanPending_
                 && !rescanPreviousUnisonMembers_[static_cast<std::size_t>(slot)];
             const bool freshVoiceCpu = !voice.hasVoicePitchHistory;
+            const bool physicalGlideHistory = slot < hardwareVoices && limit > 1;
             initialiseVoice(voice, slot, midiNote, velocity);
-            if ((freshVoiceCpu || joiningWidenedStack) && haveStackMidi
+            // An unused physical card already owns its powered glide word.
+            // Only extra cards and explicit width expansion inherit
+            // another member's origin; changing key mode must not align cards.
+            if (((freshVoiceCpu && !physicalGlideHistory) || joiningWidenedStack) && haveStackMidi
                 && voice.glideSemitonesPerScan > 0.0f)
                 voice.currentMidi = stackMidi;
             voice.unisonMember = true;
@@ -9105,7 +9122,7 @@ void YouKnowEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
 {
     // A voiced residual wander of the analogue control chain, independent of
     // the temperature state. At 375 Hz this AR(1) prior has a 3.332 s
-    // correlation time and about 2.425 cents RMS cutoff movement at Character
+    // correlation time and about 0.485 cents RMS cutoff movement at Character
     // 1. Neither number is measured Juno thermal behavior. Do not add a second
     // thermal wander on top without separating compensated cutoff response
     // from this existing prior. The DCOs have a separate, shared clock.
@@ -9385,7 +9402,7 @@ float YouKnowEngine::voiceVcaTarget(
                         : (voice.envelope.running ? 1.0f : 0.0f);
     return clamp01(
         control * velocityGain(parameters, voice)
-        + card.vcaControlOffset * 0.004f * tolerance);
+        + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * tolerance);
 }
 
 float YouKnowEngine::velocityGain(const EngineParameters& parameters,
@@ -10030,14 +10047,15 @@ float YouKnowEngine::resonanceFeedbackFor(
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
     // spread.
-    // Voiced, and back to being voiced. The service procedure trims each loop
+    // The conservative residual is an additive normalized CV coordinate,
+    // not a loop-gain percentage. The service procedure trims each loop
     // to a 4.8 Vpp self-oscillation peak but states no tolerance on the result,
     // so what spread survives the adjustment is documented nowhere located. A
     // revision briefly anchored 5% to a source describing the *untrimmed*
     // component class, which is a different question: a trimmed mechanism's
     // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv
-        + card.resonanceError * 0.02f * calibration);
+        + card.resonanceError * VoiceResidualEstimates::resonanceControlFraction * calibration);
     const float loopGain = circuitDerivedShape
              ? (softJunction
                     ? CircuitDerivedResonanceProfile::junctionLoopGain(resonancePanel)
@@ -10061,7 +10079,8 @@ float YouKnowEngine::cutoffAnalogCounts(
     // one scales the control voltage, one offsets it -- imperfectly set, and
     // the voiced residual wander, all riding below the converter's own
     // resolution on the slewed digital value. The final residual draws sit
-    // within the service windows; their distribution remains voiced.
+    // within one quarter of the service windows; their distribution is an
+    // engineering prior, not a measured population.
     // A sagging rail pulls the cutoff reference down with it, and the
     // rectifier ripple riding on the rail (advanceRailRipple) lifts and
     // lowers it 120 times a second through this same transfer. `calibration`
@@ -10072,8 +10091,9 @@ float YouKnowEngine::cutoffAnalogCounts(
         -powerSupplyDroop * railToCutoffCountsPerVolt * calibration;
     // The trim residual is bounded by Roland's own printed acceptance
     // (p. 19 procedures 7/8: repeat "until within +/-10 cents" at both check
-    // points): one +/-10-cent draw at the code-6272 FREQ point, one at the
-    // WIDTH point two octaves up, the line through them elsewhere. The
+    // points). The conservative prior uses +/-2.5-cent estimates at the
+    // code-6272 FREQ point and WIDTH point two octaves up, and the line
+    // through them elsewhere. The
     // former +/-0.07 octave and +/-5%-of-total-counts here were voiced with
     // no bounding source; a freshly calibrated card cannot legitimately
     // disperse past what the service procedure accepts at the points it
@@ -10087,7 +10107,7 @@ float YouKnowEngine::cutoffAnalogCounts(
         * vcfTrimResidualOctaves * vcfCountsPerOctave * calibration;
     return cutoffCounts
         + trimResidualCounts
-        + card.driftValue * 40.0f * calibration
+        + card.driftValue * VoiceResidualEstimates::cutoffWanderCounts * calibration
         + psuCutoffShift
         + card.vcfServiceTrimCounts
         + card.agingCutoffCounts;
@@ -10235,7 +10255,7 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     // The card's VCA GAIN spread is VR27's setting, and VR27 sits on the
     // input. Keeping it here rather than on the output leaves the small-signal
     // product identical and lets a hot card drive its own pair harder.
-    voice.vcaInputTrim = 1.0f + card.vcaGainError * 0.03f * tolerance;
+    voice.vcaInputTrim = 1.0f + card.vcaGainError * VoiceResidualEstimates::vcaInputTrimFraction * tolerance;
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
     // from values that never change. They now live in
@@ -11627,8 +11647,10 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Resistor noise enters the four OTA nodes after this coupling capacitor.
     // Only the retired voiced comparison seed still enters the signal input.
     // Compensation acts inside the resonance pair's tanh, so the cascade
-    // receives the coupled node through its input divider.
-    const float compensatedDrive = coupled * (filterInputAttenuation * filterSourceBalance_);
+    // receives the coupled node through its input divider and the source
+    // balance that the output boundary divides back out.
+    const float compensatedDrive =
+        coupled * (filterInputAttenuation * filterSourceBalance_);
     const float filterInput =
         compensatedDrive + microscopicNoise * noiseRateScale_;
     // V_t(T) = k * T / q, driven by the accelerated software temperature model.
@@ -12446,13 +12468,29 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     const float chorusNoiseScale = parameters.chorusNoise
         * chorusNoiseCalibrationScale(parameters.chorusNoiseCalibrationProfile);
 
+    // This digital convenience follows the selected mode, including in the
+    // OriginalPerformance adapter; a firmware mirror can lag that selection.
+    // Slew at host rate, independently of block size and quality, and leave
+    // every nonlinear circuit's input voltage unchanged.
+    const float unisonOutputTarget = activeParameters_.keyMode == KeyMode::Unison
+        ? unisonOutputLevel : 1.0f;
     const double outputTrimTargetGain = std::pow(
         10.0, static_cast<double>(activeParameters_.outputTrimDb) / 20.0);
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
+        unisonOutputGain_ = unisonOutputTarget_ = unisonOutputTarget;
+        unisonOutputSamplesRemaining_ = 0;
         glidedOutputTrimGain_ = outputTrimTargetGain;
         panelGlidePrimed_ = true;
+    }
+    else if (unisonOutputTarget != unisonOutputTarget_)
+    {
+        unisonOutputTarget_ = unisonOutputTarget;
+        unisonOutputSamplesRemaining_ = std::max(1, static_cast<int>(
+            std::ceil(unisonOutputTransitionSeconds * sampleRate_)));
+        unisonOutputStep_ = (unisonOutputTarget_ - unisonOutputGain_)
+            / static_cast<float>(unisonOutputSamplesRemaining_);
     }
 
     // Each converter destination owns a separately named hold network. VCF,
@@ -13550,13 +13588,21 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             ++oversamplingIdleSamples_;
 
         const float transitionGain = rateTransitionGain_;
+        if (unisonOutputSamplesRemaining_ > 0)
+        {
+            // Count host samples and land exactly on the target. Accumulated
+            // float error must not extend a transition by another sample.
+            --unisonOutputSamplesRemaining_;
+            unisonOutputGain_ = unisonOutputSamplesRemaining_ == 0
+                ? unisonOutputTarget_ : unisonOutputGain_ + unisonOutputStep_;
+        }
         left[sample] = std::isfinite(outputLeft)
                      ? outputLeft * outputBoundaryScale
-                           * transitionGain
+                           * transitionGain * unisonOutputGain_
                      : 0.0f;
         right[sample] = std::isfinite(outputRight)
                       ? outputRight * outputBoundaryScale
-                            * transitionGain
+                            * transitionGain * unisonOutputGain_
                       : 0.0f;
 
         // Preset calibration belongs after every physical circuit, including
@@ -13937,7 +13983,7 @@ float YouKnowEngine::firmwareSerialDacTarget(const ConverterWrite& write, unsign
         const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         return clamp01(static_cast<float>(code) / 4095.0f
-            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+            + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * activeParameters_.calibration);
     }
     return static_cast<float>(code) / 4095.0f;
 }

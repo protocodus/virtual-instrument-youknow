@@ -90,7 +90,8 @@ struct OtaShotNoise {
         for(int order=1;order<=8;++order){const auto left=multiply(a,term),right=multiply(term,at);
             for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j){term[i][j]=(left[i][j]+right[i][j])/(order+1);q[i][j]+=term[i][j];}}
         for(int square=0;square<squares;++square){const auto propagated=multiply(multiply(f,q),transpose(f));
-            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];f=multiply(f,f);}
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];
+            f=multiply(f,f);}
         // Remove roundoff asymmetry before Cholesky, without changing energy.
         for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
         return q;
@@ -161,7 +162,8 @@ struct OtaShotNoise {
         double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=std::abs(x);norm=std::max(norm,sum);}
         int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
         const double scale=std::ldexp(1.0,-squares);
-        for(auto&row:a)for(double&x:row)x*=scale;for(double&x:d)x*=scale;
+        for(auto&row:a)for(double&x:row)x*=scale;
+        for(double&x:d)x*=scale;
         constexpr Vector nodes{.06943184420297371,.33000947820757187,.6699905217924281,.9305681557970262};
         constexpr Vector weights{.1739274225687269,.3260725774312731,.3260725774312731,.1739274225687269};
         // All quadrature positions use the same scaled circuit. Form its
@@ -205,7 +207,8 @@ struct OtaShotNoise {
                 for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)
                     f[i][j]+=coefficients[order][i][j];
             for(int square=0;square<squares;++square){const auto propagated=multiply(multiply(f,q),transpose(f));
-                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];f=multiply(f,f);}
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];
+                f=multiply(f,f);}
             for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
         }return q;
     }
@@ -217,7 +220,8 @@ struct OtaShotNoise {
             // Only roundoff-scale negative pivots may be floored. Cache
             // retries a non-roundoff failure through positive quadrature.
             if(i==j&&value < -256*std::numeric_limits<double>::epsilon()*std::abs(q[i][i])) {
-                if(valid)*valid=false;return {};
+                if(valid)*valid=false;
+                return {};
             }
             if(i!=j&&l[j][j]==0&&value!=0){if(valid)*valid=false;return {};}
             l[i][j]=i==j?std::sqrt(std::max(0.0,value)):l[j][j]>0?value/l[j][j]:0;}}

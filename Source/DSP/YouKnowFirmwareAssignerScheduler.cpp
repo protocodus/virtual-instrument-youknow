@@ -239,7 +239,8 @@ struct Completion {
         case Op::NEGA: r.a = (0u - r.a) & 255; break;
         case Op::SLR_A: case Op::SLRC_A:
             r.carry = (r.a & 1) != 0; r.a >>= 1;
-            if (i.op == Op::SLRC_A) r.skip = r.carry; break;
+            if (i.op == Op::SLRC_A) r.skip = r.carry;
+            break;
         case Op::SLR_B: r.carry = (r.b & 1) != 0; r.b >>= 1; break;
         case Op::SLRC_C: r.carry = (r.c & 1) != 0; r.c >>= 1; r.skip = r.carry; break;
         case Op::SLL_A: r.carry = (r.a & 128) != 0; r.a = (r.a << 1) & 255; break;

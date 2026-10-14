@@ -22,6 +22,7 @@
 #include "YouKnowFirmwareSerialTrace.h"
 #include "YouKnowDcoTemperature.h"
 #include "YouKnowDcoComponents.h"
+#include "YouKnowVoiceResidualEstimates.h"
 #include "YouKnowEnvelopeHold.h"
 #include "YouKnowDcoReset.h"
 #include "YouKnowOriginalPerformance.h"
@@ -789,9 +790,11 @@ public:
     // Before prepare only; retained across reset/prepare/quality changes.
     // The reference engine keeps the original no-steal/high-note policies.
     [[nodiscard]] bool configureSingleVoiceLastNotePriority(bool enabled) noexcept;
-    // Rack's physical six-card poly glide starts from the retained power-on
-    // word, even before a card has played. Before prepare only; retained across
-    // reset/prepare. Mono, Unison and extension cards keep first-note startup.
+    // Direct Poly hosts may retain each physical card's power-on glide word,
+    // even before it has played. Unison already does so in the core by default.
+    // Before prepare only; retained across reset/prepare. Mono and extra cards
+    // keep first-note startup; explicit widening of an established Unison stack
+    // keeps its inherited-origin policy.
     [[nodiscard]] bool configurePhysicalVoicePowerOnGlide(bool enabled) noexcept;
     // Rack source/resonance balance: scale the voiced source-to-filter transfer
     // and compensate at the final digital boundary, preserving internal VCF
@@ -2155,6 +2158,11 @@ public:
     static constexpr int hardwareVoices = 6;
     static constexpr int maxVoices = 16;
 
+    // Requested product output trim, not an original-hardware circuit law.
+    // Apply after the complete signal path so stacked voices keep their drive.
+    static constexpr float unisonOutputLevel = 0.8f;
+    static constexpr double unisonOutputTransitionSeconds = 0.005;
+
     // IC1a sums each voice through 33 kOhm against a 3.3 kOhm feedback
     // resistor before the shared HPF and VCA LEVEL circuit.
     static constexpr float voiceSummerGain = 3.3f / 33.0f;
@@ -2389,15 +2397,18 @@ private:
     // is obtained (within +/-10 cents on the tuner)" -- the procedure bounds
     // the two CHECK POINTS, not an offset and a slope separately, and the
     // note that the procedures interact means both windows hold jointly on a
-    // passing card. The model therefore draws each check point's residual
-    // independently inside +/-10 cents and takes the line through them:
+    // passing card. The conservative prior draws each check point's residual
+    // independently inside +/-2.5 cents and takes the line through them:
     // `cutoffOffsetError` is the C4-point draw, `cutoffScaleError` the
     // C6-point draw, interpolated in counts about the anchored code-6272
     // trim point (extrapolation beyond the checked span is unbounded, as the
     // procedure leaves it). Anchored acceptance windows (2026-08-20 pass),
     // replacing the former voiced +/-0.07 octave and +/-5% magnitudes that
     // no source bounded. Field drift beyond the windows belongs to `aging`.
-    static constexpr float vcfTrimResidualOctaves = 10.0f / 1200.0f;
+    static constexpr float vcfTrimAcceptanceCents =
+        VoiceResidualEstimates::vcfServiceAcceptanceCents;
+    static constexpr float vcfTrimResidualOctaves =
+        VoiceResidualEstimates::vcfServiceResidualCents / 1200.0f;
     static constexpr float vcfFreqTrimAnchorCounts = 6272.0f;
     static constexpr float vcfWidthTrimSpanCounts = 2.0f * vcfCountsPerOctave;
     // The aged-unit lead's two magnitudes (see EngineParameters::aging):
@@ -2413,7 +2424,7 @@ private:
     // here, sixteen times that, which is a signal-dependent cutoff shift large
     // enough to hear as odd-harmonic grit on every resonant sweep.
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
-    // Voiced thermal-character coordinate retained from the AS3109's typical
+    // Conservative residual estimated from the AS3109's typical
     // 0.33%/degC "Tempco of frequency control" row. That replacement-IC row
     // has no min/max and concerns the control coefficient: it does not bound
     // an original 80017A's residual cutoff drift at a fixed installed CV.
@@ -2421,10 +2432,12 @@ private:
     //
     // The module board also carries R111, a 560 Ohm positor --
     // a PTC thermistor, listed as such in the parts legend -- returning the CV
-    // divider node to ground for compensation. This model's use of the clone
-    // coefficient is a sound-design prior, not an upper bound or a measured
-    // residual. Installed compensated behavior and its statistics are OQ-10.
-    static constexpr float vcfCutoffTempcoPerCelsius = 0.0033f;
+    // divider node to ground for compensation. Retaining 10% of the proxy
+    // coefficient assumes 90% compensation; that is an engineering estimate,
+    // not an upper bound or a measured residual. Installed compensated
+    // behavior and its statistics remain unknown.
+    static constexpr float vcfCutoffTempcoPerCelsius =
+        VoiceResidualEstimates::vcfResidualTempcoPerCelsius;
     // Card-to-card thermal gradient across the chassis, in degrees Celsius at
     // the card nearest the supply, falling exponentially with the card index.
     // Shared by the headroom and cutoff paths so the two cannot disagree.
@@ -3291,6 +3304,8 @@ private:
             int card {};
             bool stopped {}, physicalReset {};
             double gateSeconds {}, dischargeOhms {}, clampVolts {};
+            // Spelled out because the embedded C++17 build has no defaulted
+            // comparison; every member above takes part.
             bool operator==(const Inputs& other) const noexcept
             {
                 return periodSamples == other.periodSamples
@@ -3856,6 +3871,10 @@ private:
     // be a pot in the signal path.
     static constexpr float panelGlideSeconds = 0.005f;
     float glidedVolume_ { 0.8f };
+    float unisonOutputGain_ { 1.0f };
+    float unisonOutputTarget_ { 1.0f };
+    float unisonOutputStep_ { 0.0f };
+    int unisonOutputSamplesRemaining_ { 0 };
     // Digital trim shares the 5 ms host-rate glide but never enters the
     // volume potentiometer or either physical output route. Double precision
     // lets the final float gain settle to its exact target, including unity.
