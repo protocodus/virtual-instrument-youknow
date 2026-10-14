@@ -676,6 +676,9 @@ void testProductBankAndProgramIndexing()
             expect(*value >= 0.0f && *value <= 1.0f,
                    where + " has a control outside its travel");
         // VR1 positions are attenuation-only trims below the nominal 0.80.
+        expect(std::isfinite(preset.controls.outputTrimDb)
+                   && std::abs(preset.controls.outputTrimDb) <= 48.0f,
+               "preset digital output trim is outside its public range");
         expect(preset.controls.volume > 0.0f && preset.controls.volume <= 0.8f,
                where + " has a VR1 position outside the attenuation-only range");
         for (std::size_t b = a + 1; b < product.size(); ++b)
@@ -725,6 +728,9 @@ void testFactoryBankIsWellFormed()
                    where + " has a control outside its travel");
         // The VR1 table is a fixed-size array a dropped entry silently
         // zero-fills; a factory program with no output would be the symptom.
+        expect(std::isfinite(preset.controls.outputTrimDb)
+                   && std::abs(preset.controls.outputTrimDb) <= 48.0f,
+               "factory digital output trim is outside its public range");
         expect(preset.controls.volume > 0.0f && preset.controls.volume <= 0.8f,
                where + " has a VR1 position outside the attenuation-only range");
 

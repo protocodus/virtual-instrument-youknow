@@ -86,6 +86,7 @@ inline EngineParameters presetParameters (const char* number)
     p.velocityDepth = controls.velocity; p.calibration = controls.calibration;
     p.chorusNoise = controls.chorusNoise; p.polyphony = controls.polyphony;
     p.volume = controls.volume;
+    p.outputTrimDb = controls.outputTrimDb;
     // Explicit maximum quality: these settings cannot change during a take.
     p.vcfTanhMode = VcfTanhMode::Exact;
     p.vcfSolverMode = VcfSolverMode::MersonHalfSteps;

@@ -193,6 +193,9 @@ struct EngineParameters
     float volume { 0.80f };
 
     // --- Controls the modelled hardware does not have ----------------------
+    // Preset loudness calibration at the final digital output only. This does
+    // not change the drive, noise, saturation or diagnostics of any circuit.
+    float outputTrimDb { 0.0f };
     // Velocity zero and six voices are structurally hardware-aligned. Chorus
     // Chorus Noise retains its session-compatible default; 1 uses the
     // conservative 0.200 mVrms product normalization named beside the MN3009
@@ -628,6 +631,7 @@ struct EngineParameters
             && benderLfoDepth == other.benderLfoDepth
             && masterTuneCents == other.masterTuneCents
             && volume == other.volume
+            && outputTrimDb == other.outputTrimDb
             && velocityDepth == other.velocityDepth
             && calibration == other.calibration
             && chorusNoise == other.chorusNoise
@@ -3871,6 +3875,10 @@ private:
     float unisonOutputTarget_ { 1.0f };
     float unisonOutputStep_ { 0.0f };
     int unisonOutputSamplesRemaining_ { 0 };
+    // Digital trim shares the 5 ms host-rate glide but never enters the
+    // volume potentiometer or either physical output route. Double precision
+    // lets the final float gain settle to its exact target, including unity.
+    double glidedOutputTrimGain_ { 1.0 };
     // A glide needs somewhere to start. The first valid, positive-length
     // render after a reset takes the panel as it stands rather than sliding up
     // to it, or a startup snapshot would fade in when the transport rolled.

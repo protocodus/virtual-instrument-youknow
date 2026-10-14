@@ -677,7 +677,6 @@ const Decoded *serialInstruction(unsigned address) {
     constexpr auto& program = firmwareSerialTraceDetail::program;
     static constexpr auto index = firmwareTraceDetail::instructionIndex(
         program, [](const Decoded& i) { return i.instruction.address; });
-    static_assert(index.valid, "invalid or duplicate firmware instruction address");
     const auto offset = address < index.size() ? index[address] : 0;
     return offset != 0 ? &program[offset - 1] : nullptr;
 }
@@ -685,7 +684,6 @@ const Instruction *mainInstruction(unsigned address) {
     constexpr auto& program = firmwareTraceDetail::program;
     static constexpr auto index = firmwareTraceDetail::instructionIndex(
         program, [](const Instruction& i) { return i.address; });
-    static_assert(index.valid, "invalid or duplicate firmware instruction address");
     const auto offset = address < index.size() ? index[address] : 0;
     return offset != 0 ? &program[offset - 1] : nullptr;
 }

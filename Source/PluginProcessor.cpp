@@ -931,6 +931,21 @@ YouKnowAudioProcessor::createParameterLayout()
         juce::ParameterID { headphoneLoad, 12 }, "Headphone Load",
         juce::StringArray { "32 Ohm", "80 Ohm", "300 Ohm", "600 Ohm" }, 0,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+    // Product loudness calibration follows the whole physical circuit. Append
+    // both host index and AU version so existing automation remains bound.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { outputTrimDb, 13 }, "Output Trim",
+        juce::NormalisableRange<float> { -48.0f, 48.0f, 0.0f }, 0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("dB")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return (value > 0.0f ? "+" : "") + juce::String (value, 2) + " dB";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return juce::jlimit (-48.0f, 48.0f, text.getFloatValue());
+            })));
     return layout;
 }
 
@@ -996,6 +1011,7 @@ YouKnowAudioProcessor::YouKnowAudioProcessor()
         { ParameterIndex::outputCapacitance, outputCapacitance },
         { ParameterIndex::outputRoute, outputRoute },
         { ParameterIndex::headphoneLoad, headphoneLoad },
+        { ParameterIndex::outputTrimDb, outputTrimDb },
         { ParameterIndex::pitchBend, pitchBend },
         { ParameterIndex::modulation, modulation }
     });
@@ -1224,6 +1240,7 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
     EngineParameters engineParameters;
     ActiveProductFidelityProfile::applyTo (engineParameters);
     engineParameters.volume = valueOf (P::volume);
+    engineParameters.outputTrimDb = valueOf (P::outputTrimDb);
     engineParameters.benderDcoDepth = valueOf (P::benderDco);
     engineParameters.benderVcfDepth = valueOf (P::benderVcf);
     engineParameters.benderLfoDepth = valueOf (P::benderLfo);
@@ -2547,6 +2564,12 @@ void YouKnowAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (! containsParameterState (state, youknow::parameters::originalPerformance))
         setStoredParameterValue (state, youknow::parameters::originalPerformance, 0.0f);
 
+    // A saved program number is only a label; saved values remain authoritative.
+    // Old sessions used unity digital trim, even when loaded over a newly
+    // calibrated preset. Never reapply the current bank's trim during restore.
+    if (! containsParameterState (state, youknow::parameters::outputTrimDb))
+        setStoredParameterValue (state, youknow::parameters::outputTrimDb, 0.0f);
+
     // A state written by an earlier build will not carry parameters added
     // since. Filling them with their defaults keeps the rest of the patch
     // rather than discarding the whole thing.
@@ -2718,6 +2741,7 @@ bool YouKnowAudioProcessor::currentProgramIsEdited() const
     const bool panelPoly1 = valueOf (poly1) > 0.5f;
     const bool panelPoly2 = valueOf (poly2) > 0.5f;
     return differs (valueOf (volume), expected.volume)
+        || differs (valueOf (outputTrimDb), expected.outputTrimDb)
         || differs (valueOf (benderDco), expected.benderDco)
         || differs (valueOf (benderVcf), expected.benderVcf)
         || differs (valueOf (benderLfo), expected.benderLfo)
@@ -2822,6 +2846,7 @@ void YouKnowAudioProcessor::applyProgramValues (
     set (legacyChorus, static_cast<float> (chorus));
 
     set (volume, controls.volume);
+    set (outputTrimDb, controls.outputTrimDb);
     set (benderDco, controls.benderDco);
     set (benderVcf, controls.benderVcf);
     set (benderLfo, controls.benderLfo);

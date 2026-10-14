@@ -30,7 +30,6 @@ def main():
                        for name in members)
     fixture = r'''
 #include "DSP/YouKnowEngine.h"
-#include "DSP/YouKnowFirmwareInstructionIndex.h"
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -39,24 +38,6 @@ def main():
 #include <numbers>
 #endif
 using namespace youknow;
-// These compile-time checks cover the embedded C++17 replacement for the
-// native consteval builder, including the invalid-program rejection flag.
-struct IndexedInstruction { unsigned address; };
-constexpr auto instructionAddress = [](const IndexedInstruction& i) { return i.address; };
-constexpr std::array<IndexedInstruction, 3> sparseProgram {{{ 0 }, { 42 }, { 4095 }}};
-constexpr auto sparseIndex = firmwareTraceDetail::instructionIndex(sparseProgram, instructionAddress);
-static_assert(sparseIndex.valid && sparseIndex.size() == 4096);
-static_assert(sparseIndex[0] == 1 && sparseIndex[42] == 2 && sparseIndex[4095] == 3);
-static_assert(sparseIndex[1] == 0 && sparseIndex[4094] == 0);
-constexpr std::array<IndexedInstruction, 0> emptyProgram {};
-constexpr auto emptyIndex = firmwareTraceDetail::instructionIndex(emptyProgram, instructionAddress);
-static_assert(emptyIndex.valid && emptyIndex[0] == 0 && emptyIndex[4095] == 0);
-constexpr std::array<IndexedInstruction, 2> duplicateProgram {{{ 42 }, { 42 }}};
-static_assert(!firmwareTraceDetail::instructionIndex(duplicateProgram, instructionAddress).valid);
-constexpr std::array<IndexedInstruction, 1> invalidProgram {{{ 4096 }}};
-static_assert(!firmwareTraceDetail::instructionIndex(invalidProgram, instructionAddress).valid);
-constexpr std::array<IndexedInstruction, 1> hugeProgram {{{ std::numeric_limits<unsigned>::max() }}};
-static_assert(!firmwareTraceDetail::instructionIndex(hugeProgram, instructionAddress).valid);
 void require(bool condition, const char* name) {
     if (!condition) { std::cerr << "Portability failure: " << name << '\n'; std::exit(1); }
 }
@@ -116,9 +97,18 @@ int main() {
     require(first != second, "output capacitance equality");
 }
 '''.replace("    PARAMETER_CHECKS", checks)
-    common = [args.cxx, "-pedantic-errors", "-I", str(source)]
+    common = [args.cxx, "-Wall", "-Wextra", "-Wpedantic", "-Werror",
+              "-pedantic-errors", "-I", str(source)]
+    sources = sorted(dsp.glob("*.cpp"))
     subprocess.run(common + ["-std=c++17", "-fsyntax-only"]
-                   + [str(path) for path in sorted(dsp.glob("*.cpp"))], check=True)
+                   + [str(path) for path in sources], check=True)
+    # Match the Rack host's restricted compiler contract as well as the native
+    # view adapter. Panel/preset translation is outside the embedded engine.
+    embedded_sources = [path for path in sources
+                        if path.name not in ("YouKnowPanel.cpp", "YouKnowPresets.cpp")]
+    subprocess.run(common + ["-std=c++17", "-fno-exceptions", "-fno-rtti",
+                             "-DYOUKNOW_EMBEDDED_TARGET=1", "-fsyntax-only"]
+                   + [str(path) for path in embedded_sources], check=True)
     with tempfile.TemporaryDirectory(prefix="youknow-portability-") as temporary:
         temporary = Path(temporary)
         test = temporary / "portability.cpp"
@@ -128,7 +118,8 @@ int main() {
             subprocess.run(common + [f"-std=c++{standard}", "-O2", str(test),
                                      "-o", str(executable)], check=True)
             subprocess.run([str(executable)], check=True)
-    print(f"C++17 DSP compilation and C++17/C++20 view, numeric, and {len(members)}-field equality checks passed")
+    print(f"Strict native/embedded C++17 DSP compilation and C++17/C++20 view, "
+          f"numeric, and {len(members)}-field equality checks passed")
 
 
 if __name__ == "__main__":

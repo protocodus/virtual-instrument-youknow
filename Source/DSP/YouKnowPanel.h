@@ -95,6 +95,8 @@ inline constexpr auto originalPerformance = "originalPerformance";
 inline constexpr auto outputCapacitance = "outputCapacitance";
 inline constexpr auto outputRoute = "outputRoute";
 inline constexpr auto headphoneLoad = "headphoneLoad";
+// Transparent product-level calibration after the physical output circuit.
+inline constexpr auto outputTrimDb = "outputTrimDb";
 } // namespace parameters
 
 namespace panel

@@ -1120,17 +1120,34 @@ void YouKnowDisplay::paint (juce::Graphics& g)
     meter (lfoCell, lfo, true, panel::colour::accentMuted, "LFO");
     meter (meterRow, envelope, false, panel::colour::led, "ENV");
 
-    // Telemetry: unit warmup temperature and PSU rail voltage, on one line
-    // across the full column width instead of stacked above the trace.
-    g.setFont (panelFont (14.0f, true));
+    // Telemetry shares the remaining column. The output-trim knob leaves a
+    // narrower monitor at small sizes, so stack the two values when they
+    // cannot share a line without colliding.
+    const auto telemetryFont = panelFont (14.0f, true);
+    g.setFont (telemetryFont);
     g.setColour (fromPalette (panel::colour::textDim));
-    g.drawText (juce::String (temperature, 1) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")) + "C",
-                area.toNearestInt(), juce::Justification::centredLeft);
-
-    g.setColour (fromPalette (panel::colour::textDim));
+    const auto temperatureText = juce::String (temperature, 1)
+        + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")) + "C";
     const float railV = 15.0f - railDroop;
-    g.drawText (juce::String (railV, 2) + "V RAIL", area.toNearestInt(),
-                juce::Justification::centredRight);
+    const auto railText = juce::String (railV, 2) + "V RAIL";
+    const float telemetryWidth = juce::GlyphArrangement::getStringWidth (
+        telemetryFont, temperatureText) + juce::GlyphArrangement::getStringWidth (
+        telemetryFont, railText) + 6.0f;
+    if (telemetryWidth > area.getWidth())
+    {
+        const auto temperatureArea = area.removeFromTop (area.getHeight() * 0.5f);
+        g.drawFittedText (temperatureText, temperatureArea.toNearestInt(),
+                          juce::Justification::centredLeft, 1);
+        g.drawFittedText (railText, area.toNearestInt(),
+                          juce::Justification::centredLeft, 1);
+    }
+    else
+    {
+        g.drawText (temperatureText, area.toNearestInt(),
+                    juce::Justification::centredLeft);
+        g.drawText (railText, area.toNearestInt(),
+                    juce::Justification::centredRight);
+    }
 
     // --- Right Section: real-time oscilloscope, full height ---
     const auto screen = rightBox.reduced (1.0f);
@@ -1982,7 +1999,11 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
         "Adds filter-tuning drift and more noise as the modeled instrument "
         "ages. The default is 50%; zero is freshly serviced. Aging works "
         "independently of Unit "
-        "Character and stays unchanged when you load a preset."
+        "Character and stays unchanged when you load a preset.",
+        "Adjusts the final output level in decibels. Bundled presets recall "
+        "a calibrated value to keep their levels similar. Zero leaves the "
+        "circuit output unchanged; this control does not alter the tone or "
+        "the drive into the instrument's circuits."
     };
 
     configure (transposeSlider, transpose, "Transpose", utilityTooltips[0]);
@@ -1992,15 +2013,16 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
     configure (agingSlider, aging, "Aging", utilityTooltips[6]);
     configure (chorusNoiseSlider, chorusNoise, "Chorus noise", utilityTooltips[4]);
     configure (polyphonySlider, polyphony, "Polyphony", utilityTooltips[5]);
+    configure (outputTrimSlider, outputTrimDb, "Output Trim", utilityTooltips[7]);
     // HISS now lives inside the primary CHORUS block, so its full-size knob
     // matches that tier rather than the smaller lower-bay utilities.
     chorusNoiseSlider.getProperties().set (secondaryStyleProperty, false);
 
     const char* captions[] = { "AMOUNT", "TUNE", "VELOCITY",
-                               "CHARACTER", "HISS", "VOICES", "AGING" };
+                               "CHARACTER", "HISS", "VOICES", "AGING", "TRIM" };
     const char* controlNames[] = { "Transpose", "Master tune", "Velocity",
                                    "Unit Character", "Chorus noise", "Polyphony",
-                                   "Aging" };
+                                   "Aging", "Output Trim" };
     for (std::size_t index = 0; index < utilityLabels.size(); ++index)
     {
         auto& label = utilityLabels[index];
@@ -3199,6 +3221,7 @@ const char* YouKnowAudioProcessorEditor::parameterIdFor (
         { &agingSlider,       aging },
         { &chorusNoiseSlider, chorusNoise },
         { &polyphonySlider,   polyphony },
+        { &outputTrimSlider,  outputTrimDb },
         { &qualityBox,        quality },
         { &vcfSolverBox,      vcfSolverMode },
         { &unisonButton,      legacyKeyMode },
@@ -3473,12 +3496,18 @@ void YouKnowAudioProcessorEditor::resized()
     tuneSlider.setBounds (
         scaled (706.0f, knobTop, knobSize, knobSize).toNearestInt());
 
-    // The monitor stays beside voice allocation.
+    // The monitor and final trim share the output bay. Leave a separate column
+    // for the trim so it is visible without covering the scope or readouts.
     display.setBounds (
         scaled (panel::monitorZoneX + 10.0f,
                 panel::extensionDeckTop + 23.0f,
-                panel::monitorZoneWidth - 20.0f,
+                panel::monitorZoneWidth - 104.0f,
                 panel::extensionDeckHeight - 35.0f).toNearestInt());
+    const float outputTrimX = panel::monitorZoneX + panel::monitorZoneWidth - 76.0f;
+    utilityLabels[7].setBounds (
+        scaled (outputTrimX, labelTop, knobSize, labelHeight).toNearestInt());
+    outputTrimSlider.setBounds (
+        scaled (outputTrimX, knobTop, knobSize, knobSize).toNearestInt());
 
     // HISS is a full-size Chorus control beside the vertical OFF/I/II stack.
     const auto& chorusSection = panel::sections()[8];

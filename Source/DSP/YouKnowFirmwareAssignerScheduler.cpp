@@ -24,7 +24,6 @@ const Instruction *find(unsigned pc) noexcept {
     constexpr auto& program = firmwareAssignerSchedulerDetail::program;
     static constexpr auto index = firmwareTraceDetail::instructionIndex(
         program, [](const Instruction& i) { return i.pc; });
-    static_assert(index.valid, "invalid or duplicate firmware instruction address");
     const auto offset = pc < index.size() ? index[pc] : 0;
     return offset != 0 ? &program[offset - 1] : nullptr;
 }

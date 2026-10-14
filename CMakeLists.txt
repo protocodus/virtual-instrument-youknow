@@ -443,6 +443,10 @@ if(YOUKNOW_BUILD_TOOLS)
     target_compile_definitions(YouKnowAuditFactoryPresets PRIVATE
         "YOUKNOW_FACTORY_AUDIT_DEFAULT_OUTPUT=\"${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/factory-presets\"")
 
+    add_executable(YouKnowCalibratePresets Tools/CalibratePresets.cpp)
+    target_link_libraries(YouKnowCalibratePresets PRIVATE YouKnowDSP Threads::Threads)
+    target_compile_features(YouKnowCalibratePresets PRIVATE cxx_std_20)
+
     # Oversampling research has two deliberately separate builds. The normal
     # executable links the exact shipping DSP for uninstrumented CPU timing.
     # The work executable links only the engine/chorus translation units built
@@ -574,6 +578,7 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowRenderOriginalPresets PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowAuditFactoryPresets PRIVATE
             /W4 /permissive-)
+        target_compile_options(YouKnowCalibratePresets PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowOversamplingAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowDSPWorkAudit
@@ -609,6 +614,7 @@ if(YOUKNOW_BUILD_TOOLS)
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowAuditFactoryPresets PRIVATE
             -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowCalibratePresets PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowOversamplingAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowDSPWorkAudit PRIVATE
@@ -753,6 +759,12 @@ if(BUILD_TESTING)
     add_executable(YouKnowOutputJackTests Tests/YouKnowOutputJackTests.cpp)
     target_link_libraries(YouKnowOutputJackTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputJack COMMAND YouKnowOutputJackTests)
+
+    add_executable(YouKnowOutputTrimTests Tests/YouKnowOutputTrimTests.cpp)
+    target_link_libraries(YouKnowOutputTrimTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowOutputTrimTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.OutputTrim COMMAND YouKnowOutputTrimTests)
+    set_tests_properties(YouKnow.OutputTrim PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowSawCouplingTests Tests/YouKnowSawCouplingTests.cpp)
     target_link_libraries(YouKnowSawCouplingTests PRIVATE YouKnowDSP)
@@ -1082,7 +1094,7 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowSysExTests PRIVATE cxx_std_20)
 
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
-                   YouKnowChorusInputLoadingTests YouKnowOutputJackTests
+                   YouKnowChorusInputLoadingTests YouKnowOutputJackTests YouKnowOutputTrimTests
                    YouKnowHeadphoneOutputTests YouKnowOutputNetworkTests YouKnowPulseBalanceTests YouKnowCommonVcaOutputTests
                    YouKnowCommonVcaControlNoiseTests
                    YouKnowVcfIntegratorTests YouKnowVcfNoiseTests YouKnowSysExTests)
@@ -1160,6 +1172,13 @@ if(BUILD_TESTING)
         # also covers sixteen original-program scores and took 131 s during
         # the promotion checks. Allow shared-runner margin without a new oracle.
         set_tests_properties(YouKnow.AuditFactoryPresets PROPERTIES TIMEOUT 240)
+
+        # Factory trims belong to the shipping physical profile. Enforce the
+        # product level band on representative full-length render scores.
+        add_test(NAME YouKnow.PresetLevels
+                 COMMAND YouKnowCalibratePresets --check --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/preset-level-smoke.csv")
+        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 240)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity

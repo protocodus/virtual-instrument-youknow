@@ -329,6 +329,9 @@ constexpr std::uint64_t factoryCorpusFnv1a() noexcept
 static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 
 // Per-preset output-volume trim, in panel position, one entry per bank slot.
+// These are the retained physical VR1 settings, before the separate digital
+// Output Trim calibration below. Do not turn VR1 to normalize the product:
+// its loading also changes the output network's frequency response.
 //
 // The eighteen tone bytes are the hardware's and are never touched; VR1's shaft
 // position is not part of them, and on the instrument it is exactly what a
@@ -350,7 +353,7 @@ static_assert(factoryCorpusFnv1a() == 0xa78dab9d5bafb386ull);
 //
 // Only attenuation is applied: no entry exceeds the 0.80 panel default, so a
 // preset is never made louder than the instrument's own nominal setting. The
-// intrinsically quiet percussion and noise-sweep patches keep their level --
+// intrinsically quiet percussion and noise-sweep patches keep their circuit level --
 // VR1 has only about +2.25 dB of travel left above the default, which cannot
 // close the remaining gap, and their quietness is the hardware's own. Far less
 // of that gap is the model's doing than it once was: restoring the shared noise
@@ -394,6 +397,42 @@ constexpr std::array<float, presetCount> factoryVolume {{
     0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.676f, 0.611f,
 }};
 
+// Static product Output Trim, measured with Tools/CalibratePresets.cpp on
+// 2026-10-14: identical full scores, shipping Original timing, 48 kHz/1x,
+// Poly/Cubic/Normal and Aging 50%. Target -34 dBFS relative-gated stereo RMS;
+// A86's 30.44 dB crest factor sets the common level with >2.5 dB peak headroom.
+// Gain = target - measured unity-trim RMS, rounded to 0.001 dB. Physical VR1,
+// tone bytes, envelopes and circuit drive stay unchanged. This is a product
+// level convention, not an estimate of hardware gain. A86's short noise burst
+// measures differently across host rates: its 12.798 dB trim centres the
+// 44.1/48/96 kHz measured extrema, retaining +/-1 dB instead of fitting one
+// sample grid exactly. All other trims use the 48 kHz reference above.
+// Re-render --check after
+// changing these tables; never infer trim from a saved session's program ID.
+constexpr std::array<float, presetCount> factoryOutputTrimDb {{
+    -0.621f, -5.417f, 2.917f, 7.794f, -0.385f, -4.697f, -4.121f, -1.588f,
+    -4.001f, -5.036f, -2.336f, -4.280f, -3.172f, 0.683f, 5.630f, -1.643f,
+    -1.635f, -6.034f, -1.804f, -4.847f, -6.189f, -4.901f, 6.702f, -3.781f,
+    0.960f, 7.840f, -3.252f, -1.094f, 2.161f, -4.427f, -5.667f, -5.280f,
+    -3.797f, -5.020f, -4.778f, -1.915f, -5.129f, -5.725f, -6.794f, 0.042f,
+    -2.249f, 3.060f, -3.441f, -5.227f, -4.954f, -4.306f, 0.859f, -4.881f,
+    -1.916f, 1.733f, -1.065f, -1.549f, -2.437f, -5.593f, -2.293f, -6.171f,
+    -5.277f, -0.787f, -3.468f, 6.064f, -5.562f, 12.798f, -0.427f, 4.171f,
+    -5.541f, -2.605f, -4.806f, -5.979f, -4.789f, -2.381f, -1.199f, -3.651f,
+    -2.420f, 3.588f, -2.072f, 4.654f, -5.632f, -1.883f, 4.568f, -5.656f,
+    -3.256f, -3.737f, 12.391f, -5.683f, -5.040f, 2.431f, -4.457f, -4.086f,
+    -5.987f, 5.254f, -5.452f, 1.420f, -7.807f, -0.090f, -4.043f, -5.826f,
+    5.347f, -5.646f, 1.114f, -3.110f, -1.591f, -5.443f, -3.780f, -1.630f,
+    0.765f, 0.667f, -3.969f, -4.150f, -4.747f, -0.338f, -2.697f, -4.431f,
+    0.799f, -1.877f, -3.253f, 2.486f, -0.573f, -3.604f, 3.560f, -6.115f,
+    -5.830f, -2.869f, -5.570f, -4.028f, -3.192f, 0.445f, -4.739f, -4.837f,
+}};
+
+constexpr std::array<float, productPresetCount> productOutputTrimDb {{
+    -14.461f, -5.302f, -13.089f, -10.031f, -7.434f, -6.001f, 1.366f, -12.798f,
+    -0.141f, -0.545f, 5.699f, -0.110f, 0.322f, 2.787f, -1.520f, 1.058f,
+}};
+
 struct BankStorage
 {
     std::array<std::array<char, 4>, presetCount> numbers {};
@@ -429,6 +468,7 @@ struct BankStorage
             // deliberately leave the player's performance controls alone.
             Preset::Controls controls {};
             controls.volume = factoryVolume[index];
+            controls.outputTrimDb = factoryOutputTrimDb[index];
             switch (index)
             {
                 case 13: // A26 Celeste: play one octave up
@@ -479,7 +519,7 @@ struct BankStorage
 };
 
 // Original product sounds, not archival hardware programs. Each is a normal
-// panel patch with its visible performance setup; no private DSP or gain path.
+// panel patch with its visible performance setup and final Output Trim.
 std::array<Preset, productPresetCount> buildProductPresets()
 {
     Preset::Controls bass;
@@ -645,6 +685,8 @@ std::array<Preset, productPresetCount> buildProductPresets()
     result[11].controls.volume = 0.399f;  // Velvet PWM
     result[12].controls.volume = 0.427f;  // Hollow Choir
     result[14].controls.volume = 0.442f;  // Resonant Mist
+    for (std::size_t index = 0; index < result.size(); ++index)
+        result[index].controls.outputTrimDb = productOutputTrimDb[index];
     return result;
 }
 } // namespace
