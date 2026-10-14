@@ -131,7 +131,9 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   complete circuit and chorus, so internal drive and saturation are
   unchanged. Poly 1 and Poly 2 keep unity gain, and changing mode ramps the
   level over 5 ms. This is a level convenience, not a claim that the original
-  hardware attenuates Unison. Sessions saved in Unison play back quieter.
+  hardware attenuates Unison. Sessions saved in Unison play back quieter. The
+  bundled sounds' Output Trims are recalibrated with it, so their Unison
+  sounds keep the common playing level.
 - With portamento, Unison cards glide from their own retained pitch, as the
   B-2 voice firmware does. A card that has not played starts from its
   power-on pitch (MIDI note 60), and entering Unison from Poly no longer moves
