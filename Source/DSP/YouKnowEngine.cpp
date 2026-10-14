@@ -3629,7 +3629,7 @@ const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
 [[gnu::always_inline]] inline std::array<double, 4> polyZonedTanhBatch(
     const std::array<double, 4>& argument) noexcept
 {
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD) && defined(__aarch64__) && defined(__ARM_NEON)
     const float64x2_t first = vld1q_f64(argument.data());
     const float64x2_t second = vld1q_f64(argument.data() + 2);
     const float64x2_t firstSquared = vmulq_f64(first, first);
