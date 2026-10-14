@@ -4163,7 +4163,6 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const auto integrate = [&](auto reciprocalTag, auto tableauTag,
                                const auto& nonlinear) {
         constexpr bool useReciprocal = decltype(reciprocalTag)::value;
-        constexpr auto tableau = decltype(tableauTag)::value;
         std::array<double, pointCount> inverseHeadroomAt {};
         if constexpr (useReciprocal)
             inverseHeadroomAt = headroomReciprocals();
@@ -4234,7 +4233,6 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // tables. The feedback return stays scalar: stage zero's argument needs
     // its result.
     const auto integratePoly = [&](auto tableauTag) {
-        constexpr auto tableau = decltype(tableauTag)::value;
         const auto inverseHeadroomAt = headroomReciprocals();
 
         const auto derivative = [&](std::array<double, 4> value,

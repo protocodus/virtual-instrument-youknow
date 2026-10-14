@@ -97,9 +97,18 @@ int main() {
     require(first != second, "output capacitance equality");
 }
 '''.replace("    PARAMETER_CHECKS", checks)
-    common = [args.cxx, "-pedantic-errors", "-I", str(source)]
+    common = [args.cxx, "-Wall", "-Wextra", "-Wpedantic", "-Werror",
+              "-pedantic-errors", "-I", str(source)]
+    sources = sorted(dsp.glob("*.cpp"))
     subprocess.run(common + ["-std=c++17", "-fsyntax-only"]
-                   + [str(path) for path in sorted(dsp.glob("*.cpp"))], check=True)
+                   + [str(path) for path in sources], check=True)
+    # Match the Rack host's restricted compiler contract as well as the native
+    # view adapter. Panel/preset translation is outside the embedded engine.
+    embedded_sources = [path for path in sources
+                        if path.name not in ("YouKnowPanel.cpp", "YouKnowPresets.cpp")]
+    subprocess.run(common + ["-std=c++17", "-fno-exceptions", "-fno-rtti",
+                             "-DYOUKNOW_EMBEDDED_TARGET=1", "-fsyntax-only"]
+                   + [str(path) for path in embedded_sources], check=True)
     with tempfile.TemporaryDirectory(prefix="youknow-portability-") as temporary:
         temporary = Path(temporary)
         test = temporary / "portability.cpp"
@@ -109,7 +118,8 @@ int main() {
             subprocess.run(common + [f"-std=c++{standard}", "-O2", str(test),
                                      "-o", str(executable)], check=True)
             subprocess.run([str(executable)], check=True)
-    print(f"C++17 DSP compilation and C++17/C++20 view, numeric, and {len(members)}-field equality checks passed")
+    print(f"Strict native/embedded C++17 DSP compilation and C++17/C++20 view, "
+          f"numeric, and {len(members)}-field equality checks passed")
 
 
 if __name__ == "__main__":
