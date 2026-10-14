@@ -4190,11 +4190,13 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             // is selected, which makes this the former argument exactly.
             const double differentialInput =
                 value[3] - resonanceCompensation * drive + resonanceOffset;
-            const double feedbackArgument = [&] {
-                if constexpr (useReciprocal)
-                    return differentialInput * inverseLoopHeadroomAt[point];
-                return differentialInput / loopHeadroomAt[point];
-            }();
+            // Not an immediately invoked lambda: MSVC loses the implicit
+            // capture of process() locals three lambdas deep under if constexpr.
+            double feedbackArgument;
+            if constexpr (useReciprocal)
+                feedbackArgument = differentialInput * inverseLoopHeadroomAt[point];
+            else
+                feedbackArgument = differentialInput / loopHeadroomAt[point];
             double previous = drive - feedbackAt[point] * loopHeadroomAt[point]
                 * nonlinear(feedbackArgument);
             for (std::size_t stage = 0; stage < result.size(); ++stage)
