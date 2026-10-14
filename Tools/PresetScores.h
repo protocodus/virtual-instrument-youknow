@@ -90,6 +90,7 @@ inline EngineParameters loadPresetParameters (const char* slot)
     p.chorusNoise = controls.chorusNoise;
     p.polyphony = controls.polyphony;
     p.volume = controls.volume;
+    p.outputTrimDb = controls.outputTrimDb;
 
     // 4x oversampling ceiling with exact tanh and half-step Merson filter solver
     p.vcfTanhMode = VcfTanhMode::Exact;

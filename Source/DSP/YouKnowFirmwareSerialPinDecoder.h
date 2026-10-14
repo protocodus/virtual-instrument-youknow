@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <span>
+#include "YouKnowCompatibility.h"
 
 namespace youknow::FirmwareSerialPinDecoder {
 
@@ -32,7 +32,7 @@ struct ByteReady {
 };
 
 struct Output {
-    std::span<ByteReady> bytes;
+    Span<ByteReady> bytes;
     std::size_t count = 0;
 };
 

@@ -1,6 +1,6 @@
 #pragma once
 #include "YouKnowFirmwareTrace.h"
-#include <span>
+#include "YouKnowCompatibility.h"
 
 namespace youknow {
 // Resumable B-2 receive/main-loop subset. Supports voice-off80..85,
@@ -146,13 +146,13 @@ class FirmwareSerialTrace {
     // diagnostics; they do not roll back earlier committed work in this call.
     [[nodiscard]] static Result advanceTo(State &, const Tables &,
                                           const FirmwareAdcTrace::Inputs &, const Configuration &,
-                                          std::span<const ByteReady>, std::uint64_t target,
+                                          Span<const ByteReady>, std::uint64_t target,
                                           Events &) noexcept;
     // Compatibility path: unchanged note/ADC scope, including UnsupportedPath
     // before00D7 for all parameter payloads. No empty table is silently used.
     [[nodiscard]] static Result advanceTo(State &, const FirmwareControlTrace::Tables &,
                                           const FirmwareAdcTrace::Inputs &, const Configuration &,
-                                          std::span<const ByteReady>, std::uint64_t target,
+                                          Span<const ByteReady>, std::uint64_t target,
                                           Events &) noexcept;
 };
 } // namespace youknow

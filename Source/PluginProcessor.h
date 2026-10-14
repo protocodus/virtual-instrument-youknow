@@ -442,6 +442,7 @@ private:
         originalPerformance,
         outputRoute,
         headphoneLoad,
+        outputTrimDb,
         count
     };
     static constexpr std::size_t parameterPointerCount =

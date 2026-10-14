@@ -354,9 +354,10 @@ private:
     juce::Slider agingSlider;
     juce::Slider chorusNoiseSlider;
     juce::Slider polyphonySlider;
+    juce::Slider outputTrimSlider;
     // AGING is appended at index 6 so the historical index-based styling of
     // the HISS label (4) stays put.
-    std::array<juce::Label, 7> utilityLabels {};
+    std::array<juce::Label, 8> utilityLabels {};
     int lastTransposeSemitones = 12;
 
     // The original programmer tier. The immutable factory bank maps directly

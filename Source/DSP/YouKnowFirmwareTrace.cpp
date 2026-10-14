@@ -8,7 +8,7 @@ using firmwareTraceDetail::Instruction;
 using firmwareTraceDetail::Op;
 constexpr auto addressMap=[] {
     std::array<std::int16_t,0x851> map {};
-    map.fill(-1);
+    for (auto& entry : map) entry = -1;
     for(std::size_t i=0;i<firmwareTraceDetail::program.size();++i)
         map[firmwareTraceDetail::program[i].address]=static_cast<std::int16_t>(i);
     return map;

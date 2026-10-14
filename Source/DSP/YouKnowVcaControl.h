@@ -21,6 +21,16 @@ public:
     static constexpr double capacitanceFarads = 0.1e-6;
     static constexpr int tableSteps = 4096;
 
+    // The embedded target loads the same solved data as immutable chip data.
+    constexpr VcaControlCircuit(
+        const std::array<double, tableSteps + 1>& charge,
+        const std::array<double, tableSteps + 1>& differential,
+        double kneeRegionEnd, double kneeStep) noexcept
+        : charge_(charge), differential_(differential),
+          kneeRegionEnd_(kneeRegionEnd), kneeStep_(kneeStep)
+    {
+    }
+
     VcaControlCircuit(double thermalVolts, double spanVolts, double knee) noexcept
         : kneeRegionEnd_(knee + 8.0 * thermalVolts / spanVolts),
           kneeStep_(0.5 * thermalVolts / spanVolts)

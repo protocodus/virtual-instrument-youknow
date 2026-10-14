@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <numbers>
+#include "YouKnowCompatibility.h"
 
 namespace youknow {
 // Collector noise of the declared bare bipolar differential pairs. This is
@@ -54,7 +54,7 @@ struct OtaShotNoise {
                 }
             }
             const double r=std::sqrt(-2*std::log(uniform()));
-            const double phase=2*std::numbers::pi*uniform();
+            const double phase=2*numbers::pi*uniform();
             spare=r*std::sin(phase);hasSpare=true;return r*std::cos(phase);
         }
     };

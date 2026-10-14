@@ -91,6 +91,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowPresets.cpp
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
+    Source/DSP/YouKnowCompatibility.h
     Source/DSP/YouKnowBa662Noise.h
     Source/DSP/YouKnowCommonVcaControlNoise.h
     Source/DSP/YouKnowEngine.h
@@ -441,6 +442,10 @@ if(YOUKNOW_BUILD_TOOLS)
     target_compile_definitions(YouKnowAuditFactoryPresets PRIVATE
         "YOUKNOW_FACTORY_AUDIT_DEFAULT_OUTPUT=\"${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/factory-presets\"")
 
+    add_executable(YouKnowCalibratePresets Tools/CalibratePresets.cpp)
+    target_link_libraries(YouKnowCalibratePresets PRIVATE YouKnowDSP Threads::Threads)
+    target_compile_features(YouKnowCalibratePresets PRIVATE cxx_std_20)
+
     # Oversampling research has two deliberately separate builds. The normal
     # executable links the exact shipping DSP for uninstrumented CPU timing.
     # The work executable links only the engine/chorus translation units built
@@ -572,6 +577,7 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowRenderOriginalPresets PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowAuditFactoryPresets PRIVATE
             /W4 /permissive-)
+        target_compile_options(YouKnowCalibratePresets PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowOversamplingAudit
             PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowDSPWorkAudit
@@ -607,6 +613,7 @@ if(YOUKNOW_BUILD_TOOLS)
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowAuditFactoryPresets PRIVATE
             -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnowCalibratePresets PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowOversamplingAudit PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnowDSPWorkAudit PRIVATE
@@ -631,7 +638,36 @@ if(YOUKNOW_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    # Exercise the same host API in both native and restricted C++17 builds.
+    # Panel/preset translation belongs to the plugin, not the embedded engine.
+    set(YOUKNOW_EMBEDDED_DSP_SOURCES ${YOUKNOW_DSP_SOURCES})
+    list(REMOVE_ITEM YOUKNOW_EMBEDDED_DSP_SOURCES
+        Source/DSP/YouKnowPanel.cpp Source/DSP/YouKnowPresets.cpp)
+    add_library(YouKnowEmbeddedDSP STATIC ${YOUKNOW_EMBEDDED_DSP_SOURCES})
+    target_include_directories(YouKnowEmbeddedDSP PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_compile_definitions(YouKnowEmbeddedDSP PUBLIC YOUKNOW_EMBEDDED_TARGET=1)
+    set_target_properties(YouKnowEmbeddedDSP PROPERTIES CXX_STANDARD 17)
+    if(NOT MSVC)
+        target_compile_options(YouKnowEmbeddedDSP PRIVATE
+            -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
+    endif()
+    add_executable(YouKnowHostAdapterTests Tests/YouKnowHostAdapterTests.cpp)
+    target_link_libraries(YouKnowHostAdapterTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.HostAdapter COMMAND YouKnowHostAdapterTests)
+    add_executable(YouKnowEmbeddedHostAdapterTests Tests/YouKnowHostAdapterTests.cpp)
+    target_link_libraries(YouKnowEmbeddedHostAdapterTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedHostAdapterTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedHostAdapter COMMAND YouKnowEmbeddedHostAdapterTests)
+    set_tests_properties(YouKnow.HostAdapter YouKnow.EmbeddedHostAdapter PROPERTIES TIMEOUT 60)
+
     find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+        add_test(NAME YouKnow.DspPortability
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/CheckDspPortability.py"
+                --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(YouKnow.DspPortability PROPERTIES TIMEOUT 180)
+    endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME YouKnow.ControlDacTiming
             COMMAND "${Python3_EXECUTABLE}"
@@ -695,6 +731,12 @@ if(BUILD_TESTING)
     add_executable(YouKnowOutputJackTests Tests/YouKnowOutputJackTests.cpp)
     target_link_libraries(YouKnowOutputJackTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputJack COMMAND YouKnowOutputJackTests)
+
+    add_executable(YouKnowOutputTrimTests Tests/YouKnowOutputTrimTests.cpp)
+    target_link_libraries(YouKnowOutputTrimTests PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowOutputTrimTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.OutputTrim COMMAND YouKnowOutputTrimTests)
+    set_tests_properties(YouKnow.OutputTrim PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowSawCouplingTests Tests/YouKnowSawCouplingTests.cpp)
     target_link_libraries(YouKnowSawCouplingTests PRIVATE YouKnowDSP)
@@ -1024,7 +1066,7 @@ if(BUILD_TESTING)
     target_compile_features(YouKnowSysExTests PRIVATE cxx_std_20)
 
     foreach(target YouKnowEngineTests YouKnowCircuitTests YouKnowChorusBypassTests YouKnowChorusMuteTests
-                   YouKnowChorusInputLoadingTests YouKnowOutputJackTests
+                   YouKnowChorusInputLoadingTests YouKnowOutputJackTests YouKnowOutputTrimTests
                    YouKnowHeadphoneOutputTests YouKnowOutputNetworkTests YouKnowPulseBalanceTests YouKnowCommonVcaOutputTests
                    YouKnowCommonVcaControlNoiseTests
                    YouKnowVcfIntegratorTests YouKnowVcfNoiseTests YouKnowSysExTests)
@@ -1102,6 +1144,13 @@ if(BUILD_TESTING)
         # also covers sixteen original-program scores and took 131 s during
         # the promotion checks. Allow shared-runner margin without a new oracle.
         set_tests_properties(YouKnow.AuditFactoryPresets PROPERTIES TIMEOUT 240)
+
+        # Factory trims belong to the shipping physical profile. Enforce the
+        # product level band on representative full-length render scores.
+        add_test(NAME YouKnow.PresetLevels
+                 COMMAND YouKnowCalibratePresets --check --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/preset-level-smoke.csv")
+        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 240)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity
