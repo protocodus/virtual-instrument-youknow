@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -46,8 +46,8 @@ struct NoiseC41LowPass
         const double p = std::exp(-wc);
         const double sum = -std::expm1(-wc);
         const double a = 2.0 * p / (sum * sum);
-        const double wm = std::min(0.9 * std::numbers::pi,
-                                   2.0 * std::numbers::pi * 20000.0 / sampleRate);
+        const double wm = std::min(0.9 * numbers::pi,
+                                   2.0 * numbers::pi * 20000.0 / sampleRate);
         const double phi = 2.0 * std::pow(std::sin(0.5 * wm), 2.0);
         const double magnitudeSquared = 1.0 / (1.0 + (wm / wc) * (wm / wc));
         const double b = (magnitudeSquared * (1.0 + a * phi) - 1.0) / phi;

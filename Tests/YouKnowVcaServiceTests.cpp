@@ -337,7 +337,8 @@ void physicalDividerAndServiceTarget()
                 {
                     const double serviceKelvin = 298.15 + character *
                         (15.0 + (spatial ? 4.0 * std::exp(-card / 2.5) : 0.0));
-                    const double trim = 1.0 + 0.03 * character * error;
+                    // The ±1% residual left by the serviced input trim.
+                    const double trim = 1.0 + 0.01 * character * error;
                     const double divider = 0.052 * serviceKelvin / 298.15
                         * drive / 2.4 * trim;
                     const double total = load * (560.0 / 5260.0) / divider;

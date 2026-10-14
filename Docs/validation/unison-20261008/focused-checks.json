@@ -1,0 +1,386 @@
+{
+  "purpose": "Canonical native and embedded Unison regression evidence, not a performance measurement or physical hardware capture.",
+  "base_commit": "ded94edc84af697d66f0590dda8286b1308e0d2c",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.5.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin",
+  "machine": "arm64",
+  "native_object_compiles": [
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowEngine.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowEngine.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowEngine.log",
+      "exit_code": 0,
+      "source_sha256": "6afc6d23357bc78a5883b5a7f4d51812cde56083dcd34630e263696510230e82",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowEngine.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowChorus.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowChorus.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowChorus.log",
+      "exit_code": 0,
+      "source_sha256": "21e4e4f0d4f6242d5f3bd5d447d92c8f3018fabe7da9d5124f60e7f4917f6b34",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowChorus.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowFirmwareTrace.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareTrace.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareTrace.log",
+      "exit_code": 0,
+      "source_sha256": "6e78bd8ab15e2dfd3aaaa560b988150e9774f343a90ed812b4a25192fb1d6475",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareTrace.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowFirmwareSerialTrace.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialTrace.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialTrace.log",
+      "exit_code": 0,
+      "source_sha256": "e4a482d576943222ace0ae6637b324bd833004b3decefd670e7b51093b07ff07",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialTrace.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowFirmwareAssignerTrace.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerTrace.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerTrace.log",
+      "exit_code": 0,
+      "source_sha256": "bf0b6e92df0d9eadd9970bb1fd7c0939357ce00185c088145e7feff13e5a8e31",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerTrace.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowFirmwareAssignerScheduler.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerScheduler.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerScheduler.log",
+      "exit_code": 0,
+      "source_sha256": "28c1dc4ac5e02b4728a44ae4f1166dc5cf4f7756847d938c3b9831f519761e36",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerScheduler.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowFirmwareAssignerAudioBridge.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerAudioBridge.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerAudioBridge.log",
+      "exit_code": 0,
+      "source_sha256": "eb0cb9c32bfe3a2c77749f8172bd9ae32125c2172da1ed4c886ea250c3951f38",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerAudioBridge.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowFirmwareUartTrace.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareUartTrace.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareUartTrace.log",
+      "exit_code": 0,
+      "source_sha256": "52ae17f8d5f4f72ddd33bf8d46eac5dabd09c830ab2dce9cd7368b001e638d78",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareUartTrace.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowFirmwareSerialPinDecoder.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialPinDecoder.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialPinDecoder.log",
+      "exit_code": 0,
+      "source_sha256": "1f897dd80dcbe327bcd74de7446b4756f245452f5905fa7e51e76de69f9515ee",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialPinDecoder.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowOriginalPerformance.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowOriginalPerformance.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowOriginalPerformance.log",
+      "exit_code": 0,
+      "source_sha256": "9920a91536033f40e522f0d39b32f962dc4542d57d2084de55fb48cdc58dbed2",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowOriginalPerformance.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowSysEx.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowSysEx.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowSysEx.log",
+      "exit_code": 0,
+      "source_sha256": "a8c580ce93c4c2126dbc9a118761ae76bf959660e031e220d1ff25c9b8fc570b",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowSysEx.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowPanel.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPanel.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPanel.log",
+      "exit_code": 0,
+      "source_sha256": "1a5a8ca098c66ece73df8e6cba38d3ad67110ea878e08a10c3d7ee00f7e3c0a9",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPanel.o"
+    },
+    {
+      "command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "-c",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source/DSP/YouKnowPresets.cpp",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPresets.o"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPresets.log",
+      "exit_code": 0,
+      "source_sha256": "44d7e996b2dae431a0612eb0fdbcaf10861da1bf47d1a3c8701893b593c6e240",
+      "object": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPresets.o"
+    }
+  ],
+  "results": {
+    "unison-hardware-embedded-v2": {
+      "command": [
+        "clang++",
+        "-std=c++17",
+        "-O3",
+        "-DNDEBUG",
+        "-DYOUKNOW_EMBEDDED_TARGET=1",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Tests/YouKnowUnisonHardwareTests.cpp",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowEngine.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowChorus.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowFirmwareTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowFirmwareSerialTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowFirmwareAssignerTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowFirmwareAssignerScheduler.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowFirmwareAssignerAudioBridge.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowFirmwareUartTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowFirmwareSerialPinDecoder.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowOriginalPerformance.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/objects/YouKnowSysEx.o",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/unison-hardware-embedded-v2"
+      ],
+      "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/unison-hardware-embedded-v2-build.log",
+      "exit_code": 0,
+      "run": {
+        "command": [
+          "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/unison-hardware-embedded-v2"
+        ],
+        "log": "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/unison-hardware-embedded-v2.log",
+        "exit_code": 0
+      }
+    },
+    "native-engine-notes": {
+      "command": [
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-engine-tests"
+      ],
+      "environment": {
+        "YOUKNOW_NOTE_TESTS_ONLY": "1"
+      },
+      "exit_code": 0
+    },
+    "native-engine-dco-fixture": {
+      "command": [
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-engine-tests"
+      ],
+      "environment": {
+        "YOUKNOW_DCO_FIXTURE_TESTS_ONLY": "1"
+      },
+      "exit_code": 0
+    },
+    "native-engine-pit": {
+      "command": [
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-engine-tests"
+      ],
+      "environment": {
+        "YOUKNOW_PIT_TESTS_ONLY": "1"
+      },
+      "exit_code": 0
+    },
+    "native-unison-phase": {
+      "source_sha256": "4783d51c00c9ae4f33f668d77381816c89cb38b56d1db667a7579f3e03b0b600",
+      "build_command": [
+        "clang++",
+        "-std=c++20",
+        "-O3",
+        "-DNDEBUG",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Tests/YouKnowUnisonPhaseTests.cpp",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowEngine.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowChorus.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerScheduler.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareAssignerAudioBridge.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareUartTrace.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowFirmwareSerialPinDecoder.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowOriginalPerformance.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowSysEx.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPanel.o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-objects/YouKnowPresets.o",
+        "-o",
+        "/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/unison-20261008/canonical/native-unison-phase-tests"
+      ],
+      "build_exit_code": 0,
+      "run_exit_code": 0
+    },
+    "unison-hardware-native-v2": {
+      "exit_code": 0,
+      "log": "unison-hardware-native-v2.log",
+      "assertions": 33148
+    }
+  },
+  "source_sha256": {
+    "Source/DSP/YouKnowEngine.cpp": "6afc6d23357bc78a5883b5a7f4d51812cde56083dcd34630e263696510230e82",
+    "Source/DSP/YouKnowEngine.h": "f6c6d96cb6e0244038847e17cf902ed6b50612b7758782c3dabb8e1ea111bbce",
+    "Tests/YouKnowUnisonHardwareTests.cpp": "992fb4365b54ab51ffca62b19a192d5c9d5ba2919705cbf1a351889425e007fd",
+    "Tests/YouKnowUnisonPhaseTests.cpp": "4783d51c00c9ae4f33f668d77381816c89cb38b56d1db667a7579f3e03b0b600"
+  }
+}

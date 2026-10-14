@@ -91,6 +91,7 @@ set(YOUKNOW_DSP_SOURCES
     Source/DSP/YouKnowPresets.cpp
     Source/DSP/YouKnowSysEx.cpp)
 set(YOUKNOW_DSP_HEADERS
+    Source/DSP/YouKnowCompatibility.h
     Source/DSP/YouKnowBa662Noise.h
     Source/DSP/YouKnowCommonVcaControlNoise.h
     Source/DSP/YouKnowEngine.h
@@ -110,6 +111,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowFirmwareSerialPinDecoder.h
     Source/DSP/YouKnowDcoTemperature.h
     Source/DSP/YouKnowDcoComponents.h
+    Source/DSP/YouKnowVoiceResidualEstimates.h
     Source/DSP/YouKnowDcoReset.h
     Source/DSP/YouKnowControlDac.h
     Source/DSP/YouKnowEnvelopeHold.h
@@ -631,7 +633,63 @@ if(YOUKNOW_BUILD_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    # Exercise the same host API in both native and restricted C++17 builds.
+    # Panel/preset translation belongs to the plugin, not the embedded engine.
+    set(YOUKNOW_EMBEDDED_DSP_SOURCES ${YOUKNOW_DSP_SOURCES})
+    list(REMOVE_ITEM YOUKNOW_EMBEDDED_DSP_SOURCES
+        Source/DSP/YouKnowPanel.cpp Source/DSP/YouKnowPresets.cpp)
+    add_library(YouKnowEmbeddedDSP STATIC ${YOUKNOW_EMBEDDED_DSP_SOURCES})
+    target_include_directories(YouKnowEmbeddedDSP PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_compile_definitions(YouKnowEmbeddedDSP PUBLIC YOUKNOW_EMBEDDED_TARGET=1)
+    set_target_properties(YouKnowEmbeddedDSP PROPERTIES CXX_STANDARD 17)
+    if(NOT MSVC)
+        target_compile_options(YouKnowEmbeddedDSP PRIVATE
+            -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti)
+    endif()
+    add_executable(YouKnowHostAdapterTests Tests/YouKnowHostAdapterTests.cpp)
+    target_link_libraries(YouKnowHostAdapterTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.HostAdapter COMMAND YouKnowHostAdapterTests)
+    add_executable(YouKnowEmbeddedHostAdapterTests Tests/YouKnowHostAdapterTests.cpp)
+    target_link_libraries(YouKnowEmbeddedHostAdapterTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedHostAdapterTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedHostAdapter COMMAND YouKnowEmbeddedHostAdapterTests)
+    set_tests_properties(YouKnow.HostAdapter YouKnow.EmbeddedHostAdapter PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowUnisonHardwareTests Tests/YouKnowUnisonHardwareTests.cpp)
+    target_link_libraries(YouKnowUnisonHardwareTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.UnisonHardware COMMAND YouKnowUnisonHardwareTests)
+    add_executable(YouKnowEmbeddedUnisonHardwareTests Tests/YouKnowUnisonHardwareTests.cpp)
+    target_link_libraries(YouKnowEmbeddedUnisonHardwareTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedUnisonHardwareTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedUnisonHardware COMMAND YouKnowEmbeddedUnisonHardwareTests)
+    set_tests_properties(YouKnow.UnisonHardware YouKnow.EmbeddedUnisonHardware PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowUnisonOutputTests Tests/YouKnowUnisonOutputTests.cpp)
+    target_link_libraries(YouKnowUnisonOutputTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.UnisonOutput COMMAND YouKnowUnisonOutputTests)
+    add_executable(YouKnowEmbeddedUnisonOutputTests Tests/YouKnowUnisonOutputTests.cpp)
+    target_link_libraries(YouKnowEmbeddedUnisonOutputTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedUnisonOutputTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedUnisonOutput COMMAND YouKnowEmbeddedUnisonOutputTests)
+    set_tests_properties(YouKnow.UnisonOutput YouKnow.EmbeddedUnisonOutput PROPERTIES TIMEOUT 60)
+
+    add_executable(YouKnowVoiceResidualTests Tests/YouKnowVoiceResidualTests.cpp)
+    target_link_libraries(YouKnowVoiceResidualTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VoiceResidual COMMAND YouKnowVoiceResidualTests)
+    add_executable(YouKnowEmbeddedVoiceResidualTests Tests/YouKnowVoiceResidualTests.cpp)
+    target_link_libraries(YouKnowEmbeddedVoiceResidualTests PRIVATE YouKnowEmbeddedDSP)
+    set_target_properties(YouKnowEmbeddedVoiceResidualTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedVoiceResidual COMMAND YouKnowEmbeddedVoiceResidualTests)
+    set_tests_properties(YouKnow.VoiceResidual YouKnow.EmbeddedVoiceResidual PROPERTIES TIMEOUT 60)
+
     find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+        add_test(NAME YouKnow.DspPortability
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/CheckDspPortability.py"
+                --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(YouKnow.DspPortability PROPERTIES TIMEOUT 180)
+    endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME YouKnow.ControlDacTiming
             COMMAND "${Python3_EXECUTABLE}"

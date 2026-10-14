@@ -9629,32 +9629,36 @@ void testVcfTrimResidualHonoursPrintedWindows()
 {
     // Roland's p. 19 acceptance bounds the two trim CHECK POINTS at
     // +/-10 cents each (procedures 7/8, repeated jointly); the model draws
-    // each point inside its window and takes the line through them, so a
-    // full-scale draw contributes exactly ten cents at its own point, zero
+    // each point inside one quarter of its window, taking the line through
+    // them. A full draw contributes 2.5 cents at its own point, zero
     // at the other, and half at the midpoint. The former voiced form
     // multiplied total counts and overshot the printed window 2.7x at the
     // very point the procedure checks.
     constexpr float anchor = 6272.0f;
     constexpr float span = 2.0f * 1143.0f;
-    constexpr float tenCents = 10.0f / 1200.0f * 1143.0f;
+    constexpr float residualCounts = 2.5f / 1200.0f * 1143.0f;
     const auto residual = [](float counts, float offsetDraw, float widthDraw) {
         return YouKnowTestAccess::trimmedAnalogCounts(counts, offsetDraw,
                                                          widthDraw)
              - counts;
     };
-    expectNear(residual(anchor, 1.0f, 0.0f), tenCents, 1.0e-3,
-               "a full offset draw misses ten cents at the FREQ check point");
+    expectNear(residual(anchor, 1.0f, 0.0f), residualCounts, 1.0e-3,
+               "a full offset draw misses the 2.5-cent estimate at the FREQ check point");
     expectNear(residual(anchor + span, 1.0f, 0.0f), 0.0, 1.0e-3,
                "the offset draw leaks into the WIDTH check point");
     expectNear(residual(anchor, 0.0f, 1.0f), 0.0, 1.0e-3,
                "the width draw leaks into the FREQ check point");
-    expectNear(residual(anchor + span, 0.0f, 1.0f), tenCents, 1.0e-3,
-               "a full width draw misses ten cents at the WIDTH check point");
-    expectNear(residual(anchor + 0.5f * span, 1.0f, 0.0f), 0.5f * tenCents,
+    expectNear(residual(anchor + span, 0.0f, 1.0f), residualCounts, 1.0e-3,
+               "a full width draw misses the 2.5-cent estimate at the WIDTH check point");
+    expectNear(residual(anchor + 0.5f * span, 1.0f, 0.0f), 0.5f * residualCounts,
                1.0e-3, "the residual between the check points is not the "
                        "line through them");
-    expectNear(residual(anchor, -1.0f, 1.0f), -tenCents, 1.0e-3,
+    expectNear(residual(anchor, -1.0f, 1.0f), -residualCounts, 1.0e-3,
                "opposed draws do not stay inside their own windows");
+    for (float draw : { -1.0f, 1.0f })
+        for (float point : { anchor, anchor + span })
+            expect(std::abs(residual(point, draw, draw)) <= 10.0f / 1200.0f * 1143.0f,
+                   "the conservative residual escaped the independent service acceptance");
 }
 
 void testCompleteVoiceHonoursServiceFrequencyWindows()
@@ -10509,7 +10513,12 @@ void testFixedOutputBoundaryCorpus()
         // boundary. This hot Unison fixture therefore compresses further.
         // Refresh only its three exceeded amplitude references. Every other
         // row, fixture, four-percent tolerance and overload-count guard stays.
-        Baseline { 0.609196, 1.16688, 1.16838, 1194, 4762 },
+        // Re-pinned for the requested Unison output trim
+        // (YouKnowEngine::unisonOutputLevel), a final scalar after the output
+        // rail: the amplitude references are the previous ones times 0.8 and
+        // the overload counts were re-measured at zero. The rail checks below
+        // divide the trim back out, so this probe still crosses full scale.
+        Baseline { 0.4873568, 0.933504, 0.934704, 0, 0 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
@@ -10534,6 +10543,7 @@ void testFixedOutputBoundaryCorpus()
     constexpr int guardSamples = 16;
     const bool printAudit = std::getenv("YOUKNOW_AUDIT_OUTPUT") != nullptr;
     std::array<OutputMetrics, fixtures.size()> measured {};
+    std::array<OutputMetrics, fixtures.size()> railMeasured {};
     Render boundaryProbe;
     bool passedPositiveOne = false;
     bool passedNegativeOne = false;
@@ -10588,9 +10598,19 @@ void testFixedOutputBoundaryCorpus()
         if (fixtureIndex == 0)
             boundaryProbe = rendered;
 
+        // The Unison trim scales the finished output after the rail, so the
+        // rail checks see the probe with that scalar divided back out.
+        auto rail = rendered;
+        if (fixture.playing == Playing::SoloUnison)
+            for (auto* channel : { &rail.left, &rail.right })
+                for (auto& sample : *channel)
+                    sample /= YouKnowEngine::unisonOutputLevel;
+        railMeasured[fixtureIndex] = outputMetrics(
+            rail, static_cast<std::size_t>(warmupSamples), analysisSamples);
+
         for (int channel = 0; channel < 2; ++channel)
         {
-            const auto& signal = channel == 0 ? rendered.left : rendered.right;
+            const auto& signal = channel == 0 ? rail.left : rail.right;
             for (int index = warmupSamples;
                  index < warmupSamples + analysisSamples; ++index)
             {
@@ -10660,7 +10680,7 @@ void testFixedOutputBoundaryCorpus()
            "the output was pinned at exactly +/-1 on "
                + std::to_string(pinnedAtFullScale)
                + " samples, which is a limiter and not the modelled rail");
-    expect(std::any_of(measured.begin(), measured.end(), [](const auto& metrics) {
+    expect(std::any_of(railMeasured.begin(), railMeasured.end(), [](const auto& metrics) {
                return metrics.samplePeak > 1.0 && metrics.sampleOverloads > 0;
            }),
            "no fixture crosses full scale, so the corpus stopped exercising "
@@ -15874,11 +15894,11 @@ void testSpatialThermalScaleCacheTracksLiveDependencies()
                 // cache is refreshed on the ~375 Hz control cadence rather
                 // than only on edits, and between refreshes the direct law
                 // walks ahead of it by at most the cadence interval's share
-                // of the warm-up: 0.0033/C * 2 * 2.6 C * (1/375 s)/(3 s),
-                // under 2e-5 of the step. A stale cache after an edit,
+                // of the warm-up: 0.00033/C * 2 * 2.6 C * (1/375 s)/(3 s),
+                // under 2e-6 of the step. A stale cache after an edit,
                 // reset or rate change is orders larger than that.
                 expect(std::abs(values[0] - values[1])
-                           <= 2.0e-5f * std::max(1.0e-6f, values[1]),
+                           <= 2.0e-6f * std::max(1.0e-6f, values[1]),
                        std::string("the cached thermal cutoff scale is stale ")
                            + when + " on card " + std::to_string(card));
             }
@@ -17277,6 +17297,22 @@ void testCpuBudget()
 
 int main()
 {
+    if (std::getenv("YOUKNOW_VOICE_RESIDUAL_TESTS_ONLY") != nullptr)
+    {
+        testVcfTrimResidualHonoursPrintedWindows();
+        testResonanceAdjustmentPinsTheWarmLimitCycle();
+        testCompleteVoiceHonoursServiceFrequencyWindows();
+        testVoicesRetireWithComponentToleranceApplied();
+        testSpatialThermalScaleCacheTracksLiveDependencies();
+        if (failures != 0)
+        {
+            std::cerr << failures << " voice residual check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All voice residual/service checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW_DCO_FIXTURE_TESTS_ONLY") != nullptr)
     {
         testPhysicalRampSupplyBoundUsesTotalScaleAndCoalesces();

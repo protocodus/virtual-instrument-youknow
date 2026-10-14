@@ -57,7 +57,7 @@ Decoder::Status decode(Bridge::State& state, Bridge::Output& output,
         Decoder::ByteReady byte{};
         const bool hasSpace = output.count < output.bytes.size();
         Decoder::Output decoded{
-            std::span<Decoder::ByteReady>(&byte, hasSpace ? 1u : 0u), 0};
+            Span<Decoder::ByteReady>(&byte, hasSpace ? 1u : 0u), 0};
         const auto result = operation(state.receiver, decoded);
         if (decoded.count != 0)
             output.bytes[output.count++] = byte;
@@ -91,7 +91,7 @@ bool FirmwareAssignerAudioBridge::reset(State& state, const Sender::State& warmA
 
 FirmwareAssignerAudioBridge::Result FirmwareAssignerAudioBridge::advanceTo(
     State& state, const Sender::Configuration& configuration, const Sender::Tables& tables,
-    const Io::Inputs& inputs, std::span<const Sender::InputEvent> incoming,
+    const Io::Inputs& inputs, Span<const Sender::InputEvent> incoming,
     std::uint64_t target, Output& output) noexcept {
     if (!valid(state))
         return {Status::InvalidState};

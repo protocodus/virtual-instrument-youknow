@@ -5,12 +5,14 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <numbers>
+#include "YouKnowCompatibility.h"
 
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
 #if defined(__aarch64__) && defined(__ARM_NEON)
 #include <arm_neon.h>
 #elif defined(__x86_64__) && defined(__SSE2__)
 #include <emmintrin.h>
+#endif
 #endif
 
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -396,8 +398,13 @@ constexpr float outputJackCapacitanceF = 1.0e-9f;
 // The generator is a bipolar uniform sequence at the 192 kHz reference rate, so
 // amplitude A gives RMS A/sqrt(3) over an fs/2 band: A = sqrt(3) * density *
 // sqrt(fs/2) = 198.7 uV, which is 19.9 dB above the retired value.
-constexpr float filterNoiseSourceOhms = 68000.0f * 560.0f / (68000.0f + 560.0f);
-constexpr float filterNoiseStageAttenuation = 560.0f / (68000.0f + 560.0f);
+[[maybe_unused]] constexpr float filterNoiseSourceOhms = 68000.0f * 560.0f / (68000.0f + 560.0f);
+[[maybe_unused]] constexpr float filterNoiseStageAttenuation = 560.0f / (68000.0f + 560.0f);
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+constexpr float filterNoiseVoltsDerived =
+#include "FrozenTables/CardJohnsonNoise.inc"
+;
+#else
 const float filterNoiseVoltsDerived = []
 {
     const float density =
@@ -410,6 +417,7 @@ const float filterNoiseVoltsDerived = []
     // from drifting apart.
     return std::sqrt(3.0f) * density * std::sqrt(192000.0f * 0.5f);
 }();
+#endif
 // The retired voiced amplitude, kept bit-exactly for controlled A/B renders.
 constexpr float filterNoiseVoltsVoiced = 2.0e-5f;
 
@@ -469,7 +477,7 @@ FirmwareAdcTrace::Inputs originalPerformanceAdc(const EngineParameters& p) noexc
         return std::uint8_t{255};
     };
     FirmwareAdcTrace::Inputs input;
-    input.raw={rawFor(static_cast<unsigned>(std::clamp(128+int(YouKnowEngine::masterTunePitchWordOffset(p.masterTuneCents)),0,255))),
+    input.raw={rawFor(static_cast<unsigned>(std::clamp(128+int(YouKnowEngine::masterTunePitchWordOffset(p.masterTuneCents, p.allowHostMasterTuneExtension)),0,255))),
         rawFor(controlAdcByte(p.portamento)),255,rawFor(controlAdcByte(p.benderLfoDepth)),
         rawFor(controlAdcByte(p.benderVcfDepth)),rawFor(controlAdcByte(p.benderDcoDepth)),255,0};
     return input;
@@ -654,17 +662,20 @@ YouKnowEngine::DcoPitchPair YouKnowEngine::dcoPitchPair(
 }
 
 std::int16_t YouKnowEngine::masterTunePitchWordOffset(
-    double cents) noexcept
+    double cents, bool allowHostExtension) noexcept
 {
     // IC29 subtracts 128 from the processed Tune ADC byte. The plug-in keeps
     // its declared continuous +/-50-cent host parameter and maps it onto that
     // signed-byte grid; clamping before lround also keeps hostile finite input
     // away from the integral conversion's undefined overflow range.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1107-L1119
+    const double extent = allowHostExtension ? 150.0 : 50.0;
     const double bounded = std::isfinite(cents)
-        ? std::clamp(cents, -50.0, 50.0) : 0.0;
-    const long units = std::lround(bounded * 2.56);
-    return static_cast<std::int16_t>(std::clamp(units, -128L, 127L));
+        ? std::clamp(cents, -extent, extent) : 0.0;
+    const double panel = std::clamp(bounded, -50.0, 50.0);
+    const long units = std::clamp(std::lround(panel * 2.56), -128L, 127L);
+    return static_cast<std::int16_t>(units
+        + (allowHostExtension ? std::lround((bounded - panel) * 2.56) : 0L));
 }
 
 std::int32_t YouKnowEngine::dcoPitchBendWordOffset(
@@ -917,6 +928,7 @@ constexpr int describingSteps = 512;
 // Composite Simpson over the integrand's own quarter period; it is smooth and
 // bounded, so 64 panels hold it far inside the interpolation error of the
 // table it fills.
+#if !defined(YOUKNOW_EMBEDDED_TARGET)
 double describingIntegral(double a) noexcept
 {
     constexpr int panels = 64;
@@ -935,8 +947,14 @@ double describingIntegral(double a) noexcept
     }
     return 2.0 * sum;
 }
+#endif
 
 // N(a), tabulated on [0, 8] and continued by its own 1/a asymptote above it.
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+constexpr std::array<double, describingSteps + 1> describingTable =
+#include "FrozenTables/Describing.inc"
+;
+#else
 const std::array<double, describingSteps + 1> describingTable = [] {
     std::array<double, describingSteps + 1> values {};
     values[0] = 1.0;
@@ -949,6 +967,7 @@ const std::array<double, describingSteps + 1> describingTable = [] {
     }
     return values;
 }();
+#endif
 
 double describingGain(double a) noexcept
 {
@@ -1053,6 +1072,11 @@ float YouKnowEngine::VoicedResonanceCompatibilityProfile::frequencyTrim(
     // outer root-find. `prepare` warms this so no audio callback pays for it.
     constexpr int trimSteps = 128;
     constexpr float trimCeiling = 8.0f;
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr std::array<float, trimSteps + 1> table =
+#include "FrozenTables/ResonanceFrequencyTrim.inc"
+;
+#else
     static const std::array<float, trimSteps + 1> table = [] {
         constexpr int sweep = 1024;
         constexpr double amplitudeCeiling = 12.0;
@@ -1095,6 +1119,7 @@ float YouKnowEngine::VoicedResonanceCompatibilityProfile::frequencyTrim(
                 values[static_cast<std::size_t>(index - 1)];
         return values;
     }();
+#endif
 
     const float k = std::clamp(sanitised(feedback, 0.0f), 0.0f, trimCeiling);
     if (k <= nominalOscillationFeedback)
@@ -1189,6 +1214,11 @@ float YouKnowEngine::chassisGradientCelsius(int cardIndex) noexcept
 {
     // A per-card constant, read once per voice per internal sample. The
     // exponential belongs in a table, not in the audio path.
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr std::array<float, maxVoices> profile =
+#include "FrozenTables/ChassisGradient.inc"
+;
+#else
     static const std::array<float, maxVoices> profile = [] {
         std::array<float, maxVoices> values {};
         for (int card = 0; card < maxVoices; ++card)
@@ -1196,6 +1226,7 @@ float YouKnowEngine::chassisGradientCelsius(int cardIndex) noexcept
                 * std::exp(-static_cast<float>(card) / chassisGradientCards);
         return values;
     }();
+#endif
 
     const int index = std::max(cardIndex, 0);
     if (index < maxVoices)
@@ -1209,12 +1240,18 @@ float YouKnowEngine::chassisGradientMeanCelsius() noexcept
     // A constant, but not one the language will fold: std::exp is not
     // constexpr. Thermal-scale refreshes read it for every card, so compute it
     // once rather than repeating the same six exponentials per refresh.
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr float mean =
+#include "FrozenTables/ChassisGradientMean.inc"
+;
+#else
     static const float mean = [] {
         float total = 0.0f;
         for (int card = 0; card < hardwareVoices; ++card)
             total += chassisGradientCelsius(card);
         return total / static_cast<float>(hardwareVoices);
     }();
+#endif
     return mean;
 }
 
@@ -1944,15 +1981,27 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts,
 
 const EvidenceVcaCalibration& YouKnowEngine::evidenceVcaCalibration() noexcept
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr EvidenceVcaCalibration calibration =
+#include "FrozenTables/EvidenceVcaCalibration.inc"
+;
+#else
     static const EvidenceVcaCalibration calibration {
         VoiceVcaControlLaw::controlFullScaleVolts };
+#endif
     return calibration;
 }
 
 const VcaJunctionTemperatureCircuit& YouKnowEngine::voiceVcaJunctionCircuit() noexcept
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr VcaJunctionTemperatureCircuit circuit =
+#include "FrozenTables/VcaJunctionTemperature.inc"
+;
+#else
     static const VcaJunctionTemperatureCircuit circuit {
         VoiceVcaControlLaw::controlFullScaleVolts };
+#endif
     return circuit;
 }
 
@@ -1966,6 +2015,19 @@ void YouKnowEngine::initialiseVoiceVcaJunctionCharge(Voice& voice) noexcept
 
 const VcaControlCircuit& YouKnowEngine::voiceVcaControlCircuit(bool evidence) noexcept
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    if (evidence)
+    {
+        static constexpr VcaControlCircuit circuit =
+#include "FrozenTables/EvidenceVcaControl.inc"
+;
+        return circuit;
+    }
+    static constexpr VcaControlCircuit circuit =
+#include "FrozenTables/VcaControl.inc"
+;
+    return circuit;
+#else
     if (evidence)
     {
         static const VcaControlCircuit circuit {
@@ -1979,6 +2041,7 @@ const VcaControlCircuit& YouKnowEngine::voiceVcaControlCircuit(bool evidence) no
         VoiceVcaControlLaw::controlFullScaleVolts,
         VoiceVcaControlLaw::turnOnVolts / VoiceVcaControlLaw::controlFullScaleVolts };
     return circuit;
+#endif
 }
 
 const std::array<float, YouKnowEngine::VoiceVcaControlLaw::tableSteps + 1>&
@@ -1990,6 +2053,11 @@ YouKnowEngine::VoiceVcaControlLaw::exactGainTable()
     // monotonically towards it, so the iterate never leaves y > 0; a dozen
     // steps are far more than the quadratic tail needs. Built once, off the
     // audio thread, by prepare().
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr std::array<float, tableSteps + 1> table =
+#include "FrozenTables/VoiceVcaGain.inc"
+;
+#else
     static const std::array<float, tableSteps + 1> table = []
     {
         std::array<double, tableSteps + 1> solved {};
@@ -2015,6 +2083,7 @@ YouKnowEngine::VoiceVcaControlLaw::exactGainTable()
                 solved[static_cast<std::size_t>(i)] / fullScale);
         return result;
     }();
+#endif
     return table;
 }
 
@@ -2199,7 +2268,7 @@ float YouKnowEngine::commonVcaInputCouplingCornerHz() noexcept
 
 double YouKnowEngine::commonVcaOutputPoleHz() noexcept
 {
-    return 1.0 / (2.0 * std::numbers::pi * commonVcaFeedbackResistanceOhms
+    return 1.0 / (2.0 * numbers::pi * commonVcaFeedbackResistanceOhms
                   * commonVcaFeedbackCapacitanceF);
 }
 
@@ -2446,6 +2515,13 @@ float YouKnowEngine::BandlimitedTrack::advance(float naive) noexcept
 const YouKnowEngine::CorrectionTables&
 YouKnowEngine::correctionTables() noexcept
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr CorrectionTables tables {
+#include "FrozenTables/CorrectionStep.inc"
+,
+#include "FrozenTables/CorrectionSlope.inc"
+    };
+#else
     static const CorrectionTables tables = [] {
         // Integrate a Blackman-windowed sinc to obtain the continuous
         // bandlimited step. Integrating once more gives the bandlimited ramp.
@@ -2520,6 +2596,7 @@ YouKnowEngine::correctionTables() noexcept
         }
         return result;
     }();
+#endif
     return tables;
 }
 
@@ -3397,8 +3474,8 @@ constexpr double vcfTanhFineLimit = 5.0;
 constexpr double vcfTanhLimit = 19.0;
 constexpr std::size_t vcfTanhFineIntervals = 160;
 constexpr std::size_t vcfTanhTailIntervals = 56;
-constexpr double vcfTanhFineWidth = 1.0 / 32.0;
-constexpr double vcfTanhTailWidth = 1.0 / 4.0;
+[[maybe_unused]] constexpr double vcfTanhFineWidth = 1.0 / 32.0;
+[[maybe_unused]] constexpr double vcfTanhTailWidth = 1.0 / 4.0;
 constexpr double vcfTanhFineScale = 32.0;
 constexpr double vcfTanhTailScale = 4.0;
 
@@ -3464,10 +3541,19 @@ std::array<VcfTanhHermiteCoefficient, intervals> makeVcfTanhHermiteTable(
     return table;
 }
 
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+constexpr std::array<VcfTanhHermiteCoefficient, vcfTanhFineIntervals> vcfTanhFineTable =
+#include "FrozenTables/VcfTanhFine.inc"
+;
+constexpr std::array<VcfTanhHermiteCoefficient, vcfTanhTailIntervals> vcfTanhTailTable =
+#include "FrozenTables/VcfTanhTail.inc"
+;
+#else
 const auto vcfTanhFineTable = makeVcfTanhHermiteTable<vcfTanhFineIntervals>(
     0.0, vcfTanhFineWidth);
 const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
     vcfTanhFineLimit, vcfTanhTailWidth);
+#endif
 
 // The body of `zonedHermiteTanhUnchecked`, force-inlined into the solver's
 // right-hand side. As an outlined call it was the single largest consumer in
@@ -3636,9 +3722,15 @@ float YouKnowEngine::VoiceVcaSignalLaw::serviceGain() noexcept
     // the complete fixed correction is about 1.2790 (+2.138 dB), not merely
     // 6/4.8. The negligible C59 loss at 248 Hz is left inside that physical
     // coupling rather than absorbed into another gain adjustment.
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr float gain =
+#include "FrozenTables/VoiceVcaServiceGain.inc"
+;
+#else
     static const float gain = trimOutputPeakVolts
         / (shape(trimFilterPeakVolts)
            * VoiceVcaControlLaw::gain(4064.0f / 4095.0f));
+#endif
     return gain;
 }
 
@@ -3745,8 +3837,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         std::array<double, 3> quadratic {};
         std::array<double, 4> cubic {};
     };
-    static constexpr auto makeNodes = []<std::size_t count>(
-        const std::array<double, count>& positions) {
+    static constexpr auto makeNodes = [](const auto& positions) {
+        constexpr auto count = std::tuple_size_v<std::decay_t<decltype(positions)>>;
         std::array<IntegrationNode, count> result {};
         for (std::size_t point = 0; point < count; ++point)
         {
@@ -3987,8 +4079,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // The tableau walks are shared by every right-hand side: they advance
     // `state` through the closure with whichever derivative the dispatch
     // below built, so the ladder exists once rather than once per kernel.
-    const auto integrateSteps = [&]<Tableau tableau>(
-                                    const auto& derivative) {
+    const auto integrateSteps = [&](auto tableauTag, const auto& derivative) {
+        constexpr auto tableau = decltype(tableauTag)::value;
         if constexpr (tableau == Tableau::MersonHalf)
         {
             for (int step = 0; step < integrationSubsteps; ++step)
@@ -4068,8 +4160,9 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                     values[point] = 1.0 / headroomAt[point];
         return values;
     };
-    const auto integrate = [&]<bool useReciprocal, Tableau tableau>(
+    const auto integrate = [&](auto reciprocalTag, auto tableauTag,
                                const auto& nonlinear) {
+        constexpr bool useReciprocal = decltype(reciprocalTag)::value;
         std::array<double, pointCount> inverseHeadroomAt {};
         if constexpr (useReciprocal)
             inverseHeadroomAt = headroomReciprocals();
@@ -4128,7 +4221,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             return result;
         };
 
-        integrateSteps.template operator()<tableau>(derivative);
+        integrateSteps(tableauTag, derivative);
     };
 
     // The PolyZoned kernel: the same derivative expressions with the four
@@ -4139,7 +4232,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // out-of-zone lane is patched afterwards through the established Hermite
     // tables. The feedback return stays scalar: stage zero's argument needs
     // its result.
-    const auto integratePoly = [&]<Tableau tableau> {
+    const auto integratePoly = [&](auto tableauTag) {
         const auto inverseHeadroomAt = headroomReciprocals();
 
         const auto derivative = [&](std::array<double, 4> value,
@@ -4198,48 +4291,48 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             return result;
         };
 
-        integrateSteps.template operator()<tableau>(derivative);
+        integrateSteps(tableauTag, derivative);
     };
 
     // One switch per interval over a value that is constant for the whole
     // parameter snapshot. Each arm instantiates only the integration shell;
     // the derivative it calls is shared, so the ladder does not clone the hot
     // right-hand side -- an experiment that did clone one measured 6% slower.
-    const auto integrateWithTableau = [&]<bool useReciprocal>(
+    const auto integrateWithTableau = [&](auto reciprocalTag,
                                           const auto& nonlinear) {
         switch (plannedTableau)
         {
             case Tableau::Rk4Half:
-                integrate.template operator()<useReciprocal, Tableau::Rk4Half>(
-                    nonlinear);
+                integrate(reciprocalTag,
+                    std::integral_constant<Tableau, Tableau::Rk4Half>{}, nonlinear);
                 return;
             case Tableau::Rk4Full:
-                integrate.template operator()<useReciprocal, Tableau::Rk4Full>(
-                    nonlinear);
+                integrate(reciprocalTag,
+                    std::integral_constant<Tableau, Tableau::Rk4Full>{}, nonlinear);
                 return;
             case Tableau::MersonHalf:
                 break;
         }
-        integrate.template operator()<useReciprocal, Tableau::MersonHalf>(
-            nonlinear);
+        integrate(reciprocalTag,
+            std::integral_constant<Tableau, Tableau::MersonHalf>{}, nonlinear);
     };
 
     if (tanhMode == VcfTanhMode::PolyZoned)
         switch (plannedTableau)
         {
             case Tableau::Rk4Half:
-                integratePoly.template operator()<Tableau::Rk4Half>();
+                integratePoly(std::integral_constant<Tableau, Tableau::Rk4Half>{});
                 break;
             case Tableau::Rk4Full:
-                integratePoly.template operator()<Tableau::Rk4Full>();
+                integratePoly(std::integral_constant<Tableau, Tableau::Rk4Full>{});
                 break;
             case Tableau::MersonHalf:
             default:
-                integratePoly.template operator()<Tableau::MersonHalf>();
+                integratePoly(std::integral_constant<Tableau, Tableau::MersonHalf>{});
                 break;
         }
     else if constexpr (useCubicEarly)
-        integrateWithTableau.template operator()<true>(
+        integrateWithTableau(std::true_type{},
             [](double value) noexcept {
                 return zonedHermiteTanhImpl(value);
             });
@@ -4247,14 +4340,14 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         switch (tanhMode)
         {
             case VcfTanhMode::ZonedHermite:
-                integrateWithTableau.template operator()<true>(
+                integrateWithTableau(std::true_type{},
                     [](double value) noexcept {
                         return zonedHermiteTanhImpl(value);
                     });
                 break;
             case VcfTanhMode::Exact:
             default:
-                integrateWithTableau.template operator()<false>(
+                integrateWithTableau(std::false_type{},
                     [](double value) noexcept {
                         return std::tanh(value);
                     });
@@ -5984,7 +6077,7 @@ void YouKnowEngine::refreshVoiceVcaCoupling() noexcept
         const float serviceKelvin =
             voiceCardCelsius(activeParameters_, index, 1.0f) + 273.15f;
         const float inputTrim = 1.0f
-            + card.vcaGainError * 0.03f * activeParameters_.calibration;
+            + card.vcaGainError * VoiceResidualEstimates::vcaInputTrimFraction * activeParameters_.calibration;
         const double referenceThermalVolts = activeParameters_.enableEvidenceVcaCalibration
             ? EvidenceVcaCalibration::thermalVolts : static_cast<double>(thermalVoltage);
         const double referenceHeadroom = junctionTemperature ? card.vcaJunctionHeadroomVolts
@@ -6018,11 +6111,17 @@ void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
     const auto& parameters = activeParameters_;
     const double serviceWarmupFraction = 1.0
         - std::exp(-600.0 / thermalWarmupTimeConstantSeconds);
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr LimitCycle nominalCycle =
+#include "FrozenTables/NominalLimitCycle.inc"
+;
+#else
     static const LimitCycle nominalCycle = [] {
         std::array<double, 4> gains { 1.0, 1.0, 1.0, 1.0 };
         return limitCycleFor(2.4, otaHeadroomVolts,
             VoicedResonanceCompatibilityProfile::loopHeadroomVolts, gains);
     }();
+#endif
     for (int index = 0; index < maxVoices; ++index)
     {
         auto& card = cards_[static_cast<std::size_t>(index)];
@@ -6158,6 +6257,23 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     reset();
 }
 
+void YouKnowEngine::setInitialOversamplingFactor(int factor) noexcept
+{
+    if (!prepared_)
+        return;
+
+    oversamplingRequested_ = sanitiseOversampleFactor(factor);
+    oversamplingApplied_ = oversamplingRequested_;
+    if (effectiveOversampleFactor(oversamplingApplied_) == oversampling_)
+        return;
+
+    // The native object is still silent and reset here. Select the already
+    // prepared support rate directly so restoring a Reason song starts on its
+    // saved Quality grid without a live-change fade.
+    updateProcessingRate();
+    reset();
+}
+
 void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
 {
     // Prepare the control circuit's table before entering the audio callback.
@@ -6201,12 +6317,14 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
     processingCoefficients_.scanPhasePerInternalSample =
         controlScanHz / oversampledRate_;
-    processingCoefficients_.outputBoundaryGain = outputBoundaryGain();
+    // Host product calibration acts only after the complete analogue path.
+    processingCoefficients_.outputBoundaryGain =
+        (outputBoundaryGain() / filterSourceBalance_) * productOutputGain_;
     processingCoefficients_.outputSlewMaxStep =
         static_cast<float>(outputSummerSlewRateVoltsPerSecond
                            * voltsToSample / oversampledRate_);
     processingCoefficients_.outputSummerBandwidthBlend = 1.0f - std::exp(
-        -2.0f * std::numbers::pi_v<float> * outputSummerBandwidthHz()
+        -2.0f * numbers::pi_v<float> * outputSummerBandwidthHz()
         / oversampledRate_);
     outputFiniteWetRatio_ = -1.0;
     processingCoefficients_.outputSummerMagnitudePole =
@@ -6214,7 +6332,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     processingCoefficients_.outputSummerMutedMagnitudePole =
         OutputJackLowPass::coefficients(outputSummerBandwidthHz(false), oversampledRate_);
     processingCoefficients_.outputSummerMutedBandwidthBlend = 1.0f - std::exp(
-        -2.0f * std::numbers::pi_v<float> * outputSummerBandwidthHz(false)
+        -2.0f * numbers::pi_v<float> * outputSummerBandwidthHz(false)
         / oversampledRate_);
     // bipolarFromState() is uniform [-1,1] with RMS 1/sqrt(3). Integrating a
     // one-sided V/sqrt(Hz) density to the host Nyquist frequency therefore
@@ -6712,6 +6830,8 @@ void YouKnowEngine::reset()
     railRipplePhase_ = 0.0;
     railRippleVolts_ = 0.0f;
     lfoAccumulator_ = 0u;
+    lfoSyncPhase_ = 0.0;
+    lfoSyncDelayProgress_ = 0.0;
     lfoRising_ = true;
     lfoPolarity_ = 1.0f;
     lfoValue_ = 0.0f;
@@ -6836,6 +6956,11 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     };
 
     fix01(result.lfoRate, 0.42f);
+    result.lfoSyncRateHz = std::isfinite(result.lfoSyncRateHz)
+        ? std::clamp(result.lfoSyncRateHz, 0.0f, 1000.0f) : 0.0f;
+    result.lfoSyncDelaySeconds = std::isfinite(result.lfoSyncDelaySeconds)
+        && result.lfoSyncDelaySeconds >= 0.0f
+        ? std::min(result.lfoSyncDelaySeconds, 960.0f) : -1.0f;
     fix01(result.lfoDelay, 0.0f);
     fix01(result.dcoLfoDepth, 0.0f);
     fix01(result.pwmDepth, 0.30f);
@@ -6887,7 +7012,9 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     fix01(result.chorusNoiseTransferCorrelation, 1.0f);
 
     result.masterTuneCents = std::isfinite(result.masterTuneCents)
-                           ? std::clamp(result.masterTuneCents, -50.0f, 50.0f)
+                           ? std::clamp(result.masterTuneCents,
+                               result.allowHostMasterTuneExtension ? -150.0f : -50.0f,
+                               result.allowHostMasterTuneExtension ? 150.0f : 50.0f)
                            : 0.0f;
     result.keyTranspose = std::clamp(result.keyTranspose, -12, 12);
     result.polyphony = std::clamp(result.polyphony, 1, maxVoices);
@@ -7121,6 +7248,38 @@ void YouKnowEngine::refreshDcoMasterClock() noexcept
     // finite reset seconds and all correction histories stay continuous.
 }
 
+bool YouKnowEngine::configureSingleVoiceLastNotePriority(bool enabled) noexcept
+{
+    if (prepared_)
+        return false;
+    singleVoiceLastNotePriority_ = enabled;
+    return true;
+}
+
+bool YouKnowEngine::configurePhysicalVoicePowerOnGlide(bool enabled) noexcept
+{
+    if (prepared_)
+        return false;
+    physicalVoicePowerOnGlide_ = enabled;
+    return true;
+}
+
+bool YouKnowEngine::configureFilterSourceBalance(float scale) noexcept
+{
+    if (prepared_ || !std::isfinite(scale) || scale < 0.25f || scale > 2.0f)
+        return false;
+    filterSourceBalance_ = scale;
+    return true;
+}
+
+bool YouKnowEngine::configureOutputGain(float gain) noexcept
+{
+    if (prepared_ || !std::isfinite(gain) || gain < 0.125f || gain > 16.0f)
+        return false;
+    productOutputGain_ = gain;
+    return true;
+}
+
 bool YouKnowEngine::configureHighPassSwitch(double resistance) noexcept
 {
     if (prepared_ || !std::isfinite(resistance) || resistance < 50 || resistance > 1000)
@@ -7144,7 +7303,7 @@ void YouKnowEngine::setOriginalPerformanceMode(bool enabled) noexcept
 }
 
 bool YouKnowEngine::receiveOriginalPerformanceMidi(
-    std::span<const std::uint8_t> bytes) noexcept
+    Span<const std::uint8_t> bytes) noexcept
 {
     if (!originalPerformanceEnabled_ || !prepared_)
         return false;
@@ -7202,6 +7361,11 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
                                       && (next.keyMode == KeyMode::Unison
                                           || activeParameters_.keyMode
                                                  == KeyMode::Unison);
+    // Restoring the initial pool has no prior assignments to gate; starting a
+    // rescan there would delay the first mono note by an artificial scan pass.
+    const bool monoVoiceCountChanged = !startupSnapshot && singleVoiceLastNotePriority_
+        && next.polyphony != activeParameters_.polyphony
+        && (next.polyphony == 1 || activeParameters_.polyphony == 1);
     const bool highPassChanged = next.highPass != activeParameters_.highPass;
     if (next.enableCommonVcaOutputPole != activeParameters_.enableCommonVcaOutputPole)
         commonVcaOutputPole_.reset();
@@ -7228,6 +7392,27 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
     const bool rampCurrentScalesChanged = startupSnapshot
         || next.calibration != activeParameters_.calibration || rangeChanged;
     const bool agingChanged = next.aging != activeParameters_.aging;
+    if (next.lfoSyncDelaySeconds >= 0.0f
+        && activeParameters_.lfoSyncDelaySeconds < 0.0f)
+    {
+        // Changing clocks retains the current onset stage and fraction.
+        // Positive tempo/duration edits thereafter only change its speed.
+        lfoSyncDelayProgress_ = lfoDelayHoldoff_ < 0x4000u
+            ? static_cast<double>(lfoDelayHoldoff_) / 16384.0
+            : 1.0 + static_cast<double>(lfoDelayFade_) / 65536.0;
+    }
+    if (next.lfoSyncDelaySeconds == 0.0f)
+        lfoSyncDelayProgress_ = 2.0;
+    if (next.lfoSyncRateHz > 0.0f && activeParameters_.lfoSyncRateHz <= 0.0f)
+    {
+        // Enabling sync keeps the current triangle position and direction.
+        // Later tempo/rate edits change speed without restarting its phase.
+        const double height = static_cast<double>(lfoAccumulator_) / 8191.0;
+        lfoSyncPhase_ = (lfoPolarity_ < 0.0f ? 0.5 : 0.0)
+            + (lfoRising_ ? height : 2.0 - height) * 0.25;
+        if (lfoSyncPhase_ >= 1.0)
+            lfoSyncPhase_ -= 1.0;
+    }
     if (next.useFixedVcfServiceFrequencyTrim
             != activeParameters_.useFixedVcfServiceFrequencyTrim
         || next.useServiced439522VcfCalibration
@@ -7301,6 +7486,8 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
+    if (activeParameters_.lfoSyncDelaySeconds >= 0.0f)
+        sampleSyncedLfoDelay();
     if (vcaAntialiasChanged)
     {
         // This reference/product selector is fixed by the product profile;
@@ -7385,7 +7572,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
     // a live Unison stack is the only coherent equivalent when that count
     // changes.
     if (prepared_ && !voiceBoardCommandReplayActive_
-        && (assignModeChanged || unisonVoiceCountChanged))
+        && (assignModeChanged || unisonVoiceCountChanged || monoVoiceCountChanged))
         if (!originalPerformanceEnabled_) beginVoiceAssignmentRescan();
     if (originalParameterOverflow) {
         resetForHostStop(); originalPerformanceHealthy_=false;
@@ -7430,7 +7617,11 @@ bool YouKnowEngine::rememberHeldNote(int midiNote, float velocity) noexcept
     const auto index = static_cast<std::size_t>(midiNote);
     const bool firstPress = heldNoteCounts_[index] == 0;
     if (firstPress)
+    {
         heldNoteVelocities_[index] = velocity;
+        heldNoteOrder_[static_cast<std::size_t>(heldNoteOrderSize_++)]
+            = static_cast<std::uint8_t>(midiNote);
+    }
     if (heldNoteCounts_[index] < std::numeric_limits<std::uint16_t>::max())
         ++heldNoteCounts_[index];
     return firstPress;
@@ -7444,13 +7635,37 @@ bool YouKnowEngine::forgetHeldNote(int midiNote) noexcept
     if (heldNoteCounts_[index] == 0)
         return false;
     --heldNoteCounts_[index];
-    return heldNoteCounts_[index] == 0;
+    if (heldNoteCounts_[index] != 0)
+        return false;
+    for (int position = 0; position < heldNoteOrderSize_; ++position)
+        if (heldNoteOrder_[static_cast<std::size_t>(position)] == midiNote)
+        {
+            for (int next = position + 1; next < heldNoteOrderSize_; ++next)
+                heldNoteOrder_[static_cast<std::size_t>(next - 1)]
+                    = heldNoteOrder_[static_cast<std::size_t>(next)];
+            --heldNoteOrderSize_;
+            break;
+        }
+    return true;
 }
 
 void YouKnowEngine::clearHeldNotes() noexcept
 {
     heldNoteVelocities_.fill(0.0f);
     heldNoteCounts_.fill(0);
+    heldNoteOrder_.fill(0);
+    heldNoteOrderSize_ = 0;
+}
+
+int YouKnowEngine::newestHeldNote() const noexcept
+{
+    return heldNoteOrderSize_ > 0
+        ? heldNoteOrder_[static_cast<std::size_t>(heldNoteOrderSize_ - 1)] : -1;
+}
+
+bool YouKnowEngine::usesSingleVoiceLastNotePriority() const noexcept
+{
+    return singleVoiceLastNotePriority_ && voiceLimit() == 1;
 }
 
 int YouKnowEngine::highestHeldNote() const noexcept
@@ -7560,7 +7775,14 @@ void YouKnowEngine::completeVoiceAssignmentRescan() noexcept
     // The physical matrix is scanned from its high address down. Solo Unison
     // consumes the first set bit once; the poly modes continue descending and
     // therefore give a limited pool to the highest held keys.
-    if (activeParameters_.keyMode == KeyMode::Unison)
+    if (usesSingleVoiceLastNotePriority())
+    {
+        const int note = newestHeldNote();
+        if (note >= 0)
+            assignHeldNote(note,
+                           heldNoteVelocities_[static_cast<std::size_t>(note)]);
+    }
+    else if (activeParameters_.keyMode == KeyMode::Unison)
     {
         const int note = highestHeldNote();
         if (note >= 0)
@@ -7587,10 +7809,16 @@ void YouKnowEngine::completeVoiceAssignmentRescan() noexcept
 // The delay is a hold followed by a fade. Both start again for a new phrase.
 void YouKnowEngine::rearmLfoDelay() noexcept
 {
+    lfoSyncDelayProgress_ = 0.0;
     lfoDelayHoldoff_ = 0u;
     lfoDelayFade_ = 0u;
     lfoDelayLevel_ = 0.0f;
     lfoDelayByte_ = 0u;
+    if (activeParameters_.lfoSyncDelaySeconds == 0.0f)
+    {
+        lfoSyncDelayProgress_ = 2.0;
+        sampleSyncedLfoDelay();
+    }
 }
 
 int YouKnowEngine::findVoiceForNote(int midiNote) const noexcept
@@ -7712,9 +7940,18 @@ void YouKnowEngine::initialiseVoice(Voice& voice, int slot, int midiNote,
         // The glide integrator is per voice and survives retirement, so a
         // reassigned voice slides from its retained word in the shared CPU --
         // notes several allocator assignments back, matching poly-glide
-        // behavior. Only a slot with no earlier pitch starts at the new note.
+        // behavior. The physical voice CPU powers up at MIDI 60: FF09 targets
+        // are set to 0x3c and the first zero-coefficient pass copies them into
+        // FF71 glide words before the coefficient ADC write (B-2 0280/03D7).
+        // Physical Unison cards retain that word by default: B-2 has no
+        // assign-mode branch that resets FF71 on Voice On. Direct Poly hosts
+        // may opt into the same rule. Mono and extension cards keep their
+        // product first-note startup policy.
         if (!wasSounding)
             voice.currentMidi = voice.hasVoicePitchHistory
+                              || ((parameters.keyMode == KeyMode::Unison
+                                   || physicalVoicePowerOnGlide_)
+                                  && slot < hardwareVoices && voiceLimit() > 1)
                               ? voice.currentMidi : target;
     }
     else
@@ -7905,7 +8142,7 @@ void YouKnowEngine::noteOn(int midiNote, float velocity)
         if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
         return;
     }
-    noteOnInternal(midiNote, std::clamp(velocity, 0.0f, 1.0f));
+    noteOnInternal(midiNote, std::clamp(sanitised(velocity, 1.0f), 0.0f, 1.0f));
 }
 
 void YouKnowEngine::noteOnInternal(int midiNote, float velocity) noexcept
@@ -8037,6 +8274,11 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
 {
     if (activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt)
         return;
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr FirmwareControlTrace::Tables tables =
+#include "FrozenTables/FirmwareControl.inc"
+;
+#else
     static const auto tables = [] {
         FirmwareControlTrace::Tables result;
         for (unsigned i = 0; i < 128; ++i)
@@ -8052,6 +8294,7 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
         }
         return result;
     }();
+#endif
     auto& ram = firmwareControlState_.ram;
     if (initialise)
     {
@@ -8070,7 +8313,7 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
     // With no capture configured, use a frozen lower-bank ADC snapshot. Its
     // calculated outputs are overwritten by the next host snapshot. This is a
     // repeatable nominal path, not a claim about the real ADC interrupt phase.
-    const auto tune = masterTunePitchWordOffset(p.masterTuneCents);
+    const auto tune = masterTunePitchWordOffset(p.masterTuneCents, p.allowHostMasterTuneExtension);
     const auto bend = dcoBendCommand(pitchBendTarget_);
     ram[0x1e] = static_cast<std::uint8_t>((ram[0x1e] & 0x0e)
         | (sustainPedalDown_ ? 1 : 0) | (p.pulseEnabled ? 0x40 : 0)
@@ -8092,9 +8335,36 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
     ram[0x47] = static_cast<std::uint8_t>(storedControlByte(p.pwmDepth) * 2u);
     ram[0x48] = static_cast<std::uint8_t>(storedControlByte(p.vcfLfoDepth) * 2u);
     ram[0x49] = dcoLfoDepthScale(storedControlByte(p.dcoLfoDepth));
-    putWord(0x4b, lfoRateIncrement(p.lfoRate));
-    putWord(0x58, envelopeAttackIncrement(p.lfoDelay));
-    putWord(0x6c, lfoDelayFadeIncrement(p.lfoDelay));
+    if (p.lfoSyncRateHz > 0.0f)
+    {
+        // The optional instruction-trace profile computes modulation from
+        // this pass's sampled triangle. A zero coefficient holds that value
+        // while the firmware performs its normal delay, pitch and PWM work.
+        sampleSyncedLfo();
+        putWord(0x4d, lfoAccumulator_);
+        ram[0x4a] = static_cast<std::uint8_t>(
+            (lfoRising_ ? 0u : 1u) | (lfoPolarity_ < 0.0f ? 2u : 0u));
+        putWord(0x4b, 0u);
+    }
+    else
+        putWord(0x4b, lfoRateIncrement(p.lfoRate));
+    if (p.lfoSyncDelaySeconds >= 0.0f)
+    {
+        sampleSyncedLfoDelay();
+        putWord(0x56, lfoDelayHoldoff_);
+        putWord(0x5a, lfoDelayFade_);
+        putWord(0x58, 0u);
+        putWord(0x6c, 0u);
+        // Host note assignment already applies the same running-voice
+        // retrigger rule. Suppress a second firmware hangtime reset here.
+        ram[0x1e] = static_cast<std::uint8_t>((ram[0x1e] & ~0x0cu)
+            | (lfoSyncDelayProgress_ >= 2.0 ? 4u : 0u));
+    }
+    else
+    {
+        putWord(0x58, envelopeAttackIncrement(p.lfoDelay));
+        putWord(0x6c, lfoDelayFadeIncrement(p.lfoDelay));
+    }
     ram[0x61] = static_cast<std::uint8_t>(std::abs(tune));
     ram[0x63] = static_cast<std::uint8_t>(2u * storedControlByte(modWheelTarget_));
     ram[0x64] = static_cast<std::uint8_t>((ram[0x63] * controlAdcByte(p.benderLfoDepth)) >> 8);
@@ -8241,7 +8511,7 @@ float YouKnowEngine::firmwareConverterTarget(const ConverterWrite& write) const 
         const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         return clamp01(code / 4095.0f * velocityGain(activeParameters_, voice)
-            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+            + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * activeParameters_.calibration);
     }
     return code / 4095.0f;
 }
@@ -8266,7 +8536,7 @@ void YouKnowEngine::refreshFirmwareDcoTiming() noexcept
     const auto& p = activeParameters_;
     const float glide = resolveGlideStepPerScan(
         portamentoTravelAdcFraction(p.portamento));
-    const std::int32_t controlOffset = masterTunePitchWordOffset(p.masterTuneCents)
+    const std::int32_t controlOffset = masterTunePitchWordOffset(p.masterTuneCents, p.allowHostMasterTuneExtension)
         + dcoPitchBendWord_ + dcoLfoPitchWord_;
     for (int slot = 1; slot < hardwareVoices; ++slot)
     {
@@ -8307,6 +8577,20 @@ void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
     if (!anyVoiceRunning())
         rearmLfoDelay();
 
+    if (usesSingleVoiceLastNotePriority())
+    {
+        // This mutable one-voice setting is a product mono mode rather than
+        // the hardware's full keyboard pool. Keep every physical hold in the
+        // priority table, but let each new distinct key replace slot zero.
+        finishProtectedPitWritesBeforeSerialVoiceCommand();
+        auto& voice = voices_[0];
+        initialiseVoice(voice, 0, midiNote, velocity);
+        voice.unisonMember = activeParameters_.keyMode == KeyMode::Unison;
+        updateActiveVoiceCount();
+        restartVoiceBoardScanAfterSerialVoiceCommand();
+        return;
+    }
+
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
         finishProtectedPitWritesBeforeSerialVoiceCommand();
@@ -8343,8 +8627,12 @@ void YouKnowEngine::assignHeldNote(int midiNote, float velocity) noexcept
             const bool joiningWidenedStack = assignmentRescanPending_
                 && !rescanPreviousUnisonMembers_[static_cast<std::size_t>(slot)];
             const bool freshVoiceCpu = !voice.hasVoicePitchHistory;
+            const bool physicalGlideHistory = slot < hardwareVoices && limit > 1;
             initialiseVoice(voice, slot, midiNote, velocity);
-            if ((freshVoiceCpu || joiningWidenedStack) && haveStackMidi
+            // An unused physical card already owns its powered glide word.
+            // Only extra cards and explicit width expansion inherit
+            // another member's origin; changing key mode must not align cards.
+            if (((freshVoiceCpu && !physicalGlideHistory) || joiningWidenedStack) && haveStackMidi
                 && voice.glideSemitonesPerScan > 0.0f)
                 voice.currentMidi = stackMidi;
             voice.unisonMember = true;
@@ -8395,6 +8683,90 @@ void YouKnowEngine::noteOff(int midiNote)
     noteOffInternal(midiNote);
 }
 
+bool YouKnowEngine::retargetHeldNoteLegato(int oldMidiNote,
+                                              int newMidiNote) noexcept
+{
+    if (originalPerformanceEnabled_ || oldMidiNote < 0 || oldMidiNote > 127
+        || newMidiNote < 0 || newMidiNote > 127)
+        return false;
+
+    const auto oldIndex = static_cast<std::size_t>(oldMidiNote);
+    const auto newIndex = static_cast<std::size_t>(newMidiNote);
+    if (oldMidiNote == newMidiNote)
+        return heldNoteCounts_[oldIndex] != 0;
+
+    // A repeated source or an already-held destination is ambiguous without
+    // MIDI/CV source identities. A pending hardware assignment rescan owns the
+    // next assignment as well, so all three cases use the wrapper's safe
+    // note-off/note-on fallback.
+    if (assignmentRescanPending_ || heldNoteCounts_[oldIndex] != 1
+        || heldNoteCounts_[newIndex] != 0)
+        return false;
+
+    if (activeParameters_.keyMode == KeyMode::Unison
+        && !usesSingleVoiceLastNotePriority())
+    {
+        for (int note = 0; note < 128; ++note)
+            if (note != oldMidiNote
+                && heldNoteCounts_[static_cast<std::size_t>(note)] != 0)
+                return false;
+    }
+
+    // A held key can lack an assignment because it arrived while every voice
+    // was keyed. There is then no envelope/pitch to retarget. Leave the held
+    // table intact so the wrapper's note-off/note-on fallback can allocate a
+    // now-free slot, rather than accepting a legato change that stays silent.
+    const bool hasKeyedSource = std::any_of(
+        voices_.begin(), voices_.end(), [this, oldMidiNote](const Voice& voice) {
+            return voice.active && voice.keyDown && voice.rootMidi == oldMidiNote
+                && (activeParameters_.keyMode != KeyMode::Unison || voice.unisonMember);
+        });
+    if (!hasKeyedSource)
+        return false;
+
+    const float velocity = heldNoteVelocities_[oldIndex];
+    heldNoteCounts_[oldIndex] = 0;
+    heldNoteVelocities_[oldIndex] = 0.0f;
+    heldNoteCounts_[newIndex] = 1;
+    heldNoteVelocities_[newIndex] = velocity;
+    // A held-gate pitch move changes that same physical hold's identity,
+    // rather than creating a fresh press or changing another key's priority.
+    for (int position = 0; position < heldNoteOrderSize_; ++position)
+        if (heldNoteOrder_[static_cast<std::size_t>(position)] == oldMidiNote)
+        {
+            heldNoteOrder_[static_cast<std::size_t>(position)]
+                = static_cast<std::uint8_t>(newMidiNote);
+            break;
+        }
+
+    const auto retarget = [this, newMidiNote](Voice& voice) {
+        // The next converter scan derives the target pitch and glide from this
+        // root. Envelope, current pitch, DCO restart state, VCA and energy are
+        // deliberately left untouched: that is the legato operation.
+        voice.rootMidi = newMidiNote;
+        voice.lastRootMidi = newMidiNote;
+        voice.hasAllocatorHistory = true;
+        voice.generation = ++generation_;
+    };
+
+    if (activeParameters_.keyMode == KeyMode::Unison)
+    {
+        for (auto& voice : voices_)
+            if (voice.active && voice.keyDown && voice.unisonMember)
+                retarget(voice);
+    }
+    else
+    {
+        for (auto& voice : voices_)
+            if (voice.active && voice.keyDown && voice.rootMidi == oldMidiNote)
+            {
+                retarget(voice);
+                break;
+            }
+    }
+    return true;
+}
+
 void YouKnowEngine::reassertKeyMode() noexcept
 {
     if (originalPerformanceEnabled_) {
@@ -8417,6 +8789,25 @@ void YouKnowEngine::noteOffInternal(int midiNote) noexcept
     // needs changing before the pending descending scan reaches it.
     if (assignmentRescanPending_)
         return;
+
+    if (usesSingleVoiceLastNotePriority())
+    {
+        const auto& voice = voices_[0];
+        // Releasing an older key must not retrigger the current assignment.
+        if (!voice.active || !voice.keyDown || voice.rootMidi != midiNote)
+            return;
+        const int fallback = newestHeldNote();
+        if (fallback >= 0)
+        {
+            assignHeldNote(fallback,
+                          heldNoteVelocities_[static_cast<std::size_t>(fallback)]);
+            return;
+        }
+        finishProtectedPitWritesBeforeSerialVoiceCommand();
+        releaseVoiceKey(voices_[0]);
+        restartVoiceBoardScanAfterSerialVoiceCommand();
+        return;
+    }
 
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
@@ -8584,6 +8975,12 @@ void YouKnowEngine::updateActiveVoiceCount() noexcept
 
 void YouKnowEngine::advanceLfo(const EngineParameters& parameters) noexcept
 {
+    if (parameters.lfoSyncRateHz > 0.0f)
+    {
+        sampleSyncedLfo();
+        advanceLfoDelay(parameters);
+        return;
+    }
     // The modulator is firmware: it advances once per converter scan and holds
     // its value in between. That staircase is audible as a faint roughness on
     // deep, slow vibrato, and smoothing it away would be modelling a different
@@ -8625,9 +9022,58 @@ void YouKnowEngine::advanceLfo(const EngineParameters& parameters) noexcept
     advanceLfoDelay(parameters);
 }
 
+void YouKnowEngine::sampleSyncedLfo() noexcept
+{
+    // Keep the firmware's bipolar triangle and 13-bit amplitude, but retain
+    // fractional cycle time rather than discarding overshoot at each peak.
+    // The existing converter schedule still determines when it is observed.
+    const double quadrantPosition = lfoSyncPhase_ * 4.0;
+    const int quadrant = static_cast<int>(quadrantPosition);
+    const double travel = quadrantPosition - quadrant;
+    lfoRising_ = (quadrant & 1) == 0;
+    lfoPolarity_ = quadrant < 2 ? 1.0f : -1.0f;
+    lfoAccumulator_ = static_cast<std::uint16_t>(
+        (lfoRising_ ? travel : 1.0 - travel) * 8191.0 + 0.5);
+    lfoValue_ = lfoPolarity_ * static_cast<float>(lfoAccumulator_) / 8191.0f;
+}
+
+void YouKnowEngine::advanceSilentLfoSync(int numSamples) noexcept
+{
+    if (!prepared_ || numSamples <= 0)
+        return;
+    const double elapsed = static_cast<double>(numSamples) / sampleRate_;
+    if (activeParameters_.lfoSyncRateHz > 0.0f)
+    {
+        lfoSyncPhase_ += static_cast<double>(activeParameters_.lfoSyncRateHz) * elapsed;
+        lfoSyncPhase_ -= std::floor(lfoSyncPhase_);
+    }
+    if (activeParameters_.lfoSyncDelaySeconds > 0.0f)
+        lfoSyncDelayProgress_ = std::min(2.0, lfoSyncDelayProgress_
+            + elapsed / static_cast<double>(activeParameters_.lfoSyncDelaySeconds));
+}
+
+void YouKnowEngine::sampleSyncedLfoDelay() noexcept
+{
+    // Preserve the firmware's 8-bit modulation-depth staircase and keep its
+    // counters coherent for a later return to the free-running delay clock.
+    lfoDelayHoldoff_ = static_cast<std::uint32_t>(
+        std::min(1.0, lfoSyncDelayProgress_) * 16384.0);
+    lfoDelayFade_ = static_cast<std::uint32_t>(
+        std::max(0.0, lfoSyncDelayProgress_ - 1.0) * 65536.0);
+    lfoDelayByte_ = lfoDelayFade_ >= 0x10000u
+        ? 255u : static_cast<std::uint8_t>(lfoDelayFade_ >> 8u);
+    lfoDelayLevel_ = static_cast<float>(lfoDelayByte_) / 255.0f;
+    displayLfo_ = lfoValue_ * lfoDelayLevel_;
+}
+
 void YouKnowEngine::advanceLfoDelay(
     const EngineParameters& parameters) noexcept
 {
+    if (parameters.lfoSyncDelaySeconds >= 0.0f)
+    {
+        sampleSyncedLfoDelay();
+        return;
+    }
     // Delay: a silent hold that advances at the attack table's own rate, then
     // the stepped fade. The pair is re-armed the moment a note starts with no
     // key down -- release tails still ringing keep their vibrato, because the
@@ -8663,7 +9109,7 @@ void YouKnowEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
 {
     // A voiced residual wander of the analogue control chain, independent of
     // the temperature state. At 375 Hz this AR(1) prior has a 3.332 s
-    // correlation time and about 2.425 cents RMS cutoff movement at Character
+    // correlation time and about 0.485 cents RMS cutoff movement at Character
     // 1. Neither number is measured Juno thermal behavior. Do not add a second
     // thermal wander on top without separating compensated cutoff response
     // from this existing prior. The DCOs have a separate, shared clock.
@@ -8852,7 +9298,7 @@ std::uint32_t YouKnowEngine::updateVoicePitch(
     const std::int32_t controlOffset = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
         ? static_cast<std::int32_t>(firmwareControlState_.ram[0x6f]
             + 256u * firmwareControlState_.ram[0x70]) - 0x1818
-        : static_cast<std::int32_t>(masterTunePitchWordOffset(parameters.masterTuneCents))
+        : static_cast<std::int32_t>(masterTunePitchWordOffset(parameters.masterTuneCents, parameters.allowHostMasterTuneExtension))
             + dcoPitchBendWord_ + dcoLfoPitchWord_;
 
     const DcoPitchPair pitch = dcoPitchPair(aggregatePitchWord(
@@ -8943,7 +9389,7 @@ float YouKnowEngine::voiceVcaTarget(
                         : (voice.envelope.running ? 1.0f : 0.0f);
     return clamp01(
         control * velocityGain(parameters, voice)
-        + card.vcaControlOffset * 0.004f * tolerance);
+        + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * tolerance);
 }
 
 float YouKnowEngine::velocityGain(const EngineParameters& parameters,
@@ -9455,6 +9901,11 @@ const std::array<float,
     YouKnowEngine::CircuitDerivedResonanceProfile::junctionTableSteps + 1>&
 YouKnowEngine::CircuitDerivedResonanceProfile::junctionLoopGainTable()
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr std::array<float, junctionTableSteps + 1> table =
+#include "FrozenTables/ResonanceJunction.inc"
+;
+#else
     static const std::array<float, junctionTableSteps + 1> table = [] {
         std::array<float, junctionTableSteps + 1> result {};
         const double off = junctionCollectorCurrent(standoffVolts);
@@ -9473,6 +9924,7 @@ YouKnowEngine::CircuitDerivedResonanceProfile::junctionLoopGainTable()
         result.back() = VoicedResonanceCompatibilityProfile::maximumFeedback;
         return result;
     }();
+#endif
     return table;
 }
 
@@ -9531,6 +9983,11 @@ const std::array<float,
                  YouKnowEngine::CircuitDerivedNoiseLevelProfile::junctionTableSteps + 1>&
 YouKnowEngine::CircuitDerivedNoiseLevelProfile::junctionDriveTable()
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr std::array<float, junctionTableSteps + 1> table =
+#include "FrozenTables/NoiseJunction.inc"
+;
+#else
     static const std::array<float, junctionTableSteps + 1> table = [] {
         std::array<float, junctionTableSteps + 1> result {};
         const double fullCurrent = junctionCollectorCurrent(
@@ -9547,6 +10004,7 @@ YouKnowEngine::CircuitDerivedNoiseLevelProfile::junctionDriveTable()
         result.back() = 1.0f;
         return result;
     }();
+#endif
     return table;
 }
 
@@ -9576,14 +10034,15 @@ float YouKnowEngine::resonanceFeedbackFor(
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
     // spread.
-    // Voiced, and back to being voiced. The service procedure trims each loop
+    // The conservative residual is an additive normalized CV coordinate,
+    // not a loop-gain percentage. The service procedure trims each loop
     // to a 4.8 Vpp self-oscillation peak but states no tolerance on the result,
     // so what spread survives the adjustment is documented nowhere located. A
     // revision briefly anchored 5% to a source describing the *untrimmed*
     // component class, which is a different question: a trimmed mechanism's
     // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv
-        + card.resonanceError * 0.02f * calibration);
+        + card.resonanceError * VoiceResidualEstimates::resonanceControlFraction * calibration);
     const float loopGain = circuitDerivedShape
              ? (softJunction
                     ? CircuitDerivedResonanceProfile::junctionLoopGain(resonancePanel)
@@ -9607,7 +10066,8 @@ float YouKnowEngine::cutoffAnalogCounts(
     // one scales the control voltage, one offsets it -- imperfectly set, and
     // the voiced residual wander, all riding below the converter's own
     // resolution on the slewed digital value. The final residual draws sit
-    // within the service windows; their distribution remains voiced.
+    // within one quarter of the service windows; their distribution is an
+    // engineering prior, not a measured population.
     // A sagging rail pulls the cutoff reference down with it, and the
     // rectifier ripple riding on the rail (advanceRailRipple) lifts and
     // lowers it 120 times a second through this same transfer. `calibration`
@@ -9618,8 +10078,9 @@ float YouKnowEngine::cutoffAnalogCounts(
         -powerSupplyDroop * railToCutoffCountsPerVolt * calibration;
     // The trim residual is bounded by Roland's own printed acceptance
     // (p. 19 procedures 7/8: repeat "until within +/-10 cents" at both check
-    // points): one +/-10-cent draw at the code-6272 FREQ point, one at the
-    // WIDTH point two octaves up, the line through them elsewhere. The
+    // points). The conservative prior uses +/-2.5-cent estimates at the
+    // code-6272 FREQ point and WIDTH point two octaves up, and the line
+    // through them elsewhere. The
     // former +/-0.07 octave and +/-5%-of-total-counts here were voiced with
     // no bounding source; a freshly calibrated card cannot legitimately
     // disperse past what the service procedure accepts at the points it
@@ -9633,7 +10094,7 @@ float YouKnowEngine::cutoffAnalogCounts(
         * vcfTrimResidualOctaves * vcfCountsPerOctave * calibration;
     return cutoffCounts
         + trimResidualCounts
-        + card.driftValue * 40.0f * calibration
+        + card.driftValue * VoiceResidualEstimates::cutoffWanderCounts * calibration
         + psuCutoffShift
         + card.vcfServiceTrimCounts
         + card.agingCutoffCounts;
@@ -9781,7 +10242,7 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
     // The card's VCA GAIN spread is VR27's setting, and VR27 sits on the
     // input. Keeping it here rather than on the output leaves the small-signal
     // product identical and lets a hot card drive its own pair harder.
-    voice.vcaInputTrim = 1.0f + card.vcaGainError * 0.03f * tolerance;
+    voice.vcaInputTrim = 1.0f + card.vcaGainError * VoiceResidualEstimates::vcaInputTrimFraction * tolerance;
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
     // from values that never change. They now live in
@@ -11173,8 +11634,10 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Resistor noise enters the four OTA nodes after this coupling capacitor.
     // Only the retired voiced comparison seed still enters the signal input.
     // Compensation acts inside the resonance pair's tanh, so the cascade
-    // receives the coupled node through its input divider.
-    const float compensatedDrive = coupled * filterInputAttenuation;
+    // receives the coupled node through its input divider and the source
+    // balance that the output boundary divides back out.
+    const float compensatedDrive =
+        coupled * (filterInputAttenuation * filterSourceBalance_);
     const float filterInput =
         compensatedDrive + microscopicNoise * noiseRateScale_;
     // V_t(T) = k * T / q, driven by the accelerated software temperature model.
@@ -11821,8 +12284,8 @@ void YouKnowEngine::processOutputSummer(float& wetLeft,float& wetRight,
     else
     {
         outputSummerDelayedContext_ = currentContext;
-        const auto wetLeftKey = std::bit_cast<std::uint32_t>(wetLeft);
-        const auto wetRightKey = std::bit_cast<std::uint32_t>(wetRight);
+        const auto wetLeftKey = bitCast<std::uint32_t>(wetLeft);
+        const auto wetRightKey = bitCast<std::uint32_t>(wetRight);
         wetLeft = outputSummerClip(wetLeft);
         // outputSummerClip's asymptote and exponent are fixed. Reuse only
         // for an identical float representation, preserving signed zero
@@ -11889,7 +12352,7 @@ void YouKnowEngine::processOutputSummer(float& wetLeft,float& wetRight,
                        + ratio * outputSummerFeedbackOhms / outputSummerWetInputOhms);
             outputFiniteWetPole_ = OutputJackLowPass::coefficients(corner, oversampledRate_);
             outputFiniteWetBandwidthBlend_ = static_cast<float>(1.0 - std::exp(
-                -2.0 * std::numbers::pi * corner / oversampledRate_));
+                -2.0 * numbers::pi * corner / oversampledRate_));
             outputFiniteWetRatio_ = ratio;
         }
     }
@@ -11934,9 +12397,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         originalPerformanceRendering_=true;
         while (numSamples>0) {
             const int piece=std::min(numSamples,64);
-            const auto target=static_cast<std::uint64_t>(std::floor(
+            // The timeline is nonnegative: conversion truncates exactly as
+            // floor would, without requiring the host's long-double libm.
+            const auto target=static_cast<std::uint64_t>(
                 static_cast<long double>(firmwareSerialAudioStates_)
-                + static_cast<long double>(piece)*voiceCpuStateHz/sampleRate_+1.0e-8L));
+                + static_cast<long double>(piece)*voiceCpuStateHz/sampleRate_+1.0e-8L);
             if (!originalPerformance_.advance(*this,target)) {
                 // Bounded queue/work failure cannot leave a sounding gate.
                 reset(); originalPerformanceHealthy_=false;
@@ -11990,10 +12455,26 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     const float chorusNoiseScale = parameters.chorusNoise
         * chorusNoiseCalibrationScale(parameters.chorusNoiseCalibrationProfile);
 
+    // This digital convenience follows the selected mode, including in the
+    // OriginalPerformance adapter; a firmware mirror can lag that selection.
+    // Slew at host rate, independently of block size and quality, and leave
+    // every nonlinear circuit's input voltage unchanged.
+    const float unisonOutputTarget = activeParameters_.keyMode == KeyMode::Unison
+        ? unisonOutputLevel : 1.0f;
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
+        unisonOutputGain_ = unisonOutputTarget_ = unisonOutputTarget;
+        unisonOutputSamplesRemaining_ = 0;
         panelGlidePrimed_ = true;
+    }
+    else if (unisonOutputTarget != unisonOutputTarget_)
+    {
+        unisonOutputTarget_ = unisonOutputTarget;
+        unisonOutputSamplesRemaining_ = std::max(1, static_cast<int>(
+            std::ceil(unisonOutputTransitionSeconds * sampleRate_)));
+        unisonOutputStep_ = (unisonOutputTarget_ - unisonOutputGain_)
+            / static_cast<float>(unisonOutputSamplesRemaining_);
     }
 
     // Each converter destination owns a separately named hold network. VCF,
@@ -12012,6 +12493,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     // this reference keeps the sample equations below unchanged while avoiding
     // per-host-block exponentials and divisions.
     const auto& coefficients = processingCoefficients_;
+    const double lfoSyncPhaseIncrement = static_cast<double>(parameters.lfoSyncRateHz)
+        / (sampleRate_ * static_cast<double>(oversampling_));
+    const double lfoSyncDelayIncrement = parameters.lfoSyncDelaySeconds > 0.0f
+        ? 1.0 / (sampleRate_ * static_cast<double>(oversampling_)
+                 * static_cast<double>(parameters.lfoSyncDelaySeconds)) : 0.0;
     // The physical VCA service correction belongs ahead of HPF, common VCA,
     // BBD and output saturation. Cancel only its constant gain at the FINAL
     // digital boundary, after every physical stage, so this circuit fix does
@@ -12596,7 +13082,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 else
                     sounding = true;
             };
-            const auto renderVoices = [&]<bool useCubicEarly> {
+            const auto renderVoices = [&](auto earlyTag) {
+                constexpr bool useCubicEarly = decltype(earlyTag)::value;
                 for (int slot = 0; slot < maxVoices;)
                 {
                     auto& voice = voices_[static_cast<std::size_t>(slot)];
@@ -12698,9 +13185,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // The cubic Early multiplier is the shipped default since the
             // 2026-08-24 CPU pass, so neither arm is the unlikely one.
             if (useCubicEarly_)
-                renderVoices.template operator()<true>();
+                renderVoices(std::true_type{});
             else
-                renderVoices.template operator()<false>();
+                renderVoices(std::false_type{});
 
             // IC35/TP5 is shared by all six channels of the two M82C53s. Each
             // card-local event walk above read the same left-boundary phase;
@@ -12724,6 +13211,15 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 && assignmentRescanPassArmed_)
                 completeVoiceAssignmentRescan();
             controlScanPhase_ += coefficients.scanPhasePerInternalSample;
+            if (lfoSyncPhaseIncrement > 0.0)
+            {
+                lfoSyncPhase_ += lfoSyncPhaseIncrement;
+                if (lfoSyncPhase_ >= 1.0)
+                    lfoSyncPhase_ -= 1.0;
+            }
+            if (lfoSyncDelayIncrement > 0.0 && lfoSyncDelayProgress_ < 2.0)
+                lfoSyncDelayProgress_ = std::min(2.0,
+                    lfoSyncDelayProgress_ + lfoSyncDelayIncrement);
             if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
                 && controlScanPhase_ >= converterPassEndPhase_)
             {
@@ -12820,8 +13316,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             const float patchLevelInput = static_cast<float>(sharedVca_);
             const auto patchLevelKey =
                 (static_cast<std::uint64_t>(
-                     std::bit_cast<std::uint32_t>(patchLevelInput)) << 32)
-                | std::bit_cast<std::uint32_t>(jackBoardCelsius_);
+                     bitCast<std::uint32_t>(patchLevelInput)) << 32)
+                | bitCast<std::uint32_t>(jackBoardCelsius_);
             if (!patchLevelCacheValid || patchLevelCacheKey != patchLevelKey)
             {
                 patchLevelCacheValue =
@@ -12938,7 +13434,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         // of the two values, but this call site always wants both, so it is
         // solved once here and both results are read off the one network.
         const auto outputCouplingKey =
-            std::bit_cast<std::uint32_t>(glidedVolume_);
+            bitCast<std::uint32_t>(glidedVolume_);
         float outputCouplingGain;
         float outputPassiveNoiseScale;
         if (!outputCouplingCacheValid
@@ -13076,13 +13572,21 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             ++oversamplingIdleSamples_;
 
         const float transitionGain = rateTransitionGain_;
+        if (unisonOutputSamplesRemaining_ > 0)
+        {
+            // Count host samples and land exactly on the target. Accumulated
+            // float error must not extend a transition by another sample.
+            --unisonOutputSamplesRemaining_;
+            unisonOutputGain_ = unisonOutputSamplesRemaining_ == 0
+                ? unisonOutputTarget_ : unisonOutputGain_ + unisonOutputStep_;
+        }
         left[sample] = std::isfinite(outputLeft)
                      ? outputLeft * outputBoundaryScale
-                           * transitionGain
+                           * transitionGain * unisonOutputGain_
                      : 0.0f;
         right[sample] = std::isfinite(outputRight)
                       ? outputRight * outputBoundaryScale
-                            * transitionGain
+                            * transitionGain * unisonOutputGain_
                       : 0.0f;
 
         if (rateTransition_ == RateTransition::FadingOut)
@@ -13271,7 +13775,7 @@ bool YouKnowEngine::configureFirmwareSerialReplay(
 }
 
 bool YouKnowEngine::appendFirmwareSerialBytes(
-    std::span<const FirmwareSerialTrace::ByteReady> bytes) noexcept
+    Span<const FirmwareSerialTrace::ByteReady> bytes) noexcept
 {
     if (!prepared_ || !firmwareSerialConfiguration_.streaming
         || activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareSerialReplay
@@ -13450,7 +13954,7 @@ float YouKnowEngine::firmwareSerialDacTarget(const ConverterWrite& write, unsign
         const auto& voice = voices_[static_cast<std::size_t>(write.voice)];
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         return clamp01(static_cast<float>(code) / 4095.0f
-            + card.vcaControlOffset * 0.004f * activeParameters_.calibration);
+            + card.vcaControlOffset * VoiceResidualEstimates::vcaControlFraction * activeParameters_.calibration);
     }
     return static_cast<float>(code) / 4095.0f;
 }
@@ -13531,14 +14035,16 @@ void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
             / static_cast<long double>(oversampledRate_);
     const double end = static_cast<double>(endStates);
     const double stateSpan = end - start;
-    const auto target = static_cast<std::uint64_t>(std::floor(endStates + 1.0e-10L));
+    // Nonnegative timeline: truncation equals floor and preserves the full
+    // long-double calculation even on hosts without a long-double libm.
+    const auto target = static_cast<std::uint64_t>(endStates + 1.0e-10L);
     firmwareSerialTimelineStates_ = endStates;
     // Configuration/append validates the schedule once. Only the due prefix
     // can affect this interval; validation never scales with track length in
     // the sample loop. A live producer can fill the bounded queue immediately
     // before each audio block without retaining a song-length byte schedule.
     const auto pending = firmwareSerialConfiguration_.streaming
-        ? std::span<const FirmwareSerialTrace::ByteReady>(firmwareSerialStream_)
+        ? Span<const FirmwareSerialTrace::ByteReady>(firmwareSerialStream_)
             .subspan(firmwareSerialStreamHead_, firmwareSerialStreamCount_)
         : firmwareSerialConfiguration_.schedule.subspan(firmwareSerialScheduleCursor_);
     std::size_t dueCount = 0;

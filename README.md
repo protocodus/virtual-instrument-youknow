@@ -117,6 +117,31 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-14
+
+- Unison plays 1.94 dB quieter: a requested 0.8 output trim applied after the
+  complete circuit and chorus, so internal drive and saturation are
+  unchanged. Poly 1 and Poly 2 keep unity gain, and changing mode ramps the
+  level over 5 ms. This is a level convenience, not a claim that the original
+  hardware attenuates Unison. Sessions saved in Unison play back quieter.
+- With portamento, Unison cards glide from their own retained pitch, as the
+  B-2 voice firmware does. A card that has not played starts from its
+  power-on pitch (MIDI note 60), and entering Unison from Poly no longer moves
+  unused cards to the new note before the glide.
+- At the default 100% Unit Character, the seeded per-card residuals left after
+  service are smaller, conservative estimates:
+  - VCF FREQ/WIDTH endpoints: ±2.5 cents, down from ±10.
+  - Slow cutoff wander: about 0.485 cents RMS, down from 2.425.
+  - Resonance trim: ±0.002 normalized CV, down from ±0.02.
+  - VCA input trim: ±1%, down from ±3%.
+  - VCA control offset: ±0.001 normalized control, down from ±0.004.
+  - Compensated VCF temperature coefficient: 0.033%/°C, down from 0.33%/°C.
+
+  The six cards therefore differ less in filter tuning, resonance and level,
+  and their filters drift less while warming. These are engineering priors
+  for a serviced instrument, not measured original-card spreads. Roland's
+  ±10-cent filter acceptance window is unchanged.
+
 ### Unreleased — 2026-10-09
 
 - Reduced CPU usage by reusing temperature-interpolated voice-amplifier
@@ -823,7 +848,8 @@ forty-year-old unit will null against the plug-in.
   endpoint bit for bit. With the voiced post-trim residual cleared, every
   card settles between 4.796 and 4.804 Vp-p at code 6272; a cold card starts
   near 4.15 Vp-p and grows into the figure on the warm-up law; the
-  complete-voice ±10-cent FREQ/WIDTH windows hold at a worst of 8.7 cents.
+  complete-voice ±10-cent FREQ/WIDTH windows hold at a worst of 2.02 cents
+  with the ±2.5-cent serviced residuals.
   The FREQ solve carries the adjustment's shift of the loop gain the
   frequency-trim table is read at; the voiced residual stays out of it as
   before (anchored physics and procedure; `enableResonanceHeadroomTemperature`
@@ -2059,6 +2085,8 @@ calibration; it does not measure oscillator drift or establish population
 statistics. The [AS3109 datasheet’s](https://www.alfatriode.lv/eng/sc/AS3109.pdf)
 0.33%/°C is a typical frequency-control coefficient for a replacement IC,
 not an original 80017A residual-drift bound after the installed compensation.
+The product keeps 10% of it, 0.033%/°C, as an explicit estimate of what the
+board's R111 positor compensation leaves; no original-card curve measures it.
 
 Temperature also affects voice timbre. The filter's nonlinear OTA headroom
 follows absolute temperature, and the voice VCA now applies `T_ref/T` to its
@@ -2084,7 +2112,8 @@ static differences; ongoing thermal movement requires changing conditions.
 
 The current Unit Character model’s `0.9992` recurrence at 375 updates/s,
 with uniform `±0.004` excitation, corresponds to a 3.332 s correlation time
-and approximately 2.425 cents stationary cutoff standard deviation at 100%.
+and, at eight converter counts per state unit, approximately 0.485 cents
+stationary cutoff standard deviation at 100%.
 Its 15 °C chassis rise, spatial gradient and Aging profile remain voiced priors;
 the 3-second thermal time constant is a user-selected software acceleration.
 The sample-count scheduler approximates 375 Hz when the
@@ -2510,11 +2539,12 @@ fixed-seed profile enables the full span of every modelled tolerance:
 one per-card C54 inside its ±2 % G class and three range resistors inside
 ±1%, combined as reciprocal R×C rather than independent pitch offsets;
 one fixed comparator adjustment keeps the card within both the 48–52% and
-93–97% service windows after shared VR31 calibration, VCA and sub/noise-level errors (a voiced ±3 % class
+93–97% service windows after shared VR31 calibration, a ±1 % residual of
+the serviced VCA input trim, sub/noise-level errors (a voiced ±3 % class
 inside the ±5 % "R20J" resistor class the module-board legend on p. 12
 prints for every untrimmed leg — R3, R101/R102 and their siblings — with the
-metal-oxide 1 % parts reserved for the DCO ranges), VCF trim
-residuals derived from the service manual's ±10-cent acceptance at its two
+metal-oxide 1 % parts reserved for the DCO ranges), ±2.5-cent VCF trim
+residuals, a quarter of the service manual's ±10-cent acceptance at its two
 check points (the nominal reference endpoints remain within 6 cents at the
 declared ten-minute service state; the product adds these residuals to the
 selected nominal card base), per-stage input offsets, the resonance BA662's own input

@@ -2,7 +2,9 @@
 
 #include "YouKnowEngine.h"
 
+#if !defined(YOUKNOW_EMBEDDED_TARGET)
 #include <stdexcept>
+#endif
 
 namespace youknow
 {
@@ -72,8 +74,20 @@ struct ProductFidelityProfile
     // with its own calibrated source scale, the oscillator level. Configure
     // that alternative here so both mutually exclusive paths still receive
     // the same remaining product selections.
+#if !defined(YOUKNOW_EMBEDDED_TARGET)
     static void configureBeforePrepare (YouKnowEngine& engine,
         const CoupledSubMixer::Calibration* coupledMixer = nullptr)
+    {
+        if (!tryConfigureBeforePrepare(engine, coupledMixer))
+            throw std::logic_error (
+                "Product fidelity needs valid, compatible circuits before the first prepare");
+    }
+#endif
+
+    // Embedded hosts cannot throw through their native-object boundary.
+    // Both entry points select exactly the same circuit configuration.
+    [[nodiscard]] static bool tryConfigureBeforePrepare (YouKnowEngine& engine,
+        const CoupledSubMixer::Calibration* coupledMixer = nullptr) noexcept
     {
         if (! engine.configureHighPassSwitch (highPassSwitchOhms)
             || ! engine.configureDcoTemperatureProxy (true, 25.0)
@@ -91,12 +105,12 @@ struct ProductFidelityProfile
                       && engine.configureOscillatorLevelScale (
                           oscillatorLevelScale)
                       && engine.configurePulseLevelScale (pulseLevelScale)))
-            throw std::logic_error (
-                "Product fidelity needs valid, compatible circuits before the first prepare");
+            return false;
         // User-authorized approximate thermal coupling (2026-09-14): use the
         // named Murata CSA8.00MTZ shape, anchored at 8 MHz/25 C, on the shared
         // chassis temperature. This is not an installed KMFC calibration.
         // The common 3-second startup is an explicit software UX choice.
+        return true;
     }
 
     // A product choice, not a stored tone parameter. Apply to every newly

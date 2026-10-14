@@ -1,0 +1,75 @@
+$ clang++ -std=c++20 -O3 -DYOUKNOW_EMBEDDED_TARGET=1 -I/Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Instrument/Source /tmp/youknow-unison-audit-20261008/oracle_probe.cpp /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowChorus.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowEngine.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowFirmwareAssignerAudioBridge.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowFirmwareAssignerScheduler.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowFirmwareAssignerTrace.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowFirmwareSerialPinDecoder.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowFirmwareSerialTrace.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowFirmwareTrace.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowFirmwareUartTrace.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowOriginalPerformance.o /Users/vojta/Dev/reason-rack-extension/youknow-latest-u45-20261008/Examples/YouKnow/Release/validation/latest-main-20261008/upstream-vca-cxx20/YouKnowSysEx.o -o /tmp/youknow-unison-audit-20261008/oracle_probe
+/tmp/youknow-unison-audit-20261008/oracle_probe.cpp:19:84: warning: ignoring return value of function declared with 'nodiscard' attribute [-Wunused-result]
+   19 | auto create(bool original, KeyMode mode) {auto e=std::make_unique<YouKnowEngine>();e->configurePhysicalVoicePowerOnGlide(true);e->configureSingleVoiceLastNotePriority(true);e->setParameters(patch(mode));e->setOriginalPerformanceMode(original);e->prepare(48000,64,1);step(*e,4096);return e;}
+      |                                                                                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~
+/tmp/youknow-unison-audit-20261008/oracle_probe.cpp:19:128: warning: ignoring return value of function declared with 'nodiscard' attribute [-Wunused-result]
+   19 | auto create(bool original, KeyMode mode) {auto e=std::make_unique<YouKnowEngine>();e->configurePhysicalVoicePowerOnGlide(true);e->configureSingleVoiceLastNotePriority(true);e->setParameters(patch(mode));e->setOriginalPerformanceMode(original);e->prepare(48000,64,1);step(*e,4096);return e;}
+      |                                                                                                                                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~
+2 warnings generated.
+direct frame=-1 gates=00 running=00 pending=0 current=60.000000,60.000000,60.000000,60.000000,60.000000,60.000000
+direct frame=0 gates=3f running=3f pending=0 current=48.000000,48.000000,48.000000,48.000000,48.000000,48.000000
+partial-direct-before frame=0 gates=03 running=03 pending=0 current=58.687500,60.656250,60.000000,60.000000,60.000000,60.000000
+partial-direct frame=194 gates=3f running=3f pending=0 current=58.656250,60.687500,72.000000,72.000000,72.000000,72.000000
+original frame=-1 gates=00 running=00 pending=0 current=60.000000,60.000000,60.000000,60.000000,60.000000,60.000000
+original frame=0 gates=00 running=00 pending=0 current=60.000000,60.000000,60.000000,60.000000,60.000000,60.000000
+original frame=143 gates=01 running=00 pending=0 current=60.000000,60.000000,60.000000,60.000000,60.000000,60.000000
+original frame=174 gates=03 running=01 pending=0 current=59.980469,60.000000,60.000000,60.000000,60.000000,60.000000
+original frame=204 gates=07 running=03 pending=0 current=59.960938,59.980469,60.000000,60.000000,60.000000,60.000000
+original frame=235 gates=0f running=07 pending=0 current=59.941406,59.960938,59.980469,60.000000,60.000000,60.000000
+original frame=266 gates=1f running=0f pending=0 current=59.921875,59.941406,59.960938,59.980469,60.000000,60.000000
+original frame=297 gates=3f running=1f pending=0 current=59.902344,59.921875,59.941406,59.960938,59.980469,60.000000
+partial-original-before frame=0 gates=03 running=03 pending=0 current=59.199219,60.390625,60.000000,60.000000,60.000000,60.000000
+partial-original frame=81 gates=02 running=03 pending=0 current=59.199219,60.390625,60.000000,60.000000,60.000000,60.000000
+partial-original frame=96 gates=00 running=02 pending=0 current=59.199219,60.390625,60.000000,60.000000,60.000000,60.000000
+partial-original frame=216 gates=01 running=00 pending=0 current=59.179688,60.410156,60.000000,60.000000,60.000000,60.000000
+partial-original frame=247 gates=03 running=01 pending=0 current=59.199219,60.429688,60.000000,60.000000,60.000000,60.000000
+partial-original frame=278 gates=07 running=03 pending=0 current=59.218750,60.449219,60.000000,60.000000,60.000000,60.000000
+partial-original frame=308 gates=0f running=07 pending=0 current=59.238281,60.468750,60.019531,60.000000,60.000000,60.000000
+partial-original frame=339 gates=1f running=0f pending=0 current=59.257812,60.488281,60.039062,60.019531,60.000000,60.000000
+partial-original frame=370 gates=3f running=1f pending=0 current=59.277344,60.507812,60.058594,60.039062,60.019531,60.000000
+release-direct frame=-1 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-direct frame=0 gates=00 running=00 pending=1 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-direct frame=194 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=-1 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=0 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=130 gates=3e running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=132 gates=3e running=3e pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=145 gates=3c running=3e pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=147 gates=3c running=3c pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=160 gates=38 running=3c pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=162 gates=38 running=38 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=176 gates=30 running=38 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=178 gates=30 running=30 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=191 gates=20 running=30 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=193 gates=20 running=20 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=207 gates=00 running=20 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=208 gates=00 running=00 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=287 gates=01 running=00 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=289 gates=01 running=01 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=318 gates=03 running=01 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=320 gates=03 running=03 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=348 gates=07 running=03 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=351 gates=07 running=07 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=379 gates=0f running=07 pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=381 gates=0f running=0f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=410 gates=1f running=0f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=412 gates=1f running=1f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=440 gates=3f running=1f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original frame=443 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-direct-hold frame=-1 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-direct-hold frame=0 gates=00 running=3f pending=1 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-direct-hold frame=194 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=-1 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=0 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=129 gates=3e running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=144 gates=3c running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=159 gates=38 running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=175 gates=30 running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=190 gates=20 running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=205 gates=00 running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=286 gates=01 running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=317 gates=03 running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=347 gates=07 running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=378 gates=0f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=409 gates=1f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000
+release-original-hold frame=439 gates=3f running=3f pending=0 current=64.000000,64.000000,64.000000,64.000000,64.000000,64.000000

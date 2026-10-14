@@ -24,6 +24,7 @@ const Instruction *find(unsigned pc) noexcept {
     constexpr auto& program = firmwareAssignerSchedulerDetail::program;
     static constexpr auto index = firmwareTraceDetail::instructionIndex(
         program, [](const Instruction& i) { return i.pc; });
+    static_assert(index.valid, "invalid or duplicate firmware instruction address");
     const auto offset = pc < index.size() ? index[pc] : 0;
     return offset != 0 ? &program[offset - 1] : nullptr;
 }
@@ -382,7 +383,7 @@ Trace::Status uartStatus(Uart::Status status) noexcept {
 
 FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
     State &state, Uart::State &uart, const Configuration &configuration,
-    const Tables &tables, const Io::Inputs &inputs, std::span<const InputEvent> inputEvents,
+    const Tables &tables, const Io::Inputs &inputs, Span<const InputEvent> inputEvents,
     std::uint64_t target, Events &events, Uart::EventBuffer &uartEvents) noexcept {
     Result result{Status::ReachedTarget};
     if (!valid(state) || !Io::valid(inputs) || !Io::valid(configuration.anmWritePhase) ||
