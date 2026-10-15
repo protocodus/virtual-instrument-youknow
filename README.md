@@ -3158,7 +3158,7 @@ new plug-in instance starts at 1× with Aging 50 %.
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, mode II, then I+II | 20.5 s | −12.7 dBFS | +9.7 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −12.0 dBFS | +9.0 dB |
 | `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −19.7 dBFS | +16.7 dB |
-| `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −11.6 dBFS | +8.6 dB |
+| `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −11.5 dBFS | +8.5 dB |
 | `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −19.2 dBFS | +16.2 dB |
 <!-- peaks-table-end -->
 
