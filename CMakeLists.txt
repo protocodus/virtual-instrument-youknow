@@ -1343,13 +1343,13 @@ if(BUILD_TESTING)
                 "${YOUKNOW_SANITIZER_DEFINITION}")
         endforeach()
     else()
-        # The engine bound was 300 s. The warm-up fixture added in the
-        # 2026-08-07 pass advances up to 900 s of internal samples for four
-        # configurations, which takes the suite to about 297 s run alone and
-        # over the bound when it shares a machine with another CTest job —
-        # no runner-speed margin at all. Raised to 900 s so the guard catches
-        # a hang rather than a slow runner.
-        set(YOUKNOW_ENGINE_TEST_TIMEOUT 900)
+        # The warm-up fixture advances up to 900 s of internal samples for
+        # four configurations. With the accepted circuit reconstruction the
+        # complete suite takes 805 s on Linux CI (631 s Windows, 405 s macOS),
+        # leaving too little runner-speed margin under the former 900 s bound.
+        # Keep every assertion and warm-up interval; this is a bounded hang
+        # guard, separate from the suite's explicit performance assertions.
+        set(YOUKNOW_ENGINE_TEST_TIMEOUT 1800)
         set(YOUKNOW_CIRCUIT_TEST_TIMEOUT 90)
     endif()
     set_tests_properties(YouKnow.Engine PROPERTIES
