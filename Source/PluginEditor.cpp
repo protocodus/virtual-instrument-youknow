@@ -1994,8 +1994,9 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
         "values exaggerate the variation. Circuit saturation stays active at zero.",
         "Scales the modeled hiss of the uncompanded bucket-brigade chorus. "
         "100% is the modeled floor; zero is a clean plug-in extension.",
-        "Sets the active voice limit from 1 to 16. Six matches the hardware; "
-        "values above six add digital extension voices.",
+        "Direct sets the active voice limit from 1 to 16. Original uses six "
+        "hardware voices in Poly modes; in Unison this selects one to six "
+        "audible cards while retaining the hardware timing.",
         "Adds filter-tuning drift and more noise as the modeled instrument "
         "ages. The default is 50%; zero is freshly serviced. Aging works "
         "independently of Unit "
@@ -2236,7 +2237,8 @@ void YouKnowAudioProcessorEditor::buildUtilityStrip()
     performanceButton.setTooltip (
         "Original runs the hardware's MIDI input, voice allocation and module "
         "serial timing. Chords and retriggers follow its scan phase. Uses six "
-        "voices, hardware tone resolution and the stored chorus modes; requires "
+        "cards with the voice limit selecting the audible Unison stack, "
+        "hardware tone resolution and the stored chorus modes; requires "
         "more CPU. Switching clears held notes and tails. Presets retain this setting.");
     performanceButton.onClick = [this]
     {

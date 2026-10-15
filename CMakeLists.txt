@@ -1178,11 +1178,11 @@ if(BUILD_TESTING)
         set_tests_properties(YouKnow.AuditFactoryPresets PROPERTIES TIMEOUT 240)
 
         # Factory trims belong to the shipping physical profile. Enforce the
-        # product level band on representative full-length render scores.
+        # product level band on full-length scores in BOTH playback modes.
         add_test(NAME YouKnow.PresetLevels
                  COMMAND YouKnowCalibratePresets --check --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/preset-level-smoke.csv")
-        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 240)
+        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 480)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity

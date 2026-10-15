@@ -1459,8 +1459,7 @@ bool YouKnowAudioProcessor::updateEngineParameters() noexcept
     // The editor draws one lamp per available voice, so it needs the count the
     // engine actually settled on rather than the raw parameter.
     displayVoiceLimit.store (
-        juce::jlimit (1, youknow::YouKnowEngine::maxVoices,
-                      originalTiming ? 6 : engineParameters.polyphony),
+        engine.getEffectiveVoiceLimit(),
         std::memory_order_relaxed);
     return true;
 }

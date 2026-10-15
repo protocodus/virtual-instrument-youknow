@@ -7621,6 +7621,60 @@ int YouKnowEngine::voiceLimit() const noexcept
     return std::clamp(activeParameters_.polyphony, 1, maxVoices);
 }
 
+int YouKnowEngine::getEffectiveVoiceLimit() const noexcept
+{
+    if (!originalPerformanceEnabled_)
+        return voiceLimit();
+    return activeParameters_.keyMode == KeyMode::Unison
+        ? std::min(voiceLimit(), hardwareVoices) : hardwareVoices;
+}
+
+void YouKnowEngine::updateOriginalUnisonCardGains(bool prime) noexcept
+{
+    const bool limitedUnison = originalPerformanceEnabled_
+        && activeParameters_.keyMode == KeyMode::Unison;
+    const int limit = getEffectiveVoiceLimit();
+    if (prime || !originalPerformanceEnabled_)
+        originalUnisonSuppressedCards_ = 0;
+    for (int card = 0; card < hardwareVoices; ++card)
+    {
+        const auto index = static_cast<std::size_t>(card);
+        const unsigned bit = 1u << card;
+        if (limitedUnison)
+        {
+            if (card >= limit) originalUnisonSuppressedCards_ |= bit;
+            else originalUnisonSuppressedCards_ &= ~bit;
+        }
+        else if (!voices_[index].active)
+            originalUnisonSuppressedCards_ &= ~bit;
+        const float target = (originalUnisonSuppressedCards_ & bit) ? 0.0f : 1.0f;
+        if (prime)
+        {
+            originalUnisonCardGain_[index] = originalUnisonCardTarget_[index] = target;
+            originalUnisonCardSamplesRemaining_[index] = 0;
+        }
+        else
+        {
+            if (target != originalUnisonCardTarget_[index])
+            {
+                originalUnisonCardTarget_[index] = target;
+                const int samples = std::max(1, static_cast<int>(
+                    std::ceil(originalUnisonCardTransitionSeconds * sampleRate_)));
+                originalUnisonCardSamplesRemaining_[index] = samples;
+                originalUnisonCardStep_[index] = (target - originalUnisonCardGain_[index])
+                    / static_cast<float>(samples);
+            }
+            auto& remaining = originalUnisonCardSamplesRemaining_[index];
+            if (remaining > 0)
+            {
+                --remaining;
+                originalUnisonCardGain_[index] = remaining == 0 ? target
+                    : originalUnisonCardGain_[index] + originalUnisonCardStep_[index];
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Note handling
 // ---------------------------------------------------------------------------
@@ -8977,15 +9031,22 @@ void YouKnowEngine::updateActiveVoiceCount() noexcept
 {
     int count = 0;
     int mask = 0;
+    bool physicalVoiceActive = false;
     for (int slot = 0; slot < maxVoices; ++slot)
         if (voices_[static_cast<std::size_t>(slot)].active)
         {
+            physicalVoiceActive = true;
+            if (originalPerformanceEnabled_ && slot < hardwareVoices
+                && originalUnisonCardGain_[static_cast<std::size_t>(slot)] == 0.0f)
+                continue;
             ++count;
             if (slot < 16)
                 mask |= 1 << slot;
         }
     activeVoiceCount_ = count;
-    anyVoiceActive_ = count > 0;
+    // Hidden cards retain their physical tails and must still prevent an
+    // ostensibly idle quality change from resetting the firmware pipeline.
+    anyVoiceActive_ = physicalVoiceActive;
     displayVoiceMask_ = mask;
 }
 
@@ -12486,6 +12547,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
+        updateOriginalUnisonCardGains(true);
         unisonOutputGain_ = unisonOutputTarget_ = unisonOutputTarget;
         unisonOutputSamplesRemaining_ = 0;
         glidedOutputTrimGain_ = outputTrimTargetGain;
@@ -12564,6 +12626,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        if (originalPerformanceEnabled_)
+            updateOriginalUnisonCardGains(false);
 #if defined(YOUKNOW_WORK_AUDIT)
         YOUKNOW_COUNT_DOMAIN_WORK(hostFrames, 1);
 #endif
@@ -13088,9 +13152,19 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 }
             };
             const auto accountRenderedVoice = [&](Voice& voice, float output) {
-                mono += output;
-                loudestEnvelope = std::max(
-                    loudestEnvelope, voice.envelope.value);
+                const float cardGain = originalPerformanceEnabled_
+                    && voice.cardIndex < hardwareVoices
+                    ? originalUnisonCardGain_[static_cast<std::size_t>(voice.cardIndex)]
+                    : 1.0f;
+                if (cardGain > 0.0f)
+                {
+                    // Preserve the six-card path's exact arithmetic. Reducing
+                    // a stack changes its drive into all shared circuits,
+                    // rather than compensating a six-card sound at the output.
+                    mono += cardGain == 1.0f ? output : output * cardGain;
+                    loudestEnvelope = std::max(
+                        loudestEnvelope, voice.envelope.value * cardGain);
+                }
 
                 // Retire on the modelled amplifier actually being shut. A
                 // card's optional control offset can hold the control voltage
@@ -14065,6 +14139,9 @@ void YouKnowEngine::applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event
             env.gate = (ram[0x10] & bit) != 0;
             env.running = (ram[0x11] & bit) != 0;
             env.phase = (ram[0x33] & bit) != 0;
+            if (originalPerformanceEnabled_ && activeParameters_.keyMode != KeyMode::Unison
+                && env.gate && !voice.keyDown)
+                originalUnisonSuppressedCards_ &= ~bit;
             voice.keyDown = env.gate;
             voice.sustained = !env.gate && (ram[0x1e] & 1) && env.running;
             voice.releasing = !env.running && env.level != 0;
