@@ -1390,10 +1390,12 @@ if(BUILD_TESTING)
         endif()
 
         add_test(NAME YouKnow.PluginProcessor COMMAND YouKnowPluginProcessorTests)
-        # The accepted coupled WAVE circuit advances all six physical cards.
-        # The complete processor suite takes about 88 s on the review runner;
-        # retain a runaway guard with margin for shared CI machines.
-        set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 180)
+        # The accepted circuit reconstruction advances all six physical cards
+        # at the local processing rates. The former Windows suite took 84 s;
+        # the measured 2.25-2.44x processing cost now exceeds its 180 s bound
+        # (macOS completes in 114 s). Keep every assertion and render unchanged,
+        # with a bounded hang guard that permits slower shared CI machines.
+        set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 480)
 
         # Exercise the shipping processor and editor with reproducible control
         # storms. Timing is reported separately from correctness: shared CI
