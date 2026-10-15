@@ -13860,6 +13860,7 @@ void YouKnowEngine::initialiseFirmwareSerialReplay() noexcept
     firmwareSerialPitLsb_.fill(0);
     firmwareSerialPitNeedsMsb_.fill(false);
     firmwareSerialHoldEvent_ = {};
+    firmwareSerialLfoRateHeld_ = firmwareSerialLfoDelayHeld_ = false;
     for (unsigned i = 0; i < 128; ++i)
     {
         firmwareSerialTables_.attack[i] = attackIncrementForByte(static_cast<std::uint8_t>(i));
@@ -13995,6 +13996,58 @@ float YouKnowEngine::firmwareSerialDacTarget(const ConverterWrite& write, unsign
     return static_cast<float>(code) / 4095.0f;
 }
 
+void YouKnowEngine::applyFirmwareSerialLfoSync() noexcept
+{
+    // As in the control trace, host sync replaces B-2's free-running triangle
+    // and delay clock: the synced state enters RAM before the CPU runs, with
+    // zero increments so 074E..0790 and 0370..0394 hold it, and B-2's own
+    // coefficients return when sync ends. Its hangtime re-arm stays active.
+    auto& cpu = firmwareSerialState_.control.ram;
+    auto& mirror = firmwareControlState_.ram;
+    const auto put = [&cpu, &mirror](unsigned address, unsigned value) {
+        cpu[address] = mirror[address] = static_cast<std::uint8_t>(value);
+        cpu[address + 1] = mirror[address + 1] = static_cast<std::uint8_t>(value >> 8);
+    };
+    const auto word = [&cpu](unsigned address) {
+        return static_cast<std::uint16_t>(cpu[address] + 256u * cpu[address + 1]);
+    };
+    const auto& p = activeParameters_;
+    const bool syncRate = p.lfoSyncRateHz > 0.0f;
+    if (syncRate)
+    {
+        if (!firmwareSerialLfoRateHeld_)
+            firmwareSerialLfoRate_ = word(0x4b);
+        sampleSyncedLfo();
+        put(0x4d, lfoAccumulator_);
+        cpu[0x4a] = mirror[0x4a] = static_cast<std::uint8_t>((cpu[0x4a] & ~3u)
+            | (lfoRising_ ? 0u : 1u) | (lfoPolarity_ < 0.0f ? 2u : 0u));
+        put(0x4b, 0u);
+    }
+    else if (firmwareSerialLfoRateHeld_)
+        put(0x4b, firmwareSerialLfoRate_);
+    firmwareSerialLfoRateHeld_ = syncRate;
+
+    const bool syncDelay = p.lfoSyncDelaySeconds >= 0.0f;
+    if (syncDelay)
+    {
+        if (!firmwareSerialLfoDelayHeld_)
+            firmwareSerialLfoDelayIncrements_ = { word(0x58), word(0x6c) };
+        sampleSyncedLfoDelay();
+        put(0x56, lfoDelayHoldoff_);
+        put(0x5a, lfoDelayFade_);
+        put(0x58, 0u);
+        put(0x6c, 0u);
+        cpu[0x1e] = mirror[0x1e] = static_cast<std::uint8_t>((cpu[0x1e] & ~4u)
+            | (lfoSyncDelayProgress_ >= 2.0 ? 4u : 0u));
+    }
+    else if (firmwareSerialLfoDelayHeld_)
+    {
+        put(0x58, firmwareSerialLfoDelayIncrements_[0]);
+        put(0x6c, firmwareSerialLfoDelayIncrements_[1]);
+    }
+    firmwareSerialLfoDelayHeld_ = syncDelay;
+}
+
 void YouKnowEngine::applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event& event) noexcept
 {
     auto& ram = firmwareControlState_.ram;
@@ -14055,6 +14108,7 @@ void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
     firmwareSerialRangeChanged_ = false;
     if (firmwareSerialStatus_ != FirmwareSerialTrace::Status::ReachedTarget)
         return;
+    applyFirmwareSerialLfoSync();
     // Count samples on each constant-rate segment rather than repeatedly
     // adding a fractional CPU interval. A quality change starts a new segment
     // from the retained exact-time coordinate and never resets the processor.
@@ -14109,12 +14163,24 @@ void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
     };
     double envelopeAt = 0.0;
     double rangeAt = 0.0;
+    bool lfoRateStored = false, lfoDelayIncrementStored = false;
     for (std::size_t i = 0; i < firmwareSerialEvents_.count; ++i)
     {
         const auto& event = firmwareSerialEvents_.entries[i];
         const double position = std::clamp((static_cast<double>(event.states) - start) / stateSpan, 0.0, 1.0);
         applyFirmwareSerialRamEvent(event);
         using K = FirmwareSerialTrace::EventKind;
+        if (event.kind == K::RamByte)
+        {
+            const unsigned address = event.address & 255u;
+            lfoRateStored = lfoRateStored || address == 0x4b || address == 0x4c;
+            lfoDelayIncrementStored = lfoDelayIncrementStored || address == 0x58
+                || address == 0x59 || address == 0x6c || address == 0x6d;
+            // Here B-2, not the host, assigns notes, so its phrase re-arm
+            // (0315..0320) restarts a synced delay as rearmLfoDelay does.
+            if (event.pc == 0x0318 && activeParameters_.lfoSyncDelaySeconds >= 0.0f)
+                lfoSyncDelayProgress_ = activeParameters_.lfoSyncDelaySeconds == 0.0f ? 2.0 : 0.0;
+        }
         if (event.kind == K::PassStart)
             refreshJackBoardTemperature(activeParameters_);
         else if (event.kind == K::ExternalWrite)
@@ -14221,6 +14287,13 @@ void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
         advanceEnvelopeHolds((1.0 - envelopeAt) * seconds, activeParameters_);
     const auto& ram = firmwareControlState_.ram;
     const auto word = [&ram](unsigned a) { return ram[a] + 256u * ram[a + 1]; };
+    // A panel edit stored while sync holds a coefficient becomes the value
+    // restored when sync ends; the next interval holds it at zero again.
+    if (firmwareSerialLfoRateHeld_ && lfoRateStored)
+        firmwareSerialLfoRate_ = static_cast<std::uint16_t>(word(0x4b));
+    if (firmwareSerialLfoDelayHeld_ && lfoDelayIncrementStored)
+        firmwareSerialLfoDelayIncrements_ = { static_cast<std::uint16_t>(word(0x58)),
+                                              static_cast<std::uint16_t>(word(0x6c)) };
     lfoAccumulator_ = static_cast<std::uint16_t>(word(0x4d));
     lfoRising_ = !(ram[0x4a] & 1);
     lfoPolarity_ = (ram[0x4a] & 2) ? -1.0f : 1.0f;
