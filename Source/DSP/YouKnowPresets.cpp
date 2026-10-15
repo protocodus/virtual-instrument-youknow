@@ -397,40 +397,41 @@ constexpr std::array<float, presetCount> factoryVolume {{
     0.539f, 0.800f, 0.613f, 0.800f, 0.800f, 0.800f, 0.676f, 0.611f,
 }};
 
-// Static product Output Trim, measured with Tools/CalibratePresets.cpp on
-// 2026-10-14: identical full scores, shipping Original timing, 48 kHz/1x,
-// Poly/Cubic/Normal and Aging 50%. Target -34 dBFS relative-gated stereo RMS;
-// A86's 30.44 dB crest factor sets the common level with >2.5 dB peak headroom.
-// Gain = target - measured unity-trim RMS, rounded to 0.001 dB. Physical VR1,
-// tone bytes, envelopes and circuit drive stay unchanged. This is a product
-// level convention, not an estimate of hardware gain. A86's short noise burst
-// measures differently across host rates: its 12.798 dB trim centres the
-// 44.1/48/96 kHz measured extrema, retaining +/-1 dB instead of fitting one
-// sample grid exactly. All other trims use the 48 kHz reference above.
-// Re-render --check after
-// changing these tables; never infer trim from a saved session's program ID.
+// Static product Output Trim measured with Tools/CalibratePresets.cpp on
+// 2026-10-15: identical full scores in BOTH Direct and Original playback,
+// 48 kHz/1x, Poly/Cubic/Normal and Aging 50%. The 15-preset smoke set also
+// covers 44.1/96 kHz. One gain per preset centres its raw RMS extrema across
+// these renders: -36 - (min + max)/2, rounded to 0.001 dB. The -1 dBFS peak
+// ceiling applies to signal-only and complete-noise passes. A86's short noise
+// burst requires a documented +/-1.1 dB cross-rate allowance; all 48 kHz rows
+// and all other presets retain +/-1 dB. The quieter target accommodates
+// Direct A86's larger crest factor without compression. Physical VR1, tone
+// bytes, envelopes and circuit drive stay unchanged. This is a product level
+// convention, not an estimate of hardware gain. Re-render --check in BOTH
+// modes after changing these tables; never infer a saved session's trim from
+// its program ID or rewrite it when changing playback mode.
 constexpr std::array<float, presetCount> factoryOutputTrimDb {{
-    -0.591f, -5.327f, 2.913f, 7.880f, -0.380f, -4.585f, -4.276f, -1.540f,
-    -3.994f, -5.023f, -2.438f, -4.300f, -3.148f, 0.658f, 5.623f, -1.694f,
-    -1.698f, -6.095f, -1.682f, -4.788f, -6.244f, -4.898f, 6.710f, -3.796f,
-    0.990f, 7.816f, -3.253f, -1.069f, 2.164f, -4.440f, -5.667f, -3.388f,
-    -3.787f, -5.071f, -4.777f, -0.792f, -5.238f, -5.745f, -6.782f, -0.256f,
-    -2.304f, 2.994f, -3.458f, -3.311f, -3.079f, -2.427f, 0.765f, -4.925f,
-    -2.040f, 1.745f, -1.074f, -1.590f, -2.484f, -5.647f, -2.358f, -6.225f,
-    -5.189f, -0.992f, -3.481f, 6.054f, -5.542f, 12.645f, -0.516f, 4.126f,
-    -5.597f, -2.676f, -4.942f, -6.018f, -5.121f, -2.475f, -1.316f, -3.669f,
-    -2.781f, 3.633f, -2.164f, 4.586f, -5.718f, -1.918f, 4.244f, -5.868f,
-    -3.401f, -3.698f, 12.280f, -5.662f, -5.535f, 2.142f, -4.518f, -4.099f,
-    -6.123f, 5.255f, -5.537f, 1.422f, -7.871f, -0.303f, -4.105f, -5.989f,
-    5.507f, -5.990f, 1.086f, -3.141f, -1.568f, -5.667f, -3.846f, -1.564f,
-    0.642f, 0.659f, -3.982f, -4.211f, -4.846f, -0.260f, -2.725f, -4.488f,
-    0.700f, -1.963f, -3.315f, 2.419f, -0.761f, -3.594f, 3.235f, -6.186f,
-    -5.904f, -2.890f, -5.636f, -4.088f, -3.491f, 0.265f, -4.905f, -4.831f,
+    -2.148f, -7.409f, 0.387f, 5.630f, -2.233f, -6.361f, -5.962f, -3.185f,
+    -6.039f, -6.978f, -4.394f, -6.342f, -5.302f, -1.339f, 3.800f, -3.624f,
+    -3.945f, -7.649f, -3.591f, -6.832f, -7.930f, -6.767f, 4.562f, -5.937f,
+    -0.845f, 5.246f, -5.305f, -2.321f, 0.177f, -6.353f, -7.401f, -5.458f,
+    -5.830f, -6.806f, -6.501f, -2.126f, -7.048f, -7.535f, -8.488f, -2.437f,
+    -4.085f, 1.218f, -5.552f, -5.594f, -4.874f, -4.672f, -1.394f, -6.906f,
+    -4.319f, -0.383f, -3.084f, -3.604f, -4.369f, -7.850f, -4.591f, -7.665f,
+    -7.417f, -3.255f, -5.760f, 3.905f, -7.772f, 10.484f, -2.847f, 1.931f,
+    -7.471f, -4.825f, -6.970f, -7.926f, -7.305f, -4.540f, -3.346f, -5.752f,
+    -4.869f, 1.801f, -4.101f, 2.748f, -7.751f, -3.992f, 2.079f, -8.031f,
+    -5.312f, -5.712f, 10.311f, -7.600f, -7.784f, -0.010f, -6.564f, -5.920f,
+    -8.015f, 3.083f, -7.691f, -0.486f, -9.986f, -2.336f, -6.068f, -7.980f,
+    4.374f, -8.008f, -0.983f, -5.237f, -3.454f, -7.634f, -5.812f, -3.651f,
+    -1.452f, -1.367f, -6.082f, -6.165f, -6.610f, -2.452f, -4.714f, -6.670f,
+    -1.244f, -4.167f, -5.375f, 0.037f, -2.973f, -5.614f, 1.221f, -7.855f,
+    -7.712f, -4.923f, -7.511f, -6.261f, -5.528f, -1.249f, -7.078f, -6.651f,
 }};
 
 constexpr std::array<float, productPresetCount> productOutputTrimDb {{
-    -12.570f, -3.371f, -11.149f, -8.039f, -5.478f, -4.065f, 3.263f, -10.859f,
-    -0.117f, -0.536f, 5.677f, -0.095f, 0.287f, 2.814f, -1.537f, 0.937f,
+    -0.469f, 9.109f, 1.416f, 4.613f, 0.168f, 8.397f, 2.975f, 0.683f,
+    -2.039f, -2.440f, 3.596f, -2.026f, -1.541f, 0.802f, -3.502f, -1.328f,
 }};
 
 struct BankStorage

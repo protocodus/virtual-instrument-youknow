@@ -186,9 +186,10 @@ public:
         : engine (std::make_unique<YouKnowEngine>())
     {
         youknow::ActiveProductFidelityProfile::configureBeforePrepare (*engine);
-        // Original presets exercise a fresh plug-in; the immutable factory
-        // corpus retains its established 4x numerical reference settings.
-        // Both use the product's approved physical fidelity profile.
+        // Authored product presets use the established Direct/1x reference;
+        // the immutable factory corpus retains Direct/4x. Both use the
+        // approved physical profile. CalibratePresets separately checks
+        // product output levels in both Direct and Original playback.
         if (shippingDefaults)
             engine->selectConverterTimingProfile (
                 YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);

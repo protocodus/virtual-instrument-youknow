@@ -117,6 +117,18 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-15
+
+- Original Unison honors the authored bass presets' one- or two-voice stacks.
+  The voice limit selects audible cards before the shared audio circuit while
+  all six cards retain their firmware timing and pitch histories. Changing the
+  count fades over 5 ms. Original Poly modes retain the six-card allocator.
+  Existing Original Unison sessions with a voice limit below six also use
+  the smaller stack; reloading a bundled preset recalls its new calibration.
+- Preset Output Trims are calibrated against both Direct and Original playback;
+  loading a preset continues to preserve the session's playback mode and saved
+  sessions retain their explicit trim values.
+
 ### Unreleased — 2026-10-14
 
 - All 144 bundled sounds recall a calibrated Output Trim for a consistent
@@ -2539,6 +2551,14 @@ serial-wire delivery time. Original runs the nominal assigner and module wire;
 installed clock/receive phases remain unmeasured, so neither mode establishes
 the original-unit population's unison phase distribution.
 
+In Direct, the voice limit selects 1–16 voices. In Original Unison, it selects
+which of the first 1–6 cards reach the shared bus; the remaining cards continue
+running internally. This product extension makes the authored mono and two-card
+bass stacks work in both playback modes. Original Poly 1/2 retain all six cards
+because firmware rotates assignments across them. Count changes fade over 5 ms;
+leaving a reduced Unison stack keeps its muted tails silent until the next
+assignment. The voice lamps show the audible cards.
+
 At **Unit Character** 0% the product retains the selected nominal
 original-hybrid/service frequency calibration and its nonlinearities, with
 the additional seeded tolerances disabled. The former measured six-card
@@ -2662,18 +2682,24 @@ visible digital **Output Trim** in dB. TRIM sits beside the monitor and changes
 only the final stereo amplitude, after all modeled saturation, filtering and
 noise. It does not compress attacks or change the sound's internal drive.
 
-`YouKnowCalibratePresets` measures every bundled sound with the same sustained
-notes, releases and six-note chord at the shipping defaults, including Original
-timing, 48 kHz/1× and Aging 50%. It targets −34 dBFS relative-gated stereo RMS
-within ±1 dB and checks
-sample peaks with chorus hiss both muted and enabled. This is a repeatable
-playing-level reference, not a LUFS measurement or a promise that every register
-and playing style has identical loudness. The complete protocol is beside the
-tool's implementation. The short noise-based hand clap uses a fixed compromise
-across 44.1, 48 and 96 kHz to stay within that band. The
-[measured bank](Docs/audio/preset-levels.csv) spans 0.914 dB at 48 kHz, down from
-26.851 dB, with a maximum sample peak of −2.646 dBFS. Twelve representative
-presets also pass the ±1 dB band at 44.1 and 96 kHz.
+`YouKnowCalibratePresets` measures every bundled sound with identical sustained
+notes, releases and a six-note chord in **both Direct and Original playback**,
+at 48 kHz/1× and Aging 50%. One stored Output Trim per preset centres the two
+modes' measured levels around −36 dBFS relative-gated stereo RMS, within ±1 dB.
+The tool runs both modes by default; `--mode direct` or `--mode original` selects
+one explicitly. Fifteen representative presets also cover 44.1 and 96 kHz.
+
+The quieter reference accommodates Direct's larger hand-clap peaks while
+preserving transients. Only A86 at 44.1/96 kHz allows ±1.1 dB: its short noise
+burst spans 2.109 dB across sample grids, which one static trim cannot fit inside
+±1 dB. A86 at 48 kHz and every other preset keep the ±1 dB check. Both the
+signal-only and complete chorus-hiss passes must stay below −1 dBFS sample peak.
+Each row of the [measured bank](Docs/audio/preset-levels.csv) records its playback
+mode, sample rate and allowed deviation. At 48 kHz, all 288 preset/mode renders
+span 1.729 dB, with a maximum sample peak of −2.510 dBFS. The 60 additional
+sample-rate renders stay below −2.299 dBFS sample peak. This is a repeatable playing-level
+reference, not LUFS or a promise of identical loudness in every register or
+playing style. The complete protocol is beside the tool's implementation.
 Host/preset-browser recall restores the trim; saved
 sessions preserve their own value, and older sessions use 0 dB. INIT also keeps
 0 dB. Hardware MIDI Program Change and SysEx continue to change only tone bytes,
@@ -2682,7 +2708,7 @@ retaining the current performance controls and Output Trim.
 The `YouKnowAuditFactoryPresets` tool renders all
 144 tones through the same engine the plug-in runs — the 128 archival tones
 at 48 kHz/4×, the normalised converter chart and a fresh service state, the
-16 product presets with the plug-in's shipping defaults — and enforces two
+16 product presets at 1×/Aging 50%, both in Direct mode — and enforces two
 contracts **before digital Output Trim** as build failures: no preset peaks
 above −1 dBFS and none exceeds −28.5 dBFS gated RMS. CI runs its `--smoke`
 subset; the full audit is a
@@ -4053,8 +4079,9 @@ and factory-preset audits. Each takes several minutes at full length;
 To verify the calibrated bank, run
 `./build-dsp/YouKnowCalibratePresets --check out/preset-levels.csv`.
 `--raw` measures unity Output Trim and reports recommended gains for review;
-it does not edit presets. `--smoke` checks twelve representative presets with
-the full score, and `--rate 44100` or `--rate 96000` checks another host rate.
+it does not edit presets. `--smoke` checks fifteen representative presets in
+both modes with the full score; `--mode direct` or `--mode original` restricts
+playback, and `--rate 44100` or `--rate 96000` selects another host rate.
 
 The hardware comparison protocols live with their executable checks in
 [`AnalyzeSubMixerCalibration.py`](Tools/AnalyzeSubMixerCalibration.py),

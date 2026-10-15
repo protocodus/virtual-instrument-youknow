@@ -2,21 +2,24 @@
 // audit. All 144 presets play identical velocity-127 notes (36/48/60/72,
 // four seconds on and one off), then a six-note chord for four seconds and a
 // two-second tail. This covers attacks, sustained voices, releases and unison.
-// Fresh shipping defaults: 48 kHz, Original/1x, Poly/Cubic/Normal, Aging 50%,
+// Both playback modes: 48 kHz, Direct and Original/1x, Poly/Cubic/Normal, Aging 50%,
 // approved component profile, deterministic engine reset. Stored performance
 // controls (including transpose, voice mode and analog Volume) stay intact.
 // Stereo RMS uses 400 ms windows / 100 ms hops, gated 20 dB below the loudest
 // window. Only chorus hiss is muted for the signal measurement; a second pass
 // checks the complete preset including hiss. This is unweighted RMS, not LUFS.
-// --raw measures unity digital trim and recommends static gains; --check
-// renders the stored gains through the engine and enforces +/-1 dB around
-// -34 dBFS signal RMS, plus -1 dBFS sample-peak headroom on BOTH passes.
-// The 2026-10-14 baseline's largest crest factor is about 30.44 dB (A86);
-// -34 dBFS keeps over 2.5 dB of headroom without compressing that attack,
-// including A86's fixed compromise trim across 44.1/48/96 kHz. The short noise
-// burst varies across sample grids; its trim centres the measured extrema.
-// The target is a product listening-level convention, not a hardware claim.
-// No dynamics, EQ, normalization of delivered files, or tone-byte edits.
+// --raw measures unity digital trim; --check renders the stored gains through
+// the engine. Both modes run by default; --mode can select one explicitly.
+// The common target is -36 dBFS signal RMS +/-1 dB, with a -1 dBFS sample-peak
+// ceiling on BOTH passes. The earlier Original-only -34 dBFS target missed
+// Direct A86's approximately 32.67 dB crest factor. The quieter reference keeps
+// over 2 dB of headroom without compressing its attack.
+// One static trim per preset centres the extrema across both modes at 48 kHz;
+// the smoke set also includes 44.1/96 kHz. A86's short noise burst spans about
+// 2.109 dB across these sample grids, so only A86 at 44.1/96 kHz allows +/-1.1
+// dB. Its 48 kHz check and every other preset retain +/-1 dB. Each CSV row names
+// its exact tolerance. These are unweighted product-level conventions, not a
+// hardware loudness claim. No dynamics, EQ, tone-byte edits or file normalization.
 #include "PresetScores.h"
 
 #include <atomic>
@@ -31,15 +34,18 @@
 namespace
 {
 using namespace youknow;
-constexpr double targetDb = -34.0;
-constexpr double toleranceDb = 1.0;
+constexpr double targetDb = -36.0;
+double toleranceDb(const presets::Preset& preset, double rate)
+{
+    return std::string_view(preset.number) == "A86" && rate != 48000.0 ? 1.1 : 1.0;
+}
 constexpr double peakCeilingDb = -1.0;
 constexpr int blockSize = 256;
 
 double db(double amplitude) { return 20.0 * std::log10(std::max(1.0e-12, amplitude)); }
 struct Metrics { double gatedDb, peakDb; };
 
-Metrics render(const presets::Preset& preset, double rate, bool raw, bool hiss)
+Metrics render(const presets::Preset& preset, double rate, bool original, bool raw, bool hiss)
 {
     auto engine = std::make_unique<YouKnowEngine>();
     ActiveProductFidelityProfile::configureBeforePrepare(*engine);
@@ -53,7 +59,7 @@ Metrics render(const presets::Preset& preset, double rate, bool raw, bool hiss)
     p.outputTrimDb = raw ? 0.0f : preset.controls.outputTrimDb;
     if (!hiss) p.chorusNoise = 0.0f;
     engine->setParameters(p);
-    engine->setOriginalPerformanceMode(true);
+    engine->setOriginalPerformanceMode(original);
     std::vector<double> energy { 0.0 };
     energy.reserve(static_cast<std::size_t>(rate * 26.25) + 1);
     double peak = 0.0;
@@ -107,7 +113,7 @@ int run(int argc, char** argv)
 {
     bool raw = false, smoke = false, check = false;
     double rate = 48000.0;
-    std::string slot;
+    std::string slot, mode = "both";
     std::filesystem::path output;
     for (int i = 1; i < argc; ++i)
     {
@@ -116,28 +122,33 @@ int run(int argc, char** argv)
         else if (arg == "--smoke") smoke = true;
         else if (arg == "--check") check = true;
         else if (arg == "--rate" && i + 1 < argc) rate = std::stod(argv[++i]);
+        else if (arg == "--mode" && i + 1 < argc) mode = argv[++i];
         else if (arg == "--slot" && i + 1 < argc) slot = argv[++i];
         else if (arg == "--help")
         {
             std::cout << "usage: YouKnowCalibratePresets [--raw | --check] [--smoke] "
-                         "[--rate 44100|48000|96000] [--slot A11] OUTPUT.csv\n";
+                         "[--mode both|direct|original] [--rate 44100|48000|96000] [--slot A11] OUTPUT.csv\n";
             return 0;
         }
         else if (arg.starts_with("--") || !output.empty()) throw std::runtime_error("Invalid arguments");
         else output = arg;
     }
-    if (output.empty() || (raw && check) || (rate != 44100 && rate != 48000 && rate != 96000))
+    if ((mode != "both" && mode != "direct" && mode != "original")
+        || output.empty() || (raw && check) || (rate != 44100 && rate != 48000 && rate != 96000))
         throw std::runtime_error("Supply an output CSV, valid rate, and either --raw or --check");
-    std::vector<const presets::Preset*> bank;
+    struct Entry { const presets::Preset* preset; bool original; };
+    std::vector<Entry> bank;
     const auto add = [&](const auto& presets) {
         for (const auto& preset : presets)
         {
             if (!slot.empty() && slot != preset.number) continue;
-            constexpr std::array smokeSlots { "A11", "A17", "A48", "A86", "B12", "B26",
-                                             "B31", "B85", "YB1", "YB8", "YP2", "YP7" };
+            constexpr std::array smokeSlots { "A11", "A17", "A44", "A48", "A86",
+                                             "B12", "B26", "B31", "B51", "B85",
+                                             "YB1", "YB5", "YB8", "YP2", "YP7" };
             if (smoke && std::none_of(smokeSlots.begin(), smokeSlots.end(),
                 [&](const char* s) { return std::string_view(s) == preset.number; })) continue;
-            bank.push_back(&preset);
+            if (mode != "original") bank.push_back({ &preset, false });
+            if (mode != "direct") bank.push_back({ &preset, true });
         }
     };
     add(presets::factoryBank()); add(presets::productBank());
@@ -159,18 +170,19 @@ int run(int argc, char** argv)
                 try
                 {
                     auto& row = rows[i];
-                    row.signal = render(*bank[i], rate, raw, false);
-                    row.complete = render(*bank[i], rate, raw, true);
-                    row.recommended = (raw ? 0.0 : bank[i]->controls.outputTrimDb)
+                    row.signal = render(*bank[i].preset, rate, bank[i].original, raw, false);
+                    row.complete = render(*bank[i].preset, rate, bank[i].original, raw, true);
+                    row.recommended = (raw ? 0.0 : bank[i].preset->controls.outputTrimDb)
                                     + targetDb - row.signal.gatedDb;
                     const double peak = std::max(row.signal.peakDb, row.complete.peakDb);
                     const bool valid = row.signal.gatedDb > -100 && std::abs(row.recommended) <= 48
-                        && (!check || (std::abs(row.signal.gatedDb - targetDb) <= toleranceDb
+                        && (!check || (std::abs(row.signal.gatedDb - targetDb) <= toleranceDb(*bank[i].preset, rate)
                                         && peak <= peakCeilingDb));
                     if (!valid) failed = true;
                     std::lock_guard guard(log);
-                    std::cout << bank[i]->number << " RMS " << row.signal.gatedDb
+                    std::cout << bank[i].preset->number << (bank[i].original ? " Original" : " Direct") << " RMS " << row.signal.gatedDb
                               << ", peak " << peak << ", trim " << row.recommended
+                              << ", tolerance +/-" << toleranceDb(*bank[i].preset, rate)
                               << (valid ? "\n" : " FAILED\n") << std::flush;
                 }
                 catch (const std::exception& e)
@@ -185,23 +197,23 @@ int run(int argc, char** argv)
     if (!output.parent_path().empty()) std::filesystem::create_directories(output.parent_path());
     std::ofstream csv(output);
     if (!csv) throw std::runtime_error("Cannot write CSV");
-    csv << "slot,name,sample_rate,volume,applied_trim_db,signal_gated_rms_dbfs,"
-           "complete_gated_rms_dbfs,signal_peak_dbfs,complete_peak_dbfs,recommended_trim_db\n";
+    csv << "slot,name,mode,sample_rate,volume,applied_trim_db,signal_gated_rms_dbfs,"
+           "complete_gated_rms_dbfs,signal_peak_dbfs,complete_peak_dbfs,tolerance_db,recommended_trim_db\n";
     double lowest = 0.0, highest = -240.0, maxPeak = -240.0;
     for (std::size_t i = 0; i < bank.size(); ++i)
     {
-        const auto& p = *bank[i]; const auto& r = rows[i];
-        csv << p.number << ',' << std::quoted(p.name) << ',' << rate << ','
+        const auto& p = *bank[i].preset; const auto& r = rows[i];
+        csv << p.number << ',' << std::quoted(p.name) << ',' << (bank[i].original ? "original" : "direct") << ',' << rate << ','
             << std::fixed << std::setprecision(6) << p.controls.volume << ','
             << (raw ? 0.0f : p.controls.outputTrimDb) << ',' << r.signal.gatedDb << ','
             << r.complete.gatedDb << ',' << r.signal.peakDb << ',' << r.complete.peakDb << ','
-            << r.recommended << '\n';
+            << toleranceDb(p, rate) << ',' << r.recommended << '\n';
         lowest = std::min(lowest, r.signal.gatedDb); highest = std::max(highest, r.signal.gatedDb);
         maxPeak = std::max({maxPeak, r.signal.peakDb, r.complete.peakDb});
     }
     csv.close();
     if (!csv) throw std::runtime_error("Failed writing CSV");
-    std::cout << bank.size() << " presets: " << lowest << " to " << highest
+    std::cout << bank.size() << " preset/mode renders: " << lowest << " to " << highest
               << " dBFS gated RMS (" << highest-lowest << " dB spread), maximum peak "
               << maxPeak << " dBFS. " << (check ? "Stored trim verification" : "Measurement")
               << (failed ? " FAILED\n" : " passed\n");
