@@ -1227,7 +1227,10 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.PresetLevels
                  COMMAND YouKnowCalibratePresets --check --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/preset-level-smoke.csv")
-        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 480)
+        # Selected circuit refinements measured about 2.4x whole-engine CPU.
+        # Windows completed 12/30 full-score rows in the former 480-second
+        # budget. Retain the scores, meters and gates, with shared-runner margin.
+        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 1800)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity

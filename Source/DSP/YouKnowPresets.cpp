@@ -399,7 +399,7 @@ constexpr std::array<float, presetCount> factoryVolume {{
 
 // Static product Output Trim measured with Tools/CalibratePresets.cpp on
 // 2026-10-15: identical full scores in BOTH Direct and Original playback,
-// 48 kHz/1x, Poly/Cubic/Normal and Aging 50%. The 15-preset smoke set also
+// 48 kHz/1x, Poly/Cubic/Normal and Aging 50%. The 17-preset smoke set also
 // covers 44.1/96 kHz. One gain per preset centres its raw RMS extrema across
 // these renders: -36 - (min + max)/2, rounded to 0.001 dB. The -1 dBFS peak
 // ceiling applies to signal-only and complete-noise passes. A86's short noise
@@ -410,6 +410,9 @@ constexpr std::array<float, presetCount> factoryVolume {{
 // convention, not an estimate of hardware gain. Re-render --check in BOTH
 // modes after changing these tables; never infer a saved session's trim from
 // its program ID or rewrite it when changing playback mode.
+// The higher-rate VCF corrects the coarse-grid resonance in B15 and B42;
+// only these two digital trims are recalibrated below. The other 142 gains,
+// every analog Volume position and every tone byte remain unchanged.
 constexpr std::array<float, presetCount> factoryOutputTrimDb {{
     -2.148f, -7.409f, 0.387f, 5.630f, -2.233f, -6.361f, -5.962f, -3.185f,
     -6.039f, -6.978f, -4.394f, -6.342f, -5.302f, -1.339f, 3.800f, -3.624f,
@@ -419,10 +422,10 @@ constexpr std::array<float, presetCount> factoryOutputTrimDb {{
     -4.085f, 1.218f, -5.552f, -5.594f, -4.874f, -4.672f, -1.394f, -6.906f,
     -4.319f, -0.383f, -3.084f, -3.604f, -4.369f, -7.850f, -4.591f, -7.665f,
     -7.417f, -3.255f, -5.760f, 3.905f, -7.772f, 10.484f, -2.847f, 1.931f,
-    -7.471f, -4.825f, -6.970f, -7.926f, -7.305f, -4.540f, -3.346f, -5.752f,
+    -7.471f, -4.825f, -6.970f, -7.926f, 3.066f, -4.540f, -3.346f, -5.752f,
     -4.869f, 1.801f, -4.101f, 2.748f, -7.751f, -3.992f, 2.079f, -8.031f,
     -5.312f, -5.712f, 10.311f, -7.600f, -7.784f, -0.010f, -6.564f, -5.920f,
-    -8.015f, 3.083f, -7.691f, -0.486f, -9.986f, -2.336f, -6.068f, -7.980f,
+    -8.015f, 4.404f, -7.691f, -0.486f, -9.986f, -2.336f, -6.068f, -7.980f,
     4.374f, -8.008f, -0.983f, -5.237f, -3.454f, -7.634f, -5.812f, -3.651f,
     -1.452f, -1.367f, -6.082f, -6.165f, -6.610f, -2.452f, -4.714f, -6.670f,
     -1.244f, -4.167f, -5.375f, 0.037f, -2.973f, -5.614f, 1.221f, -7.855f,

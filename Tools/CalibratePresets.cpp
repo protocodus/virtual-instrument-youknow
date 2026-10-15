@@ -143,7 +143,7 @@ int run(int argc, char** argv)
         {
             if (!slot.empty() && slot != preset.number) continue;
             constexpr std::array smokeSlots { "A11", "A17", "A44", "A48", "A86",
-                                             "B12", "B26", "B31", "B51", "B85",
+                                             "B12", "B15", "B26", "B31", "B42", "B51", "B85",
                                              "YB1", "YB5", "YB8", "YP2", "YP7" };
             if (smoke && std::none_of(smokeSlots.begin(), smokeSlots.end(),
                 [&](const char* s) { return std::string_view(s) == preset.number; })) continue;
