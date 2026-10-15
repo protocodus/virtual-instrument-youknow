@@ -48,6 +48,15 @@ struct ProductHardwareRealismProfile
         parameters.enableVoiceVcaJunctionTemperature = true;
         parameters.useBa662AResonanceOffsetEstimate = true;
         parameters.useOriginalCardVcfCalibration = true;
+        // 2026-10-15 numerical corrections to these same selected circuits:
+        // preserve the signed reconstructed Tr19 edge, evaluate chorus
+        // support on the existing IC6 FIR grid, and move the VCF/C59 inside
+        // the existing voice-VCA FIR boundary. No hardware value is refitted.
+        // Independent circuit/transport references qualify the implementation;
+        // the fresh auditions are not a new by-ear calibration verdict.
+        parameters.enableCoupledMixerBandlimitedSwitch = true;
+        parameters.enableChorusRateIsland = true;
+        parameters.enableVoiceFilterRateIsland = true;
     }
 };
 } // namespace youknow

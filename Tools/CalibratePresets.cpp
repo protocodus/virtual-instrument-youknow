@@ -5,6 +5,11 @@
 // Both playback modes: 48 kHz, Direct and Original/1x, Poly/Cubic/Normal, Aging 50%,
 // approved component profile, deterministic engine reset. Stored performance
 // controls (including transpose, voice mode and analog Volume) stay intact.
+// At 96 kHz every preset is resampled to the 48 kHz measurement grid through
+// the qualified tool-only FIR in PresetLevelMeter.h. Native full-band RMS and
+// peaks remain separate diagnostics; peaks always use the actual engine output.
+// This avoids counting ultrasonic resonance as extra playing level. 44.1/48 kHz
+// measurements retain their original arithmetic, score duration and gates.
 // Stereo RMS uses 400 ms windows / 100 ms hops, gated 20 dB below the loudest
 // window. Only chorus hiss is muted for the signal measurement; a second pass
 // checks the complete preset including hiss. This is unweighted RMS, not LUFS.
@@ -15,12 +20,14 @@
 // Direct A86's approximately 32.67 dB crest factor. The quieter reference keeps
 // over 2 dB of headroom without compressing its attack.
 // One static trim per preset centres the extrema across both modes at 48 kHz;
-// the smoke set also includes 44.1/96 kHz. A86's short noise burst spans about
-// 2.109 dB across these sample grids, so only A86 at 44.1/96 kHz allows +/-1.1
-// dB. Its 48 kHz check and every other preset retain +/-1 dB. Each CSV row names
+// the smoke set also includes 44.1/96 kHz. The earlier native-grid audit found
+// A86's short noise burst spanned about 2.109 dB across those grids. Its existing
+// +/-1.1 dB bound at 44.1/96 kHz is retained; the 48 kHz check and every other
+// preset retain +/-1 dB. Each CSV row names
 // its exact tolerance. These are unweighted product-level conventions, not a
 // hardware loudness claim. No dynamics, EQ, tone-byte edits or file normalization.
 #include "PresetScores.h"
+#include "PresetLevelMeter.h"
 
 #include <atomic>
 #include <filesystem>
@@ -42,8 +49,7 @@ double toleranceDb(const presets::Preset& preset, double rate)
 constexpr double peakCeilingDb = -1.0;
 constexpr int blockSize = 256;
 
-double db(double amplitude) { return 20.0 * std::log10(std::max(1.0e-12, amplitude)); }
-struct Metrics { double gatedDb, peakDb; };
+struct Metrics { double gatedDb, peakDb, nativeGatedDb, measurementRate; };
 
 Metrics render(const presets::Preset& preset, double rate, bool original, bool raw, bool hiss)
 {
@@ -60,9 +66,7 @@ Metrics render(const presets::Preset& preset, double rate, bool original, bool r
     if (!hiss) p.chorusNoise = 0.0f;
     engine->setParameters(p);
     engine->setOriginalPerformanceMode(original);
-    std::vector<double> energy { 0.0 };
-    energy.reserve(static_cast<std::size_t>(rate * 26.25) + 1);
-    double peak = 0.0;
+    preset_level_meter::StereoMeter meter(rate, static_cast<std::size_t>(rate * 26.25));
     const auto play = [&](double seconds) {
         std::array<float, blockSize> left {}, right {};
         auto remaining = static_cast<int>(std::llround(seconds * rate));
@@ -76,8 +80,7 @@ Metrics render(const presets::Preset& preset, double rate, bool original, bool r
                 const double r = right[static_cast<std::size_t>(i)];
                 if (!std::isfinite(l) || !std::isfinite(r))
                     throw std::runtime_error(std::string(preset.number) + " non-finite output");
-                peak = std::max({peak, std::abs(l), std::abs(r)});
-                energy.push_back(energy.back() + 0.5 * (l*l + r*r));
+                meter.add(l, r);
             }
             remaining -= count;
         }
@@ -96,17 +99,9 @@ Metrics render(const presets::Preset& preset, double rate, bool original, bool r
     play(2.0);
     if (!engine->originalPerformanceHealthy())
         throw std::runtime_error(std::string(preset.number) + " firmware performance failed");
-    const auto window = static_cast<std::size_t>(std::llround(rate * 0.4));
-    const auto hop = static_cast<std::size_t>(std::llround(rate * 0.1));
-    std::vector<double> windows;
-    for (std::size_t start = 0; start + window < energy.size(); start += hop)
-        windows.push_back(std::max(0.0, (energy[start + window] - energy[start]) / window));
-    const double loudest = *std::max_element(windows.begin(), windows.end());
-    double sum = 0.0;
-    int count = 0;
-    for (double square : windows)
-        if (square >= std::max(1.0e-14, loudest * 0.01)) { sum += square; ++count; }
-    return { db(count ? std::sqrt(sum / count) : 0.0), db(peak) };
+    const auto result = meter.finish();
+    return { result.gatedRmsDb, result.nativePeakDb,
+             result.nativeGatedRmsDb, result.measurementSampleRate };
 }
 
 int run(int argc, char** argv)
@@ -143,7 +138,7 @@ int run(int argc, char** argv)
         {
             if (!slot.empty() && slot != preset.number) continue;
             constexpr std::array smokeSlots { "A11", "A17", "A44", "A48", "A86",
-                                             "B12", "B26", "B31", "B51", "B85",
+                                             "B12", "B15", "B26", "B31", "B42", "B51", "B85",
                                              "YB1", "YB5", "YB8", "YP2", "YP7" };
             if (smoke && std::none_of(smokeSlots.begin(), smokeSlots.end(),
                 [&](const char* s) { return std::string_view(s) == preset.number; })) continue;
@@ -198,7 +193,8 @@ int run(int argc, char** argv)
     std::ofstream csv(output);
     if (!csv) throw std::runtime_error("Cannot write CSV");
     csv << "slot,name,mode,sample_rate,volume,applied_trim_db,signal_gated_rms_dbfs,"
-           "complete_gated_rms_dbfs,signal_peak_dbfs,complete_peak_dbfs,tolerance_db,recommended_trim_db\n";
+           "complete_gated_rms_dbfs,signal_peak_dbfs,complete_peak_dbfs,tolerance_db,recommended_trim_db,"
+           "measurement_sample_rate,signal_native_gated_rms_dbfs,complete_native_gated_rms_dbfs\n";
     double lowest = 0.0, highest = -240.0, maxPeak = -240.0;
     for (std::size_t i = 0; i < bank.size(); ++i)
     {
@@ -207,7 +203,8 @@ int run(int argc, char** argv)
             << std::fixed << std::setprecision(6) << p.controls.volume << ','
             << (raw ? 0.0f : p.controls.outputTrimDb) << ',' << r.signal.gatedDb << ','
             << r.complete.gatedDb << ',' << r.signal.peakDb << ',' << r.complete.peakDb << ','
-            << toleranceDb(p, rate) << ',' << r.recommended << '\n';
+            << toleranceDb(p, rate) << ',' << r.recommended << ',' << r.signal.measurementRate << ','
+            << r.signal.nativeGatedDb << ',' << r.complete.nativeGatedDb << '\n';
         lowest = std::min(lowest, r.signal.gatedDb); highest = std::max(highest, r.signal.gatedDb);
         maxPeak = std::max({maxPeak, r.signal.peakDb, r.complete.peakDb});
     }

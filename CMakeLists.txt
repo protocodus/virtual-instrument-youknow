@@ -130,7 +130,9 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowNoiseC41.h
     Source/DSP/YouKnowOtaShotNoise.h
     Source/DSP/YouKnowVoiceVcaAntialias.h
+    Source/DSP/YouKnowVoiceRateIsland.h
     Source/DSP/YouKnowOutputSummerAntialias.h
+    Source/DSP/YouKnowChorusRateIsland.h
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
@@ -334,6 +336,21 @@ if(YOUKNOW_BUILD_TOOLS)
     add_executable(YouKnowRenderFidelityQuickWins Tools/RenderFidelityQuickWins.cpp)
     target_link_libraries(YouKnowRenderFidelityQuickWins PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderFidelityQuickWins PRIVATE cxx_std_20)
+
+    add_executable(YouKnowRenderAudibleRealism Tools/RenderAudibleRealism.cpp)
+    target_link_libraries(YouKnowRenderAudibleRealism PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderAudibleRealism PRIVATE cxx_std_20)
+    target_compile_definitions(YouKnowRenderAudibleRealism PRIVATE
+        YOUKNOW_AUDIBLE_REALISM_R2=1 YOUKNOW_AUDIBLE_REALISM_VARIANT=4)
+    # These explicit selectors keep isolated auditions isolated after product
+    # promotion; variant0 also verifies parity with an unchanged shipping build.
+    foreach(variant RANGE 0 3)
+        add_executable(YouKnowRenderAudibleRealism${variant} Tools/RenderAudibleRealism.cpp)
+        target_link_libraries(YouKnowRenderAudibleRealism${variant} PRIVATE YouKnowDSP)
+        target_compile_features(YouKnowRenderAudibleRealism${variant} PRIVATE cxx_std_20)
+        target_compile_definitions(YouKnowRenderAudibleRealism${variant} PRIVATE
+            YOUKNOW_AUDIBLE_REALISM_R2=1 YOUKNOW_AUDIBLE_REALISM_VARIANT=${variant})
+    endforeach()
 
     add_executable(YouKnowAuditSchedulerLedger Tools/AuditSchedulerLedger.cpp)
     target_link_libraries(YouKnowAuditSchedulerLedger PRIVATE YouKnowDSP)
@@ -738,6 +755,10 @@ if(BUILD_TESTING)
     add_executable(YouKnowCoupledMixerJunctionTests Tests/YouKnowCoupledMixerJunctionTests.cpp)
     target_link_libraries(YouKnowCoupledMixerJunctionTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.CoupledMixerJunction COMMAND YouKnowCoupledMixerJunctionTests)
+    add_executable(YouKnowCoupledMixerSwitchTests Tests/YouKnowCoupledMixerSwitchTests.cpp)
+    target_link_libraries(YouKnowCoupledMixerSwitchTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.CoupledMixerSwitch COMMAND YouKnowCoupledMixerSwitchTests)
+    set_tests_properties(YouKnow.CoupledMixerSwitch PROPERTIES TIMEOUT 180)
     set_tests_properties(YouKnow.ChorusNonlinear PROPERTIES TIMEOUT 180)
 
     add_executable(YouKnowChorusClockIntegrationTests Tests/YouKnowChorusClockIntegrationTests.cpp)
@@ -841,10 +862,24 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME YouKnow.VoiceVcaAntialias COMMAND YouKnowVoiceVcaAntialiasTests)
     set_tests_properties(YouKnow.VoiceVcaAntialias PROPERTIES TIMEOUT 180)
+    add_executable(YouKnowVoiceRateIslandTests Tests/YouKnowVoiceRateIslandTests.cpp)
+    target_link_libraries(YouKnowVoiceRateIslandTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VoiceRateIsland COMMAND YouKnowVoiceRateIslandTests)
+
+    add_executable(YouKnowPresetLevelMeterTests Tests/YouKnowPresetLevelMeterTests.cpp)
+    target_include_directories(YouKnowPresetLevelMeterTests PRIVATE Tools)
+    target_compile_features(YouKnowPresetLevelMeterTests PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.PresetLevelMeter COMMAND YouKnowPresetLevelMeterTests)
+    set_tests_properties(YouKnow.PresetLevelMeter PROPERTIES TIMEOUT 60)
+    set_tests_properties(YouKnow.VoiceRateIsland PROPERTIES TIMEOUT 180)
     add_executable(YouKnowOutputSummerAntialiasTests Tests/YouKnowOutputSummerAntialiasTests.cpp)
     target_link_libraries(YouKnowOutputSummerAntialiasTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputSummerAntialias COMMAND YouKnowOutputSummerAntialiasTests)
     set_tests_properties(YouKnow.OutputSummerAntialias PROPERTIES TIMEOUT 180)
+    add_executable(YouKnowChorusRateIslandTests Tests/YouKnowChorusRateIslandTests.cpp)
+    target_link_libraries(YouKnowChorusRateIslandTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusRateIsland COMMAND YouKnowChorusRateIslandTests)
+    set_tests_properties(YouKnow.ChorusRateIsland PROPERTIES TIMEOUT 180)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowHeadphoneOutputTests Tests/YouKnowHeadphoneOutputTests.cpp)
@@ -1198,7 +1233,10 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.PresetLevels
                  COMMAND YouKnowCalibratePresets --check --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/preset-level-smoke.csv")
-        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 480)
+        # Selected circuit refinements measured about 2.4x whole-engine CPU.
+        # Windows completed 12/30 full-score rows in the former 480-second
+        # budget. Retain the scores, meters and gates, with shared-runner margin.
+        set_tests_properties(YouKnow.PresetLevels PROPERTIES TIMEOUT 1800)
 
         # Wall-clock/CPU measurements are informational and intentionally not
         # gated. CI checks deterministic work algebra and raw-float parity
@@ -1305,13 +1343,13 @@ if(BUILD_TESTING)
                 "${YOUKNOW_SANITIZER_DEFINITION}")
         endforeach()
     else()
-        # The engine bound was 300 s. The warm-up fixture added in the
-        # 2026-08-07 pass advances up to 900 s of internal samples for four
-        # configurations, which takes the suite to about 297 s run alone and
-        # over the bound when it shares a machine with another CTest job —
-        # no runner-speed margin at all. Raised to 900 s so the guard catches
-        # a hang rather than a slow runner.
-        set(YOUKNOW_ENGINE_TEST_TIMEOUT 900)
+        # The warm-up fixture advances up to 900 s of internal samples for
+        # four configurations. With the accepted circuit reconstruction the
+        # complete suite takes 805 s on Linux CI (631 s Windows, 405 s macOS),
+        # leaving too little runner-speed margin under the former 900 s bound.
+        # Keep every assertion and warm-up interval; this is a bounded hang
+        # guard, separate from the suite's explicit performance assertions.
+        set(YOUKNOW_ENGINE_TEST_TIMEOUT 1800)
         set(YOUKNOW_CIRCUIT_TEST_TIMEOUT 90)
     endif()
     set_tests_properties(YouKnow.Engine PROPERTIES
@@ -1352,10 +1390,12 @@ if(BUILD_TESTING)
         endif()
 
         add_test(NAME YouKnow.PluginProcessor COMMAND YouKnowPluginProcessorTests)
-        # The accepted coupled WAVE circuit advances all six physical cards.
-        # The complete processor suite takes about 88 s on the review runner;
-        # retain a runaway guard with margin for shared CI machines.
-        set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 180)
+        # The accepted circuit reconstruction advances all six physical cards
+        # at the local processing rates. The former Windows suite took 84 s;
+        # the measured 2.25-2.44x processing cost now exceeds its 180 s bound
+        # (macOS completes in 114 s). Keep every assertion and render unchanged,
+        # with a bounded hang guard that permits slower shared CI machines.
+        set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 480)
 
         # Exercise the shipping processor and editor with reproducible control
         # storms. Timing is reported separately from correctness: shared CI

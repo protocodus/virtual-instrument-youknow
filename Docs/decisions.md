@@ -1785,6 +1785,35 @@ of seven audible timbral improvements was supplied; the chorus and sub
 corrections remain small numerical changes. The working recordings stay
 frozen as the original comparison evidence.
 
+## 2026-10-15 — Audible numerical corrections, second pass
+
+The new comparison starts from shipping `15a784c`, after the earlier approved
+firmware/controller fixes. Research found three supported remaining numerical
+gaps: clipped/fractional Tr19 switch reconstruction in the coupled WAVE/SUB
+network, coarse-grid chorus support, and the VCF's premature open-filter pole
+limit. The product selects signed reconstruction of the two physical mixer
+states, a shared chorus/IC6 FIR stage, and a shared VCF/C59/VCA FIR stage.
+Circuit values, physical clock rates and the established latency report stay
+fixed. The local filter stage increases fixed per-instance storage and CPU;
+its uncalibrated rail-energy proxy inherits 24 parent samples of input delay.
+
+**Selection:** engineering implementation under the owner's request to find
+and implement supported audible improvements. Independent circuit references,
+control/noise chronology, lifecycle and disabled-path comparisons qualify the
+numerical changes. This is not a new hardware calibration or a by-ear verdict.
+The existing shared-clock Unison model supplies no basis for independent DCO
+detuning, so none was added.
+
+`RenderAudibleRealism.cpp` defines seven fresh auditions of these three
+mechanisms: two mixer scores, two chorus scores, two filter scores, and one
+combined Unison phrase. A is the unchanged shipping build; B changes only the
+named mechanism in the first six pairs and all three in the last pair.
+Identical events, controls and seeds feed the actual product path. Raw output
+and whole-file stereo-RMS-matched pairs remain outside the repository, with
+their own provenance manifest and separate `key.md`, unread by design for
+listening. No user preference between the letters has been recorded. Earlier
+audio evidence remains frozen.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

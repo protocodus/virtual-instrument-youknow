@@ -17,12 +17,14 @@ from pathlib import Path
 
 
 MARKER = '<!-- youknow-portable-player-v1 -->'
+EXTERNAL_MARKER = '<!-- youknow-external-player-v1 -->'
 
 
 class PortablePage(HTMLParser):
-    def __init__(self, page: Path):
+    def __init__(self, page: Path, *, embed_audio: bool = True):
         super().__init__(convert_charrefs=False)
         self.folder = page.parent.resolve()
+        self.embed_audio = embed_audio
         self.parts: list[str] = []
         self.documents: dict[str, dict[str, str]] = {}
         self.audio_count = 0
@@ -42,7 +44,8 @@ class PortablePage(HTMLParser):
                 data = self.asset(source).read_bytes()
                 if data[:4] != b'RIFF' or data[8:12] != b'WAVE':
                     raise ValueError(f'Expected a WAV file: {source}')
-                attributes['src'] = 'data:audio/wav;base64,' + base64.b64encode(data).decode('ascii')
+                if self.embed_audio:
+                    attributes['src'] = 'data:audio/wav;base64,' + base64.b64encode(data).decode('ascii')
                 attributes['data-audio-file'] = source
                 attributes.setdefault('data-group', Path(source).parent.as_posix())
             # Load the selected clip on demand instead of decoding every clip.
@@ -87,17 +90,22 @@ class PortablePage(HTMLParser):
         self.parts.append(f'<!{decl}>')
 
 
-def make_portable(page: Path) -> int:
+def add_player(page: Path, *, embed_audio: bool) -> int:
     source = page.read_text()
-    if MARKER in source:
+    if MARKER in source or EXTERNAL_MARKER in source:
         return 0
-    parser = PortablePage(page)
+    parser = PortablePage(page, embed_audio=embed_audio)
     parser.feed(source)
     parser.close()
     if not parser.audio_count:
         raise ValueError(f'No audio players in {page}')
     documents = json.dumps(parser.documents, ensure_ascii=True).replace('<', '\\u003c')
-    support = MARKER + '''
+    playback_error = (
+        'This preview could not play the embedded audio. Download this HTML page and open it in your browser; the audio is included in the file.'
+        if embed_audio else
+        'This preview could not play the audio files. Open the portable pair link, or serve the complete listening package locally.'
+    )
+    support = (MARKER if embed_audio else EXTERNAL_MARKER) + '''
 <style>
 #playback-error{position:fixed;bottom:1rem;left:1rem;right:1rem;z-index:10;padding:1rem;background:#50212a;color:#fff;border-radius:.5rem}
 #player-document{width:min(800px,85vw);max-height:80vh;padding:1.5rem;border:1px solid #526577;border-radius:12px;background:#17212b;color:#e7edf3}
@@ -141,13 +149,13 @@ def make_portable(page: Path) -> int:
     });
     audio.addEventListener('error', () => {
       error.hidden = false;
-      error.textContent = 'This preview could not play the embedded audio. Download this HTML page and open it in your browser; the audio is included in the file.';
+      error.textContent = PLAYBACK_ERROR;
     });
     audio.addEventListener('playing', () => { error.hidden = true; });
   });
 })();
 </script>
-'''.replace('DOCUMENTS', documents)
+'''.replace('DOCUMENTS', documents).replace('PLAYBACK_ERROR', json.dumps(playback_error))
     result = ''.join(parser.parts)
     end = result.rfind('</body>')
     if end < 0:
@@ -156,6 +164,16 @@ def make_portable(page: Path) -> int:
         end = len(result)
     page.write_text(result[:end] + support + result[end:])
     return parser.audio_count
+
+
+def make_portable(page: Path) -> int:
+    """Embed media and evidence, retaining the original standalone-page API."""
+    return add_player(page, embed_audio=True)
+
+
+def make_external(page: Path) -> int:
+    """Add the same playback controls while leaving WAVs as relative URLs."""
+    return add_player(page, embed_audio=False)
 
 
 if __name__ == '__main__':

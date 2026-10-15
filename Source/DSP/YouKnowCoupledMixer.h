@@ -277,6 +277,55 @@ public:
         return result;
     }
 
+    // Tr19 has two physical circuit states (Roland module-board p.13 above).
+    // A reconstructed SUB edge is a bandlimited interpolation weight, not a
+    // fractional transistor conductance. Clamping its Gibbs lobes creates new
+    // discontinuities and aliases; solving two simultaneously weighted diode
+    // branches also makes a topology that neither switch state has.
+    //
+    // Solve each physical endpoint with the SAME retained C56 charge, then
+    // reconstruct their voltages/currents. Keep the signed BLEP weight here:
+    // its overshoot belongs to numerical reconstruction, not a negative
+    // physical conductance. One capacitor update follows the reconstruction.
+    // Integer weights retain the original circuit exactly. This corrects the
+    // switch reconstruction, not all nonlinear source-wave intermodulation:
+    // a time-varying source still arrives on the engine's existing audio grid.
+    // See the distinction between a continuous discontinuity and its digital
+    // reconstruction in Esqueda et al., "Rounding corners with BLAMP" (2016):
+    // https://www.dafx.de/paper-archive/2016/dafxpapers/18-DAFx-16_paper_33-PN.pdf
+    [[nodiscard]] Result processBandlimitedSwitch(const Calibration& c,
+        const PreparedCoefficients& coefficients, double sourceVolts,
+        double railVolts, double gate) noexcept
+    {
+        if (gate == 0.0 || gate == 1.0)
+            return process(c, coefficients, sourceVolts, railVolts, gate);
+
+        const double history = capacitorVolts_
+            + coefficients.companionOhms * capacitorAmps_;
+        const auto endpoint = [&](double state) {
+            return c.diodeSlopeVolts > 0.0
+                ? solveExponential<true>(c, sourceVolts, railVolts, state,
+                    coefficients.loadConductance, history, &coefficients)
+                : solve(c, sourceVolts, railVolts, state,
+                    coefficients.loadConductance, history);
+        };
+        const auto on = endpoint(0.0);
+        const auto off = endpoint(1.0);
+        const auto interpolate = [gate](double a, double b) {
+            return a + gate * (b - a);
+        };
+        const Result result {
+            interpolate(on.waveVolts, off.waveVolts),
+            interpolate(on.filterVolts, off.filterVolts),
+            interpolate(on.capacitorAmps, off.capacitorAmps),
+            gate * off.subOffAmps,
+            (1.0 - gate) * on.subOnAmps
+        };
+        capacitorVolts_ = result.waveVolts - result.filterVolts;
+        capacitorAmps_ = result.capacitorAmps;
+        return result;
+    }
+
     [[nodiscard]] double capacitorVolts() const noexcept { return capacitorVolts_; }
     [[nodiscard]] double capacitorAmps() const noexcept { return capacitorAmps_; }
 
