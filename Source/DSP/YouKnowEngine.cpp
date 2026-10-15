@@ -477,7 +477,9 @@ FirmwareAdcTrace::Inputs originalPerformanceAdc(const EngineParameters& p) noexc
         return std::uint8_t{255};
     };
     FirmwareAdcTrace::Inputs input;
-    input.raw={rawFor(static_cast<unsigned>(std::clamp(128+int(YouKnowEngine::masterTunePitchWordOffset(p.masterTuneCents, p.allowHostMasterTuneExtension)),0,255))),
+    // The physical Tune pot spans only the panel byte, so in this replay the
+    // host extension saturates at the panel endpoints rather than wrapping.
+    input.raw={rawFor(static_cast<unsigned>(128+YouKnowEngine::masterTunePitchWordOffset(p.masterTuneCents))),
         rawFor(controlAdcByte(p.portamento)),255,rawFor(controlAdcByte(p.benderLfoDepth)),
         rawFor(controlAdcByte(p.benderVcfDepth)),rawFor(controlAdcByte(p.benderDcoDepth)),255,0};
     return input;
@@ -8326,7 +8328,12 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
     // With no capture configured, use a frozen lower-bank ADC snapshot. Its
     // calculated outputs are overwritten by the next host snapshot. This is a
     // repeatable nominal path, not a claim about the real ADC interrupt phase.
-    const auto tune = masterTunePitchWordOffset(p.masterTuneCents, p.allowHostMasterTuneExtension);
+    // B-2 holds only the panel's signed tune byte (sign 1E.7, magnitude 61)
+    // and adds it linearly into the pitch word at 6F (03AD..03D5), so the
+    // host extension beyond that byte joins the word where it is read back.
+    const auto tune = masterTunePitchWordOffset(p.masterTuneCents);
+    firmwareTuneExtension_ = static_cast<std::int16_t>(masterTunePitchWordOffset(
+        p.masterTuneCents, p.allowHostMasterTuneExtension) - tune);
     const auto bend = dcoBendCommand(pitchBendTarget_);
     ram[0x1e] = static_cast<std::uint8_t>((ram[0x1e] & 0x0e)
         | (sustainPedalDown_ ? 1 : 0) | (p.pulseEnabled ? 0x40 : 0)
@@ -9310,7 +9317,7 @@ std::uint32_t YouKnowEngine::updateVoicePitch(
 
     const std::int32_t controlOffset = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
         ? static_cast<std::int32_t>(firmwareControlState_.ram[0x6f]
-            + 256u * firmwareControlState_.ram[0x70]) - 0x1818
+            + 256u * firmwareControlState_.ram[0x70]) - 0x1818 + firmwareTuneExtension_
         : static_cast<std::int32_t>(masterTunePitchWordOffset(parameters.masterTuneCents, parameters.allowHostMasterTuneExtension))
             + dcoPitchBendWord_ + dcoLfoPitchWord_;
 

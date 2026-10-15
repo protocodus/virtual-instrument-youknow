@@ -3970,6 +3970,9 @@ private:
     FirmwareControlTrace::Result firmwareControlTrace_ {};
     std::array<std::uint16_t, converterWritesPerPass> firmwareConverterCodes_ {};
     std::uint8_t firmwarePassResetMask_ { 0 };
+    // Host master tune beyond the panel's signed byte, held for the pass with
+    // the RAM snapshot and added to the firmware's pitch word.
+    std::int16_t firmwareTuneExtension_ { 0 };
     std::size_t nextFirmwareControlEvent_ { 0 };
     bool firmwareControlTraceValid_ { true };
 
