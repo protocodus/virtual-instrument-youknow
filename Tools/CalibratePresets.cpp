@@ -20,9 +20,10 @@
 // Direct A86's approximately 32.67 dB crest factor. The quieter reference keeps
 // over 2 dB of headroom without compressing its attack.
 // One static trim per preset centres the extrema across both modes at 48 kHz;
-// the smoke set also includes 44.1/96 kHz. A86's short noise burst spans about
-// 2.109 dB across these sample grids, so only A86 at 44.1/96 kHz allows +/-1.1
-// dB. Its 48 kHz check and every other preset retain +/-1 dB. Each CSV row names
+// the smoke set also includes 44.1/96 kHz. The earlier native-grid audit found
+// A86's short noise burst spanned about 2.109 dB across those grids. Its existing
+// +/-1.1 dB bound at 44.1/96 kHz is retained; the 48 kHz check and every other
+// preset retain +/-1 dB. Each CSV row names
 // its exact tolerance. These are unweighted product-level conventions, not a
 // hardware loudness claim. No dynamics, EQ, tone-byte edits or file normalization.
 #include "PresetScores.h"

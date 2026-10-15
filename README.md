@@ -158,8 +158,11 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   Existing Original Unison sessions with a voice limit below six also use
   the smaller stack; reloading a bundled preset recalls its new calibration.
 - Preset Output Trims are calibrated against both Direct and Original playback;
-  loading a preset continues to preserve the session's playback mode and saved
-  sessions retain their explicit trim values.
+  B15 Harpsichord 1 and B42 Harpsichord 2 are recalibrated after the filter
+  correction. Recalling these bundled presets loads their updated digital
+  trims while preserving the session's playback mode. Saved sessions retain
+  their explicit trim values. All other preset trims, tone bytes and analog
+  Volume positions are unchanged.
 
 ### Unreleased — 2026-10-14
 
@@ -1530,7 +1533,13 @@ correctness fixes. The coupled SUB switch was clipping its reconstructed
 edge, the default-rate chorus support differed appreciably from its
 high-rate circuit solution, and the VCF's low-grid pole limit rolled off
 open-filter sounds prematurely. These are three supported corrections to
-existing circuits, demonstrated with seven auditions. The Unison audit found the shared master clock, independent
+existing circuits, demonstrated with seven auditions. B15's maximum-cutoff,
+maximum-resonance tone also exposed an artificial resonance around 19.9 kHz
+under the old pole limit. A direct 192 kHz engine reference resonates around
+45.6 kHz; independently downsampling its output to 48 kHz matches the corrected
+default path's short-note RMS within 0.00035 dB. This qualifies the numerical
+implementation against a finer-grid model, rather than a hardware capture.
+The Unison audit found the shared master clock, independent
 free-running phases, six-card assignment and firmware glide already present;
 adding independent oscillator detune would contradict that evidence.
 `Tools/RenderAudibleRealism.cpp` supplies fresh musical scores, with isolated
@@ -2800,19 +2809,38 @@ notes, releases and a six-note chord in **both Direct and Original playback**,
 at 48 kHz/1× and Aging 50%. One stored Output Trim per preset centres the two
 modes' measured levels around −36 dBFS relative-gated stereo RMS, within ±1 dB.
 The tool runs both modes by default; `--mode direct` or `--mode original` selects
-one explicitly. Fifteen representative presets also cover 44.1 and 96 kHz.
+one explicitly. Seventeen representative presets also cover 44.1 and 96 kHz,
+including both high-resonance harpsichord tones.
+
+The 96 kHz level measurement resamples every preset to the 48 kHz reference
+grid before applying the same relative gate. Its tool-only 257-tap Kaiser FIR
+has a 22 kHz cutoff, less than 0.0002 dB error through 20 kHz, and at least
+92.9 dB rejection from 24 kHz upward. Centered filtering and zero extension
+compensate its delay and retain the complete score timeline. Native full-band
+RMS remains in separate CSV columns, and the peak gate always measures the
+unfiltered engine output. This separates playing-level comparison from
+ultrasonic energy such as B15's 45.6 kHz resonance. The 44.1 and 48 kHz
+measurements retain their original arithmetic. Independent SciPy coefficients,
+mixed-tone outputs and timing checks qualify the measurement filter in
+`YouKnowPresetLevelMeterTests`.
 
 The quieter reference accommodates Direct's larger hand-clap peaks while
-preserving transients. Only A86 at 44.1/96 kHz allows ±1.1 dB: its short noise
-burst spans 2.109 dB across sample grids, which one static trim cannot fit inside
-±1 dB. A86 at 48 kHz and every other preset keep the ±1 dB check. Both the
+preserving transients. Only A86 at 44.1/96 kHz retains its existing ±1.1 dB
+allowance: the earlier native-grid audit found its short noise burst spanned
+2.109 dB across sample grids. A86 at 48 kHz and every other preset keep the
+±1 dB check. Both the
 signal-only and complete chorus-hiss passes must stay below −1 dBFS sample peak.
-Each row of the [measured bank](Docs/audio/preset-levels.csv) records its playback
-mode, sample rate and allowed deviation. At 48 kHz, all 288 preset/mode renders
-span 1.729 dB, with a maximum sample peak of −2.510 dBFS. The 60 additional
-sample-rate renders stay below −2.299 dBFS sample peak. This is a repeatable playing-level
-reference, not LUFS or a promise of identical loudness in every register or
-playing style. The complete protocol is beside the tool's implementation.
+All 356 rows of the [measured bank](Docs/audio/preset-levels.csv) pass these
+checks. Each records playback mode, engine and measurement sample rates,
+allowed deviation, reference-grid level and native full-band diagnostics.
+At 48 kHz, all 288 preset/mode renders span 1.729 dB, with a maximum native
+sample peak of −2.508 dBFS. The 68 additional sample-rate renders reach at most
+−2.313 dBFS native sample peak. The [measurement receipt](Docs/audio/preset-levels-provenance.json)
+identifies the exact source commits, hosted runs and retained measurements;
+the 96 kHz rerun preserves all native RMS and peak values to six decimal places.
+This is a repeatable playing-level reference, not LUFS or a promise of identical
+loudness in every register or playing style. The complete protocol is beside
+the tool's implementation.
 Host/preset-browser recall restores the trim; saved
 sessions preserve their own value, and older sessions use 0 dB. INIT also keeps
 0 dB. Hardware MIDI Program Change and SysEx continue to change only tone bytes,
@@ -4213,7 +4241,7 @@ and factory-preset audits. Each takes several minutes at full length;
 To verify the calibrated bank, run
 `./build-dsp/YouKnowCalibratePresets --check out/preset-levels.csv`.
 `--raw` measures unity Output Trim and reports recommended gains for review;
-it does not edit presets. `--smoke` checks fifteen representative presets in
+it does not edit presets. `--smoke` checks seventeen representative presets in
 both modes with the full score; `--mode direct` or `--mode original` restricts
 playback, and `--rate 44100` or `--rate 96000` selects another host rate.
 

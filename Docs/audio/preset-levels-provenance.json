@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "artifact": "Docs/audio/preset-levels.csv",
+  "artifact_sha256": "55e1f363b31c7902b0058ca4f16de38c3d50dd79f2c3014617f0b18a086dee38",
+  "rows": 356,
+  "passing_rows": 356,
+  "coverage": {
+    "full_bank_48000_hz": 288,
+    "smoke_44100_hz": 34,
+    "smoke_96000_hz": 34,
+    "playback_modes": [
+      "direct",
+      "original"
+    ],
+    "smoke_presets": [
+      "A11",
+      "A17",
+      "A44",
+      "A48",
+      "A86",
+      "B12",
+      "B15",
+      "B26",
+      "B31",
+      "B42",
+      "B51",
+      "B85",
+      "YB1",
+      "YB5",
+      "YB8",
+      "YP2",
+      "YP7"
+    ]
+  },
+  "compiler": {
+    "version": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "driver_sha256": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769"
+  },
+  "measurement_segments": [
+    {
+      "run_url": "https://github.com/protocodus/virtual-instrument-youknow/actions/runs/38747626027",
+      "source_commit": "a5127fc1adc290dd961be9ddb5e52ae0ab0ce7be",
+      "workflow_commit": "1ccccd175da4dcb1bef4499b826ad20758cdee86",
+      "aggregate_artifact": "youknow-bank-aggregate",
+      "aggregate_csv": "preset-levels-348.csv",
+      "aggregate_csv_sha256": "3b4ac75076fe6d3b978d16b4c1d3694ec46a4761ebfe8c8a42d524e0804827e3",
+      "binary_sha256": "52d80a7d8017ebdd141bf177283bd9d30da4b24d476d58bc72c59509fdde93c4",
+      "source_rows": 348,
+      "retained_rows": 314,
+      "retained_coverage": "284 rows: all 144 presets in both modes at 48 kHz except B15/B42; 30 rows: original 15-preset smoke set in both modes at 44.1 kHz.",
+      "excluded_evidence": "Four failing B15/B42 48 kHz rows remain in this original artifact. Its 30 native-grid 96 kHz rows are superseded by the uniform reference-grid measurements below."
+    },
+    {
+      "run_url": "https://github.com/protocodus/virtual-instrument-youknow/actions/runs/38751874864",
+      "source_commit": "8ba48762dd1c979cbf2f24b1f5f1233ede7b92ea",
+      "workflow_commit": "06dd4297415aa7a1ff10d14ecba8ffca558e431a",
+      "aggregate_artifact": "youknow-trim-aggregate",
+      "aggregate_csv": "preset-levels-12.csv",
+      "aggregate_csv_sha256": "1c0543a1ed00c0a3654d0243b8290c9b14c16ee41ebf0771ddd8e671fc9df357",
+      "binary_sha256": "05d564f489ae332837339227f71d1545e3ef46e76cdd0eec9176f8ef0af83618",
+      "source_rows": 12,
+      "retained_rows": 8,
+      "retained_coverage": "B15/B42 in both modes at 44.1 and 48 kHz, with stored Output Trims 3.066 and 4.404 dB respectively.",
+      "excluded_evidence": "All four native-grid 96 kHz rows remain in this original artifact. B15 failed the full-band level check in both modes because its ultrasonic resonance is inside 96 kHz Nyquist."
+    },
+    {
+      "run_url": "https://github.com/protocodus/virtual-instrument-youknow/actions/runs/38755001844",
+      "source_commit": "0b8bfe45d93c5bebb8f6fde8e3fdad3c41213e2e",
+      "workflow_commit": "31c0114f0094466a956257502d16d762a792ef42",
+      "aggregate_artifact": "youknow-96k-aggregate",
+      "aggregate_csv": "preset-levels-34.csv",
+      "aggregate_csv_sha256": "9f3dbf04123b28e10524052a3781ddf13869ecf00f0926d8cbc8c1b9923561a7",
+      "binary_sha256": "f129e639b01fec24bcfd7dfcffbccceb854ca68043b19319a9e4fafe53e0e5cf",
+      "source_rows": 34,
+      "retained_rows": 34,
+      "retained_coverage": "All 17 smoke presets in both modes at 96 kHz, with the qualified uniform 48 kHz measurement grid and native full-band diagnostics."
+    }
+  ],
+  "measurement_policy": {
+    "tool": "Tools/CalibratePresets.cpp",
+    "helper": "Tools/PresetLevelMeter.h",
+    "tests": "Tests/YouKnowPresetLevelMeterTests.cpp",
+    "score_seconds_per_pass": 26.25,
+    "passes_per_mode": 2,
+    "quality": {
+      "global_oversampling": 1,
+      "aging_percent": 50,
+      "filter_quality": "PolyZoned/Cubic/Rk4Single",
+      "active_product_profile": true
+    },
+    "relative_gate": {
+      "window_ms": 400,
+      "hop_ms": 100,
+      "below_loudest_window_db": 20
+    },
+    "signal_target_dbfs": -36,
+    "signal_tolerance_db": 1,
+    "existing_exception": {
+      "slot": "A86",
+      "rates_hz": [
+        44100,
+        96000
+      ],
+      "tolerance_db": 1.1
+    },
+    "both_passes_native_peak_ceiling_dbfs": -1,
+    "measurement_at_44100_and_48000_hz": "Original native-grid arithmetic is unchanged. Appended native RMS columns exactly alias the existing measured gated RMS; measurement_sample_rate equals sample_rate. No level is estimated or rescaled.",
+    "measurement_at_96000_hz": {
+      "reference_rate_hz": 48000,
+      "fir_taps": 257,
+      "kaiser_beta": 8.6,
+      "cutoff_hz": 22000,
+      "passband_through_hz": 20000,
+      "maximum_qualified_passband_error_db": 0.0002,
+      "stopband_from_hz": 24000,
+      "minimum_qualified_stopband_rejection_db": 92.9,
+      "alignment": "Centered FIR with zero extension compensates group delay and preserves the score timeline.",
+      "native_diagnostics": "Native full-band signal/complete RMS are retained separately; signal/complete peak columns always measure unfiltered engine output."
+    }
+  },
+  "source_changes_between_measurement_segments": {
+    "a5127fc_to_8ba4876": "Only B15 and B42 stored digital Output Trims change in DSP source; the smoke selection adds those two presets and CMake timeout increases. No tone bytes, analog Volume positions, other 142 trims or engine algorithms change.",
+    "8ba4876_to_0b8bfe4": "Tool-only measurement helper and independent tests, calibration-tool diagnostics, and CMake test registration. DSP sources are unchanged.",
+    "after_0b8bfe4": "This evidence/docs update changes a historical A86 explanation comment in CalibratePresets.cpp; executable behavior is unchanged."
+  },
+  "native_measurement_invariance_at_96000_hz": {
+    "rows": 34,
+    "columns": {
+      "signal_native_gated_rms_dbfs": "signal_gated_rms_dbfs",
+      "complete_native_gated_rms_dbfs": "complete_gated_rms_dbfs",
+      "signal_peak_dbfs": "signal_peak_dbfs",
+      "complete_peak_dbfs": "complete_peak_dbfs"
+    },
+    "identical_at_recorded_six_decimal_precision": true,
+    "maximum_absolute_native_delta_db": "0.000000",
+    "comparison_inputs": "Original 30 native-grid rows from a5127fc plus corrected four B15/B42 native-grid rows from 8ba4876, both preserved in their workflow artifacts."
+  },
+  "assembly": {
+    "retained_actual_rows_by_segment": [
+      314,
+      8,
+      34
+    ],
+    "inferred_or_scaled_measurement_rows": 0,
+    "old_failed_measurements_preserved": true,
+    "supplemental_local_gcc14_rows_included": false,
+    "csv_serialization": "LF line endings; measured field strings are unchanged."
+  },
+  "summary": {
+    "rows": 356,
+    "slots": 144,
+    "passing_rows": 356,
+    "failing_rows": [],
+    "analog_volumes_unchanged": true,
+    "only_allowed_trim_changes": {
+      "B15": 3.066,
+      "B42": 4.404
+    },
+    "rates": {
+      "48000": {
+        "rows": 288,
+        "minimum_signal_rms_dbfs": -36.861913,
+        "maximum_signal_rms_dbfs": -35.13291,
+        "signal_rms_spread_db": 1.7290029999999987,
+        "maximum_peak_dbfs": -2.50755
+      },
+      "44100": {
+        "rows": 34,
+        "minimum_signal_rms_dbfs": -37.054875,
+        "maximum_signal_rms_dbfs": -35.015155,
+        "signal_rms_spread_db": 2.0397200000000026,
+        "maximum_peak_dbfs": -5.212869
+      },
+      "96000": {
+        "rows": 34,
+        "minimum_signal_rms_dbfs": -36.86263,
+        "maximum_signal_rms_dbfs": -34.945122,
+        "signal_rms_spread_db": 1.917508000000005,
+        "maximum_peak_dbfs": -2.31301
+      }
+    },
+    "cross_rate_maximum_peak_dbfs": -2.31301,
+    "a86_signal_spread_all_modes_rates_db": 2.109753000000005
+  }
+}
