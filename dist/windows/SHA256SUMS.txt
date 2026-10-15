@@ -1,1 +1,1 @@
-efcfa6677796f1d8cee3940ce8bac3b4d6f1165402f4d2bead928d77749dc1ee  YouKnow-1.2.0-build.38654041430.1-Windows-x64.zip
+f38502b21e0c7d92292218c092621d4fd0dffb32e776f9ced11d8f7eef1b310d  YouKnow-1.2.0-build.38702357719.1-Windows-x64.zip

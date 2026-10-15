@@ -37,6 +37,20 @@ struct YouKnowTestAccess {
     }
     static auto ic40(const E& e) { return e.firmwareSerialIc40_; }
     static auto chorus(const E& e) { return e.firmwareSerialCircuitParameters_.chorus; }
+    static float lfo(const E& e) { return e.lfoValue_; }
+    static float delayLevel(const E& e) { return e.lfoDelayLevel_; }
+    static double delayProgress(const E& e) { return e.lfoSyncDelayProgress_; }
+    static unsigned cpuWord(const E& e,unsigned a) {
+        const auto& ram=e.firmwareSerialState_.control.ram; return ram[a]+256u*ram[a+1];
+    }
+    static auto cardGains(const E& e) { return e.originalUnisonCardGain_; }
+    static auto cardHistory(const E& e,unsigned card) {
+        const auto& v=e.voices_[card];
+        return std::tuple{v.active,v.keyDown,v.sustained,v.envelope.level,
+            v.currentMidi,v.dcoCv,v.dco.rampValue,v.dco.pitClocksToEvent,
+            v.cutoffCounts,v.filter.state,v.vcaControl,v.vca,v.energy,
+            v.noiseState,v.vcaInputVolts};
+    }
 };
 }
 EngineParameters patch() {
@@ -109,6 +123,143 @@ unsigned gates(const E& e) {
     unsigned mask=0;
     for(unsigned i=0;i<6;++i) if(YouKnowTestAccess::gate(e,i)) mask|=1u<<i;
     return mask;
+}
+
+EngineParameters voiceCountPatch() {
+    auto p=patch();
+    p.keyMode=KeyMode::Unison;
+    p.sawEnabled=p.pulseEnabled=false;
+    p.subLevel=p.resonance=p.envDepth=p.keyFollow=0;
+    p.cutoff=1; p.highPass=HighPassMode::One;
+    p.noiseLevel=p.vcaLevel=32.f/127;
+    p.vcaMode=VcaMode::Gate; p.sustain=1; p.release=0;
+    return p;
+}
+double power(const std::vector<float>& audio) {
+    double result=0;
+    for(float sample:audio) result+=static_cast<double>(sample)*sample;
+    return result/audio.size();
+}
+auto firmwareSnapshot(const E& e) {
+    const auto& a=e.originalPerformance().state().assigner;
+    const auto& b=e.firmwareSerialState();
+    return std::tuple{a.ram,a.now,a.foregroundPasses,a.registers.pc,
+        b.control.ram,b.now,b.ordinal,b.registers.pc,
+        e.originalPerformance().state().uart.frameOrdinal};
+}
+void originalUnisonVoiceCounts() {
+    auto p=voiceCountPatch();
+    auto full=create(48000,1,p);
+    full->noteOn(60,1); render(*full,8192,173);
+    std::vector<float> fullAudio;
+    render(*full,8192,173,&fullAudio);
+    const double fullPower=power(fullAudio);
+    check(fullPower>1.e-15,"voice-count audio fixture is audible");
+    for(int requested:{1,2,6,12}) {
+        p.polyphony=requested;
+        auto e=create(48000,1,p);
+        e->noteOn(60,1); render(*e,8192,173);
+        std::vector<float> audio;
+        render(*e,8192,173,&audio);
+        const int audible=std::min(requested,6);
+        check(e->getEffectiveVoiceLimit()==audible,
+              "Original Unison exposes the physical six-card maximum");
+        check(gates(*e)==63,"reduced Original Unison keeps all six firmware gates");
+        check(e->getActiveVoiceCount()==audible
+              && e->getDisplayVoiceMask()==((1<<audible)-1),
+              "Original Unison count and lamps describe the audible cards");
+        const auto gains=YouKnowTestAccess::cardGains(*e);
+        for(unsigned card=0;card<6;++card) {
+            check(gains[card]==(card<static_cast<unsigned>(audible)?1.f:0.f),
+                  "startup card selection reaches exact gain endpoints");
+            check(YouKnowTestAccess::cardHistory(*e,card)
+                      ==YouKnowTestAccess::cardHistory(*full,card),
+                  "muting a card preserves its oscillator/filter/VCA/noise history");
+        }
+        check(firmwareSnapshot(*e)==firmwareSnapshot(*full),
+              "audible Unison count leaves the complete six-card firmware timeline intact");
+        // Shared noise is coherent across the identical nominal cards. At
+        // this small drive the output should scale with the number summed,
+        // not merely display fewer lamps while retaining six-card audio.
+        const double ratio=std::sqrt(power(audio)/fullPower);
+        check(std::abs(ratio-static_cast<double>(audible)/6)<.02,
+              "reduced Original Unison changes actual audio by the selected card count");
+        if(audible==6)
+            check(audio==fullAudio,"six and above-six Original Unison retain exact six-card audio");
+    }
+    for(auto mode:{KeyMode::Poly1,KeyMode::Poly2}) {
+        p=voiceCountPatch(); p.keyMode=mode; p.polyphony=1;
+        auto e=create(48000,1,p);
+        for(int note:{48,52,55,60,64,67}) e->noteOn(note,1);
+        render(*e,4096,173);
+        check(e->getEffectiveVoiceLimit()==6 && gates(*e)==63
+              && e->getActiveVoiceCount()==6 && e->getDisplayVoiceMask()==63,
+              "Original Poly modes retain six audible assignments even at requested count one");
+        e->releaseAllNotes(); render(*e,4096,173);
+        check(gates(*e)==0 && e->getActiveVoiceCount()==0,
+              "all Original Poly assignments release at requested count one");
+    }
+}
+auto originalUnisonCountTransitions(unsigned block) {
+    auto p=voiceCountPatch();
+    auto e=create(48000,1,p);
+    std::vector<float> audio;
+    e->noteOn(60,1); render(*e,4096,block,&audio);
+    p.polyphony=1; e->setParameters(p);
+    render(*e,1,block,&audio);
+    const auto fading=YouKnowTestAccess::cardGains(*e);
+    check(fading[0]==1 && fading[1]>0 && fading[1]<1,
+          "live count reduction fades card output rather than stepping it");
+    check(gates(*e)==63,"count reduction does not manufacture firmware note offs");
+    render(*e,255,block,&audio);
+    check(e->getActiveVoiceCount()==1 && e->getDisplayVoiceMask()==1,
+          "count reduction settles to one audible card");
+    p.polyphony=2; e->setParameters(p); render(*e,256,block,&audio);
+    check(e->getActiveVoiceCount()==2 && e->getDisplayVoiceMask()==3,
+          "count increase fades a running second card into the stack");
+    e->setSustainPedal(true); render(*e,2048,block,&audio);
+    e->noteOff(60); render(*e,2048,block,&audio);
+    check(gates(*e)==0 && e->getActiveVoiceCount()==2,
+          "sustain retains the selected Original Unison cards after key up");
+    e->setSustainPedal(false); render(*e,4096,block,&audio);
+    check(e->getActiveVoiceCount()==0,"pedal up releases selected and hidden Unison cards");
+    e->noteOn(67,1); render(*e,4096,block,&audio);
+    check(gates(*e)==63 && e->getActiveVoiceCount()==2,
+          "a fresh note after release restores the requested stack without stale tails");
+    e->allNotesOff();
+    check(e->getActiveVoiceCount()==0 && e->getDisplayVoiceMask()==0,
+          "Original panic clears audible count and lamps");
+    e->noteOn(60,1); render(*e,4096,block,&audio);
+    check(e->getActiveVoiceCount()==2,"Original panic retains the requested stack size");
+    e->reset(); e->noteOn(60,1); render(*e,4096,block,&audio);
+    check(gates(*e)==63 && e->getActiveVoiceCount()==2,
+          "cold reset primes the requested audible stack while retaining six-card firmware");
+    return std::tuple{audio,firmwareSnapshot(*e),e->getDisplayVoiceMask()};
+}
+void originalUnisonHiddenTails() {
+    auto p=voiceCountPatch(); p.polyphony=1;
+    p.vcaMode=VcaMode::Envelope; p.release=90.f/127;
+    auto e=create(48000,1,p);
+    e->noteOn(60,1); render(*e,8192,173);
+    e->noteOff(60); render(*e,2048,173);
+    check(gates(*e)==0 && e->getActiveVoiceCount()==1,
+          "hidden-tail fixture retains an audible envelope release");
+    p.keyMode=KeyMode::Poly1; e->setParameters(p); render(*e,4096,173);
+    check((e->originalPerformance().state().assigner.ram[0xc8]&6)==2,
+          "hidden-tail fixture reaches actual Original Poly1");
+    const auto gains=YouKnowTestAccess::cardGains(*e);
+    for(unsigned card=1;card<6;++card)
+        check(gains[card]==0,"leaving Unison cannot resurrect a suppressed release tail");
+    // A new physical assignment admits a formerly suppressed card without
+    // resetting the other cards' release histories.
+    for(int note:{48,52,55,60,64,67}) e->noteOn(note,1);
+    render(*e,4096,173);
+    check(gates(*e)==63 && e->getActiveVoiceCount()==6 && e->getDisplayVoiceMask()==63,
+          "fresh Poly assignments reopen all six previously masked cards");
+    p.release=0; e->setParameters(p); render(*e,4096,173);
+    e->releaseAllNotes(); render(*e,8192,173);
+    check(gates(*e)==0 && e->getActiveVoiceCount()==0,
+          "Unison-to-Poly mode changes leave no stuck audible tails");
 }
 void allocatorAndBitmap() {
     // Literal original A-5 0AAF..0AF7/0AF8..0B2F: Poly1 pushes each
@@ -714,6 +865,39 @@ void rawLeverTargetsSurviveTransitions() {
               "setter zero is not suppressed after a raw MIDI lever request");
     }
 }
+// Host LFO sync replaces B-2's free-running triangle and delay clock in this
+// replay, so the panel's own LFO rate and delay become inaudible while synced.
+void lfoSync() {
+    using Access=YouKnowTestAccess;
+    auto synced=[](float rate,float delay) {
+        auto p=patch(); p.lfoRate=rate; p.lfoDelay=delay; p.dcoLfoDepth=p.vcfLfoDepth=p.pwmDepth=60.f/127;
+        p.lfoSyncRateHz=2.f; p.lfoSyncDelaySeconds=0.f;
+        auto e=create(48000,1,p); e->noteOn(60,1);
+        std::vector<float> audio; render(*e,3000,83,&audio); // 1/16 s: phase 0.125
+        return std::pair{std::move(e),std::move(audio)};
+    };
+    auto [slow,slowAudio]=synced(10.f/127,0);
+    auto [fast,fastAudio]=synced(110.f/127,90.f/127);
+    check(slowAudio==fastAudio,"synced replay ignores B-2's own LFO rate and delay");
+    check(std::abs(Access::lfo(*slow)-.5f)<2e-3f,"replay reports the synced half-scale triangle at phase 0.125");
+    check(Access::cpuWord(*slow,0x4b)==0&&Access::delayLevel(*slow)==1.f,"sync holds B-2's rate and completes its delay");
+
+    auto p=patch(); p.dcoLfoDepth=60.f/127; p.lfoDelay=0;
+    auto e=create(48000,1,p); render(*e,512,83);
+    const unsigned ownRate=Access::cpuWord(*e,0x4b);
+    p.lfoSyncRateHz=2.f; p.lfoSyncDelaySeconds=.05f; e->setParameters(p); render(*e,512,83);
+    check(ownRate!=0&&Access::cpuWord(*e,0x4b)==0,"sync takes over B-2's free-running rate");
+    // B-2 re-arms the delay on the first voice-on after a pass with no voice
+    // running; in this replay that restarts the synced delay, not the host.
+    e->noteOn(60,1); render(*e,9600,83);
+    check(Access::delayLevel(*e)==1.f,"synced delay completes while the phrase holds");
+    e->noteOff(60); render(*e,2400,83);
+    e->noteOn(62,1); render(*e,1440,83);
+    check(Access::delayProgress(*e)<1.0&&Access::delayLevel(*e)==0.f,"B-2's phrase re-arm restarts the synced delay");
+    p.lfoSyncRateHz=0; p.lfoSyncDelaySeconds=-1; e->setParameters(p); render(*e,512,83);
+    const float before=Access::lfo(*e); render(*e,2400,83);
+    check(Access::cpuWord(*e,0x4b)==ownRate&&Access::lfo(*e)!=before,"B-2's own LFO runs again after sync ends");
+}
 int main() {
     holdListeningFixture();
     check(coalescedHoldBursts(1)==coalescedHoldBursts(173),
@@ -724,6 +908,11 @@ int main() {
     mixedRawAndPedalRequests(1); mixedRawAndPedalRequests(173);
     check(rapidSustainReversal(1)==rapidSustainReversal(173),
           "rapid pedal reversals preserve full stereo audio across host blocks");
+    lfoSync();
+    originalUnisonVoiceCounts();
+    check(originalUnisonCountTransitions(1)==originalUnisonCountTransitions(173),
+          "audible Unison count transitions preserve stereo audio and firmware across host blocks");
+    originalUnisonHiddenTails();
     allocatorAndBitmap();
     check(repeatedMode(1)==repeatedMode(173),"same-mode contact processing is block invariant");
     burstAndRecovery();

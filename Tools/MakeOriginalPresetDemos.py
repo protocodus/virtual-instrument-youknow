@@ -318,7 +318,13 @@ def package(output, scratch):
     files += [take[kind] for take in results for kind in ['wav', 'midi']]
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as zipped:
         for relative in files:
-            zipped.write(output / relative, f'YouKnow-Original-Sessions/{relative}')
+            # Fixed entry metadata: rewriting the page or manifest refreshes
+            # their mtimes, which would otherwise change identical archives.
+            entry = zipfile.ZipInfo(f'YouKnow-Original-Sessions/{relative}', date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.create_system = 3
+            entry.external_attr = 0o644 << 16
+            zipped.writestr(entry, (output / relative).read_bytes())
     print(f'Packaged sixteen performances: {output}', flush=True)
 
 

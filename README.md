@@ -137,6 +137,15 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   boundaries. Chorus input/output clock events follow the continuously changing
   clock within each sample. These complete existing timing models; neither
   introduces a new hardware calibration or a claimed audible tone improvement.
+- Original Unison honors the authored bass presets' one- or two-voice stacks.
+  The voice limit selects audible cards before the shared audio circuit while
+  all six cards retain their firmware timing and pitch histories. Changing the
+  count fades over 5 ms. Original Poly modes retain the six-card allocator.
+  Existing Original Unison sessions with a voice limit below six also use
+  the smaller stack; reloading a bundled preset recalls its new calibration.
+- Preset Output Trims are calibrated against both Direct and Original playback;
+  loading a preset continues to preserve the session's playback mode and saved
+  sessions retain their explicit trim values.
 
 ### Unreleased — 2026-10-14
 
@@ -2597,6 +2606,14 @@ serial-wire delivery time. Original runs the nominal assigner and module wire;
 installed clock/receive phases remain unmeasured, so neither mode establishes
 the original-unit population's unison phase distribution.
 
+In Direct, the voice limit selects 1–16 voices. In Original Unison, it selects
+which of the first 1–6 cards reach the shared bus; the remaining cards continue
+running internally. This product extension makes the authored mono and two-card
+bass stacks work in both playback modes. Original Poly 1/2 retain all six cards
+because firmware rotates assignments across them. Count changes fade over 5 ms;
+leaving a reduced Unison stack keeps its muted tails silent until the next
+assignment. The voice lamps show the audible cards.
+
 At **Unit Character** 0% the product retains the selected nominal
 original-hybrid/service frequency calibration and its nonlinearities, with
 the additional seeded tolerances disabled. The former measured six-card
@@ -2720,18 +2737,24 @@ visible digital **Output Trim** in dB. TRIM sits beside the monitor and changes
 only the final stereo amplitude, after all modeled saturation, filtering and
 noise. It does not compress attacks or change the sound's internal drive.
 
-`YouKnowCalibratePresets` measures every bundled sound with the same sustained
-notes, releases and six-note chord at the shipping defaults, including Original
-timing, 48 kHz/1× and Aging 50%. It targets −34 dBFS relative-gated stereo RMS
-within ±1 dB and checks
-sample peaks with chorus hiss both muted and enabled. This is a repeatable
-playing-level reference, not a LUFS measurement or a promise that every register
-and playing style has identical loudness. The complete protocol is beside the
-tool's implementation. The short noise-based hand clap uses a fixed compromise
-across 44.1, 48 and 96 kHz to stay within that band. The
-[measured bank](Docs/audio/preset-levels.csv) spans 0.914 dB at 48 kHz, down from
-26.851 dB, with a maximum sample peak of −2.646 dBFS. Twelve representative
-presets also pass the ±1 dB band at 44.1 and 96 kHz.
+`YouKnowCalibratePresets` measures every bundled sound with identical sustained
+notes, releases and a six-note chord in **both Direct and Original playback**,
+at 48 kHz/1× and Aging 50%. One stored Output Trim per preset centres the two
+modes' measured levels around −36 dBFS relative-gated stereo RMS, within ±1 dB.
+The tool runs both modes by default; `--mode direct` or `--mode original` selects
+one explicitly. Fifteen representative presets also cover 44.1 and 96 kHz.
+
+The quieter reference accommodates Direct's larger hand-clap peaks while
+preserving transients. Only A86 at 44.1/96 kHz allows ±1.1 dB: its short noise
+burst spans 2.109 dB across sample grids, which one static trim cannot fit inside
+±1 dB. A86 at 48 kHz and every other preset keep the ±1 dB check. Both the
+signal-only and complete chorus-hiss passes must stay below −1 dBFS sample peak.
+Each row of the [measured bank](Docs/audio/preset-levels.csv) records its playback
+mode, sample rate and allowed deviation. At 48 kHz, all 288 preset/mode renders
+span 1.729 dB, with a maximum sample peak of −2.510 dBFS. The 60 additional
+sample-rate renders stay below −2.299 dBFS sample peak. This is a repeatable playing-level
+reference, not LUFS or a promise of identical loudness in every register or
+playing style. The complete protocol is beside the tool's implementation.
 Host/preset-browser recall restores the trim; saved
 sessions preserve their own value, and older sessions use 0 dB. INIT also keeps
 0 dB. Hardware MIDI Program Change and SysEx continue to change only tone bytes,
@@ -2740,7 +2763,7 @@ retaining the current performance controls and Output Trim.
 The `YouKnowAuditFactoryPresets` tool renders all
 144 tones through the same engine the plug-in runs — the 128 archival tones
 at 48 kHz/4×, the normalised converter chart and a fresh service state, the
-16 product presets with the plug-in's shipping defaults — and enforces two
+16 product presets at 1×/Aging 50%, both in Direct mode — and enforces two
 contracts **before digital Output Trim** as build failures: no preset peaks
 above −1 dBFS and none exceeds −28.5 dBFS gated RMS. CI runs its `--smoke`
 subset; the full audit is a
@@ -3129,21 +3152,21 @@ Short musical performances of fifteen well-known factory presets, each composed 
 <!-- preset-demos-table-begin: regenerated by YouKnowRenderPresetDemos; edits between the markers are overwritten -->
 | Preset | Name | Category | Length | Rendered peak | Normalisation | What to hear |
 | --- | --- | --- | ---: | ---: | ---: | --- |
-| [`A11`](Docs/audio/demo-A11-brass-set-1.wav) | Brass Set 1 | Poly Brass | 9.5 s | −13.4 dBFS | +10.4 dB | Syncopated 80s brass stabs and punchy fanfare cadence in B-flat |
-| [`A17`](Docs/audio/demo-A17-choir.wav) | Choir | Pad / Vocal | 22.1 s | −16.9 dBFS | +13.9 dB | Ethereal vocal wash with slow-blooming voice leading in D minor |
-| [`A28`](Docs/audio/demo-A28-elect-piano-2.wav) | Elect. Piano II | Keyboards | 18.1 s | −11.7 dBFS | +8.7 dB | Warm chorused neo-soul progression with singing upper harmonics |
-| [`A32`](Docs/audio/demo-A32-steel-drums.wav) | Steel Drums | Percussive | 10.4 s | −14.7 dBFS | +11.7 dB | Syncopated tropical calypso bounce and bright envelope strike |
-| [`A48`](Docs/audio/demo-A48-synth-bass-unison.wav) | Synth Bass I (unison) | Bass | 10.3 s | −17.9 dBFS | +14.9 dB | Punchy 16th-note analog funk bassline driving with 6-voice unison bite |
-| [`A53`](Docs/audio/demo-A53-lead-3.wav) | Lead III | Lead | 15.8 s | −29.1 dBFS | +26.1 dB | Singing solo synth lead with expressive portamento glides |
-| [`A54`](Docs/audio/demo-A54-funky-2.wav) | Funky II | Pluck / Stab | 7.8 s | −11.3 dBFS | +8.3 dB | Resonant funk stab groove with dynamic envelope bounce in E Dorian |
-| [`A62`](Docs/audio/demo-A62-clav.wav) | Clav | Pluck | 8.1 s | −12.2 dBFS | +9.2 dB | Crisp percussive 70s funk clavinet pattern in D Dorian |
-| [`A68`](Docs/audio/demo-A68-synth-pad.wav) | Synth Pad | Pad | 24.0 s | −16.9 dBFS | +13.9 dB | Deep warm analog pad with slow filter bloom and moving inner voices |
-| [`A86`](Docs/audio/demo-A86-hand-claps.wav) | Hand Claps | Percussive / FX | 7.5 s | −13.6 dBFS | +10.6 dB | Rhythmic analog noise burst claps in an 80s drum groove |
-| [`B11`](Docs/audio/demo-B11-strings.wav) | Strings | Strings | 20.9 s | −17.5 dBFS | +14.5 dB | The iconic Juno PWM chorused strings with lush voice-led counterpoint |
-| [`B13`](Docs/audio/demo-B13-chorus-vibes.wav) | Chorus Vibes | Mallet / Keys | 21.6 s | −17.0 dBFS | +14.0 dB | Shimmering vibraphone jazz chords and sparkling upward arpeggio |
-| [`B31`](Docs/audio/demo-B31-brass.wav) | Brass | Brass | 21.1 s | −17.5 dBFS | +14.5 dB | Warm, mellow brass chorale with gentle filter swells in F major |
-| [`B33`](Docs/audio/demo-B33-lute.wav) | Lute | Pluck | 17.2 s | −19.3 dBFS | +16.3 dB | Baroque plucked string arpeggiation with natural acoustic damping in D minor |
-| [`B44`](Docs/audio/demo-B44-contact-wah.wav) | Contact Wah | Filter / Mod | 8.1 s | −15.9 dBFS | +12.9 dB | Funky envelope-wah comping with dynamic rhythmic filter sweeps |
+| [`A11`](Docs/audio/demo-A11-brass-set-1.wav) | Brass Set 1 | Poly Brass | 9.5 s | −15.0 dBFS | +12.0 dB | Syncopated 80s brass stabs and punchy fanfare cadence in B-flat |
+| [`A17`](Docs/audio/demo-A17-choir.wav) | Choir | Pad / Vocal | 22.1 s | −18.6 dBFS | +15.6 dB | Ethereal vocal wash with slow-blooming voice leading in D minor |
+| [`A28`](Docs/audio/demo-A28-elect-piano-2.wav) | Elect. Piano II | Keyboards | 18.1 s | −13.6 dBFS | +10.6 dB | Warm chorused neo-soul progression with singing upper harmonics |
+| [`A32`](Docs/audio/demo-A32-steel-drums.wav) | Steel Drums | Percussive | 10.4 s | −16.3 dBFS | +13.3 dB | Syncopated tropical calypso bounce and bright envelope strike |
+| [`A48`](Docs/audio/demo-A48-synth-bass-unison.wav) | Synth Bass I (unison) | Bass | 10.3 s | −20.0 dBFS | +17.0 dB | Punchy 16th-note analog funk bassline driving with 6-voice unison bite |
+| [`A53`](Docs/audio/demo-A53-lead-3.wav) | Lead III | Lead | 15.8 s | −30.8 dBFS | +27.8 dB | Singing solo synth lead with expressive portamento glides |
+| [`A54`](Docs/audio/demo-A54-funky-2.wav) | Funky II | Pluck / Stab | 7.8 s | −12.6 dBFS | +9.6 dB | Resonant funk stab groove with dynamic envelope bounce in E Dorian |
+| [`A62`](Docs/audio/demo-A62-clav.wav) | Clav | Pluck | 8.1 s | −14.0 dBFS | +11.0 dB | Crisp percussive 70s funk clavinet pattern in D Dorian |
+| [`A68`](Docs/audio/demo-A68-synth-pad.wav) | Synth Pad | Pad | 24.0 s | −18.8 dBFS | +15.8 dB | Deep warm analog pad with slow filter bloom and moving inner voices |
+| [`A86`](Docs/audio/demo-A86-hand-claps.wav) | Hand Claps | Percussive / FX | 7.5 s | −15.8 dBFS | +12.8 dB | Rhythmic analog noise burst claps in an 80s drum groove |
+| [`B11`](Docs/audio/demo-B11-strings.wav) | Strings | Strings | 20.9 s | −19.4 dBFS | +16.4 dB | The iconic Juno PWM chorused strings with lush voice-led counterpoint |
+| [`B13`](Docs/audio/demo-B13-chorus-vibes.wav) | Chorus Vibes | Mallet / Keys | 21.6 s | −19.0 dBFS | +16.0 dB | Shimmering vibraphone jazz chords and sparkling upward arpeggio |
+| [`B31`](Docs/audio/demo-B31-brass.wav) | Brass | Brass | 21.1 s | −19.4 dBFS | +16.4 dB | Warm, mellow brass chorale with gentle filter swells in F major |
+| [`B33`](Docs/audio/demo-B33-lute.wav) | Lute | Pluck | 17.2 s | −21.2 dBFS | +18.2 dB | Baroque plucked string arpeggiation with natural acoustic damping in D minor |
+| [`B44`](Docs/audio/demo-B44-contact-wah.wav) | Contact Wah | Filter / Mod | 8.1 s | −17.8 dBFS | +14.8 dB | Funky envelope-wah comping with dynamic rhythmic filter sweeps |
 <!-- preset-demos-table-end -->
 
 ## Known gaps
@@ -4119,8 +4142,9 @@ and factory-preset audits. Each takes several minutes at full length;
 To verify the calibrated bank, run
 `./build-dsp/YouKnowCalibratePresets --check out/preset-levels.csv`.
 `--raw` measures unity Output Trim and reports recommended gains for review;
-it does not edit presets. `--smoke` checks twelve representative presets with
-the full score, and `--rate 44100` or `--rate 96000` checks another host rate.
+it does not edit presets. `--smoke` checks fifteen representative presets in
+both modes with the full score; `--mode direct` or `--mode original` restricts
+playback, and `--rate 44100` or `--rate 96000` selects another host rate.
 
 The hardware comparison protocols live with their executable checks in
 [`AnalyzeSubMixerCalibration.py`](Tools/AnalyzeSubMixerCalibration.py),

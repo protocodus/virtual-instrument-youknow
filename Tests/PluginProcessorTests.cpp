@@ -6749,6 +6749,37 @@ void testOriginalProductProgramsPreserveFactorySlotsAndState()
     }
 }
 
+void testProductBassVoiceCountsInBothPlaybackModes()
+{
+    for (int original : { 0, 1 })
+        for (const auto& preset : presets::productBank())
+        {
+            if (preset.controls.keyMode != KeyMode::Unison)
+                continue;
+            auto processor = std::make_unique<YouKnowAudioProcessor>();
+            setParameterValue (*processor, parameters::originalPerformance,
+                               static_cast<float> (original));
+            for (int program = 1; program < processor->getNumPrograms(); ++program)
+                if (presets::programPreset (program) == &preset)
+                    processor->setCurrentProgram (program);
+            processor->prepareToPlay (sampleRate, blockSize);
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 48, 1.0f), 0);
+            processor->processBlock (buffer, midi);
+            renderBlocks (*processor, buffer, 24);
+            const auto label = std::string (preset.number)
+                + (original ? " Original" : " Direct");
+            expect (processor->getVoiceLimitForDisplay() == preset.controls.polyphony,
+                    label + " displays the wrong voice count");
+            expect (processor->getActiveVoiceCount() == preset.controls.polyphony,
+                    label + " does not honor its authored Unison voice count");
+            expect (parameterValue (*processor, parameters::originalPerformance) == original,
+                    label + " changed the session playback mode on recall");
+            processor->releaseResources();
+        }
+}
+
 void testOutputTrimRecallsAndPreservesSavedLevels()
 {
     YouKnowAudioProcessor processor;
@@ -9554,6 +9585,7 @@ int main()
     {
         testFactoryProgramsLoad();
         testOriginalProductProgramsPreserveFactorySlotsAndState();
+        testProductBassVoiceCountsInBothPlaybackModes();
         testOutputTrimRecallsAndPreservesSavedLevels();
         testEveryProductProgramRestoresEveryParameter();
         testEditedFlagFollowsTheCompleteProgram();
@@ -9566,6 +9598,7 @@ int main()
         testPublicParameterOrderMatchesTheSharedList();
         testParameterContract();
         testDisplayedParameterTextIsStableWhenReentered();
+        testProductBassVoiceCountsInBothPlaybackModes();
         testOutputTrimRecallsAndPreservesSavedLevels();
         testOutputTrimReachesHostAudio();
         testEveryProductProgramRestoresEveryParameter();
@@ -9714,6 +9747,7 @@ int main()
     testColdStartProgramAndEditorAreInSync();
     testFactoryProgramsLoad();
     testOriginalProductProgramsPreserveFactorySlotsAndState();
+    testProductBassVoiceCountsInBothPlaybackModes();
     testOutputTrimRecallsAndPreservesSavedLevels();
     testOutputTrimReachesHostAudio();
     testHardwareProgrammerAddressesCompleteFactoryBank();

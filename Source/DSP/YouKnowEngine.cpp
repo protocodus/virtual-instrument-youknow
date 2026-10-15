@@ -477,7 +477,9 @@ FirmwareAdcTrace::Inputs originalPerformanceAdc(const EngineParameters& p) noexc
         return std::uint8_t{255};
     };
     FirmwareAdcTrace::Inputs input;
-    input.raw={rawFor(static_cast<unsigned>(std::clamp(128+int(YouKnowEngine::masterTunePitchWordOffset(p.masterTuneCents, p.allowHostMasterTuneExtension)),0,255))),
+    // The physical Tune pot spans only the panel byte, so in this replay the
+    // host extension saturates at the panel endpoints rather than wrapping.
+    input.raw={rawFor(static_cast<unsigned>(128+YouKnowEngine::masterTunePitchWordOffset(p.masterTuneCents))),
         rawFor(controlAdcByte(p.portamento)),255,rawFor(controlAdcByte(p.benderLfoDepth)),
         rawFor(controlAdcByte(p.benderVcfDepth)),rawFor(controlAdcByte(p.benderDcoDepth)),255,0};
     return input;
@@ -7652,6 +7654,60 @@ int YouKnowEngine::voiceLimit() const noexcept
     return std::clamp(activeParameters_.polyphony, 1, maxVoices);
 }
 
+int YouKnowEngine::getEffectiveVoiceLimit() const noexcept
+{
+    if (!originalPerformanceEnabled_)
+        return voiceLimit();
+    return activeParameters_.keyMode == KeyMode::Unison
+        ? std::min(voiceLimit(), hardwareVoices) : hardwareVoices;
+}
+
+void YouKnowEngine::updateOriginalUnisonCardGains(bool prime) noexcept
+{
+    const bool limitedUnison = originalPerformanceEnabled_
+        && activeParameters_.keyMode == KeyMode::Unison;
+    const int limit = getEffectiveVoiceLimit();
+    if (prime || !originalPerformanceEnabled_)
+        originalUnisonSuppressedCards_ = 0;
+    for (int card = 0; card < hardwareVoices; ++card)
+    {
+        const auto index = static_cast<std::size_t>(card);
+        const unsigned bit = 1u << card;
+        if (limitedUnison)
+        {
+            if (card >= limit) originalUnisonSuppressedCards_ |= bit;
+            else originalUnisonSuppressedCards_ &= ~bit;
+        }
+        else if (!voices_[index].active)
+            originalUnisonSuppressedCards_ &= ~bit;
+        const float target = (originalUnisonSuppressedCards_ & bit) ? 0.0f : 1.0f;
+        if (prime)
+        {
+            originalUnisonCardGain_[index] = originalUnisonCardTarget_[index] = target;
+            originalUnisonCardSamplesRemaining_[index] = 0;
+        }
+        else
+        {
+            if (target != originalUnisonCardTarget_[index])
+            {
+                originalUnisonCardTarget_[index] = target;
+                const int samples = std::max(1, static_cast<int>(
+                    std::ceil(originalUnisonCardTransitionSeconds * sampleRate_)));
+                originalUnisonCardSamplesRemaining_[index] = samples;
+                originalUnisonCardStep_[index] = (target - originalUnisonCardGain_[index])
+                    / static_cast<float>(samples);
+            }
+            auto& remaining = originalUnisonCardSamplesRemaining_[index];
+            if (remaining > 0)
+            {
+                --remaining;
+                originalUnisonCardGain_[index] = remaining == 0 ? target
+                    : originalUnisonCardGain_[index] + originalUnisonCardStep_[index];
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Note handling
 // ---------------------------------------------------------------------------
@@ -8379,7 +8435,12 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
     // With no capture configured, use a frozen lower-bank ADC snapshot. Its
     // calculated outputs are overwritten by the next host snapshot. This is a
     // repeatable nominal path, not a claim about the real ADC interrupt phase.
-    const auto tune = masterTunePitchWordOffset(p.masterTuneCents, p.allowHostMasterTuneExtension);
+    // B-2 holds only the panel's signed tune byte (sign 1E.7, magnitude 61)
+    // and adds it linearly into the pitch word at 6F (03AD..03D5), so the
+    // host extension beyond that byte joins the word where it is read back.
+    const auto tune = masterTunePitchWordOffset(p.masterTuneCents);
+    firmwareTuneExtension_ = static_cast<std::int16_t>(masterTunePitchWordOffset(
+        p.masterTuneCents, p.allowHostMasterTuneExtension) - tune);
     const auto bend = dcoBendCommand(pitchBendTarget_);
     ram[0x1e] = static_cast<std::uint8_t>((ram[0x1e] & 0x0e)
         | (sustainPedalDown_ ? 1 : 0) | (p.pulseEnabled ? 0x40 : 0)
@@ -9044,15 +9105,22 @@ void YouKnowEngine::updateActiveVoiceCount() noexcept
 {
     int count = 0;
     int mask = 0;
+    bool physicalVoiceActive = false;
     for (int slot = 0; slot < maxVoices; ++slot)
         if (voices_[static_cast<std::size_t>(slot)].active)
         {
+            physicalVoiceActive = true;
+            if (originalPerformanceEnabled_ && slot < hardwareVoices
+                && originalUnisonCardGain_[static_cast<std::size_t>(slot)] == 0.0f)
+                continue;
             ++count;
             if (slot < 16)
                 mask |= 1 << slot;
         }
     activeVoiceCount_ = count;
-    anyVoiceActive_ = count > 0;
+    // Hidden cards retain their physical tails and must still prevent an
+    // ostensibly idle quality change from resetting the firmware pipeline.
+    anyVoiceActive_ = physicalVoiceActive;
     displayVoiceMask_ = mask;
 }
 
@@ -9384,7 +9452,7 @@ std::uint32_t YouKnowEngine::updateVoicePitch(
 
     const std::int32_t controlOffset = activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareControlNoInterrupt
         ? static_cast<std::int32_t>(firmwareControlState_.ram[0x6f]
-            + 256u * firmwareControlState_.ram[0x70]) - 0x1818
+            + 256u * firmwareControlState_.ram[0x70]) - 0x1818 + firmwareTuneExtension_
         : static_cast<std::int32_t>(masterTunePitchWordOffset(parameters.masterTuneCents, parameters.allowHostMasterTuneExtension))
             + dcoPitchBendWord_ + dcoLfoPitchWord_;
 
@@ -12569,6 +12637,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
+        updateOriginalUnisonCardGains(true);
         unisonOutputGain_ = unisonOutputTarget_ = unisonOutputTarget;
         unisonOutputSamplesRemaining_ = 0;
         glidedOutputTrimGain_ = outputTrimTargetGain;
@@ -12647,6 +12716,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        if (originalPerformanceEnabled_)
+            updateOriginalUnisonCardGains(false);
 #if defined(YOUKNOW_WORK_AUDIT)
         YOUKNOW_COUNT_DOMAIN_WORK(hostFrames, 1);
 #endif
@@ -13171,9 +13242,19 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 }
             };
             const auto accountRenderedVoice = [&](Voice& voice, float output) {
-                mono += output;
-                loudestEnvelope = std::max(
-                    loudestEnvelope, voice.envelope.value);
+                const float cardGain = originalPerformanceEnabled_
+                    && voice.cardIndex < hardwareVoices
+                    ? originalUnisonCardGain_[static_cast<std::size_t>(voice.cardIndex)]
+                    : 1.0f;
+                if (cardGain > 0.0f)
+                {
+                    // Preserve the six-card path's exact arithmetic. Reducing
+                    // a stack changes its drive into all shared circuits,
+                    // rather than compensating a six-card sound at the output.
+                    mono += cardGain == 1.0f ? output : output * cardGain;
+                    loudestEnvelope = std::max(
+                        loudestEnvelope, voice.envelope.value * cardGain);
+                }
 
                 // Retire on the modelled amplifier actually being shut. A
                 // card's optional control offset can hold the control voltage
@@ -13943,6 +14024,7 @@ void YouKnowEngine::initialiseFirmwareSerialReplay() noexcept
     firmwareSerialPitLsb_.fill(0);
     firmwareSerialPitNeedsMsb_.fill(false);
     firmwareSerialHoldEvent_ = {};
+    firmwareSerialLfoRateHeld_ = firmwareSerialLfoDelayHeld_ = false;
     for (unsigned i = 0; i < 128; ++i)
     {
         firmwareSerialTables_.attack[i] = attackIncrementForByte(static_cast<std::uint8_t>(i));
@@ -14078,6 +14160,58 @@ float YouKnowEngine::firmwareSerialDacTarget(const ConverterWrite& write, unsign
     return static_cast<float>(code) / 4095.0f;
 }
 
+void YouKnowEngine::applyFirmwareSerialLfoSync() noexcept
+{
+    // As in the control trace, host sync replaces B-2's free-running triangle
+    // and delay clock: the synced state enters RAM before the CPU runs, with
+    // zero increments so 074E..0790 and 0370..0394 hold it, and B-2's own
+    // coefficients return when sync ends. Its hangtime re-arm stays active.
+    auto& cpu = firmwareSerialState_.control.ram;
+    auto& mirror = firmwareControlState_.ram;
+    const auto put = [&cpu, &mirror](unsigned address, unsigned value) {
+        cpu[address] = mirror[address] = static_cast<std::uint8_t>(value);
+        cpu[address + 1] = mirror[address + 1] = static_cast<std::uint8_t>(value >> 8);
+    };
+    const auto word = [&cpu](unsigned address) {
+        return static_cast<std::uint16_t>(cpu[address] + 256u * cpu[address + 1]);
+    };
+    const auto& p = activeParameters_;
+    const bool syncRate = p.lfoSyncRateHz > 0.0f;
+    if (syncRate)
+    {
+        if (!firmwareSerialLfoRateHeld_)
+            firmwareSerialLfoRate_ = word(0x4b);
+        sampleSyncedLfo();
+        put(0x4d, lfoAccumulator_);
+        cpu[0x4a] = mirror[0x4a] = static_cast<std::uint8_t>((cpu[0x4a] & ~3u)
+            | (lfoRising_ ? 0u : 1u) | (lfoPolarity_ < 0.0f ? 2u : 0u));
+        put(0x4b, 0u);
+    }
+    else if (firmwareSerialLfoRateHeld_)
+        put(0x4b, firmwareSerialLfoRate_);
+    firmwareSerialLfoRateHeld_ = syncRate;
+
+    const bool syncDelay = p.lfoSyncDelaySeconds >= 0.0f;
+    if (syncDelay)
+    {
+        if (!firmwareSerialLfoDelayHeld_)
+            firmwareSerialLfoDelayIncrements_ = { word(0x58), word(0x6c) };
+        sampleSyncedLfoDelay();
+        put(0x56, lfoDelayHoldoff_);
+        put(0x5a, lfoDelayFade_);
+        put(0x58, 0u);
+        put(0x6c, 0u);
+        cpu[0x1e] = mirror[0x1e] = static_cast<std::uint8_t>((cpu[0x1e] & ~4u)
+            | (lfoSyncDelayProgress_ >= 2.0 ? 4u : 0u));
+    }
+    else if (firmwareSerialLfoDelayHeld_)
+    {
+        put(0x58, firmwareSerialLfoDelayIncrements_[0]);
+        put(0x6c, firmwareSerialLfoDelayIncrements_[1]);
+    }
+    firmwareSerialLfoDelayHeld_ = syncDelay;
+}
+
 void YouKnowEngine::applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event& event) noexcept
 {
     auto& ram = firmwareControlState_.ram;
@@ -14095,6 +14229,9 @@ void YouKnowEngine::applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event
             env.gate = (ram[0x10] & bit) != 0;
             env.running = (ram[0x11] & bit) != 0;
             env.phase = (ram[0x33] & bit) != 0;
+            if (originalPerformanceEnabled_ && activeParameters_.keyMode != KeyMode::Unison
+                && env.gate && !voice.keyDown)
+                originalUnisonSuppressedCards_ &= ~bit;
             voice.keyDown = env.gate;
             voice.sustained = !env.gate && (ram[0x1e] & 1) && env.running;
             voice.releasing = !env.running && env.level != 0;
@@ -14138,6 +14275,7 @@ void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
     firmwareSerialRangeChanged_ = false;
     if (firmwareSerialStatus_ != FirmwareSerialTrace::Status::ReachedTarget)
         return;
+    applyFirmwareSerialLfoSync();
     // Count samples on each constant-rate segment rather than repeatedly
     // adding a fractional CPU interval. A quality change starts a new segment
     // from the retained exact-time coordinate and never resets the processor.
@@ -14192,12 +14330,24 @@ void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
     };
     double envelopeAt = 0.0;
     double rangeAt = 0.0;
+    bool lfoRateStored = false, lfoDelayIncrementStored = false;
     for (std::size_t i = 0; i < firmwareSerialEvents_.count; ++i)
     {
         const auto& event = firmwareSerialEvents_.entries[i];
         const double position = std::clamp((static_cast<double>(event.states) - start) / stateSpan, 0.0, 1.0);
         applyFirmwareSerialRamEvent(event);
         using K = FirmwareSerialTrace::EventKind;
+        if (event.kind == K::RamByte)
+        {
+            const unsigned address = event.address & 255u;
+            lfoRateStored = lfoRateStored || address == 0x4b || address == 0x4c;
+            lfoDelayIncrementStored = lfoDelayIncrementStored || address == 0x58
+                || address == 0x59 || address == 0x6c || address == 0x6d;
+            // Here B-2, not the host, assigns notes, so its phrase re-arm
+            // (0315..0320) restarts a synced delay as rearmLfoDelay does.
+            if (event.pc == 0x0318 && activeParameters_.lfoSyncDelaySeconds >= 0.0f)
+                lfoSyncDelayProgress_ = activeParameters_.lfoSyncDelaySeconds == 0.0f ? 2.0 : 0.0;
+        }
         if (event.kind == K::PassStart)
             refreshJackBoardTemperature(activeParameters_);
         else if (event.kind == K::ExternalWrite)
@@ -14304,6 +14454,13 @@ void YouKnowEngine::advanceFirmwareSerialInterval(double seconds) noexcept
         advanceEnvelopeHolds((1.0 - envelopeAt) * seconds, activeParameters_);
     const auto& ram = firmwareControlState_.ram;
     const auto word = [&ram](unsigned a) { return ram[a] + 256u * ram[a + 1]; };
+    // A panel edit stored while sync holds a coefficient becomes the value
+    // restored when sync ends; the next interval holds it at zero again.
+    if (firmwareSerialLfoRateHeld_ && lfoRateStored)
+        firmwareSerialLfoRate_ = static_cast<std::uint16_t>(word(0x4b));
+    if (firmwareSerialLfoDelayHeld_ && lfoDelayIncrementStored)
+        firmwareSerialLfoDelayIncrements_ = { static_cast<std::uint16_t>(word(0x58)),
+                                              static_cast<std::uint16_t>(word(0x6c)) };
     lfoAccumulator_ = static_cast<std::uint16_t>(word(0x4d));
     lfoRising_ = !(ram[0x4a] & 1);
     lfoPolarity_ = (ram[0x4a] & 2) ? -1.0f : 1.0f;

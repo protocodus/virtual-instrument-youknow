@@ -1,8 +1,8 @@
 {
   "collection": "YouKnow / Original Sessions",
   "source": {
-    "sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
-    "git_commit": "06b3b87ad6b3b97125156743761ac6dbbe907bda",
+    "sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
+    "git_commit": "97befe7c4991fe88f81b39f0e53da4801c7206e5",
     "tracked_sources_modified": false
   },
   "sample_rate": 96000,
@@ -33,19 +33,19 @@
         "settle_seconds": 0.25,
         "tail_seconds": 1.02499997616,
         "active_voice_peak": 1,
-        "raw_peak_dbfs": -22.6562143059,
-        "raw_rms_dbfs": -33.3015970365,
+        "raw_peak_dbfs": -24.9728826362,
+        "raw_rms_dbfs": -35.6426722125,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "32afd836c56b01da8e52c9d99dc8b2eb01e64a3312c9b1a74635f8e6fe8a8b14"
       },
-      "wav_sha256": "1c82458d4dd265f6e766a5e24a8984b6081b60dfe5f350ff9a71e65813f2b504",
+      "wav_sha256": "6b38b185436a5028304379bd93f186b8accbe6b335892320e23b50080f437c3a",
       "midi_sha256": "b4e4c84cae39da9638a8e68a4369c9f3b3514b892525104a201f1295a75f8a0d",
-      "gain_db": 16.99,
+      "gain_db": 19.3,
       "lufs": -18.0,
       "true_peak_dbtp": -5.67
     },
@@ -73,21 +73,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 0.991400003433,
         "active_voice_peak": 1,
-        "raw_peak_dbfs": -21.2483264725,
-        "raw_rms_dbfs": -36.2570962389,
+        "raw_peak_dbfs": -14.3022374822,
+        "raw_rms_dbfs": -29.2748957341,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "805fe2c65416bfce233dbd9b9708bc701ecba4394c1841330d2d7de112ca8c2b"
       },
-      "wav_sha256": "1c03c2a778a679b866e02256c78f3805f9bc707c53d38dacc8a707f17b9c4993",
+      "wav_sha256": "5e08947b55c3aaca2d7a576e4a643c393c18ef47b9f7513a57a3fa84ca83ef4b",
       "midi_sha256": "8dc42cc7c84c2550b97508d3b73a69fbc427b41c61f0a0dbf1ecf4837949e1cd",
-      "gain_db": 16.94,
+      "gain_db": 9.95,
       "lufs": -18.0,
-      "true_peak_dbtp": -4.31
+      "true_peak_dbtp": -4.35
     },
     {
       "slot": "YB3",
@@ -113,19 +113,19 @@
         "settle_seconds": 0.25,
         "tail_seconds": 0.8,
         "active_voice_peak": 1,
-        "raw_peak_dbfs": -22.7689155136,
-        "raw_rms_dbfs": -36.2416011146,
+        "raw_peak_dbfs": -23.5867607414,
+        "raw_rms_dbfs": -37.0616712373,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "cd3077faeff294184ed1bff6e1c4e349d515f83251081e18808caa0b7b0aa828"
       },
-      "wav_sha256": "f476972de2b55d37324f119227a4acf421a25797779983ad00e7b77a102599a0",
+      "wav_sha256": "35a5c7a580d1d83839e864da6ad21a688e15a6b2c5f330869e24b038fcebf5fc",
       "midi_sha256": "08f26ba736bd8ffbdd459e29381990a7826955b1a997ee90a0d69f1de9621dbd",
-      "gain_db": 16.5,
+      "gain_db": 17.31,
       "lufs": -18.0,
       "true_peak_dbtp": -6.27
     },
@@ -153,21 +153,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 1.05860000849,
         "active_voice_peak": 1,
-        "raw_peak_dbfs": -23.7133151149,
-        "raw_rms_dbfs": -35.403970402,
+        "raw_peak_dbfs": -21.0329798642,
+        "raw_rms_dbfs": -32.7128226167,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "2b8ce421fc97e85ee17f3a4a1e018ba635f39296daa4ae227b900bbc8bcefa19"
       },
-      "wav_sha256": "7150c94e53d97d8290acc8daca940f5367b748d91331b3514f8ff1b91597930e",
+      "wav_sha256": "a635f58af0ecf8cb22ee5481c9705011ac9d033f6ab647c517dc42d0e3bfad67",
       "midi_sha256": "e0328ff7b03d99af8d159e78685a49da648647616b040b59e955599deae81cfc",
-      "gain_db": 15.99,
-      "lufs": -18.01,
-      "true_peak_dbtp": -7.72
+      "gain_db": 13.3,
+      "lufs": -18.0,
+      "true_peak_dbtp": -7.73
     },
     {
       "slot": "YB5",
@@ -193,21 +193,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 1.18459999561,
         "active_voice_peak": 2,
-        "raw_peak_dbfs": -22.0615106352,
-        "raw_rms_dbfs": -31.4769286891,
+        "raw_peak_dbfs": -23.9259032203,
+        "raw_rms_dbfs": -33.321231264,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "ab48e04277c1f11c32ee9a66c2e53703edb22f35df36405eb4a68d6b28c25dcd"
       },
-      "wav_sha256": "df4660f347fffff0539d618ed5376f4dcecd316a4b3a48fdcc874379f6b012b9",
+      "wav_sha256": "35450fdd603d21717b51129365dba70e7557a2d16596851b14f171f2664c6e3b",
       "midi_sha256": "bd9bf5ee0c002194689dfbaaa0840246059cf6314f1cab6b94e0e30d68987814",
-      "gain_db": 14.77,
-      "lufs": -18.0,
-      "true_peak_dbtp": -7.29
+      "gain_db": 16.56,
+      "lufs": -18.01,
+      "true_peak_dbtp": -7.37
     },
     {
       "slot": "YB6",
@@ -233,21 +233,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 0.8,
         "active_voice_peak": 1,
-        "raw_peak_dbfs": -22.8791218101,
-        "raw_rms_dbfs": -41.3898243434,
+        "raw_peak_dbfs": -16.5734786142,
+        "raw_rms_dbfs": -35.1401699049,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "91eb53fd4e809dc6f10165398ab9625ad62418f586b935d002c10a5f8d4bca05"
       },
-      "wav_sha256": "a2fb42295fa0627d69d7bdcb2b6df1d36f6557039241a7c0830d842f5698358c",
+      "wav_sha256": "0e2644e579304e9f17ddc22c614316d9b202ea58e0c799f2c51664e90c0894ab",
       "midi_sha256": "8583354d775468efbf821da91c2c4a18bd9386fc5294d07ab34f09a81ca9156c",
-      "gain_db": 20.65,
-      "lufs": -18.01,
-      "true_peak_dbtp": -2.23
+      "gain_db": 14.37,
+      "lufs": -18.02,
+      "true_peak_dbtp": -2.2
     },
     {
       "slot": "YB7",
@@ -273,21 +273,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 1.18459999561,
         "active_voice_peak": 1,
-        "raw_peak_dbfs": -24.7922841722,
-        "raw_rms_dbfs": -33.5743573678,
+        "raw_peak_dbfs": -23.8667851544,
+        "raw_rms_dbfs": -32.6396309163,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "68f289c78c4634525f22f9dc3456068e248b6f377809af59059962e11e22c4a3"
       },
-      "wav_sha256": "a11becfa271f6140cb5579cd3d6887f6d5a046aa021d85b001a2f129d2d26b80",
+      "wav_sha256": "cae5151f976a2fe6e7a9f5852d7423e0e59fa764c4bc2eea6eb4e9f289422d84",
       "midi_sha256": "ec5d50638b335fd71f58b347a79272fbf06c490e8775652128b096aee765e799",
-      "gain_db": 15.5,
-      "lufs": -18.0,
-      "true_peak_dbtp": -9.29
+      "gain_db": 14.56,
+      "lufs": -17.99,
+      "true_peak_dbtp": -9.31
     },
     {
       "slot": "YB8",
@@ -313,21 +313,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 1.05860000849,
         "active_voice_peak": 1,
-        "raw_peak_dbfs": -31.6031084972,
-        "raw_rms_dbfs": -36.0713217351,
+        "raw_peak_dbfs": -32.9449439487,
+        "raw_rms_dbfs": -37.6179540495,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "175ba96381a3e9495bf66d0e0c92046c6c2237597a98cf71b877f290f5fd857f"
       },
-      "wav_sha256": "2f8c95dba79ab41d0719746326bee216b4ecac4b7dfc432873f2b887d842ec0b",
+      "wav_sha256": "3d27b6ff2d0bbea54c9332e90b6dc17466fd3f5e9a79de7a64958319aa2e5cb6",
       "midi_sha256": "6e11aeb6afdb71e3ee8395b6eca994df2ae0f2d141d954f0fe154d3d4b48742c",
-      "gain_db": 15.76,
-      "lufs": -18.0,
-      "true_peak_dbtp": -15.84
+      "gain_db": 17.28,
+      "lufs": -18.01,
+      "true_peak_dbtp": -15.66
     },
     {
       "slot": "YP1",
@@ -353,21 +353,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 5.98939990997,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -17.6614248951,
-        "raw_rms_dbfs": -32.3765617547,
+        "raw_peak_dbfs": -19.7247209518,
+        "raw_rms_dbfs": -34.4010883272,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "2a3b6c6415aaab6a78a4a3555ddd7fa41e5e1003f35928b4f25d0f51b54abc63"
       },
-      "wav_sha256": "7f158d5c50c327517a4ee3152c44821c8b302baf1ef0395e6af5763ec055d5f2",
+      "wav_sha256": "4c7cbbac53ddb6d1677224013c025525399e8247585c44ff397118574b1ba233",
       "midi_sha256": "e826c8d086c2a3eefd9a0f12223d402b7866cb4dcaaea9221bd3216dba36f6e3",
-      "gain_db": 10.15,
-      "lufs": -18.05,
-      "true_peak_dbtp": -7.51
+      "gain_db": 12.17,
+      "lufs": -18.06,
+      "true_peak_dbtp": -7.55
     },
     {
       "slot": "YP2",
@@ -393,21 +393,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 9.15200042725,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -16.2000462828,
-        "raw_rms_dbfs": -32.3894819394,
+        "raw_peak_dbfs": -18.6568650024,
+        "raw_rms_dbfs": -34.8130039657,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "d046b8a04183415b441a166b03b3cd9277f70e5dd3533ec1a5c8107e8bf2c4a1"
       },
-      "wav_sha256": "f0c17f514902b44258022e2c07c9c84bcebb895c00933a36b71a6435050c8ae8",
+      "wav_sha256": "44e79b110ddfdf059b74d66738cdfe6870c614d5e8a3972045ec0781f3721b00",
       "midi_sha256": "765480b9acd145b104b3ef0f8295d296ccc155d87e9c7264adb5eafde364806b",
-      "gain_db": 9.82,
-      "lufs": -18.01,
-      "true_peak_dbtp": -6.38
+      "gain_db": 12.21,
+      "lufs": -18.03,
+      "true_peak_dbtp": -6.45
     },
     {
       "slot": "YP3",
@@ -433,21 +433,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 7.1779999733,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -18.695619582,
-        "raw_rms_dbfs": -37.9967085305,
+        "raw_peak_dbfs": -15.0582611849,
+        "raw_rms_dbfs": -34.3944937608,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "6209c377b1acf6963ea2d89ae147751bc2f82932ce8e2b6aa27269906db58189"
       },
-      "wav_sha256": "36d14bb71ec3f0f609fee206f372e44a73282511e10bdbc853caf10ffabd8d23",
+      "wav_sha256": "ff088965c519f2ee6061b209a2b954f3d44df208d0af596ee92927f1767696f8",
       "midi_sha256": "a515e8e4ee774dce504d3c4c4be246c87acd1874d556c176686643c04bdf3093",
-      "gain_db": 14.27,
-      "lufs": -18.06,
-      "true_peak_dbtp": -4.42
+      "gain_db": 10.66,
+      "lufs": -18.07,
+      "true_peak_dbtp": -4.4
     },
     {
       "slot": "YP4",
@@ -473,21 +473,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 6.43039989471,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -18.5885363554,
-        "raw_rms_dbfs": -32.8921286026,
+        "raw_peak_dbfs": -20.482279249,
+        "raw_rms_dbfs": -34.8761159715,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "9cb8f9c4222d78a6ce8fca770d4362c195d536ca45aee010ad2306bef309fe04"
       },
-      "wav_sha256": "199d7539cd004beac54224a1f2c74c8a6514051312c6e060d5205cc7cf77c206",
+      "wav_sha256": "8531a7bc5523a287def83507d74a21aefe56c43bc7692ef84e65386a722a3ab0",
       "midi_sha256": "0cb20d92a38cc0344b3f1260c29e2fa48cdae69df7e1da9bd3167e11e2f41212",
-      "gain_db": 10.32,
+      "gain_db": 12.3,
       "lufs": -18.0,
-      "true_peak_dbtp": -8.27
+      "true_peak_dbtp": -8.18
     },
     {
       "slot": "YP5",
@@ -513,21 +513,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 5.63240003586,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -17.5341889988,
-        "raw_rms_dbfs": -32.3007227246,
+        "raw_peak_dbfs": -19.1921356456,
+        "raw_rms_dbfs": -33.8738324174,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "0952b192e1e5d9e87703f24019176daa421d4b0933fcc505558f6bf6e062755a"
       },
-      "wav_sha256": "e57e2f7ee43920fb29ec98fc8b5a98a9523961e056250c350e65834b97f8e648",
+      "wav_sha256": "7933ca4a5661dea9e791bd4645e57e3b8a1c97552f54f7ab41a700904cc1b79a",
       "midi_sha256": "a2bdcec4ed26884ff6abbb8734403f1796c9374b78ff450989b2b1fe20599af2",
-      "gain_db": 9.67,
-      "lufs": -18.0,
-      "true_peak_dbtp": -7.86
+      "gain_db": 11.19,
+      "lufs": -18.05,
+      "true_peak_dbtp": -8.0
     },
     {
       "slot": "YP6",
@@ -553,21 +553,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 5.77519989014,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -18.6204255967,
-        "raw_rms_dbfs": -34.741830248,
+        "raw_peak_dbfs": -17.8350444464,
+        "raw_rms_dbfs": -33.9554032249,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "0e3c46683584d17ccbde03e9ffcb80a053f4df07ccf21edba700c413d5a0fb1b"
       },
-      "wav_sha256": "c16ab6044e68afc40358efd752e3d5b42e5ea91ae8950fbfe85b2af8c01c6ddf",
+      "wav_sha256": "d30f9e72adb2787fa42af8692c4c50e3353991b849cd390950b2dce419184732",
       "midi_sha256": "86f38c79a61289fdc168ddddc3903a092bf54cf84e701a3239003d39f2c6f962",
-      "gain_db": 11.55,
-      "lufs": -18.08,
-      "true_peak_dbtp": -7.07
+      "gain_db": 10.78,
+      "lufs": -18.06,
+      "true_peak_dbtp": -7.06
     },
     {
       "slot": "YP7",
@@ -593,21 +593,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 8.31199979782,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -12.8608695511,
-        "raw_rms_dbfs": -30.3203004569,
+        "raw_peak_dbfs": -16.4373989792,
+        "raw_rms_dbfs": -33.8166956517,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "60071582c228e7f352087bf41db4cd104341196166dd2e341942a973bd81e532"
       },
-      "wav_sha256": "286ab37defcb2ced0b3cc90a94cf06830fc1b3e7aa5a46fe4d6dd3482a4ad0bf",
+      "wav_sha256": "94b7e6a92d2f6063e023921a70072f11d0ab49036de49128fde1e4977762e29a",
       "midi_sha256": "9e3e6332a737c6fa1d52f4092e3d981be70fcef8ff7c8e3badbe1de594352c25",
-      "gain_db": 7.92,
-      "lufs": -18.0,
-      "true_peak_dbtp": -4.94
+      "gain_db": 11.41,
+      "lufs": -18.04,
+      "true_peak_dbtp": -5.03
     },
     {
       "slot": "YP8",
@@ -633,21 +633,21 @@
         "settle_seconds": 0.25,
         "tail_seconds": 6.82520008087,
         "active_voice_peak": 6,
-        "raw_peak_dbfs": -18.6518023034,
-        "raw_rms_dbfs": -34.7143400776,
+        "raw_peak_dbfs": -19.6698829931,
+        "raw_rms_dbfs": -35.8854037934,
         "engine_profile": "ProductHardwareRealismProfile",
         "performance_timing": "Direct / MeasuredChartGeometry"
       },
       "provenance": {
-        "renderer_sha256": "fa705251dfa1a8b21f010bb9f23ecb9aa228241107c628312573ec9059270ef5",
-        "source_sha256": "ec0f7ba3f9a49cdff577918f0a2865de5b23712987500536e082f6d5df202eac",
+        "renderer_sha256": "cfc747ced1842b967d3238cb68b72a37d69a12958d82b9510941e2e8920f1ffb",
+        "source_sha256": "6bf45a69418ce3e18febac0494e5a2cde8585f9ebf1bc2f006ae2f1a2c5b9ad4",
         "score_sha256": "646f5975ad7fb0d2d2e290be6da38c59e0b343b212885f754d4079ed6d6f5703"
       },
-      "wav_sha256": "8544254fa79d3b1f8027d5cadfaa26c4a15369c7f6eaee9607f7f9a2b6bf761f",
+      "wav_sha256": "f784195aae3efc9ea62cbe97324c79b10d74a89cdfa755a295a61c46863fed85",
       "midi_sha256": "4ee3e001a0b123d6142cfeccb9dfe375449d11f557cd65d47b2d6a22f9945cdf",
-      "gain_db": 12.3,
+      "gain_db": 13.47,
       "lufs": -18.06,
-      "true_peak_dbtp": -6.35
+      "true_peak_dbtp": -6.2
     }
   ]
 }

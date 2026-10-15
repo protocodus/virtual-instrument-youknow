@@ -942,6 +942,10 @@ public:
     void advanceSilentLfoSync(int numSamples) noexcept;
 
     [[nodiscard]] int getActiveVoiceCount() const noexcept { return activeVoiceCount_; }
+    // Original retains the hardware's six-card allocator. Its Unison product
+    // extension admits only the requested first 1..6 cards to the audio bus;
+    // Poly1/Poly2 keep all six because the firmware rotates their assignments.
+    [[nodiscard]] int getEffectiveVoiceLimit() const noexcept;
     // A Key Mode change completes on the converter scan. Rack hosts may stop
     // scheduling silent devices, so the adapter must keep that scan moving
     // even before its held notes have been assigned to active voices.
@@ -3867,6 +3871,7 @@ private:
                         float secondLeft, float secondRight,
                         float& outputLeft, float& outputRight) noexcept;
     void updateActiveVoiceCount() noexcept;
+    void updateOriginalUnisonCardGains(bool prime) noexcept;
     [[nodiscard]] int voiceLimit() const noexcept;
 
     // What the panel is set to. Discrete settings -- key mode, voice count,
@@ -3886,6 +3891,17 @@ private:
     float unisonOutputTarget_ { 1.0f };
     float unisonOutputStep_ { 0.0f };
     int unisonOutputSamplesRemaining_ { 0 };
+    // A host voice-count extension at the individual card outputs, ahead of
+    // the shared HPF/VCA/chorus. All six physical cards and both firmware CPUs
+    // continue running; this must never alter their gates, DACs or histories.
+    static constexpr double originalUnisonCardTransitionSeconds = 0.005;
+    std::array<float, hardwareVoices> originalUnisonCardGain_ {};
+    std::array<float, hardwareVoices> originalUnisonCardTarget_ {};
+    std::array<float, hardwareVoices> originalUnisonCardStep_ {};
+    std::array<int, hardwareVoices> originalUnisonCardSamplesRemaining_ {};
+    // On leaving reduced Unison, do not resurrect the hidden old stack's
+    // releases. A card rejoins Poly when idle or at its next firmware gate-on.
+    unsigned originalUnisonSuppressedCards_ { 0 };
     // Digital trim shares the 5 ms host-rate glide but never enters the
     // volume potentiometer or either physical output route. Double precision
     // lets the final float gain settle to its exact target, including unity.
@@ -3981,6 +3997,9 @@ private:
     FirmwareControlTrace::Result firmwareControlTrace_ {};
     std::array<std::uint16_t, converterWritesPerPass> firmwareConverterCodes_ {};
     std::uint8_t firmwarePassResetMask_ { 0 };
+    // Host master tune beyond the panel's signed byte, held for the pass with
+    // the RAM snapshot and added to the firmware's pitch word.
+    std::int16_t firmwareTuneExtension_ { 0 };
     std::size_t nextFirmwareControlEvent_ { 0 };
     bool firmwareControlTraceValid_ { true };
 
@@ -4392,8 +4411,14 @@ private:
     std::array<unsigned,hardwareVoices> firmwareSerialPitLsb_ {};
     std::array<bool,hardwareVoices> firmwareSerialPitNeedsMsb_ {};
     SerialHoldEvent firmwareSerialHoldEvent_ {};
+    // While host LFO sync drives the replay, B-2's own LFO rate and delay
+    // increments are held at zero; these keep its values for when sync ends.
+    std::uint16_t firmwareSerialLfoRate_ = 0;
+    std::array<std::uint16_t, 2> firmwareSerialLfoDelayIncrements_ {};
+    bool firmwareSerialLfoRateHeld_ = false, firmwareSerialLfoDelayHeld_ = false;
     void initialiseFirmwareSerialReplay() noexcept;
     void advanceFirmwareSerialInterval(double seconds) noexcept;
+    void applyFirmwareSerialLfoSync() noexcept;
     void applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event&) noexcept;
     [[nodiscard]] bool decodeFirmwareSerialDac(unsigned pa, ConverterWrite&) const noexcept;
     [[nodiscard]] float firmwareSerialDacTarget(const ConverterWrite&,unsigned code) const noexcept;

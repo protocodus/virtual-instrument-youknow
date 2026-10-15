@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace youknow {
@@ -40,6 +41,12 @@ struct YouKnowTestAccess {
         e.nextConverterWrite_=22;
     }
     static float vca(const YouKnowEngine& e,int i){return e.voices_[static_cast<std::size_t>(i)].vcaControlTarget;}
+    static float midi(const YouKnowEngine& e,int i){return e.voices_[static_cast<std::size_t>(i)].currentMidi;}
+    static std::pair<std::uint32_t,float> pitch(YouKnowEngine& e,int i) {
+        auto& voice=e.voices_[static_cast<std::size_t>(i)];
+        const auto divider=e.updateVoicePitch(voice,e.activeParameters_);
+        return {divider,voice.dcoCvTarget};
+    }
 };
 }
 namespace {
@@ -177,5 +184,25 @@ void checkAssignmentRescan(){
     for(int guard=0;guard<128&&Access::rescan(*e);++guard)e->process(left.data(),right.data(),1);
     require(!Access::rescan(*e)&&period>0,"completed off-gate pass reassigns held unison key");
 }
+void checkExtendedTune(){
+    // RAM 61 holds an eight-bit magnitude: +150 cents (+383 units) once
+    // wrapped to +127 there and -150 cents to -128.
+    for(double cents:{-150.,-120.,-50.,0.,37.5,60.,150.}){
+        auto e=std::make_unique<Engine>();e->selectConverterTimingProfile(Engine::ConverterTimingProfile::FirmwareControlNoInterrupt);e->prepare(48000,1);
+        youknow::EngineParameters p;p.allowHostMasterTuneExtension=true;p.masterTuneCents=static_cast<float>(cents);p.dcoLfoDepth=0;p.calibration=0;e->setParameters(p);
+        Access::seed(*e);
+        // 03D5 forms the pitch word from the pass snapshot; 071F later refills
+        // RAM 61 from the frozen ADC bank until the next host snapshot.
+        const auto snapshot=Access::ram(*e);
+        Access::advance(*e,Access::trace(*e).states);
+        const int panel=Engine::masterTunePitchWordOffset(cents),total=Engine::masterTunePitchWordOffset(cents,true);
+        const auto& ram=Access::ram(*e);
+        require(snapshot[0x61]==std::abs(panel)&&((snapshot[0x1e]&0x80)!=0)==(panel<0)
+            &&static_cast<int>(ram[0x6f]+256u*ram[0x70])-0x1818==panel,"firmware pitch word carries only the panel tune byte");
+        const auto expected=Engine::dcoPitchPair(static_cast<std::uint16_t>(std::floor(0x1818+Access::midi(*e,0)*256.0+total+0.5)));
+        const auto actual=Access::pitch(*e,0);
+        require(actual.first==expected.divider&&actual.second==static_cast<float>(expected.cvCode),"DCO pitch carries the complete extended tune");
+    }
 }
-int main(){checkNominalInstructions();checkEnvelopeBranches();checkPortamentoAndSpacing();checkCausalEngineStores();checkRenderGrids();checkAssignmentRescan();std::cout<<(failures?"FAIL ":"PASS ")<<"FirmwareControlTrace failures="<<failures<<'\n';return failures?1:0;}
+}
+int main(){checkNominalInstructions();checkEnvelopeBranches();checkPortamentoAndSpacing();checkCausalEngineStores();checkRenderGrids();checkAssignmentRescan();checkExtendedTune();std::cout<<(failures?"FAIL ":"PASS ")<<"FirmwareControlTrace failures="<<failures<<'\n';return failures?1:0;}
