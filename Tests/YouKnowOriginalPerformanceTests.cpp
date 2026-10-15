@@ -1,5 +1,6 @@
 #include "../Source/DSP/YouKnowEngine.h"
 #include "../Source/DSP/YouKnowProductFidelity.h"
+#include "../Source/DSP/YouKnowActiveProductFidelity.h"
 #include <array>
 #include <algorithm>
 #include <bit>
@@ -682,6 +683,188 @@ void startupControlsAndLifecycle() {
     check(e->originalPerformance().state().assigner.now==0 && e->firmwareSerialAudioStates()==0,
           "temperature-preserving panic still resets all firmware clocks");
 }
+void holdListeningFixture() {
+    // Exact frozen8-second48k/1x pedal A/B score, including250ms preroll.
+    // Its old1-sample down/up pairs set both A-5 pending flags before service;
+    // the original OFF-before-ON foreground order left the stack held forever.
+    EngineParameters p; ActiveProductFidelityProfile::applyTo(p);
+    p.vcfTanhMode=VcfTanhMode::PolyZoned; p.vcfFastEarlyMode=VcfFastEarlyMode::Cubic;
+    p.vcfSolverMode=VcfSolverMode::Rk4Single; p.calibration=1; p.aging=0; p.polyphony=6;
+    p.sawEnabled=true; p.pulseEnabled=false; p.range=DcoRange::Eight;
+    p.subLevel=p.noiseLevel=p.pwmDepth=0; p.pwmSource=PwmSource::Manual;
+    p.cutoff=.62f; p.resonance=0; p.envDepth=.25f; p.keyFollow=0;
+    p.dcoLfoDepth=p.vcfLfoDepth=0; p.attack=0; p.decay=.25f; p.sustain=.6f; p.release=.1f;
+    p.vcaLevel=.7f; p.volume=.55f; p.chorus=ChorusMode::Off;
+    p.highPass=HighPassMode::One; p.velocityDepth=0; p.keyMode=KeyMode::Unison;
+    auto e=std::make_unique<E>(); ActiveProductFidelityProfile::configureBeforePrepare(*e);
+    check(e->configureThermalStart(true),"listening fixture selects settled thermal state");
+    e->selectConverterTimingProfile(E::ConverterTimingProfile::MeasuredChartGeometry);
+    e->prepare(48000,128,1); e->setParameters(p); e->setOriginalPerformanceMode(true);
+    render(*e,12000,128);
+    unsigned at=0;
+    const auto advance=[&](unsigned frame){render(*e,frame-at,128);at=frame;};
+    for(auto [start,note]:{std::pair{4800u,48},std::pair{105600u,50},std::pair{206400u,43}}) {
+        advance(start); e->noteOn(note,1);
+        advance(start+9600); e->setSustainPedal(true);
+        advance(start+9601); e->setSustainPedal(false);
+        advance(start+28800); e->noteOff(note);
+    }
+    advance(336000);
+    std::vector<float> tail; render(*e,48000,128,&tail);
+    double energy=0; for(float sample:tail) energy+=double(sample)*sample;
+    check((e->firmwareSerialState().control.ram[0x1e]&1)==0
+          && e->firmwareSerialState().control.ram[0x10]==0
+          && e->firmwareSerialState().control.ram[0x11]==0
+          && e->getActiveVoiceCount()==0,
+          "exact listening score ends with HOLD, gates, run mask and active voices all cleared");
+    check(std::sqrt(energy/tail.size())<1e-5,
+          "exact listening score's final second reaches the circuit noise floor");
+}
+std::vector<float> coalescedHoldBursts(unsigned block) {
+    auto p=patch(); p.keyMode=KeyMode::Unison;
+    auto e=create(48000,1,p); e->noteOn(60,1); render(*e,2048,block);
+    std::vector<float> audio;
+    for(bool last:{false,true}) {
+        // More than one foreground pass of opposite receive requests, with
+        // repeated values too: the final received value must own HOLD.
+        for(unsigned i=0;i<32;++i) {
+            const std::array<std::uint8_t,3> message{0xb0,64,
+                static_cast<std::uint8_t>((i==31?last:((i/2)&1))?127:0)};
+            check(e->receiveOriginalPerformanceMidi(message),"coalesced HOLD burst accepted");
+        }
+        render(*e,4096,block,&audio);
+        check(bool(e->firmwareSerialState().control.ram[0x1e]&1)==last,
+              "last received HOLD command wins across both burst directions");
+    }
+    e->setSustainPedal(false); e->noteOff(60); render(*e,4096,block,&audio);
+    check(e->firmwareSerialState().control.ram[0x11]==0,
+          "burst leaves no stuck Unison run bits after release");
+    return audio;
+}
+void mixedRawAndPedalRequests(unsigned block) {
+    constexpr std::array<std::uint8_t,3> down{0xbf,64,1}, up{0xb3,64,0};
+    auto e=create(48000,1);
+    check(e->receiveOriginalPerformanceMidi(down),"raw nonzero CC64 is accepted on any routed channel");
+    render(*e,2048,block);
+    check((e->firmwareSerialState().control.ram[0x1e]&1)!=0,"raw CC64 reaches the B-2 HOLD bit");
+    e->setSustainPedal(false); render(*e,2048,block);
+    check((e->firmwareSerialState().control.ram[0x1e]&1)==0,
+          "pedal setter can release a settled raw CC64 request");
+    e->setSustainPedal(true); render(*e,1,block);
+    check(e->receiveOriginalPerformanceMidi(up),"raw CC64 off follows a pending pedal setter");
+    render(*e,2048,block);
+    e->setSustainPedal(true); render(*e,2048,block);
+    check((e->firmwareSerialState().control.ram[0x1e]&1)!=0,
+          "raw CC64 off updates the request used by the next pedal setter");
+    e->setSustainPedal(false); render(*e,2048,block);
+    check(e->receiveOriginalPerformanceMidi(down),"queued raw CC64 down is accepted");
+    render(*e,1,block);
+    e->setSustainPedal(false); render(*e,2048,block);
+    check((e->firmwareSerialState().control.ram[0x1e]&1)==0,
+          "pedal setter can reverse a raw CC64 request before it reaches the firmware");
+}
+void directVelocityZero() {
+    for(auto mode:{KeyMode::Poly1,KeyMode::Poly2,KeyMode::Unison}) {
+        auto p=patch(); p.keyMode=mode;
+        auto e=create(48000,1,p);
+        e->setOriginalPerformanceMode(false);
+        e->noteOn(60,0); render(*e,2048,173);
+        check(gates(*e)==0 && YouKnowTestAccess::held(*e,60)==0,
+              "unmatched Direct zero-velocity On cannot create a sounding assignment");
+        e->noteOn(60,1); e->noteOn(60,1); render(*e,2048,173);
+        e->noteOn(60,0);
+        check(gates(*e)!=0 && YouKnowTestAccess::held(*e,60)==1,
+              "Direct zero-velocity On releases one counted host press");
+        e->noteOn(60,0); render(*e,2048,173);
+        check(gates(*e)==0 && YouKnowTestAccess::held(*e,60)==0,
+              "last Direct zero-velocity On releases the Poly or Unison gate");
+    }
+}
+void replacedLocalFallback(unsigned block) {
+    // Source96 at +12 uses the existing MIDI fallback outside the61-key
+    // local matrix. A new press owns its new pitch, but must retire the old
+    // wire pitch before that source's retained owner is overwritten.
+    for(int nextTranspose:{0,7}) {
+        auto p=patch(); p.keyTranspose=12;
+        auto e=create(48000,1,p);
+        e->noteOnFromLocalKeyboard(96,1); render(*e,2048,block);
+        check(std::popcount(gates(*e))==1,"local out-of-range press reaches the DIN fallback");
+        p.keyTranspose=nextTranspose; e->setParameters(p);
+        e->noteOnFromLocalKeyboard(96,1); render(*e,2048,block);
+        check(std::popcount(gates(*e))==1,
+              "replaced local fallback retires its old wire pitch for native and fallback destinations");
+        e->noteOffFromLocalKeyboard(96); render(*e,2048,block);
+        check(gates(*e)==0,"replaced local source releases without an orphaned wire note");
+    }
+    auto p=patch(); p.keyTranspose=12;
+    auto e=create(48000,1,p);
+    e->noteOnFromLocalKeyboard(96,1); render(*e,2048,block);
+    e->noteOnFromLocalKeyboard(96,1);
+    check(e->originalPerformance().pending()==3,
+          "same-pitch local fallback repeat keeps one On without an invented Off/On retrigger");
+    render(*e,2048,block);
+    e->noteOffFromLocalKeyboard(96); render(*e,2048,block);
+    check(gates(*e)==0,"same-pitch fallback repeat still has one local owner");
+}
+std::vector<float> rapidSustainReversal(unsigned block) {
+    auto p=patch(); p.keyMode=KeyMode::Unison;
+    auto e=create(48000,1,p);
+    e->noteOn(60,1); render(*e,2048,block);
+    std::vector<float> audio;
+    e->setSustainPedal(true);
+    render(*e,1,block,&audio); // Less than one 320 us DIN byte: B-2 still has HOLD off.
+    const auto pending=e->originalPerformance().pending();
+    e->setSustainPedal(true);
+    check(e->originalPerformance().pending()==pending,
+          "repeated requested HOLD state does not duplicate queued input while firmware lags");
+    e->setSustainPedal(false);
+    render(*e,2048,block,&audio);
+    check((e->firmwareSerialState().control.ram[0x1e]&1)==0,
+          "rapid pedal release survives the delayed B-2 HOLD mirror");
+    e->noteOff(60); render(*e,2048,block,&audio);
+    check(e->firmwareSerialState().control.ram[0x11]==0,
+          "rapid pedal reversal leaves no stuck six-voice sustained stack");
+
+    e->setSustainPedal(true); render(*e,2048,block,&audio);
+    e->setSustainPedal(false); render(*e,1,block,&audio);
+    e->setSustainPedal(true); render(*e,2048,block,&audio);
+    check((e->firmwareSerialState().control.ram[0x1e]&1)!=0,
+          "rapid pedal repress survives the delayed B-2 HOLD mirror");
+    e->allNotesOff();
+    e->setSustainPedal(true);
+    check(e->originalPerformance().pending()==3,
+          "panic resets the requested HOLD state as well as the actual firmware state");
+    render(*e,2048,block);
+    check((e->firmwareSerialState().control.ram[0x1e]&1)!=0,
+          "pedal down after panic reaches the original voice board");
+    return audio;
+}
+void rawLeverTargetsSurviveTransitions() {
+    for(bool stop:{false,true}) {
+        auto e=create(48000,1);
+        constexpr unsigned bend=14337;
+        const std::array<std::uint8_t,3> pitch{0xef,bend&127u,bend>>7u};
+        const std::array<std::uint8_t,3> mod{0xb7,1,102};
+        check(e->receiveOriginalPerformanceMidi(pitch)
+              && e->receiveOriginalPerformanceMidi(mod),"raw lever requests are accepted");
+        if(stop) e->allSoundOff();
+        else { e->setOriginalPerformanceMode(false); e->setOriginalPerformanceMode(true); }
+        check(e->originalPerformance().pending()==6,
+              "controller retention requeues both latest raw lever positions");
+        const auto queued=e->originalPerformance().pending();
+        e->setPitchBend(float(bend-8192u)/8192.f); e->setModWheel(102.f/127);
+        check(e->originalPerformance().pending()==queued,
+              "raw requests retain exact controller quantization for setter deduplication");
+        render(*e,2048,173);
+        check(e->originalPerformance().state().assigner.ram[0xa1]!=0
+              && (e->originalPerformance().state().assigner.ram[0xa2]&127u)==102,
+              "retained raw lever requests reach original firmware after transition");
+        e->setPitchBend(0); e->setModWheel(0); render(*e,2048,173);
+        check((e->originalPerformance().state().assigner.ram[0xa1]&127u)==0
+              && (e->originalPerformance().state().assigner.ram[0xa2]&127u)==0,
+              "setter zero is not suppressed after a raw MIDI lever request");
+    }
+}
 // Host LFO sync replaces B-2's free-running triangle and delay clock in this
 // replay, so the panel's own LFO rate and delay become inaudible while synced.
 void lfoSync() {
@@ -716,6 +899,15 @@ void lfoSync() {
     check(Access::cpuWord(*e,0x4b)==ownRate&&Access::lfo(*e)!=before,"B-2's own LFO runs again after sync ends");
 }
 int main() {
+    holdListeningFixture();
+    check(coalescedHoldBursts(1)==coalescedHoldBursts(173),
+          "coalesced HOLD correction preserves complete stereo audio across blocks");
+    rawLeverTargetsSurviveTransitions();
+    directVelocityZero();
+    replacedLocalFallback(1); replacedLocalFallback(173);
+    mixedRawAndPedalRequests(1); mixedRawAndPedalRequests(173);
+    check(rapidSustainReversal(1)==rapidSustainReversal(173),
+          "rapid pedal reversals preserve full stereo audio across host blocks");
     lfoSync();
     originalUnisonVoiceCounts();
     check(originalUnisonCountTransitions(1)==originalUnisonCountTransitions(173),

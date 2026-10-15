@@ -768,8 +768,8 @@ public:
     void setParameters(const EngineParameters& parameters,
         ParameterInputSource source = ParameterInputSource::Panel);
     // Session-only optional original A-5 -> module UART -> B-2 execution.
-    // Switching clears the performance and output tails. This installs a
-    // coherent time-zero warm panel; it does not synthesize a cold boot.
+    // Switching clears notes and output tails, retaining live controllers.
+    // This installs a coherent time-zero warm panel, not a cold boot.
     void setOriginalPerformanceMode(bool enabled) noexcept;
     [[nodiscard]] bool originalPerformanceMode() const noexcept { return originalPerformanceEnabled_; }
     [[nodiscard]] bool originalPerformanceHealthy() const noexcept { return originalPerformanceHealthy_; }
@@ -928,6 +928,9 @@ public:
     // stop, for all-sound-off and for panic.
     void releaseAllNotes();
     void allNotesOff();
+    // MIDI CC120 stops voices/tails without resetting performance controls.
+    // Panic and host transport reset keep their separate reset semantics.
+    void allSoundOff();
     // The bender lever: left/right bends pitch, and sweeps the filter when the
     // VCF bender slider is up. Its separate LFO axis arrives as the mod wheel.
     void setPitchBend(float normalisedBipolar) noexcept;
@@ -2783,6 +2786,14 @@ private:
         // disagree, which is what made the first half-cycle after a retrigger
         // twice as long as every other one.
         float subState { 1.0f };
+        // Tr19's collector releases after the divider changes state. Retain
+        // the remaining physical storage time across sample/grid boundaries;
+        // moving only the BLEP timestamp would clip late-in-sample delays.
+        double subStorageSecondsRemaining { 0.0 };
+        [[nodiscard]] float subOutputState() const noexcept
+        {
+            return subStorageSecondsRemaining > 0.0 ? -1.0f : subState;
+        }
         BandlimitedTrack saw {};
         BandlimitedTrack pulse {};
         BandlimitedTrack sub {};
@@ -4101,6 +4112,9 @@ private:
     std::int32_t vcfLfoCountsWord_ { 0 };
     float modWheelTarget_ { 0.0f };
     bool sustainPedalDown_ { false };
+    // Original's host request can lead the serially delivered B-2 HOLD bit.
+    // Never deduplicate a new gesture against that delayed hardware mirror.
+    bool originalSustainPedalTarget_ { false };
 
     float outputSlewStateLeft_ { 0.0f };
     float outputSlewStateRight_ { 0.0f };

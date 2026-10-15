@@ -541,6 +541,28 @@ struct Fixture {
 };
 void run() {
     watch = true;
+    // The product's explicit HOLD correction changes only the opposite pending
+    // bit at the two original19-state receive stores. Literal audit mode keeps
+    // the ROM's OR, and neither mode commits a frame before instruction end.
+    for(bool corrected:{false,true}) for(unsigned pc:{0x0754u,0x0759u})
+    for(unsigned initial=0;initial<256;++initial) {
+        Fixture f;
+        f.configuration.correctCoalescedHoldOrder=corrected;
+        f.state.registers.pc=pc; f.state.ram[0xb6]=static_cast<std::uint8_t>(initial);
+        const auto before=f.state.ram;
+        check(f.run(18).status==S::Status::ReachedTarget && f.state.ram==before
+              && f.events.count==0,"HOLD correction retains the original instruction duration");
+        const unsigned requested=pc==0x0754?0x10u:0x08u;
+        const unsigned expected=(corrected?(initial&~0x18u):initial)|requested;
+        check(f.run(19).status==S::Status::ReachedTarget && f.state.ram[0xb6]==expected
+              && f.state.registers.pc==pc+3 && f.events.count==1
+              && f.events.entries[0].states==19,
+              "HOLD store selects latest request only in corrected mode at the same endpoint");
+        for(unsigned i=0;i<256;++i)
+            check(i==0xb6 || f.state.ram[i]==before[i],"HOLD correction preserves unrelated RAM");
+        check((f.state.ram[0xb6]&~0x18u)==(initial&~0x18u),
+              "HOLD correction preserves every unrelated flag bit");
+    }
     {
         Fixture f;
         f.state.io.statesUntilConversion = 0;

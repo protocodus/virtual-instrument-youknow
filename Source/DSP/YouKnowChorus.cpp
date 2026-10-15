@@ -2125,6 +2125,76 @@ float Chorus::advanceInputSupport(float input, bool prepareCapture) noexcept
     return static_cast<float>(passive);
 }
 
+namespace
+{
+// The clock changes by at most a few thousandths over our three-sample
+// horizon. Evaluate the analytic integral/inverse without subtracting nearly
+// equal numbers or paying for an elementary function at every physical edge.
+// For |x|<.01, the omitted log term is <=|x|^8/(9*(1-|x|)) <1.13e-17;
+// the omitted exponential term is <exp(.01)*|x|^7/40320 <2.51e-19.
+// Larger diagnostic arguments retain the general library implementations.
+double clockLogRatio(double x) noexcept
+{
+    if (std::abs(x) >= .01)
+        return std::log1p(x) / x;
+    return 1.0 + x * (-.5 + x * (1.0/3.0 + x * (-.25
+        + x * (.2 + x * (-1.0/6.0 + x * (1.0/7.0 - x/8.0))))));
+}
+double clockExponentialRatio(double x) noexcept
+{
+    if (std::abs(x) >= .01)
+        return std::expm1(x) / x;
+    return 1.0 + x * (.5 + x * (1.0/6.0 + x * (1.0/24.0
+        + x * (1.0/120.0 + x * (1.0/720.0 + x/5040.0)))));
+}
+}
+
+Chorus::ClockTrajectory Chorus::ClockTrajectory::make(
+    double phase, double rate, double centre, double sweep,
+    double sampleRate, double side) noexcept
+{
+    ClockTrajectory result;
+    result.cyclesPerDelay = static_cast<double>(cellPairs) / sampleRate;
+    result.initialDelay = centre + side * sweep * triangle(phase);
+    result.delaySlope = side * sweep * (phase < 0.5 ? 4.0 : -4.0)
+                      * rate / sampleRate;
+    result.cuspSample = rate > 0.0
+        ? ((phase < 0.5 ? 0.5 : 1.0) - phase) * sampleRate / rate
+        : std::numeric_limits<double>::infinity();
+    result.cuspDelay = std::isfinite(result.cuspSample)
+        ? result.initialDelay + result.delaySlope * result.cuspSample : result.initialDelay;
+    // Only the current sample and its two-sample predictor need this boundary.
+    // Avoid a full-flank logarithm in the overwhelmingly common no-cusp case.
+    result.cyclesToCusp = result.cuspSample <= 3.0
+        ? result.cyclesPerDelay * result.cuspSample / result.initialDelay
+            * clockLogRatio(result.delaySlope * result.cuspSample / result.initialDelay)
+        : std::numeric_limits<double>::infinity();
+    result.intervalCycles = result.cyclesAt(1.0);
+    result.initialSamplesPerCycle = result.initialDelay / result.cyclesPerDelay;
+    result.slopePerCycle = result.delaySlope / result.cyclesPerDelay;
+    result.cuspSamplesPerCycle = result.cuspDelay / result.cyclesPerDelay;
+    return result;
+}
+
+double Chorus::ClockTrajectory::cyclesAt(double sample) const noexcept
+{
+    const auto integrate = [&](double delay, double slope, double length) noexcept
+    {
+        return cyclesPerDelay * length / delay * clockLogRatio(slope * length / delay);
+    };
+    if (sample <= cuspSample)
+        return integrate(initialDelay, delaySlope, sample);
+    return cyclesToCusp + integrate(cuspDelay, -delaySlope, sample - cuspSample);
+}
+
+double Chorus::ClockTrajectory::sampleAt(double cycles) const noexcept
+{
+    if (cycles <= cyclesToCusp)
+        return cycles * initialSamplesPerCycle * clockExponentialRatio(cycles * slopePerCycle);
+    const double after = cycles - cyclesToCusp;
+    return cuspSample + after * cuspSamplesPerCycle * clockExponentialRatio(-after * slopePerCycle);
+}
+
 void Chorus::Line::reset(std::uint32_t seed) noexcept
 {
     outputEventCount = 0;
@@ -2209,7 +2279,8 @@ void Chorus::Line::rememberBlepEvent(float jump,
 }
 
 double Chorus::Line::deterministicBlepCorrection(
-    double clockIncrement, float noiseScale) const noexcept
+    double clockIncrement, float noiseScale,
+    const ClockTrajectory* trajectory) const noexcept
 {
     double correction = 0.0;
 
@@ -2244,6 +2315,9 @@ double Chorus::Line::deterministicBlepCorrection(
     const bool outputPendingThisPeriod = clockPhase < 0.5;
     double distance = ((outputPendingThisPeriod ? 0.5 : 1.5) - clockPhase)
                     * inverseIncrement;
+    if (trajectory != nullptr)
+        distance = trajectory->sampleAt(clockIncrement
+            + (outputPendingThisPeriod ? 0.5 : 1.5) - clockPhase) - 1.0;
     float predictedTransferState = transferState;
     float predictedHeld = held;
     std::uint32_t predictedNoiseState = noiseState;
@@ -2255,7 +2329,10 @@ double Chorus::Line::deterministicBlepCorrection(
 
     for (int event = 0;
          event < maximumBlepEvents && distance < 2.0;
-         ++event, distance += inverseIncrement)
+         ++event, distance = trajectory != nullptr
+             ? trajectory->sampleAt(clockIncrement
+                 + (outputPendingThisPeriod ? 0.5 : 1.5) - clockPhase + event) - 1.0
+             : distance + inverseIncrement)
     {
 #if defined(YOUKNOW_WORK_AUDIT)
         YOUKNOW_COUNT_DOMAIN_WORK(blepFuturePredictionVisits, 1);
@@ -2288,13 +2365,14 @@ float Chorus::Line::processClockedCore(float limitedInput, double clockHz,
                                        float sampleRate,
                                        float noiseScale,
                                        const InputCaptureInterval* capture,
-                                       bool recoverHeldOutput) noexcept
+                                       bool recoverHeldOutput,
+                                       const ClockTrajectory* trajectory) noexcept
 {
     outputEventCount = 0;
     ageBlepEvents();
 
-    const double increment =
-        static_cast<double>(clockHz) / static_cast<double>(sampleRate);
+    const double increment = trajectory != nullptr ? trajectory->intervalCycles
+        : static_cast<double>(clockHz) / static_cast<double>(sampleRate);
     const double endPhase = clockPhase + increment;
     // Panasonic MN3009 p.43: C0 is captured when CP2 closes, then odd stages
     // move on CP1; the complementary edge moves even stages. The
@@ -2314,9 +2392,11 @@ float Chorus::Line::processClockedCore(float limitedInput, double clockHz,
          ++events, ++halfEvent)
     {
         const double eventPhase = 0.5 * halfEvent;
-        const double ageInSamples = increment > 0.0
-            ? std::clamp((endPhase - eventPhase) / increment, 0.0, 1.0)
-            : 0.0;
+        const double ageInSamples = trajectory != nullptr
+            ? std::clamp(1.0 - trajectory->sampleAt(eventPhase - clockPhase), 0.0, 1.0)
+            : increment > 0.0
+                ? std::clamp((endPhase - eventPhase) / increment, 0.0, 1.0)
+                : 0.0;
         if ((halfEvent & 1) == 0)
         {
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -2402,14 +2482,15 @@ float Chorus::Line::processClockedCore(float limitedInput, double clockHz,
 
     if (recoverHeldOutput)
         return held;
-    return held + static_cast<float>(deterministicBlepCorrection(increment, noiseScale));
+    return held + static_cast<float>(deterministicBlepCorrection(increment, noiseScale, trajectory));
 }
 
 float Chorus::Line::process(
     float limited, double clockHz, float sampleRate,
     const SupportChain::ExactTransition& outputTransition,
     float noiseScale, bool useBlep,
-    const InputCaptureInterval* capture) noexcept
+    const InputCaptureInterval* capture,
+    const ClockTrajectory* trajectory) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(bbdLineFrames, 1);
@@ -2418,7 +2499,7 @@ float Chorus::Line::process(
     const bool eventOutput = eventMap.available;
     const double heldStart = held;
     const float correctedHold = processClockedCore(
-        limited, clockHz, sampleRate, noiseScale, capture, eventOutput);
+        limited, clockHz, sampleRate, noiseScale, capture, eventOutput, trajectory);
     const float reconstructedHold = eventOutput ? held : (useBlep ? correctedHold : held);
     std::array<double, 6> forcing {};
     if (eventOutput)
@@ -3051,48 +3132,23 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // derivation. It also renders the instrument's fixed-detune character: a
     // linear delay flank is a constant pitch offset, where a bent flank
     // slides through it.
-    const auto clockAtPhase = [&](double phase) noexcept
-    {
-        phase -= std::floor(phase);
-        const double modulation = triangle(phase);
-        const double nominalDelayA = centreDelay_ + sweep_ * modulation;
-        const double nominalDelayB = centreDelay_ - sweep_ * modulation;
-
-        return std::array<double, 2> {{
-            std::clamp(cellPairs / std::max(nominalDelayA, 1.0e-4),
-                       static_cast<double>(minimumClockHz), static_cast<double>(maximumClockHz)),
-            std::clamp(cellPairs / std::max(nominalDelayB, 1.0e-4),
-                       static_cast<double>(minimumClockHz), static_cast<double>(maximumClockHz))
-        }};
-    };
-
-    // Advance the BBD clock through the elapsed interval, not at its right
-    // endpoint. With delay affine along a triangle flank, f=N/delay has the
-    // exact integral (N/slope)*log(delayEnd/delayStart). Midpoint quadrature
-    // has local O(dt^3) error there; an endpoint rectangle accumulates an
-    // O(dt) phase bias that moves genuine clock-folded images in phase.
-    // Split at triangle cusps before applying midpoint, so a derivative
-    // discontinuity cannot degrade that bound. Declared LFO rates and the
-    // 8 kHz minimum grid permit at most one cusp in an interval.
-    // Tools/AuditBbdDynamicQuality.cpp independently integrates this clock
-    // law with its exact logarithm/inverse. Continuous BBD event chronology:
-    // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf
-    // No physical delay/clock-cycle convention or fitted time shift changes.
-    auto clock = clockAtPhase(0.5 * (intervalStartPhase + intervalEndPhase));
-    const double cusp = intervalStartPhase < 0.5 ? 0.5 : 1.0;
-    if (intervalEndPhase > cusp)
-    {
-        const double firstFraction = (cusp - intervalStartPhase) / phaseIncrement;
-        const auto first = clockAtPhase(0.5 * (intervalStartPhase + cusp));
-        const auto second = clockAtPhase(0.5 * (cusp + intervalEndPhase));
-        for (std::size_t line = 0; line < clock.size(); ++line)
-            clock[line] = firstFraction * first[line]
-                        + (1.0 - firstFraction) * second[line];
-    }
-    // This interval-average approximation feeds the existing constant-clock
-    // edge-age calculation and two-sample BLEP predictor. Their within-sample
-    // scheduling error remains a separate O(dt^2) approximation; fixed-clock
-    // Line callers keep their exact former behavior, including RNG advances.
+    // Holters/Parker2018's variable-rate transport requires the complete
+    // clock integral, including when each input capture and output hold occurs.
+    // With d(t)=d0+k*t, cycles=128/k*log1p(k*t/d0), whose inverse uses expm1.
+    // Previously midpoint quadrature supplied a constant rate for the whole
+    // sample: its phase error was O(dt^2), and event ages still used a straight
+    // line. This exact piecewise integral/inverse also follows the next two
+    // numerical samples used by the low-grid BLEP predictor. It changes no
+    // LFO rate/depth, BBD noise draw count convention or analogue filtering.
+    // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=2
+    const auto trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
+        centreDelay_, sweep_, sampleRate_, 1.0);
+    const auto trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
+        centreDelay_, sweep_, sampleRate_, -1.0);
+    const std::array<double, 2> clock {{
+        trajectoryA.intervalCycles * sampleRate_,
+        trajectoryB.intervalCycles * sampleRate_
+    }};
     const double clockA = clocksStopped_ ? 0.0 : clock[0];
     const double clockB = clocksStopped_ ? 0.0 : clock[1];
     if(enableCorrelatedNoise)
@@ -3137,9 +3193,11 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const auto* capture = inputSupport_.captureInterval.enabled
         ? &inputSupport_.captureInterval : nullptr;
     float wetA = lineA_.process(limitedInput, clockA, sampleRate_,
-                                wetOutputTransition, lineNoiseScale, true, capture);
+                                wetOutputTransition, lineNoiseScale, true, capture,
+                                clocksStopped_ ? nullptr : &trajectoryA);
     float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
-                                wetOutputTransition, lineNoiseScale, true, capture);
+                                wetOutputTransition, lineNoiseScale, true, capture,
+                                clocksStopped_ ? nullptr : &trajectoryB);
 
     // Both ordinary modes carry dry plus one wet line per channel. The I+II
     // product extension uses the owner's chosen narrow colour: equal mid

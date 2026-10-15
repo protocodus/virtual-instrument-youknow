@@ -119,6 +119,24 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### Unreleased — 2026-10-15
 
+- HOLD pedal reversals in Original timing retain the latest requested state,
+  removing an adapter bug that could leave notes and Unison stacks held. The
+  product also corrects the original firmware's OFF-before-ON service order
+  when opposite requests arrive before service. This is an intentional
+  firmware behavior correction; literal ROM diagnostics retain the original
+  behavior.
+- Repressing an on-screen/programmatic key after a transpose change releases
+  its old MIDI fallback pitch before assigning the replacement. The Direct
+  engine API also treats zero-velocity Note On as Note Off, matching the
+  plug-in MIDI path's existing behavior.
+- Switching Original/Direct timing preserves held pitch-bend, modulation and HOLD
+  controls. MIDI All Sound Off silences the circuit while retaining bend,
+  modulation and HOLD for subsequent notes; Reset All Controllers remains the
+  separate command that returns those controls to rest.
+- The sub oscillator's existing Tr19 storage delay now survives sample
+  boundaries. Chorus input/output clock events follow the continuously changing
+  clock within each sample. These complete existing timing models; neither
+  introduces a new hardware calibration or a claimed audible tone improvement.
 - Original Unison honors the authored bass presets' one- or two-voice stacks.
   The voice limit selects audible cards before the shared audio circuit while
   all six cards retain their firmware timing and pitch histories. Changing the
@@ -732,6 +750,11 @@ forty-year-old unit will null against the plug-in.
   small-signal switching class (2N3904 200 ns maximum, 2N2222A 225 ns
   typical); Toshiba's 2SC1815 sheet lists no switching times, so the value is
   a borrowed class figure, not the installed part's (`enableSubStorageSkew`).
+  The delayed collector edge retains its remaining physical time across audio
+  sample boundaries and quality-grid changes; it is no longer truncated when
+  the divider edge arrives near the end of a sample. Independent delayed-square
+  Fourier checks bound the tested H2 error to 0.00124 dB without changing that
+  part-class estimate.
   The held SUB rail now crosses a soft silicon-diode threshold:
   one aggregate resistor/current scale, 8.896 V, fitted on alternating levels
   of an identified original-DCO recording reduces the worst error on the
@@ -1203,15 +1226,18 @@ forty-year-old unit will null against the plug-in.
   the ideal first dry/wet cancellation moves from 128 to 148 Hz, about 0.21
   octaves. Comparing one profile's minimum with another's centre overstates
   that shift; unequal gains and the support filters also change actual nulls.
-- Clock phase integrates the changing clock over each audio interval. A
-  midpoint evaluation, split at triangle corners, replaces the former
-  end-of-interval rectangle; the LFO increment also stays in double precision.
-  The independent reference integrates `128 / delay(t)` analytically on
-  each linear-delay flank, following the variable-clock event model in
+- Clock phase and individual input/output edge times follow the continuous
+  clock over each audio interval. A piecewise logarithmic integral and its
+  exponential inverse replace the former midpoint/constant-average scheduler;
+  the LFO increment stays in double precision. Independent quadrature and
+  bisection check `128 / delay(t)` on each linear-delay flank, following the
+  variable-clock event model in
   [Holters & Parker](https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf).
   This corrects numerical timing without changing the selected sweep,
-  component values or noise amplitude. The constant average clock within each
-  audio interval and finite clock-event reconstruction kernel remain approximations.
+  component values or noise amplitude. The finite clock-event reconstruction
+  kernel remains an approximation. On an isolated bright-tone comparison at
+  48 kHz/1×, the timing correction's residual is about −116 dBc: a numerical
+  accuracy correction, not an audible chorus redesign.
   The stage-timing audit of the
   [MN3009 circuit](https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf#page=2)
   also separates integer-phase input captures from half-phase output updates.
@@ -1433,7 +1459,36 @@ ladder and the VCF numerical-kernel settings described under
 
 ### Juno-106 fidelity research
 
-The latest service and state audit corrects two further discrepancies.
+The 15 October audit compared the oscillator, unison and chorus paths against
+Roland's [service schematics](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf),
+the [recovered voice firmware](https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt),
+[Raffel and Smith's BBD paper](https://www.dafx.de/paper-archive/2010/DAFx10/RaffelSmith_DAFx10_P42.pdf),
+[Holters and Parker's variable-clock model](https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf)
+and [Välimäki, Pekonen and Nam's oscillator reconstruction paper](https://mac.kaist.ac.kr/pubs/ValimakiPeknenNam-jasa2012.pdf).
+Shared DCO timing, free-running phase, waveform coupling, firmware Unison
+assignment, bandlimited edges and the main BBD support circuits were already
+implemented. Seven remaining corrections comprise five performance/controller
+bugs and two subtle timing errors, listed in the latest release entry. They
+are not seven newly calibrated analog effects. The separate MIDI All Sound
+Off/Reset All Controllers behavior follows the
+[MIDI Association's message summary](https://midi.org/summary-of-midi-1-0-messages).
+
+`Tools/RenderFidelityQuickWins.cpp` and `Tools/MakeFidelityQuickWins.py` render
+the active product path from frozen baseline and candidate builds, retain raw
+float audio and exact event manifests, and produce whole-file stereo-RMS-matched
+`A.wav`/`B.wav` pairs with a separate `key.md`. A is always the unchanged
+baseline. Per-mechanism builds isolate individual fixes; a grouped final-engine
+comparison is labelled separately. Listening files stay outside the repository,
+and no listening preference or original-unit calibration is inferred from them.
+
+The listening HTML embeds the original WAV bytes and evidence documents so
+sandbox previews can play them without access to sibling files. Native controls
+load audio on demand; selecting the other member of a playing A/B pair preserves
+its position and pauses the previous clip. Raw pairs retain their original gain.
+`Tools/MakeListeningPagePortable.py` can convert existing local listening pages
+without changing their WAVs, identity keys or manifests.
+
+An earlier service and state audit corrects two further discrepancies.
 Roland's consecutive [p. 19 adjustments 5 and 6](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19)
 require 4.8 Vp-p at TP19 and 6 Vp-p at TP8 under the same bank/key setting.
 The former voice-amplifier path applied its physically derived distortion
@@ -2793,8 +2848,9 @@ assignments for the synthesis panel; use the plug-in's host automation
 parameters instead.
 YouKnow does not transmit performance data or Program Changes. Three
 extensions beyond the owner's chart are product policy: All Sound Off
-(CC 120) performs a hard stop, which the instrument's own chart does not
-list; Reset All Controllers (CC 121) lifts the hold pedal and returns the
+(CC 120) performs a hard stop while retaining the controller positions for
+subsequent notes, which the instrument's own chart does not list; Reset All
+Controllers (CC 121) lifts the hold pedal and returns the
 pitch bend and modulation to rest without touching the panel; and
 overlapping presses of one pitch are counted so that the first matching
 Note Off does not release a later press — the A-5 keeps one bit per note
@@ -3117,6 +3173,13 @@ Short musical performances of fifteen well-known factory presets, each composed 
 
 Deliberate, each with its reason recorded:
 
+- **Open-filter response at low Quality.** The numerical VCF pole cap is
+  0.45 times the internal sample rate: 21.6 kHz at 48 kHz/1×, below the upper
+  cutoff requested by the analog control law. The existing 4× setting avoids
+  that cap at 48 kHz for the present circuit range. Removing the cap requires
+  local oversampling and decimation; solver substeps alone would alias
+  ultrasonic self-oscillation. The October audit leaves the established
+  quality/CPU policy intact.
 - **Selected estimates remain estimates.** The accepted five-mechanism
   product profile uses a recording-derived effective Mode-I chorus fit,
   schematic-ratio Mode-II timing, the named Tr20 component prior, nominal

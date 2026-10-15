@@ -912,6 +912,29 @@ private:
     [[nodiscard]] static double bbdPolyBlepResidual(
         double distanceInSamples) noexcept;
 
+    // Continuous clock for one completed sample plus the two-sample BLEP
+    // lookahead. Each LFO flank gives an affine delay and a hyperbolic clock.
+    // At most one triangle cusp lies in this horizon at every supported rate.
+    // Integrating and inverting that clock places both complementary edges;
+    // an interval-average frequency gets the count right but not their ages.
+    struct ClockTrajectory
+    {
+        double cyclesPerDelay {}; // 128 / sampleRate
+        double initialDelay {};
+        double delaySlope {}; // delay change per numerical sample
+        double cuspSample {};
+        double cuspDelay {};
+        double cyclesToCusp {};
+        double intervalCycles {};
+        double initialSamplesPerCycle {};
+        double slopePerCycle {};
+        double cuspSamplesPerCycle {};
+        [[nodiscard]] static ClockTrajectory make(double phase, double rate,
+            double centre, double sweep, double sampleRate, double side) noexcept;
+        [[nodiscard]] double cyclesAt(double sample) const noexcept;
+        [[nodiscard]] double sampleAt(double cycles) const noexcept;
+    };
+
     // One bucket-brigade line: a shift register of cell pairs clocked
     // asynchronously to the host rate, with the input resampled onto the clock
     // grid and the output held between clock edges exactly as the part does.
@@ -975,20 +998,23 @@ private:
         void ageBlepEvents() noexcept;
         void rememberBlepEvent(float jump, double ageInSamples) noexcept;
         [[nodiscard]] double deterministicBlepCorrection(
-            double clockIncrement, float noiseScale = 0.0f) const noexcept;
-        // Full Chorus supplies an interval-average clock in double; fixed
-        // float-clock callers convert exactly, preserving input-edge precision.
+            double clockIncrement, float noiseScale = 0.0f,
+            const ClockTrajectory* trajectory = nullptr) const noexcept;
+        // Full Chorus supplies a continuous clock trajectory. Fixed-clock
+        // callers retain their exact former event times and RNG chronology.
         [[nodiscard]] float processClockedCore(
             float limitedInput, double clockHz, float sampleRate,
             float noiseScale,
             const InputCaptureInterval* capture = nullptr,
-            bool recoverHeldOutput = false) noexcept;
+            bool recoverHeldOutput = false,
+            const ClockTrajectory* trajectory = nullptr) noexcept;
         // `limitedInput` has already been through the shared input support
         // chain -- see `Chorus::advanceInputSupport`.
         float process(float limitedInput, double clockHz, float sampleRate,
                       const SupportChain::ExactTransition& outputTransition,
                       float noiseScale, bool useBlep = true,
-                      const InputCaptureInterval* capture = nullptr) noexcept;
+                      const InputCaptureInterval* capture = nullptr,
+                      const ClockTrajectory* trajectory = nullptr) noexcept;
     };
 
     // Both wet branches take the same node through the same input support

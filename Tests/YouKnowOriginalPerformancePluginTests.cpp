@@ -374,6 +374,149 @@ static void publishedNativePanelOrigin(bool beforeSnapshot) {
           && std::abs(p.currentPatch().resonance-float(beforeSnapshot?30:80)/127)<1.e-6f,
           "native and MIDI origin ordering reaches the final host mirror");
 }
+
+static void timingSwitchRetainsPerformanceLever() {
+    // A timing-policy change resets voice/firmware state, but the APVTS
+    // performance lever is still held. Compare with an explicit re-send at
+    // that boundary, through the same public controls and shipping callback.
+    for(bool startsOriginal:{false,true}) for(bool external:{false,true}) {
+        YouKnowAudioProcessor held,resent;
+        for(auto* p:{&held,&resent}) {
+            choose(*p,startsOriginal?1.f:0.f);
+            if(!external) {
+                setSlider(*p,youknow::parameters::pitchBend,.75f);
+                setSlider(*p,youknow::parameters::modulation,102.f/127);
+            }
+            setSlider(*p,youknow::parameters::benderDco,1.f);
+            setSlider(*p,youknow::parameters::benderLfo,1.f);
+            setSlider(*p,youknow::parameters::chorusI,0.f);
+            setSlider(*p,youknow::parameters::chorusII,0.f);
+            p->prepareToPlay(48000,512);
+            juce::MidiBuffer controls;
+            controls.addEvent(juce::MidiMessage::controllerEvent(1,64,127),0);
+            if(external) {
+                controls.addEvent(juce::MidiMessage::pitchWheel(1,14336),0);
+                controls.addEvent(juce::MidiMessage::controllerEvent(1,1,102),0);
+            }
+            samples(*p,512,&controls);
+            for(int i=0;i<3;++i) samples(*p,512);
+            choose(*p,startsOriginal?0.f:1.f);
+        }
+        if(!external) {
+            setSlider(resent,youknow::parameters::pitchBend,0.f);
+            setSlider(resent,youknow::parameters::modulation,0.f);
+            setSlider(resent,youknow::parameters::pitchBend,.75f);
+            setSlider(resent,youknow::parameters::modulation,102.f/127);
+        }
+        double energy=0, difference=0;
+        for(int blockIndex=0;blockIndex<8;++blockIndex) {
+            juce::AudioBuffer<float> heldAudio(2,512),resentAudio(2,512);
+            juce::MidiBuffer heldMidi,resentMidi;
+            if(blockIndex==0) {
+                resentMidi.addEvent(juce::MidiMessage::controllerEvent(1,64,127),0);
+                if(external) {
+                    resentMidi.addEvent(juce::MidiMessage::pitchWheel(1,14336),0);
+                    resentMidi.addEvent(juce::MidiMessage::controllerEvent(1,1,102),0);
+                }
+                const auto note=juce::MidiMessage::noteOn(1,60,juce::uint8(100));
+                heldMidi.addEvent(note,73); resentMidi.addEvent(note,73);
+            }
+            if(blockIndex==4) {
+                const auto release=juce::MidiMessage::noteOff(1,60);
+                heldMidi.addEvent(release,0); resentMidi.addEvent(release,0);
+            }
+            held.processBlock(heldAudio,heldMidi);
+            resent.processBlock(resentAudio,resentMidi);
+            check(held.getOriginalPerformanceHealthyForTest()
+                  && resent.getOriginalPerformanceHealthyForTest(),
+                  "lever retention keeps timing-mode pipelines healthy");
+            for(int c=0;c<2;++c) for(int i=0;i<512;++i) {
+                const double expected=resentAudio.getSample(c,i);
+                const double delta=heldAudio.getSample(c,i)-expected;
+                energy+=expected*expected; difference+=delta*delta;
+            }
+        }
+        check(energy>1.e-6,"timing-switch lever reference is audible");
+        check(difference<1.e-12,
+              "timing switch retains host/MIDI pitch/mod/HOLD without a fresh gesture");
+        check(held.getActiveVoiceCount()==1,
+              "timing switch retains a held pedal for subsequent note releases");
+        if(!startsOriginal) {
+            const auto& ram=held.getOriginalPerformanceForTest().state().assigner.ram;
+            check(ram[0xa1]!=0 && (ram[0xa2]&127u)==102,
+                  "timing switch restores held lever through actual original firmware");
+        }
+    }
+}
+
+static void allSoundOffRetainsPerformanceControllers() {
+    // CC120 is an immediate sound stop, while CC121 owns controller reset.
+    // MIDI Association's table distinguishes these messages explicitly:
+    // https://midi.org/summary-of-midi-1-0-messages
+    for(bool original:{false,true}) {
+        YouKnowAudioProcessor retained,resent;
+        const auto sendControls=[](juce::MidiBuffer& midi) {
+            midi.addEvent(juce::MidiMessage::pitchWheel(1,14336),0);
+            midi.addEvent(juce::MidiMessage::controllerEvent(1,1,102),0);
+            midi.addEvent(juce::MidiMessage::controllerEvent(1,64,127),0);
+        };
+        for(auto* p:{&retained,&resent}) {
+            choose(*p,original?1.f:0.f);
+            setSlider(*p,youknow::parameters::attack,0.f);
+            setSlider(*p,youknow::parameters::sustain,1.f);
+            setSlider(*p,youknow::parameters::release,0.f);
+            setSlider(*p,youknow::parameters::benderDco,1.f);
+            setSlider(*p,youknow::parameters::benderLfo,1.f);
+            p->prepareToPlay(48000,512);
+            juce::MidiBuffer setup; sendControls(setup);
+            setup.addEvent(juce::MidiMessage::noteOn(1,60,juce::uint8(100)),1);
+            samples(*p,512,&setup);
+            for(int i=0;i<6;++i) samples(*p,512);
+            check(p->getActiveVoiceCount()>0,"CC120 fixture first sounds a held note");
+            juce::MidiBuffer stop;
+            stop.addEvent(juce::MidiMessage::controllerEvent(1,120,0),0);
+            samples(*p,1,&stop);
+            check(p->getActiveVoiceCount()==0,"CC120 immediately retires sounding voices");
+        }
+        double energy=0, difference=0;
+        for(int blockIndex=0;blockIndex<16;++blockIndex) {
+            juce::AudioBuffer<float> actualAudio(2,512),expectedAudio(2,512);
+            juce::MidiBuffer actualMidi,expectedMidi;
+            if(blockIndex==0) {
+                sendControls(expectedMidi);
+                const auto note=juce::MidiMessage::noteOn(1,67,juce::uint8(100));
+                actualMidi.addEvent(note,73); expectedMidi.addEvent(note,73);
+            }
+            if(blockIndex==4) {
+                const auto release=juce::MidiMessage::noteOff(1,67);
+                actualMidi.addEvent(release,0); expectedMidi.addEvent(release,0);
+            }
+            retained.processBlock(actualAudio,actualMidi);
+            resent.processBlock(expectedAudio,expectedMidi);
+            for(int c=0;c<2;++c) for(int i=0;i<512;++i) {
+                const double expected=expectedAudio.getSample(c,i);
+                const double delta=actualAudio.getSample(c,i)-expected;
+                energy+=expected*expected; difference+=delta*delta;
+            }
+        }
+        check(energy>1.e-6,"CC120 subsequent-note reference is audible");
+        check(difference<1.e-12,
+              "CC120 retains bend/modulation/HOLD exactly as an explicit controller re-send");
+        check(retained.getActiveVoiceCount()==1,
+              "CC120 retains HOLD for a subsequent note and its release");
+        juce::MidiBuffer reset;
+        reset.addEvent(juce::MidiMessage::controllerEvent(1,121,0),0);
+        samples(retained,512,&reset);
+        for(int i=0;i<16;++i) samples(retained,512);
+        check(retained.getActiveVoiceCount()==0,
+              "CC121 still releases the retained pedal and its sustained note");
+        if(original) {
+            const auto& ram=retained.getOriginalPerformanceForTest().state().assigner.ram;
+            check((ram[0xa1]&127u)==0 && (ram[0xa2]&127u)==0,
+                  "CC121 still centres original bend and removes modulation");
+        }
+    }
+}
 int main() {
     juce::ScopedJuceInitialiser_GUI init;
     YouKnowAudioProcessor p;
@@ -413,5 +556,7 @@ int main() {
     hostRecallDuringIncomingReflection();
     publishedNativePanelOrigin(true);
     publishedNativePanelOrigin(false);
+    timingSwitchRetainsPerformanceLever();
+    allSoundOffRetainsPerformanceControllers();
     std::puts("Original performance plugin contracts passed");
 }
