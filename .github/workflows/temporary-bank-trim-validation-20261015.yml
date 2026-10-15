@@ -1,0 +1,302 @@
+name: Temporary two-preset trim validation 8ba4876
+
+on:
+  push:
+    branches: [codex/youknow-bank-trim-validation-20261015]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: youknow-bank-trim-validation-8ba4876-20261015
+  cancel-in-progress: false
+
+jobs:
+  bank:
+    name: Trim ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - { label: '44100', rate: 44100, shard: 0 }
+          - { label: '48000', rate: 48000, shard: 0 }
+          - { label: '96000', rate: 96000, shard: 0 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8ba48762dd1c979cbf2f24b1f5f1233ede7b92ea
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Record immutable source and runner environment
+        run: |
+          mkdir validation
+          test "$(git rev-parse HEAD)" = 8ba48762dd1c979cbf2f24b1f5f1233ede7b92ea
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git rev-parse HEAD > validation/source-sha.txt
+          git status --porcelain --untracked-files=no > validation/tracked-status.txt
+          c++ --version > validation/compiler-version.txt
+          cmake --version > validation/cmake-version.txt
+          lscpu > validation/cpu.txt
+          uname -a > validation/platform.txt
+
+      - name: Configure calibration target only
+        timeout-minutes: 5
+        run: |
+          cmake -S . -B build-bank -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF \
+            -DYOUKNOW_BUILD_TOOLS=ON \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=OFF \
+            2>&1 | tee validation/configure.log
+
+      - name: Build unchanged calibration executable
+        timeout-minutes: 10
+        run: |
+          cmake --build build-bank --target YouKnowCalibratePresets --parallel 4 \
+            2>&1 | tee validation/build.log
+          sha256sum build-bank/YouKnowCalibratePresets > validation/binary-sha256.txt
+
+      - name: Run complete unchanged calibration fixtures
+        timeout-minutes: 50
+        run: |
+          cat > "$RUNNER_TEMP/run-youknow-bank-shard.py" <<'PYTHON'
+          #!/usr/bin/env python3
+          """Temporary validation orchestration; never changes the committed fixture."""
+          import argparse, concurrent.futures, csv, hashlib, json, math, os
+          from pathlib import Path
+          from decimal import Decimal
+          import platform, subprocess, time
+          
+          SHA = '8ba48762dd1c979cbf2f24b1f5f1233ede7b92ea'
+          ALL = [f'{b}{r}{c}' for b in 'AB' for r in range(1, 9) for c in range(1, 9)] + [f'Y{b}{n}' for b in 'BP' for n in range(1, 9)]
+          SMOKE = 'A11 A17 A44 A48 A86 B12 B26 B31 B51 B85 YB1 YB5 YB8 YP2 YP7'.split()
+          NUMERIC = ['sample_rate', 'volume', 'applied_trim_db', 'signal_gated_rms_dbfs', 'complete_gated_rms_dbfs', 'signal_peak_dbfs', 'complete_peak_dbfs', 'tolerance_db', 'recommended_trim_db']
+          
+          def digest(p):
+              return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          
+          def write_json(p, value):
+              tmp = p.with_suffix(p.suffix + '.tmp')
+              tmp.write_text(json.dumps(value, indent=2) + '\n')
+              tmp.replace(p)
+          
+          def command(*args):
+              return subprocess.check_output(args, text=True).strip()
+          
+          def snapshot():
+              paths = command('git', 'ls-files', 'Source', 'Tools', 'CMakeLists.txt').splitlines()
+              return {p: digest(p) for p in paths}
+          
+          p = argparse.ArgumentParser()
+          p.add_argument('--rate', type=int, required=True, choices=[44100, 48000, 96000])
+          p.add_argument('--shard', type=int, required=True, choices=range(8))
+          p.add_argument('--label', required=True)
+          a = p.parse_args()
+          assert command('git', 'rev-parse', 'HEAD') == SHA
+          assert not command('git', 'status', '--porcelain', '--untracked-files=no')
+          slots = ['B15', 'B42']
+          assert len(slots) == 2
+          root = Path('validation')
+          root.mkdir(exist_ok=True)
+          (root / 'slots').mkdir(exist_ok=False)
+          binary = Path('build-bank/YouKnowCalibratePresets').resolve()
+          cache = Path('build-bank/CMakeCache.txt').read_text()
+          compiler = next(line.split('=', 1)[1] for line in cache.splitlines() if line.startswith('CMAKE_CXX_COMPILER:FILEPATH='))
+          assert digest(compiler) == '1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769', 'Compiler driver differs from preceding 348-row run'
+          assert command(compiler, '-dumpfullversion') == '13.3.0'
+          started = time.time()
+          status = {
+              'source_head': SHA, 'workflow_head': os.environ['GITHUB_SHA'],
+              'workflow_run_id': os.environ['GITHUB_RUN_ID'], 'label': a.label,
+              'sample_rate': a.rate, 'slots': slots, 'modes': ['direct', 'original'],
+              'workers': 4, 'expected_rows': len(slots) * 2, 'completed_modes': 0,
+              'fixture_seconds_per_pass': 26.25, 'passes_per_mode': 2,
+              'unchanged_check_policy': True, 'started_unix': started, 'complete': False,
+              'compiler': command(compiler, '--version'), 'compiler_path': compiler,
+              'compiler_sha256': digest(compiler), 'platform': platform.platform(),
+              'python': platform.python_version(), 'cmake': command('cmake', '--version'),
+              'source_and_header_sha256': snapshot(), 'binary_sha256': digest(binary),
+              'runner_sha256': digest(__file__), 'cmake_cache_sha256': digest('build-bank/CMakeCache.txt'),
+              'compile_commands_sha256': digest('build-bank/compile_commands.json'), 'results': []
+          }
+          write_json(root / 'status.json', status)
+          print(json.dumps({'rendering_started': True, 'label': a.label, 'rate': a.rate, 'workers': 4, 'expected_rows': status['expected_rows'], 'source_head': SHA}), flush=True)
+          
+          def run(slot, mode):
+              csv_path = root / 'slots' / f'{slot}-{mode}.csv'
+              log_path = root / 'slots' / f'{slot}-{mode}.log'
+              cmd = [str(binary), '--check', '--rate', str(a.rate), '--slot', slot, '--mode', mode, str(csv_path)]
+              began = time.time()
+              errors, rows = [], []
+              print(json.dumps({'starting_slot': slot, 'mode': mode, 'rate': a.rate}), flush=True)
+              with log_path.open('w') as log:
+                  log.write(json.dumps({'command': cmd, 'start_unix': began}) + '\n')
+                  log.flush()
+                  try:
+                      result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=3000, check=False)
+                      exit_code = result.returncode
+                  except subprocess.TimeoutExpired:
+                      exit_code = -1
+                      errors.append('Single mode exceeded 3000 seconds')
+              try:
+                  with csv_path.open(newline='') as f:
+                      rows = list(csv.DictReader(f))
+                  if len(rows) != 1:
+                      errors.append('Expected exactly one CSV row')
+                  for row in rows:
+                      if row['slot'] != slot or row['mode'] != mode or float(row['sample_rate']) != a.rate:
+                          errors.append('Wrong row identity')
+                      if not all(math.isfinite(float(row[k])) for k in NUMERIC):
+                          errors.append('Nonfinite metric')
+                      tolerance = 1.1 if slot == 'A86' and a.rate != 48000 else 1.0
+                      if float(row['tolerance_db']) != tolerance:
+                          errors.append('Unexpected executable tolerance')
+                      # Decimal preserves six-place CSV endpoints such as -37.100000.
+                      # The executable's unrounded check and exit code remain authoritative.
+                      if abs(Decimal(row['signal_gated_rms_dbfs']) + Decimal('36')) > Decimal(str(tolerance)):
+                          errors.append('Signal outside unchanged loudness tolerance')
+                      if max(float(row['signal_peak_dbfs']), float(row['complete_peak_dbfs'])) > -1.0:
+                          errors.append('Peak exceeds unchanged ceiling')
+                      if abs(float(row['recommended_trim_db'])) > 48:
+                          errors.append('Recommended trim outside unchanged bound')
+              except Exception as e:
+                  errors.append(str(e))
+              record = {'slot': slot, 'mode': mode, 'sample_rate': a.rate, 'command': cmd,
+                        'exit_code': exit_code, 'errors': errors, 'rows': len(rows),
+                        'seconds': round(time.time() - began, 3),
+                        'csv_sha256': digest(csv_path) if csv_path.exists() else None,
+                        'log_sha256': digest(log_path)}
+              write_json(root / 'slots' / f'{slot}-{mode}.json', record)
+              return record, rows
+          
+          all_rows = {}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              futures = [pool.submit(run, slot, mode) for slot in slots for mode in ['direct', 'original']]
+              for future in concurrent.futures.as_completed(futures):
+                  result, rows = future.result()
+                  all_rows[(result['slot'], result['mode'])] = rows
+                  status['results'].append(result)
+                  status['completed_modes'] += 1
+                  status['elapsed_seconds'] = round(time.time() - started, 3)
+                  write_json(root / 'status.json', status)
+                  print(json.dumps({'completed': status['completed_modes'], **result}), flush=True)
+          ordered = [row for slot in slots for mode in ['direct', 'original'] for row in all_rows[(slot, mode)]]
+          with (root / 'preset-levels.csv').open('w', newline='') as f:
+              if ordered:
+                  writer = csv.DictWriter(f, fieldnames=list(ordered[0]))
+                  writer.writeheader()
+                  writer.writerows(ordered)
+          status['complete'] = True
+          status['actual_rows'] = len(ordered)
+          status['source_and_header_unchanged'] = snapshot() == status['source_and_header_sha256']
+          status['binary_unchanged'] = digest(binary) == status['binary_sha256']
+          status['failed_modes'] = [{'slot': r['slot'], 'mode': r['mode'], 'exit_code': r['exit_code'], 'errors': r['errors']} for r in status['results'] if r['exit_code'] or r['errors']]
+          status['passed'] = not status['failed_modes'] and len(ordered) == status['expected_rows'] and status['source_and_header_unchanged'] and status['binary_unchanged']
+          status['elapsed_seconds'] = round(time.time() - started, 3)
+          status['aggregate_csv_sha256'] = digest(root / 'preset-levels.csv')
+          write_json(root / 'status.json', status)
+          print(json.dumps({k: status[k] for k in ['label', 'complete', 'passed', 'actual_rows', 'failed_modes', 'elapsed_seconds']}), flush=True)
+          raise SystemExit(0 if status['passed'] else 1)
+          PYTHON
+          cp "$RUNNER_TEMP/run-youknow-bank-shard.py" validation/runner.py
+          python3 -u "$RUNNER_TEMP/run-youknow-bank-shard.py" \
+            --rate ${{ matrix.rate }} --shard ${{ matrix.shard }} \
+            --label '${{ matrix.label }}' 2>&1 | tee validation/progress.log
+
+      - name: Preserve build provenance even on failure
+        if: always()
+        run: |
+          mkdir -p validation
+          for file in CMakeCache.txt compile_commands.json; do
+            if test -f "build-bank/$file"; then cp "build-bank/$file" validation/; fi
+          done
+
+      - name: Upload shard evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youknow-trim-${{ matrix.label }}
+          path: validation/
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: Verify all 12 corrected-preset rows
+    needs: bank
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download every available shard
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: youknow-trim-*
+          path: artifacts
+
+      - name: Require complete exact coverage and unchanged gates
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import csv, hashlib, json, math
+          from pathlib import Path
+          SHA = '8ba48762dd1c979cbf2f24b1f5f1233ede7b92ea'
+          expected = {(rate, slot, mode) for rate in [44100, 48000, 96000] for slot in ['B15', 'B42'] for mode in ['direct', 'original']}
+          labels = ['44100', '48000', '96000']
+          rows, errors, shards = [], [], []
+          for label in labels:
+              folder = Path('artifacts') / f'youknow-trim-{label}'
+              try:
+                  status = json.loads((folder / 'status.json').read_text())
+                  if status['source_head'] != SHA or status['label'] != label or not status.get('complete') or not status.get('passed'):
+                      errors.append(f'{label}: unsuccessful or mismatched shard status')
+                  data = (folder / 'preset-levels.csv').read_bytes()
+                  if hashlib.sha256(data).hexdigest() != status['aggregate_csv_sha256']:
+                      errors.append(f'{label}: aggregate CSV hash mismatch')
+                  with (folder / 'preset-levels.csv').open(newline='') as f:
+                      part = list(csv.DictReader(f))
+                  expected_count = 4
+                  if len(part) != expected_count or status['completed_modes'] != expected_count or status['actual_rows'] != expected_count:
+                      errors.append(f'{label}: incorrect completed row count')
+                  rows.extend(part)
+                  shards.append({'label': label, 'passed': status.get('passed'), 'rows': len(part), 'failed_modes': status.get('failed_modes'), 'binary_sha256': status['binary_sha256'], 'compiler': status['compiler']})
+              except Exception as e:
+                  errors.append(f'{label}: {e}')
+          identities = []
+          for row in rows:
+              try:
+                  identities.append((int(float(row['sample_rate'])), row['slot'], row['mode']))
+              except Exception as e:
+                  errors.append(f'Malformed aggregate row identity: {e}')
+          if len(identities) != 12 or len(set(identities)) != 12 or set(identities) != expected:
+              errors.append('Coverage must be exactly 12 unique expected rate/slot/mode identities')
+          output = Path('aggregate')
+          output.mkdir()
+          if rows:
+              with (output / 'preset-levels-12.csv').open('w', newline='') as f:
+                  writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+                  writer.writeheader()
+                  writer.writerows(rows)
+          report = {'source_head': SHA, 'expected_rows': 12, 'actual_rows': len(rows), 'unique_rows': len(set(identities)), 'passed': not errors, 'errors': errors, 'shards': shards}
+          (output / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2), flush=True)
+          raise SystemExit(0 if not errors else 1)
+          PYTHON
+
+      - name: Upload aggregate evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youknow-trim-aggregate
+          path: aggregate/
+          if-no-files-found: error
+          retention-days: 7
