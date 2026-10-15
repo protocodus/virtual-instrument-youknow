@@ -36,6 +36,12 @@ struct YouKnowTestAccess {
     }
     static auto ic40(const E& e) { return e.firmwareSerialIc40_; }
     static auto chorus(const E& e) { return e.firmwareSerialCircuitParameters_.chorus; }
+    static float lfo(const E& e) { return e.lfoValue_; }
+    static float delayLevel(const E& e) { return e.lfoDelayLevel_; }
+    static double delayProgress(const E& e) { return e.lfoSyncDelayProgress_; }
+    static unsigned cpuWord(const E& e,unsigned a) {
+        const auto& ram=e.firmwareSerialState_.control.ram; return ram[a]+256u*ram[a+1];
+    }
     static auto cardGains(const E& e) { return e.originalUnisonCardGain_; }
     static auto cardHistory(const E& e,unsigned card) {
         const auto& v=e.voices_[card];
@@ -676,7 +682,41 @@ void startupControlsAndLifecycle() {
     check(e->originalPerformance().state().assigner.now==0 && e->firmwareSerialAudioStates()==0,
           "temperature-preserving panic still resets all firmware clocks");
 }
+// Host LFO sync replaces B-2's free-running triangle and delay clock in this
+// replay, so the panel's own LFO rate and delay become inaudible while synced.
+void lfoSync() {
+    using Access=YouKnowTestAccess;
+    auto synced=[](float rate,float delay) {
+        auto p=patch(); p.lfoRate=rate; p.lfoDelay=delay; p.dcoLfoDepth=p.vcfLfoDepth=p.pwmDepth=60.f/127;
+        p.lfoSyncRateHz=2.f; p.lfoSyncDelaySeconds=0.f;
+        auto e=create(48000,1,p); e->noteOn(60,1);
+        std::vector<float> audio; render(*e,3000,83,&audio); // 1/16 s: phase 0.125
+        return std::pair{std::move(e),std::move(audio)};
+    };
+    auto [slow,slowAudio]=synced(10.f/127,0);
+    auto [fast,fastAudio]=synced(110.f/127,90.f/127);
+    check(slowAudio==fastAudio,"synced replay ignores B-2's own LFO rate and delay");
+    check(std::abs(Access::lfo(*slow)-.5f)<2e-3f,"replay reports the synced half-scale triangle at phase 0.125");
+    check(Access::cpuWord(*slow,0x4b)==0&&Access::delayLevel(*slow)==1.f,"sync holds B-2's rate and completes its delay");
+
+    auto p=patch(); p.dcoLfoDepth=60.f/127; p.lfoDelay=0;
+    auto e=create(48000,1,p); render(*e,512,83);
+    const unsigned ownRate=Access::cpuWord(*e,0x4b);
+    p.lfoSyncRateHz=2.f; p.lfoSyncDelaySeconds=.05f; e->setParameters(p); render(*e,512,83);
+    check(ownRate!=0&&Access::cpuWord(*e,0x4b)==0,"sync takes over B-2's free-running rate");
+    // B-2 re-arms the delay on the first voice-on after a pass with no voice
+    // running; in this replay that restarts the synced delay, not the host.
+    e->noteOn(60,1); render(*e,9600,83);
+    check(Access::delayLevel(*e)==1.f,"synced delay completes while the phrase holds");
+    e->noteOff(60); render(*e,2400,83);
+    e->noteOn(62,1); render(*e,1440,83);
+    check(Access::delayProgress(*e)<1.0&&Access::delayLevel(*e)==0.f,"B-2's phrase re-arm restarts the synced delay");
+    p.lfoSyncRateHz=0; p.lfoSyncDelaySeconds=-1; e->setParameters(p); render(*e,512,83);
+    const float before=Access::lfo(*e); render(*e,2400,83);
+    check(Access::cpuWord(*e,0x4b)==ownRate&&Access::lfo(*e)!=before,"B-2's own LFO runs again after sync ends");
+}
 int main() {
+    lfoSync();
     originalUnisonVoiceCounts();
     check(originalUnisonCountTransitions(1)==originalUnisonCountTransitions(173),
           "audible Unison count transitions preserve stereo audio and firmware across host blocks");

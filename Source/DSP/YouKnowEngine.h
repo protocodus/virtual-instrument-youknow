@@ -3986,6 +3986,9 @@ private:
     FirmwareControlTrace::Result firmwareControlTrace_ {};
     std::array<std::uint16_t, converterWritesPerPass> firmwareConverterCodes_ {};
     std::uint8_t firmwarePassResetMask_ { 0 };
+    // Host master tune beyond the panel's signed byte, held for the pass with
+    // the RAM snapshot and added to the firmware's pitch word.
+    std::int16_t firmwareTuneExtension_ { 0 };
     std::size_t nextFirmwareControlEvent_ { 0 };
     bool firmwareControlTraceValid_ { true };
 
@@ -4394,8 +4397,14 @@ private:
     std::array<unsigned,hardwareVoices> firmwareSerialPitLsb_ {};
     std::array<bool,hardwareVoices> firmwareSerialPitNeedsMsb_ {};
     SerialHoldEvent firmwareSerialHoldEvent_ {};
+    // While host LFO sync drives the replay, B-2's own LFO rate and delay
+    // increments are held at zero; these keep its values for when sync ends.
+    std::uint16_t firmwareSerialLfoRate_ = 0;
+    std::array<std::uint16_t, 2> firmwareSerialLfoDelayIncrements_ {};
+    bool firmwareSerialLfoRateHeld_ = false, firmwareSerialLfoDelayHeld_ = false;
     void initialiseFirmwareSerialReplay() noexcept;
     void advanceFirmwareSerialInterval(double seconds) noexcept;
+    void applyFirmwareSerialLfoSync() noexcept;
     void applyFirmwareSerialRamEvent(const FirmwareSerialTrace::Event&) noexcept;
     [[nodiscard]] bool decodeFirmwareSerialDac(unsigned pa, ConverterWrite&) const noexcept;
     [[nodiscard]] float firmwareSerialDacTarget(const ConverterWrite&,unsigned code) const noexcept;
