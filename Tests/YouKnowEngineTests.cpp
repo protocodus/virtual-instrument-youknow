@@ -841,6 +841,7 @@ struct YouKnowTestAccess
         dco.renderScale = 1.0f;
         dco.pulseState = 1.0f;
         dco.subState = -1.0f;
+        dco.subStorageSecondsRemaining = 0.0;
         dco.saw.reset();
         dco.pulse.reset();
         dco.sub.reset();
@@ -1886,6 +1887,14 @@ struct YouKnowTestAccess
         return { dco.pulseState, dco.subState };
     }
 
+    static std::array<double, 2> subCollectorState(
+        const YouKnowEngine& engine, int slot) noexcept
+    {
+        const auto& dco =
+            engine.voices_[static_cast<std::size_t>(slot)].dco;
+        return { dco.subOutputState(), dco.subStorageSecondsRemaining };
+    }
+
     // `sanitise` is private: `setParameters` only ever exposes its effect
     // through rendered audio, so a defect that swapped two fields' documented
     // fallback defaults, or turned a finite-but-out-of-range clamp into a
@@ -1952,7 +1961,7 @@ struct YouKnowTestAccess
                 state.physicalResetActive, state.resetTargetValue,
                 state.resetTimeConstant, state.resetSawCorrection,
                 state.positiveRailHeld, state.renderScale, state.pulseState,
-                state.subState);
+                state.subState, state.subStorageSecondsRemaining);
         };
         const auto correction = [](const auto& state) {
             return std::tie(state.ring, state.delay, state.base, state.primed);
@@ -4013,6 +4022,8 @@ void testMode3CountStagingAndControlPolarity()
     // A control-word low-to-high OUT edge occurs at the converter timestamp,
     // the left edge of the interval. Its correction rings must be identical to
     // the same running-PIT rising edge consumed by the event walk at elapsed 0.
+    // Advance both intervals before comparing: the logical sub divider clocks
+    // at OUT's edge, while its positive collector transition follows storage.
     YouKnowEngine programmedEdge;
     YouKnowEngine runningEdge;
     programmedEdge.prepare(768000.0, blockSize, false);
@@ -4025,6 +4036,7 @@ void testMode3CountStagingAndControlPolarity()
     YouKnowTestAccess::primeDcoControlEdgeFixture(runningEdge, 0);
     YouKnowTestAccess::programDcoCount(
         programmedEdge, 0, 10000u, true);
+    YouKnowTestAccess::advanceDcoPitAndRamp(programmedEdge, 0, true);
     YouKnowTestAccess::advanceDcoPitAndRamp(runningEdge, 0, true);
     const auto programmedSaw =
         YouKnowTestAccess::sawTrackState(programmedEdge, 0);
@@ -4076,12 +4088,25 @@ void testMode3CountStagingAndControlPolarity()
            "a control-word OUT edge cleared bandlimited waveform histories");
     expect(ringEnergy(sawAfter.ring) > 1.0e-8,
            "the C54 discharge slope change received no BLAMP residual");
-    expect(ringEnergy(subAfter.ring) > 1.0e-8,
-           "the positive OUT edge's sub clock received no BLEP residual");
+    expect(ringEnergy(subAfter.ring) < 1.0e-14
+               && YouKnowTestAccess::subCollectorState(engine, 0)[0] == -1.0,
+           "the positive OUT edge moved the sub collector before storage ended");
+    expectNear(YouKnowTestAccess::subCollectorState(engine, 0)[1],
+               0.2e-6, 1.0e-15,
+               "the positive OUT edge did not retain the sub storage interval");
     expect(ringEnergy(pulseAfter.ring) < 1.0e-14,
            "the control word fabricated a comparator BLEP");
 
-    // Copying the sub track exposes the isolated logic transition. The
+    // No later PIT edge can occur before the pending control/LSB/MSB writes.
+    // One interval therefore contains only the delayed positive collector edge.
+    YouKnowTestAccess::advanceDcoPitAndRamp(engine, 0, true);
+    expect(YouKnowTestAccess::subCollectorState(engine, 0)[0] == 1.0
+               && YouKnowTestAccess::subCollectorState(engine, 0)[1] == 0.0
+               && ringEnergy(
+                   YouKnowTestAccess::subTrackState(engine, 0).ring) > 1.0e-8,
+           "the delayed positive sub collector edge received no BLEP residual");
+
+    // Copying the sub track exposes the isolated collector transition. The
     // symmetric BLEP preserves the event's old side, then reaches the new side
     // after its finite residual support instead of emitting a full-band step.
     const auto transition =
@@ -4090,7 +4115,7 @@ void testMode3CountStagingAndControlPolarity()
                "bandlimited control edge changed a pre-event sub sample");
     expectNear(transition.back(), 1.0, 0.02,
                "bandlimited control edge did not settle on its new sub state");
-    for (int frame = 0; frame < 4; ++frame)
+    for (int frame = 1; frame < 4; ++frame)
         YouKnowTestAccess::advanceDcoPitAndRamp(engine, 0, true);
     expect(YouKnowTestAccess::activeDcoDivider(engine, 0) == 11u
                && YouKnowTestAccess::pitState(engine, 0)

@@ -79,6 +79,10 @@ class FirmwareAssignerScheduler {
         FirmwareUartTrace::Configuration uart{};
         FirmwareAssignerIo::AnmWritePhase anmWritePhase =
             FirmwareAssignerIo::AnmWritePhase::RestartConversion;
+        // Product correction, disabled for literal recovered-ROM comparisons:
+        // opposite CC64 requests pending in one foreground pass use the last
+        // received value instead of the original fixed OFF-before-ON order.
+        bool correctCoalescedHoldOrder = false;
         // Optional native contact owner. Called after actual FFA6/FFA8
         // scan-history stores and completed foreground-pass instructions;
         // it may update only its borrowed physical inputs before subsequent

@@ -190,7 +190,22 @@ struct Completion {
         case Op::ORA_A_B: r.a = logic(r.a | r.b); break;
         case Op::ORA_A_C: r.a = logic(r.a | r.c); break;
         case Op::ORI_A_xx: r.a = logic(r.a | x); break;
-        case Op::ORIW_wa_xx: write(0xff00 + x, logic(read(0xff00 + x) | y)); break;
+        case Op::ORIW_wa_xx: {
+            unsigned value = read(0xff00 + x);
+            // A-5 RX0754/0759 sets independent pending HOLD bits. Foreground
+            //0419..0433 sends OFF87 before ON86, so a fast down/up pair can
+            // finish ON. The explicitly selected product correction retains
+            // only the latest request at these two receive stores. Existing
+            // CPU instruction endpoints, serial transport and other flag bits
+            // remain intact. User-authorized2026-10-15 firmware correction;
+            // this is deliberately not a claim about original behavior.
+            // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1033-L1040
+            if (configuration.correctCoalescedHoldOrder && x == 0xb6
+                && ((i.pc == 0x0754 && y == 0x10)
+                    || (i.pc == 0x0759 && y == 0x08)))
+                value &= ~0x18u;
+            write(0xff00 + x, logic(value | y));
+        } break;
         case Op::XRAW_wa: r.a = logic(r.a ^ read(0xff00 + x)); break;
         case Op::XRAX_H: r.a = logic(r.a ^ read(pair(r.h, r.l))); break;
         case Op::XRA_A_C: r.a = logic(r.a ^ r.c); break;

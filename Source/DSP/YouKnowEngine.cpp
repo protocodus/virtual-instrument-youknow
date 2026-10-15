@@ -2860,6 +2860,7 @@ void YouKnowEngine::Dco::reset() noexcept
     renderScale = 1.0f;
     pulseState = -1.0f;
     subState = 1.0f;
+    subStorageSecondsRemaining = 0.0;
     saw.reset();
     pulse.reset();
     sub.reset();
@@ -2893,21 +2894,18 @@ void YouKnowEngine::beginDcoDischarge(
     if (addCorrections && dco.saw.primed)
         addDcoSlope(voice, newSlope - oldSlope, samplesAgo);
 
-    const float nextSub = -dco.subState;
+    const float previousSubOutput = dco.subOutputState();
+    dco.subState = -dco.subState;
+    // The already-selected part-class storage estimate applies to Tr19, not
+    // the divide-by-two latch inside MC5534A. Keep its delayed collector edge
+    // on the event timeline, including when it falls in the next sample.
+    // The opposite edge cancels any unfinished release and has no delay.
+    dco.subStorageSecondsRemaining =
+        dco.subState > 0.0f && activeParameters_.enableSubStorageSkew
+            ? subSwitchStorageSeconds : 0.0;
     if (addCorrections && dco.sub.primed)
-    {
-        // Tr19's storage time delays the edge that ends its saturation -- the
-        // start of the D6-conducting +1 half-cycle -- and nothing delays the
-        // other. Later inside the sample just rendered is fewer samples ago;
-        // addStep clamps at zero, so an edge closer than t_s to the sample
-        // boundary (0.04 of a 192 kHz sample) keeps only part of its skew.
-        const double stepSamplesAgo =
-            nextSub > 0.0f && activeParameters_.enableSubStorageSkew
-                ? samplesAgo - subSwitchStorageSeconds * oversampledRate_
-                : samplesAgo;
-        addStep(dco.sub, nextSub - dco.subState, static_cast<float>(stepSamplesAgo));
-    }
-    dco.subState = nextSub;
+        addStep(dco.sub, dco.subOutputState() - previousSubOutput,
+                static_cast<float>(samplesAgo));
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(dcoSubTransitions, 1);
 #endif
@@ -6672,7 +6670,7 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
         voice.dco.sub.reset();
         voice.dco.saw.prime(saw);
         voice.dco.pulse.prime(voice.dco.pulseState);
-        voice.dco.sub.prime(voice.dco.subState);
+        voice.dco.sub.prime(voice.dco.subOutputState());
 
         if (voice.active || voice.cardIndex < hardwareVoices)
         {
@@ -6894,6 +6892,7 @@ void YouKnowEngine::reset()
     dcoLfoPitchWord_ = 0;
     vcfLfoCountsWord_ = 0;
     sustainPedalDown_ = false;
+    originalSustainPedalTarget_ = false;
     generation_ = 0;
     activeVoiceCount_ = 0;
     anyVoiceActive_ = false;
@@ -7304,6 +7303,10 @@ bool YouKnowEngine::configureHighPassSwitch(double resistance) noexcept
 void YouKnowEngine::setOriginalPerformanceMode(bool enabled) noexcept
 {
     if (enabled == originalPerformanceEnabled_) return;
+    const float bend = pitchBendTarget_;
+    const float modulation = modWheelTarget_;
+    const bool hold = originalPerformanceEnabled_
+        ? originalSustainPedalTarget_ : sustainPedalDown_;
     if (enabled) {
         originalPerformancePreviousProfile_ = converterTimingProfile_;
         converterTimingProfile_ = ConverterTimingProfile::FirmwareSerialReplay;
@@ -7312,7 +7315,16 @@ void YouKnowEngine::setOriginalPerformanceMode(bool enabled) noexcept
         firmwareSerialConfiguration_.inputs=originalPerformanceAdc(activeParameters_);
     } else converterTimingProfile_ = originalPerformancePreviousProfile_;
     originalPerformanceEnabled_ = enabled;
-    if (prepared_) reset();
+    if (prepared_) {
+        reset();
+        // Changing the timing policy does not release physical controls.
+        // These audio-owned targets include external MIDI as well as host
+        // automation; an untouched APVTS lever may still be centred while
+        // the external wheel is held. Later queued UI gestures still win.
+        setPitchBend(bend);
+        setModWheel(modulation);
+        setSustainPedal(hold);
+    }
 }
 
 bool YouKnowEngine::receiveOriginalPerformanceMidi(
@@ -7322,7 +7334,28 @@ bool YouKnowEngine::receiveOriginalPerformanceMidi(
         return false;
     if (originalPerformance_.message(bytes,
             static_cast<std::uint64_t>(std::floor(firmwareSerialAudioStates_))))
+    {
+        // This complete-message API and controller setters share one ordered
+        // input stream. Remember accepted raw requests too, or a later setter
+        // could suppress a return to zero against a stale target. Timing and
+        // CC120 transitions also retain these latest requested positions.
+        // OriginalPerformance routes every channel packet to its matching
+        // receive channel; the JUNO hold law is zero off, any1..127 on.
+        if (bytes.size() == 3 && bytes[1] < 128 && bytes[2] < 128)
+        {
+            if ((bytes[0] & 0xf0u) == 0xb0u)
+            {
+                if (bytes[1] == 64)
+                    originalSustainPedalTarget_ = bytes[2] != 0;
+                else if (bytes[1] == 1)
+                    modWheelTarget_ = static_cast<float>(bytes[2]) / 127.0f;
+            }
+            else if ((bytes[0] & 0xf0u) == 0xe0u)
+                pitchBendTarget_ = (static_cast<float>(bytes[1]
+                    | (static_cast<unsigned>(bytes[2]) << 7u)) - 8192.0f) / 8192.0f;
+        }
         return true;
+    }
     // Queue refusal cannot leave half a received packet or stale later work.
     resetForHostStop();
     originalPerformanceHealthy_ = false;
@@ -8093,6 +8126,19 @@ void YouKnowEngine::noteOnFromLocalKeyboard(int midiNote, float velocity)
     if (originalPerformanceEnabled_)
     {
         const int pitch = originalWirePitch(midiNote, activeParameters_.keyTranspose);
+        // Retiring a native contact is local; retiring its out-of-range DIN
+        // fallback must also release the retained wire pitch. A transpose edit
+        // can otherwise replace the owner while its old note stays held. An
+        // equal fallback pitch keeps the existing repeated-On bitmap policy.
+        const int previousWire = originalPerformance_.keyboardNoteOff(midiNote);
+        if (previousWire >= 0 && previousWire != pitch)
+        {
+            const std::array<std::uint8_t,3> off {
+                0x80, static_cast<std::uint8_t>(previousWire), 0 };
+            if (!originalPerformance_.message(off,
+                    static_cast<std::uint64_t>(firmwareSerialAudioStates_)))
+            { allNotesOff(); originalPerformanceHealthy_ = false; return; }
+        }
         if (originalPerformance_.keyboardNoteOn(midiNote, pitch)) return;
         // The visible keyboard is36..96. Programmatic keys and host transpose
         // outside that61-contact span retain the prior DIN pitch/folding
@@ -8155,7 +8201,14 @@ void YouKnowEngine::noteOn(int midiNote, float velocity)
         if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
         return;
     }
-    noteOnInternal(midiNote, std::clamp(sanitised(velocity, 1.0f), 0.0f, 1.0f));
+    velocity = std::clamp(sanitised(velocity, 1.0f), 0.0f, 1.0f);
+    // MIDI Note On with velocity zero is Note Off, including in the Direct
+    // adapter. At the default zero velocity sensitivity it would otherwise
+    // open a full-level voice and increment the counted held-note state.
+    if (velocity == 0.0f)
+        noteOffInternal(midiNote);
+    else
+        noteOnInternal(midiNote, velocity);
 }
 
 void YouKnowEngine::noteOnInternal(int midiNote, float velocity) noexcept
@@ -8908,6 +8961,23 @@ void YouKnowEngine::allNotesOff()
     updateActiveVoiceCount();
 }
 
+void YouKnowEngine::allSoundOff()
+{
+    // MIDI Association: CC120 turns oscillators off and sets their volume
+    // envelopes to zero; CC121 is the separate controller reset message.
+    // https://midi.org/summary-of-midi-1-0-messages
+    // Original's hard silence resets its serial processors, so restore the
+    // latest requested controls ahead of any subsequent notes on that wire.
+    const float bend = pitchBendTarget_;
+    const float modulation = modWheelTarget_;
+    const bool hold = originalPerformanceEnabled_
+        ? originalSustainPedalTarget_ : sustainPedalDown_;
+    allNotesOff();
+    setPitchBend(bend);
+    setModWheel(modulation);
+    setSustainPedal(hold);
+}
+
 void YouKnowEngine::setPitchBend(float normalisedBipolar) noexcept
 {
     if (originalPerformanceEnabled_) {
@@ -8942,8 +9012,12 @@ void YouKnowEngine::setModWheel(float amount) noexcept
 void YouKnowEngine::setSustainPedal(bool down) noexcept
 {
     if (originalPerformanceEnabled_) {
-        if (down==sustainPedalDown_) return;
-        sustainPedalDown_=down;
+        // B-2 sets/clears FF1E bit0 only when 86/87 arrives (00B7..00C2).
+        // advanceFirmwareSerialInterval mirrors that delayed bit every sample;
+        // it cannot decide whether a newer host pedal edge is redundant.
+        // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L161-L167
+        if (down==originalSustainPedalTarget_) return;
+        originalSustainPedalTarget_=down;
         const std::array<std::uint8_t,3> message{0xb0,64,static_cast<std::uint8_t>(down?127:0)};
         if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
         return;
@@ -10983,9 +11057,9 @@ void YouKnowEngine::advanceDcoPitAndRamp(
         ? firmwareSerialDcoCounts_[static_cast<std::size_t>(voice.cardIndex)] : 0;
 
     // At 8 kHz, 1x, the 4 MHz range clock and divider 8, the closed interval
-    // can contain 126 OUT transitions plus 63 reset completions and 63 supply
-    // hits. A fixed pitch transaction adds one pre-stage and two byte events;
-    // 512 leaves a real margin over the 254-event supported worst case while
+    // can contain 126 OUT transitions plus 63 reset completions, 63 supply
+    // hits and 32 delayed sub edges. A fixed pitch transaction adds one
+    // pre-stage and two byte events; 512 leaves a real margin while
     // still bounding malformed state without allocating anything. IC35 reload
     // is chassis-global and does not add one event to each card's walk.
     constexpr int maximumEventsPerInterval = 512;
@@ -11010,6 +11084,9 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             : std::numeric_limits<double>::infinity();
         const double resetSeconds = dco.resetSecondsRemaining > 0.0
             ? dco.resetSecondsRemaining
+            : std::numeric_limits<double>::infinity();
+        const double subStorageSeconds = dco.subStorageSecondsRemaining > 0.0
+            ? dco.subStorageSecondsRemaining
             : std::numeric_limits<double>::infinity();
         // The current-source ramp cannot charge beyond the ideal +15 V supply
         // bound. A newly staged long count can otherwise leave the old
@@ -11038,7 +11115,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
             : std::max(0.0, chargingRailSeconds);
         const double segment = std::min(
             { remaining, pitSeconds, cpuWriteSeconds, serialWriteSeconds, resetSeconds,
-              positiveRailSeconds });
+              subStorageSeconds, positiveRailSeconds });
 
         if (addCorrections && !comparatorPinnedForInterval && segment > 0.0)
         {
@@ -11147,6 +11224,9 @@ void YouKnowEngine::advanceDcoPitAndRamp(
         if (dco.resetSecondsRemaining > 0.0)
             dco.resetSecondsRemaining = std::max(
                 0.0, dco.resetSecondsRemaining - segment);
+        if (dco.subStorageSecondsRemaining > 0.0)
+            dco.subStorageSecondsRemaining = std::max(
+                0.0, dco.subStorageSecondsRemaining - segment);
         if (dco.pitState == Dco::PitState::awaitingCount)
         {
             // CE is stopped, not TP5. Follow the chassis-global falling/count
@@ -11166,6 +11246,8 @@ void YouKnowEngine::advanceDcoPitAndRamp(
 
         const bool resetComplete =
             resetSeconds <= segment + eventToleranceSeconds;
+        const bool subStorageComplete =
+            subStorageSeconds <= segment + eventToleranceSeconds;
         const bool positiveRailHit =
             positiveRailSeconds <= segment + eventToleranceSeconds;
         const bool pitEvent =
@@ -11173,7 +11255,7 @@ void YouKnowEngine::advanceDcoPitAndRamp(
         const bool cpuWriteEvent =
             cpuWriteSeconds <= segment + eventToleranceSeconds;
         const bool serialWriteEvent = serialWriteSeconds <= segment + eventToleranceSeconds;
-        if (!resetComplete && !positiveRailHit && !pitEvent
+        if (!resetComplete && !subStorageComplete && !positiveRailHit && !pitEvent
             && !cpuWriteEvent && !serialWriteEvent)
             break;
 
@@ -11183,6 +11265,14 @@ void YouKnowEngine::advanceDcoPitAndRamp(
         if (resetComplete)
             beginDcoCharge(
                 voice, eventSamplesAgo(elapsed), addCorrections);
+
+        if (subStorageComplete)
+        {
+            dco.subStorageSecondsRemaining = 0.0;
+            if (addCorrections && dco.sub.primed)
+                addStep(dco.sub, dco.subState + 1.0f,
+                        static_cast<float>(eventSamplesAgo(elapsed)));
+        }
 
         // If a scaled cycle reaches the supply bound exactly at the next
         // positive OUT edge, preserve the incoming charge slope so discharge
@@ -11531,7 +11621,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Half-wave: AC +/- subGain as before, plus a +subGain mean (see the
     // summing-node note below). The comparison switch keeps the zero-mean
     // square.
-    const float subTrack = dco.sub.advance(dco.subState);
+    const float subTrack = dco.sub.advance(dco.subOutputState());
     const float subOut = parameters.enableSubHalfWaveNodeCoupling
         ? (subTrack + 1.0f) * subGain
         : subTrack * subGain;

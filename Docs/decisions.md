@@ -1768,6 +1768,23 @@ unattributed, probably Juno-6 sibling data, and not a second reading of this
 unit. The verdict stands as chosen by ear; C was simply a sibling-class
 candidate rather than an estimator of #439522.
 
+## 2026-10-15 — Firmware, controller and timing corrections
+
+The working A/B set compared A, the unchanged shipping baseline, with B,
+the proposed fixes: HOLD edge handling (including the approved original-ROM
+coalescing correction), transposed local-note release, direct-engine
+velocity-zero release, controller preservation across timing changes and
+All Sound Off, continuous chorus clock-event timing, and sub-divider storage
+completion across sample boundaries. Individual builds isolated each fix;
+the ensemble pair compared the combined candidate.
+
+**Verdict:** the owner explicitly approved all fixes and candidate changes
+and requested their implementation and merge to main. This licenses these
+corrections and their product selection. No separate by-ear ranking or claim
+of seven audible timbral improvements was supplied; the chorus and sub
+corrections remain small numerical changes. The working recordings stay
+frozen as the original comparison evidence.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

@@ -1684,7 +1684,7 @@ void YouKnowAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         if (message.isAllSoundOff())
         {
             engine.clearLocalKeyboardNotes();
-            engine.allNotesOff();
+            engine.allSoundOff();
             uiHeldNotes.fill (0);
         }
         else if (message.isAllNotesOff()

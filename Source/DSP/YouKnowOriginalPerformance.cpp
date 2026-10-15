@@ -245,6 +245,10 @@ void OriginalPerformance::serviceModeContact(bool scanned) noexcept {
 }
 bool OriginalPerformance::advance(YouKnowEngine& engine,std::uint64_t target) noexcept {
     auto configuration=configuration_;
+    // User-requested correction: the latest received HOLD request wins when
+    // opposite edges arrive before foreground service. Literal scheduler
+    // comparisons keep the recovered ROM's independent pending-bit behavior.
+    configuration.correctCoalescedHoldOrder=true;
     if(modeContact_ || switchContact_ || switchRelease_ || switchTargetPending_) {
         configuration.inputServiceContext=this;
         configuration.inputService=[](void* context,const FirmwareAssignerScheduler::State&,

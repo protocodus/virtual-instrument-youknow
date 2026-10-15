@@ -687,13 +687,6 @@ void hashScalar(std::uint64_t& hash, Value value) noexcept
     }
 }
 
-double productionTriangle(double phase) noexcept
-{
-    phase -= std::floor(phase);
-    const double folded = phase < 0.5 ? phase : 1.0 - phase;
-    return folded * 4.0 - 1.0;
-}
-
 float noiseFromStateFloat(std::uint32_t state) noexcept
 {
     return static_cast<float>(state & 0xffffffu)
@@ -706,8 +699,8 @@ struct DiscreteShadow
     std::uint64_t edgesB {};
     int indexA {};
     int indexB {};
-    double phaseA {};
-    double phaseB {};
+    long double phaseA {};
+    long double phaseB {};
     std::uint32_t rngA { 0x9e3779b9u };
     std::uint32_t rngB { 0x85ebca6bu };
     double lfoPhase {};
@@ -748,45 +741,55 @@ ShadowFrame advanceShadow(DiscreteShadow& shadow, ChorusMode mode,
     const float muteGlide = 1.0f - std::exp(
         -inverse / static_cast<float>(wetTau));
     shadow.wetGain += (targetWet - shadow.wetGain) * muteGlide;
-    // This is the declared DISCRETE schedule ledger, not the physical oracle.
-    // It checks the corrected midpoint policy, while buildEvents() above
-    // independently solves exact log/expm1 clock integrals and event times.
+    // The schedule now follows the continuous physical clock. Integrate it
+    // independently with long-double four-point Gauss-Legendre quadrature;
+    // do not copy production's log-ratio / exponential-ratio polynomials.
+    // Splitting at the triangle cusp leaves a smooth rational clock on each
+    // interval. At these fixed programs/grids the relative delay change is
+    // <0.001 per sample, so the degree-eight quadrature remainder is far below
+    // double roundoff. buildEvents() separately uses log/expm1 event times.
     const double beginPhase = shadow.lfoPhase;
     const double phaseStep = static_cast<double>(shadow.rate)
                            / static_cast<double>(sampleRate);
     const double endPhase = beginPhase + phaseStep;
     shadow.lfoPhase = endPhase - std::floor(endPhase);
-    const double centre = static_cast<float>(centreDelay);
-    const double sweep = static_cast<float>(sweepDelay);
-    const auto atPhase = [&](double phase) {
-        const double modulation = productionTriangle(phase);
-        return std::array<double, 2> {{
-            std::clamp(referenceCellPairs / (centre + sweep * modulation),
-                       static_cast<double>(referenceMinimumClockHz),
-                       static_cast<double>(referenceMaximumClockHz)),
-            std::clamp(referenceCellPairs / (centre - sweep * modulation),
-                       static_cast<double>(referenceMinimumClockHz),
-                       static_cast<double>(referenceMaximumClockHz))
-        }};
+    const long double centre = static_cast<float>(centreDelay);
+    const long double sweep = static_cast<float>(sweepDelay);
+    const long double cusp = beginPhase < 0.5 ? 0.5L : 1.0L;
+    const long double split = std::min(1.0L,
+        (cusp - static_cast<long double>(beginPhase)) / phaseStep);
+    const auto integral = [&](long double sign) {
+        const auto value = [&](long double sample) {
+            auto phase = static_cast<long double>(beginPhase)
+                       + static_cast<long double>(phaseStep) * sample;
+            phase -= std::floor(phase);
+            const auto modulation = 4.0L * std::min(phase, 1.0L - phase) - 1.0L;
+            return static_cast<long double>(referenceCellPairs)
+                 / (sampleRate * (centre + sign * sweep * modulation));
+        };
+        const auto segment = [&](long double first, long double last) {
+            constexpr std::array<long double, 2> nodes {
+                .33998104358485626480L, .86113631159405257522L };
+            constexpr std::array<long double, 2> weights {
+                .65214515486254614263L, .34785484513745385737L };
+            const auto middle = (first + last) / 2.0L;
+            const auto half = (last - first) / 2.0L;
+            long double sum = 0.0L;
+            for (std::size_t i = 0; i < nodes.size(); ++i)
+                sum += weights[i] * (value(middle + half * nodes[i])
+                                   + value(middle - half * nodes[i]));
+            return half * sum;
+        };
+        return segment(0.0L, split)
+             + (split < 1.0L ? segment(split, 1.0L) : 0.0L);
     };
-    auto clock = atPhase(0.5 * (beginPhase + endPhase));
-    const double cusp = beginPhase < 0.5 ? 0.5 : 1.0;
-    if (endPhase > cusp)
-    {
-        const double weight = (cusp - beginPhase) / phaseStep;
-        const auto first = atPhase(0.5 * (beginPhase + cusp));
-        const auto second = atPhase(0.5 * (cusp + endPhase));
-        for (std::size_t line = 0; line < clock.size(); ++line)
-            clock[line] = weight * first[line] + (1.0 - weight) * second[line];
-    }
+    const long double countA = integral(1.0L), countB = integral(-1.0L);
     ShadowFrame result;
-    result.clockA = clock[0];
-    result.clockB = clock[1];
-    const double oldPhaseA = shadow.phaseA, oldPhaseB = shadow.phaseB;
-    shadow.phaseA += static_cast<double>(result.clockA)
-                   / static_cast<double>(sampleRate);
-    shadow.phaseB += static_cast<double>(result.clockB)
-                   / static_cast<double>(sampleRate);
+    result.clockA = static_cast<double>(countA * sampleRate);
+    result.clockB = static_cast<double>(countB * sampleRate);
+    const auto oldPhaseA = shadow.phaseA, oldPhaseB = shadow.phaseB;
+    shadow.phaseA += countA;
+    shadow.phaseB += countB;
     while (shadow.phaseA >= 1.0)
     {
         shadow.phaseA -= 1.0;
@@ -814,6 +817,8 @@ struct StructuralAudit
     bool clockExact { true };
     bool heldNoiseExact { true };
     bool finite { true };
+    double maximumPhaseError {};
+    double maximumPhaseBound {};
     std::uint64_t expectedHash { fnvOffset };
     std::uint64_t actualHash { fnvOffset };
     std::uint64_t frames {};
@@ -854,11 +859,25 @@ public:
         result_.clockExact = result_.clockExact
             && std::abs(actualClockA - expectedFrame.clockA) <= 1.0e-7
             && std::abs(actualClockB - expectedFrame.clockB) <= 1.0e-7;
+        // Independent real-valued integration cannot require bit identity
+        // with production's double polynomial. Budget 32 eps per phase add
+        // and integrated cycle: this covers the bounded eight-term evaluation,
+        // divisions and fractional wrapping; quadrature's remainder is smaller.
+        // Over the longest tested cycle this is <3e-9 clock cycles, hence
+        // <2.9e-8 samples even at 192 kHz / the minimum 20 kHz clock.
+        // Exact integer edges/RNG/control ledgers remain mandatory below.
+        const double phaseBound = 32.0 * std::numeric_limits<double>::epsilon()
+            * static_cast<double>(result_.frames + 1
+                + std::max(result_.expected.edgesA, result_.expected.edgesB));
+        const double phaseError = static_cast<double>(std::max(
+            std::abs(static_cast<long double>(state.phaseA) - result_.expected.phaseA),
+            std::abs(static_cast<long double>(state.phaseB) - result_.expected.phaseB)));
+        result_.maximumPhaseError = std::max(result_.maximumPhaseError, phaseError);
+        result_.maximumPhaseBound = std::max(result_.maximumPhaseBound, phaseBound);
         result_.exact = result_.exact
             && state.indexA == result_.expected.indexA
             && state.indexB == result_.expected.indexB
-            && state.phaseA == result_.expected.phaseA
-            && state.phaseB == result_.expected.phaseB
+            && phaseError <= phaseBound
             && state.rngA == result_.expected.rngA
             && state.rngB == result_.expected.rngB
             && state.lfoPhase == result_.expected.lfoPhase
@@ -928,8 +947,11 @@ private:
                           std::uint32_t rngB, float wetGain,
                           ChorusMode runningMode, bool primed) noexcept
     {
-        for (const auto value : { lfo, phaseA, phaseB })
-            hashScalar(hash, value);
+        // Fractional phase has its independent roundoff gate above. Hash
+        // only the exact structural ledger, not one formula's rounding bits.
+        (void) phaseA;
+        (void) phaseB;
+        hashScalar(hash, lfo);
         for (const auto value : { clockA, clockB })
             hashScalar(hash, value);
         for (const auto value : { shiftsA, shiftsB, indexA, indexB })
@@ -1940,6 +1962,9 @@ bool runShippingPortabilitySelfTest()
                   << " I=" << (one.passed() ? "PASS" : "FAIL")
                   << " II=" << (two.passed() ? "PASS" : "FAIL")
                   << " frames=" << one.frames << "/" << two.frames
+                  << " phase_error=" << std::scientific << std::setprecision(3)
+                  << std::max(one.maximumPhaseError,two.maximumPhaseError)
+                  << " cycles bound=" << std::max(one.maximumPhaseBound,two.maximumPhaseBound)
                   << '\n';
     }
     const bool sixUniqueGrids = auditedGridCount == auditedGrids.size();
