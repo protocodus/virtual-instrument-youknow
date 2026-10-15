@@ -130,7 +130,9 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowNoiseC41.h
     Source/DSP/YouKnowOtaShotNoise.h
     Source/DSP/YouKnowVoiceVcaAntialias.h
+    Source/DSP/YouKnowVoiceRateIsland.h
     Source/DSP/YouKnowOutputSummerAntialias.h
+    Source/DSP/YouKnowChorusRateIsland.h
     Source/DSP/YouKnowHighPassSwitch.h
     Source/DSP/YouKnowPwmControl.h
     Source/DSP/YouKnowOutputJack.h
@@ -334,6 +336,21 @@ if(YOUKNOW_BUILD_TOOLS)
     add_executable(YouKnowRenderFidelityQuickWins Tools/RenderFidelityQuickWins.cpp)
     target_link_libraries(YouKnowRenderFidelityQuickWins PRIVATE YouKnowDSP)
     target_compile_features(YouKnowRenderFidelityQuickWins PRIVATE cxx_std_20)
+
+    add_executable(YouKnowRenderAudibleRealism Tools/RenderAudibleRealism.cpp)
+    target_link_libraries(YouKnowRenderAudibleRealism PRIVATE YouKnowDSP)
+    target_compile_features(YouKnowRenderAudibleRealism PRIVATE cxx_std_20)
+    target_compile_definitions(YouKnowRenderAudibleRealism PRIVATE
+        YOUKNOW_AUDIBLE_REALISM_R2=1 YOUKNOW_AUDIBLE_REALISM_VARIANT=4)
+    # These explicit selectors keep isolated auditions isolated after product
+    # promotion; variant0 also verifies parity with an unchanged shipping build.
+    foreach(variant RANGE 0 3)
+        add_executable(YouKnowRenderAudibleRealism${variant} Tools/RenderAudibleRealism.cpp)
+        target_link_libraries(YouKnowRenderAudibleRealism${variant} PRIVATE YouKnowDSP)
+        target_compile_features(YouKnowRenderAudibleRealism${variant} PRIVATE cxx_std_20)
+        target_compile_definitions(YouKnowRenderAudibleRealism${variant} PRIVATE
+            YOUKNOW_AUDIBLE_REALISM_R2=1 YOUKNOW_AUDIBLE_REALISM_VARIANT=${variant})
+    endforeach()
 
     add_executable(YouKnowAuditSchedulerLedger Tools/AuditSchedulerLedger.cpp)
     target_link_libraries(YouKnowAuditSchedulerLedger PRIVATE YouKnowDSP)
@@ -738,6 +755,10 @@ if(BUILD_TESTING)
     add_executable(YouKnowCoupledMixerJunctionTests Tests/YouKnowCoupledMixerJunctionTests.cpp)
     target_link_libraries(YouKnowCoupledMixerJunctionTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.CoupledMixerJunction COMMAND YouKnowCoupledMixerJunctionTests)
+    add_executable(YouKnowCoupledMixerSwitchTests Tests/YouKnowCoupledMixerSwitchTests.cpp)
+    target_link_libraries(YouKnowCoupledMixerSwitchTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.CoupledMixerSwitch COMMAND YouKnowCoupledMixerSwitchTests)
+    set_tests_properties(YouKnow.CoupledMixerSwitch PROPERTIES TIMEOUT 180)
     set_tests_properties(YouKnow.ChorusNonlinear PROPERTIES TIMEOUT 180)
 
     add_executable(YouKnowChorusClockIntegrationTests Tests/YouKnowChorusClockIntegrationTests.cpp)
@@ -841,10 +862,18 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME YouKnow.VoiceVcaAntialias COMMAND YouKnowVoiceVcaAntialiasTests)
     set_tests_properties(YouKnow.VoiceVcaAntialias PROPERTIES TIMEOUT 180)
+    add_executable(YouKnowVoiceRateIslandTests Tests/YouKnowVoiceRateIslandTests.cpp)
+    target_link_libraries(YouKnowVoiceRateIslandTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VoiceRateIsland COMMAND YouKnowVoiceRateIslandTests)
+    set_tests_properties(YouKnow.VoiceRateIsland PROPERTIES TIMEOUT 180)
     add_executable(YouKnowOutputSummerAntialiasTests Tests/YouKnowOutputSummerAntialiasTests.cpp)
     target_link_libraries(YouKnowOutputSummerAntialiasTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputSummerAntialias COMMAND YouKnowOutputSummerAntialiasTests)
     set_tests_properties(YouKnow.OutputSummerAntialias PROPERTIES TIMEOUT 180)
+    add_executable(YouKnowChorusRateIslandTests Tests/YouKnowChorusRateIslandTests.cpp)
+    target_link_libraries(YouKnowChorusRateIslandTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusRateIsland COMMAND YouKnowChorusRateIslandTests)
+    set_tests_properties(YouKnow.ChorusRateIsland PROPERTIES TIMEOUT 180)
     set_tests_properties(YouKnow.OutputJack PROPERTIES TIMEOUT 60)
 
     add_executable(YouKnowHeadphoneOutputTests Tests/YouKnowHeadphoneOutputTests.cpp)

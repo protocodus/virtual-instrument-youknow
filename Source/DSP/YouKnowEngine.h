@@ -11,7 +11,9 @@
 #include "YouKnowNoiseCalibration.h"
 #include "YouKnowNoiseC41.h"
 #include "YouKnowVoiceVcaAntialias.h"
+#include "YouKnowVoiceRateIsland.h"
 #include "YouKnowOutputSummerAntialias.h"
+#include "YouKnowChorusRateIsland.h"
 #include "YouKnowHighPassSwitch.h"
 #include "YouKnowPwmControl.h"
 #include "YouKnowOutputJack.h"
@@ -310,6 +312,8 @@ struct EngineParameters
     // envelope multiply. Raw reference retains the direct sampled law.
     // FIR group delay is included in the reported/padded engine latency.
     bool enableVoiceVcaAntialias { false };
+    // Diagnostic numerical candidates; raw reference retains its existing path.
+    bool enableCoupledMixerBandlimitedSwitch { false };
     // On by default: the p.19 VCA GAIN adjustment turns the same bank-3
     // 4.8 Vp-p filter sine into 6 Vp-p at TP8. The pair's unity-normalized
     // shape is not that physical gain. Restore the fixed service gain after
@@ -459,6 +463,12 @@ struct EngineParameters
     // Local numerical reconstruction of IC6's existing clipping curve.
     // Product on/raw off; no revised swing, knee, SR or analogue pole.
     bool enableOutputSummerAntialias { false };
+    // Extend the same48-sample output-summer island to the existing chorus.
+    // Product numerical selector; raw stays bit-identical and high grids direct.
+    bool enableChorusRateIsland { false };
+    // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
+    // FIR boundary. Numerical accuracy selector; no new hardware parameter.
+    bool enableVoiceFilterRateIsland { false };
     // Product-selected IC6 loading: the delayed Tr11/12 gate opens its
     // 39k wet input, removing that branch's noise gain and Johnson source.
     // Raw references retain their always-connected amplifier convention.
@@ -652,6 +662,7 @@ struct EngineParameters
             && enableSubHalfWaveNodeCoupling == other.enableSubHalfWaveNodeCoupling
             && enableVoiceVcaSignalSaturation == other.enableVoiceVcaSignalSaturation
             && enableVoiceVcaAntialias == other.enableVoiceVcaAntialias
+            && enableCoupledMixerBandlimitedSwitch == other.enableCoupledMixerBandlimitedSwitch
             && enableVoiceVcaServiceGain == other.enableVoiceVcaServiceGain
             && enableVoiceVcaTemperature == other.enableVoiceVcaTemperature
             && enableCoupledVoiceVcaControl == other.enableCoupledVoiceVcaControl
@@ -681,6 +692,8 @@ struct EngineParameters
             && enableCommonVcaOutputPole == other.enableCommonVcaOutputPole
             && enableOutputSummerMagnitudePole == other.enableOutputSummerMagnitudePole
             && enableOutputSummerAntialias == other.enableOutputSummerAntialias
+            && enableChorusRateIsland == other.enableChorusRateIsland
+            && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableOutputSummerMuteLoading == other.enableOutputSummerMuteLoading
             && enableCardJohnsonFloor == other.enableCardJohnsonFloor
             && enableOtaShotNoise == other.enableOtaShotNoise
@@ -3344,6 +3357,29 @@ private:
         float mean {}, threshold {}, duty {};
     };
 
+    // Physical controls at the INPUT timestamp, delayed with the existing
+    // reconstruction FIR. Seven nodes retain converter-event curvature;
+    // piecewise linear subdivision never overshoots their physical bounds.
+    struct VoiceFilterIslandContext
+    {
+        std::array<float, 7> omega {}, feedback {};
+        std::array<float, 4> gScale {}, offset {};
+        float headroom { 1.0f }, gain {}, character {}, inputScale { 1.0f };
+        float couplingG {}, vcaHeadroom { 1.0f }, serviceGain { 1.0f };
+        float kelvin { 298.15f }, serviceLoopHeadroom { 1.0f };
+        float peakTailAmps {}, johnsonScale { 1.0f };
+        float resonanceOffset {}, compensation {};
+        enum Flag : std::uint32_t {
+            Early = 1u, FollowHeadroom = 2u, Johnson = 4u, Shot = 8u,
+            Mirror = 16u, TailMirror = 32u, EvidenceVca = 64u,
+            Saturate = 128u, CubicEarly = 256u
+        };
+        std::uint32_t flags {};
+        VcfTanhMode tanhMode { VcfTanhMode::Exact };
+        VcfSolverMode solverMode {};
+        [[nodiscard]] bool has(Flag flag) const noexcept { return (flags & flag) != 0; }
+    };
+
     struct Voice
     {
         bool active { false };
@@ -3497,6 +3533,16 @@ private:
         // the capacitor that stops the envelope from multiplying it.
         HighPass vcaInputCoupling {};
         VoiceVcaAntialias vcaAntialias {};
+        VoiceRateIsland<VoiceFilterIslandContext> filterIsland {};
+        // Present-time control endpoints are distinct from the delayed
+        // cascade's local-step history. No second physical cascade is kept.
+        float islandPreviousOmega {}, islandPreviousFeedback {}, islandPreviousHeadroom { 1.0f };
+        float islandCouplingBase { -1.0f }, islandCouplingLocal {};
+        float islandLastInput {};
+        double islandBaseRate {};
+        int islandFactor { 1 };
+        bool islandControlPrimed {}, islandWarmStart {};
+
         // The pin 9 node itself, held after each internal sample: the value
         // the voice VCA multiplies, in volts. It is what the service
         // procedure's VR30/R112 null is adjusted against, and the DC
@@ -3815,7 +3861,11 @@ private:
         bool needsFilter { false };
     };
     [[nodiscard]] float applyVoiceFilterShotNoise(
-        Voice& voice, const VoiceFilterFrame& frame, float filtered) noexcept;
+        Voice& voice, const VoiceFilterFrame& frame, float filtered,
+        const VoiceFilterIslandContext* context = nullptr) noexcept;
+    [[nodiscard]] bool voiceFilterRateIslandEnabled() const noexcept;
+    [[nodiscard]] float renderVoiceFilterIsland(Voice& voice, const VoiceFilterFrame& frame) noexcept;
+    void resetVoiceFilterIsland(Voice& voice, bool warm) noexcept;
     [[nodiscard]] VoiceFilterFrame prepareVoiceFilter(
         Voice& voice, const EngineParameters& parameters,
         float noiseSample) noexcept;
@@ -3860,8 +3910,11 @@ private:
     // padded out to the deepest one's group delay instead.
     void applyLatencyPad(float& left, float& right) noexcept;
     [[nodiscard]] OutputSummerAntialias::Context outputSummerHostNoiseContext() noexcept;
+    [[nodiscard]] ChorusRateIsland::Controls chorusRateControls(
+        const EngineParameters& parameters) const noexcept;
     void processOutputSummer(float& left, float& right,
-                             const EngineParameters& parameters) noexcept;
+                             const EngineParameters& parameters,
+                             const OutputSummerAntialias::Context* islandContext = nullptr) noexcept;
     // Group delay of the whole chain for an oversampling factor, in output
     // samples: the bandlimiting tracks' own delay, which runs at the internal
     // rate, plus each decimation stage's.
@@ -4097,6 +4150,7 @@ private:
     HighPass noiseSourceLowPass_;
     NoiseC41LowPass noiseSourceMagnitude_;
     VoiceVcaAntialias::Kernel voiceVcaAntialiasKernel_ {};
+    VoiceVcaAntialias::Kernel chorusRateIslandKernel_ {};
     float noiseSourceHighPassG_ { 0.01f };
     float noiseSourceLowPassG_ { 0.1f };
 
@@ -4125,6 +4179,7 @@ private:
     OutputJackLowPass outputSummerMagnitudeLeft_ {};
     OutputJackLowPass outputSummerMagnitudeRight_ {};
     OutputSummerAntialias outputSummerAntialias_ {};
+    ChorusRateIsland chorusRateIsland_ {};
     OutputSummerAntialias::Context outputSummerDelayedContext_ {};
     std::array<OutputSummerAntialias::Context, latencyPadRingSize> outputSummerHostContexts_ {};
     int outputSummerHostContextWrite_ {};
@@ -4312,6 +4367,7 @@ private:
     // it depends on the internal rate the pending quality switch may just have
     // changed.
     float voiceEnergyFollower_ { 0.0f };
+    float voiceIslandEnergyFollower_ {}, voiceIslandNoiseRateScale_ { 1.0f };
 
     // The envelope generator is the one shared digital processor: ATTACK,
     // DECAY and RELEASE resolve to the same increment/multiplier for every

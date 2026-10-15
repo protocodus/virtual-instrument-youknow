@@ -83,7 +83,9 @@ void activeProductPromotion()
             && Probe::chorusInsertion(*active) == ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate
             && applied.chorusTimingProfile == ChorusTimingProfile::HardwareEvidence
             && applied.enableEvidenceVcaCalibration && applied.useOriginalCardVcfCalibration
-            && applied.enableVoiceVcaJunctionTemperature && applied.useBa662AResonanceOffsetEstimate,
+            && applied.enableVoiceVcaJunctionTemperature && applied.useBa662AResonanceOffsetEstimate
+            && applied.enableCoupledMixerBandlimitedSwitch && applied.enableChorusRateIsland
+            && applied.enableVoiceFilterRateIsland,
             "active product setup lost an accepted-B circuit selection");
 }
 

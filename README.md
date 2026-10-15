@@ -119,6 +119,20 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ### Unreleased — 2026-10-15
 
+- The coupled WAVE/SUB mixer reconstructs Tr19's two physical switch states
+  with the signed bandlimited edge. Clipping that edge or treating its
+  intermediate values as fractional switch conductance added folded tones,
+  especially on high SUB notes. Circuit values and source balance are unchanged.
+- At ordinary host rates, the existing chorus and IC6 output clip share the
+  output stage's higher-rate reconstruction. The chorus support filters now
+  retain their high-grid response at default Quality without adding latency.
+  Unusually low-rate settings that cannot reuse a prepared grid retain the
+  previous chorus/output-stage path.
+- The filter, C59 coupling and voice amplifier share the existing amplifier
+  reconstruction stage. At default Quality this removes the premature
+  open-filter cutoff limit, with controls and noise evaluated at the same
+  reconstructed time. These three numerical corrections have seven fresh
+  auditions; no additional oscillator detune or Unison voicing was invented.
 - HOLD pedal reversals in Original timing retain the latest requested state,
   removing an adapter bug that could leave notes and Unison stacks held. The
   product also corrects the original firmware's OFF-before-ON service order
@@ -769,6 +783,14 @@ forty-year-old unit will null against the plug-in.
   voltage into the cascade coordinate. The 0.738 oscillator-drive and 0.857
   pulse-balance conventions stay explicit; the diode law and C56 each run
   once. A 0.6 V diode reference and ideal grounded collector remain priors.
+  The product now reconstructs the outputs of both physical Tr19 switch
+  states with the unclipped signed BLEP weight, then updates C56 once. It
+  no longer clips the bandlimited edge or interprets intermediate weights
+  as simultaneous fractional conduction. In a 1,760 Hz SUB fixture at
+  48 kHz, wanted-harmonic error against continuous binary switching and
+  C56 integration falls from −27.75 to −99.35 dBr. This is numerical
+  convergence with the declared diode/source model, not a hardware capture;
+  nonlinear interaction with a moving WAVE source retains a residual.
   Mixed-source captures and node readings are still needed (OQ-15). One
   shared Tr21 noise source — a reverse-biased emitter-base avalanche
   junction, so its amplitude statistics are Gaussian by the central limit
@@ -962,6 +984,16 @@ forty-year-old unit will null against the plug-in.
   filters lose at most 0.04 dB through 20 kHz at 44.1 kHz. Control and audio
   reconstruction share a timestamp; their 48-internal-sample delay is
   included in host compensation. Raw reference fixtures retain the direct law.
+  The product now runs the existing VCF and C59 inside this same FIR pair.
+  Its local 176.4/192 kHz grid can represent the control law's open-filter
+  poles instead of limiting them to 21.6 kHz at 48 kHz/1×. A small-signal
+  50 kHz four-pole fixture at 12 kHz changes from −4.066 to −0.967 dB;
+  the independent analogue prediction is −0.973 dB. The existing FIR delay
+  is reused, not added again. Seven-node cutoff/resonance trajectories,
+  envelope gain, component offsets, temperature and physical noise density
+  follow the reconstructed input. The separate, uncalibrated audio-energy
+  rail proxy also sees that input delay (24 parent samples); it remains a
+  voiced approximation rather than a physical power-supply simulation.
 - The product also adds the bare OTA pairs' collector shot-noise component,
   separately from resistor Johnson noise. [TI's transistor-noise model](https://www.ti.com/lit/pdf/snoa626)
   and [ADI's Schottky relation](https://www.analog.com/media/en/training-seminars/tutorials/MT-047.pdf)
@@ -1306,6 +1338,18 @@ forty-year-old unit will null against the plug-in.
   the remaining error approaches the existing endpoint/reference-solver floor.
   The first three intervals retain their lower-order current priming, and the
   current interpolation is still an approximation between solved endpoints.
+  At ordinary host rates the product now places the complete chorus and
+  IC6 static clip inside the existing output-stage FIR pair. This supplies
+  the 176.4/192 kHz support path at default Quality while retaining the same
+  48-parent-sample numerical delay. Mode, mute and noise controls follow the
+  reconstructed audio timestamp; firmware execution stays on its original
+  schedule. A bright 783.99 Hz multitone in Mode II gives −62.56 dBr error
+  against a 768 kHz reference, compared with −25.72 dBr before the change;
+  the 384/768 kHz reference-refinement difference is −72.22 dBr. No chorus
+  gain, delay, modulation or component value was fitted to that comparison.
+  Physical BBD clock folding remains part of the model. Below ordinary host
+  rates, configurations requiring additional support caches retain the
+  earlier path and its full IC6 antialias factor.
   At those same high numerical rates, each delayed BBD output step drives
   the physical output filter for its actual remaining fraction of the interval,
   following [Holters & Parker, §3.2](https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=3).
@@ -1480,6 +1524,20 @@ float audio and exact event manifests, and produce whole-file stereo-RMS-matched
 baseline. Per-mechanism builds isolate individual fixes; a grouped final-engine
 comparison is labelled separately. Listening files stay outside the repository,
 and no listening preference or original-unit calibration is inferred from them.
+
+The second 15 October pass targets audible numerical errors after those
+correctness fixes. The coupled SUB switch was clipping its reconstructed
+edge, the default-rate chorus support differed appreciably from its
+high-rate circuit solution, and the VCF's low-grid pole limit rolled off
+open-filter sounds prematurely. These are three supported corrections to
+existing circuits, demonstrated with seven auditions. The Unison audit found the shared master clock, independent
+free-running phases, six-card assignment and firmware glide already present;
+adding independent oscillator detune would contradict that evidence.
+`Tools/RenderAudibleRealism.cpp` supplies fresh musical scores, with isolated
+mechanism builds and a separate combined Unison comparison. The listening
+package keeps small external-audio pages plus portable two-clip pages, raw
+and RMS-matched audio, exact events and build hashes. Earlier listening
+evidence remains frozen.
 
 The listening HTML embeds the original WAV bytes and evidence documents so
 sandbox previews can play them without access to sibling files. Native controls
@@ -2947,12 +3005,23 @@ measurements, not a bound for other CPUs or host meters. The audit tool's
 `--cpu-benchmark` retains Direct timing.
 
 The QUALITY selector offers a 1×/2×/4× internal-rate ladder applied as a
-ceiling against what the host rate needs; engine cost tracks the applied
-factor nearly linearly. An earlier six-voice resonant audit measured
+ceiling against what the host rate needs. The selected local filter and chorus
+stages reuse a higher-rate grid across ordinary Quality settings, so current
+whole-engine cost need not scale linearly with the global factor. An earlier six-voice resonant audit measured
 0.85× realtime at 4× on one Apple M1 Max core (0.23× at 1×); that predates
 the selected coupled mixer and is not a current product cost bound. New
-instances ship at 1× for lower CPU use. Choose 2× or 4× to reduce aliasing;
-the BBD and VCF domains pass their absolute numerical gates at 4×.
+instances ship at 1×. Choose 2× or 4× to refine oscillator reconstruction and
+the other shared circuits; the local stages already refine their own grids.
+
+The second 15 October refinement has a material cost. On one Linux cloud
+CPU, two alternating baseline/candidate runs of three six-voice 48 kHz/1×
+fixtures measured 2.25–2.44 times the former processing CPU. Each measurement
+rendered two seconds after one excluded second, using Original timing and the
+shipping Poly/Cubic/Normal solver settings; candidate medians were
+4.62–4.76 CPU seconds, so that host did not render these fixtures in real time.
+This is a host-specific cost measurement, not a DAW deadline qualification.
+Fixed engine storage grew from 475,264 to 564,176 bytes; delayed control
+histories are preallocated and processing remains allocation-free.
 
 The VCF SOLVER selector descends a solver ladder (Max/High/Normal) for the
 nonlinear filter. Normal — the cheapest rung, roughly half the filter's
@@ -3173,13 +3242,14 @@ Short musical performances of fifteen well-known factory presets, each composed 
 
 Deliberate, each with its reason recorded:
 
-- **Open-filter response at low Quality.** The numerical VCF pole cap is
-  0.45 times the internal sample rate: 21.6 kHz at 48 kHz/1×, below the upper
-  cutoff requested by the analog control law. The existing 4× setting avoids
-  that cap at 48 kHz for the present circuit range. Removing the cap requires
-  local oversampling and decimation; solver substeps alone would alias
-  ultrasonic self-oscillation. The October audit leaves the established
-  quality/CPU policy intact.
+- **Numerical accuracy is still rate-dependent.** The selected local VCF and
+  chorus stages remove the former ordinary-rate open-filter cap and coarse
+  chorus-support errors without changing the latency report. Global Quality
+  still affects oscillator reconstruction and other shared circuits. At
+  unusually low host rates, the bounded available grids retain limitations;
+  chorus settings that cannot reuse an existing support cache keep the older
+  path and its full output-clip antialias factor. Raw diagnostic fixtures
+  retain their original numerical limits.
 - **Selected estimates remain estimates.** The accepted five-mechanism
   product profile uses a recording-derived effective Mode-I chorus fit,
   schematic-ratio Mode-II timing, the named Tr20 component prior, nominal
@@ -3368,11 +3438,12 @@ after `EI; RETI` at `0008–0009`, rather than at the printed `0008` label.
 no ROM image is included in the instrument.
 
 The precise stop-bit-to-RXB transfer subcycle, overrun byte retention and
-installed clock/pin propagation remain unresolved. Normal A-5 scheduling now
-executes in the separate `FirmwareAssignerScheduler` comparison, including
-full ADC and MIDI service. Explicit byte-ready conventions connect its wire
-output to `FirmwareSerialReplay` and actual audio without claiming those
-physical unknowns. The product retains its logical-command adapter.
+installed clock/pin propagation remain unresolved. Original timing now runs
+A-5 scheduling, including ADC and MIDI service, through
+`FirmwareAssignerAudioBridge` in the product. Explicit byte-ready conventions
+connect its decoded wire output to B-2 serial replay and actual audio without
+claiming those physical unknowns. The separate scheduler comparisons retain
+the recovered ROM behavior; the product applies the approved HOLD-order fix.
 
 The nominal B-2 conversion on either side of those timing anchors is now
 closed as well. The recovered firmware builds one unsigned 8.8 pitch word,

@@ -6324,6 +6324,9 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     processingCoefficients_.pwmFullInterval = pwmHoldCoefficients(
         processingCoefficients_.internalIntervalSeconds);
     voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
+    const double voiceIslandRate = oversampledRate_ * VoiceVcaAntialias::factorForRate(oversampledRate_);
+    voiceIslandEnergyFollower_ = static_cast<float>(1.0 - std::exp(-1.0 / (voiceIslandRate * voiceEnergyFollowerSeconds)));
+    voiceIslandNoiseRateScale_ = static_cast<float>(std::sqrt(voiceIslandRate / noiseReferenceRateHz));
     processingCoefficients_.outputGlide =
         1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
     processingCoefficients_.scanPhasePerInternalSample =
@@ -6416,6 +6419,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
     processingCoefficients_.mainNoiseMagnitudePole =
         NoiseC41LowPass::coefficients(oversampledRate_);
     voiceVcaAntialiasKernel_ = VoiceVcaAntialias::prepare(oversampledRate_);
+    chorusRateIslandKernel_ = ChorusRateIsland::prepare(oversampledRate_,oversampling_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     (void) outputNetwork_.prepare(sampleRate_, { activeParameters_.outputSelector,
@@ -6463,7 +6467,9 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         voice.cutoffChainFeedback = -1.0e30f;
         voice.filterShotCache = {};
     }
-    chorus_.prepare(oversampledRate_, preserveFreeRunningState);
+    const int chorusFactor = activeParameters_.enableChorusRateIsland
+        ? chorusRateIslandKernel_.factor : 1;
+    chorus_.prepare(oversampledRate_ * chorusFactor, preserveFreeRunningState);
 }
 
 int YouKnowEngine::effectiveOversampleFactor(int requestedFactor) const noexcept
@@ -6581,6 +6587,10 @@ void YouKnowEngine::clearRateDependentOutputPath(
     firstDecimator_.reset();
     secondDecimator_.reset();
     outputSummerAntialias_.reset();
+    if (preserveFreeRunningState)
+        chorusRateIsland_.resetWarm(chorusRateControls(circuitParameters()));
+    else
+        chorusRateIsland_.reset();
     outputSummerDelayedContext_ = {};
     outputSummerHostContexts_.fill({});
     outputSummerHostContextWrite_ = 0;
@@ -6652,7 +6662,10 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
     {
         // Sample-grid FIR history has no physical capacitor charge. The
         // existing quality safety fade has reached zero before rebuilding.
-        voice.vcaAntialias.reset();
+        const bool hadIsland = voice.islandControlPrimed;
+        const float previousLocalStep = static_cast<float>(voice.filter.previousOmegaStep);
+        if (hadIsland || voiceFilterRateIslandEnabled()) resetVoiceFilterIsland(voice, true);
+        else voice.vcaAntialias.reset();
         const float previousFilterOmegaStep = voice.filterOmegaStep;
         const float previousEffectiveFilterOmegaStep =
             boundedThermalFilterOmegaStep(
@@ -6681,10 +6694,19 @@ void YouKnowEngine::rebuildRateDependentVoiceState() noexcept
                 boundedThermalFilterOmegaStep(
                     voice.filterOmegaStep, activeParameters_, voice.cardIndex,
                     thermalWarmupFraction_);
-            voice.filter.retime(previousEffectiveFilterOmegaStep,
-                                nextEffectiveFilterOmegaStep);
+            if (hadIsland || voiceFilterRateIslandEnabled())
+            {
+                const int factor = voiceFilterRateIslandEnabled() ? voiceVcaAntialiasKernel_.factor : 1;
+                const float nextLocalStep = static_cast<float>(OtaCascade::clampOmegaStep(
+                    voice.filterOmegaStep * cards_[static_cast<std::size_t>(voice.cardIndex)].thermalFilterOmegaScale / factor));
+                voice.filter.retime(previousLocalStep, nextLocalStep);
+            }
+            else voice.filter.retime(previousEffectiveFilterOmegaStep,
+                                     nextEffectiveFilterOmegaStep);
         }
     }
+    if (!voiceFilterRateIslandEnabled() && activeParameters_.enableVoiceFilterRateIsland)
+        refreshVoiceCardStageTrims();
 }
 
 double YouKnowEngine::totalLatencySamples(int factor) noexcept
@@ -6714,8 +6736,10 @@ double YouKnowEngine::runningLatencySamples(int factor) const noexcept
     const double extra = activeParameters_.enableVoiceVcaAntialias
         && VoiceVcaAntialias::factorForRate(sampleRate_ * factor) > 1
         ? static_cast<double>(VoiceVcaAntialias::delaySamples) / factor : 0.0;
-    const double summer = activeParameters_.enableOutputSummerAntialias
-        && VoiceVcaAntialias::factorForRate(sampleRate_ * factor) > 1
+    const double summer = ((activeParameters_.enableOutputSummerAntialias
+        && VoiceVcaAntialias::factorForRate(sampleRate_ * factor) > 1)
+        || (activeParameters_.enableChorusRateIsland
+            && ChorusRateIsland::factorForRate(sampleRate_ * factor,factor) > 1))
         ? static_cast<double>(VoiceVcaAntialias::delaySamples) / factor : 0.0;
     return totalLatencySamples(factor) + extra + summer;
 }
@@ -6723,7 +6747,8 @@ double YouKnowEngine::runningLatencySamples(int factor) const noexcept
 double YouKnowEngine::maximumLatencySamples() const noexcept
 {
     if (!activeParameters_.enableVoiceVcaAntialias
-        && !activeParameters_.enableOutputSummerAntialias)
+        && !activeParameters_.enableOutputSummerAntialias
+        && !activeParameters_.enableChorusRateIsland)
         return totalLatencySamples(maximumOversampleFactor);
     // One report for all quality rungs. At ordinary rates local FIR delay
     // is longest on1x; already-high grids need no local oversampling.
@@ -6800,6 +6825,9 @@ void YouKnowEngine::reset()
         voice = Voice {};
         voice.dco.reset();
         voice.filter.reset();
+        voice.filterIsland.reset();
+        voice.islandControlPrimed = false;
+        voice.islandWarmStart = false;
         voice.moduleCoupling.reset();
         voice.coupledMixer.reset();
         voice.vcaInputCoupling.reset();
@@ -7418,10 +7446,15 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
     if (next.enableCommonVcaOutputPole != activeParameters_.enableCommonVcaOutputPole)
         commonVcaOutputPole_.reset();
     const bool rangeChanged = next.range != activeParameters_.range;
+    const bool oldVoiceIsland = voiceFilterRateIslandEnabled();
+    const bool voiceIslandChanged = next.enableVoiceFilterRateIsland
+        != activeParameters_.enableVoiceFilterRateIsland;
     const bool vcaAntialiasChanged = next.enableVoiceVcaAntialias
         != activeParameters_.enableVoiceVcaAntialias;
     const bool summerAntialiasChanged = next.enableOutputSummerAntialias
         != activeParameters_.enableOutputSummerAntialias;
+    const bool chorusRateIslandChanged = next.enableChorusRateIsland
+        != activeParameters_.enableChorusRateIsland;
     const bool stageTrimsChanged =
         next.calibration != activeParameters_.calibration
         || next.enableVcfStageOffsets
@@ -7536,24 +7569,52 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
     activeParameters_ = targetParameters_;
     if (activeParameters_.lfoSyncDelaySeconds >= 0.0f)
         sampleSyncedLfoDelay();
-    if (vcaAntialiasChanged)
+    if (vcaAntialiasChanged || voiceIslandChanged)
     {
-        // This reference/product selector is fixed by the product profile;
-        // a deliberate diagnostic change installs its new latency/history.
-        for (auto& voice : voices_) voice.vcaAntialias.reset();
-        refreshLatencyPad();
+        // Diagnostic selectors retain physical charges but replace coherent
+        // numerical support. Direct high-grid flag changes need no rebuild.
+        const bool newVoiceIsland = voiceFilterRateIslandEnabled();
+        for (auto& voice : voices_)
+        {
+            if (oldVoiceIsland || newVoiceIsland)
+            {
+                const float previous = static_cast<float>(voice.filter.previousOmegaStep);
+                const float scale = static_cast<float>(oldVoiceIsland ? voiceVcaAntialiasKernel_.factor : 1)
+                    / static_cast<float>(newVoiceIsland ? voiceVcaAntialiasKernel_.factor : 1);
+                voice.filter.retime(previous, previous * scale);
+                resetVoiceFilterIsland(voice, !startupSnapshot);
+            }
+            else if (vcaAntialiasChanged) voice.vcaAntialias.reset();
+        }
+        if (oldVoiceIsland && !newVoiceIsland)
+            refreshVoiceCardStageTrims();
+        if (vcaAntialiasChanged) refreshLatencyPad();
     }
-    if (summerAntialiasChanged)
+    if ((summerAntialiasChanged && !(next.enableChorusRateIsland
+                                    && chorusRateIslandKernel_.factor > 1))
+        || (chorusRateIslandChanged && chorusRateIslandKernel_.factor > 1))
     {
         // This numerical product/reference selector is not a host parameter.
         // Match the VCA selector: install coherent empty FIR/context/pad state
         // on an explicit diagnostic latency change, without changing circuits.
         outputSummerAntialias_.reset();
+        chorusRateIsland_.reset();
+        if (chorusRateIslandChanged && prepared_)
+        {
+            const int factor = next.enableChorusRateIsland
+                ? chorusRateIslandKernel_.factor : 1;
+            chorus_.prepare(oversampledRate_ * factor, !startupSnapshot);
+            if (!startupSnapshot)
+                chorusRateIsland_.resetWarm(chorusRateControls(next));
+        }
         outputSummerDelayedContext_ = {};
         outputSummerHostContexts_.fill({});
         outputSummerHostContextWrite_ = 0;
         refreshLatencyPad();
     }
+    // Even a direct current grid can change the maximum latency promised
+    // across lower quality rungs when this diagnostic selector changes.
+    if (chorusRateIslandChanged) refreshLatencyPad();
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay && prepared_)
     {
         const auto range = firmwareSerialCircuitParameters_.range;
@@ -8080,7 +8141,10 @@ void YouKnowEngine::initialiseVoice(Voice& voice, int slot, int midiNote,
 
 void YouKnowEngine::silenceVoice(Voice& voice) noexcept
 {
-    voice.vcaAntialias.reset();
+    if (!voiceFilterRateIslandEnabled())
+        voice.vcaAntialias.reset();
+    else if (voice.cardIndex >= hardwareVoices)
+        resetVoiceFilterIsland(voice, false);
     voice.active = false;
     voice.keyDown = false;
     voice.sustained = false;
@@ -8105,6 +8169,9 @@ void YouKnowEngine::silenceVoice(Voice& voice) noexcept
         voice.dcoResetPending = true;
         voice.pulseThresholdPrimed = false;
         voice.filter.reset();
+        voice.filterIsland.reset();
+        voice.islandControlPrimed = false;
+        voice.islandWarmStart = false;
         voice.moduleCoupling.reset();
         voice.coupledMixer.reset();
         voice.vcaInputCoupling.reset();
@@ -10359,7 +10426,8 @@ void YouKnowEngine::updateVoiceAudio(Voice& voice,
         const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, calibrationFeedback,
             (parameters.useServiced439522VcfCalibration && !parameters.useOriginalCardVcfCalibration) ? voice.cardIndex : -1);
         const float limited =
-            std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
+            std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f
+                * (voiceFilterRateIslandEnabled() ? voiceVcaAntialiasKernel_.factor : 1));
         voice.filterOmegaStep = twoPi * limited * inverseOversampledRate_;
         voice.cutoffChainCounts = analogCounts;
         voice.cutoffChainFeedback = calibrationFeedback;
@@ -11628,7 +11696,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // frozen fingerprints and work counters are untouched -- and switching
     // back to Exact is the way to switch this behaviour off.
     if (!voice.active && parameters.vcfTanhMode != VcfTanhMode::Exact
-        && !coupledMixerEnabled_)
+        && !coupledMixerEnabled_ && !voiceFilterRateIslandEnabled())
     {
         freewheelVoiceCard(voice);
         return {};
@@ -11640,9 +11708,10 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     auto& dco = voice.dco;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const auto boundedOmegaStep = [&](float baseOmegaStep) {
+        const int factor = voiceFilterRateIslandEnabled() ? voiceVcaAntialiasKernel_.factor : 1;
         return static_cast<float>(OtaCascade::clampOmegaStep(
             static_cast<double>(baseOmegaStep)
-                * card.thermalFilterOmegaScale));
+                * card.thermalFilterOmegaScale / factor) * factor);
     };
 
     // Returning to full reconstruction (including a switch to Exact while
@@ -11749,20 +11818,24 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     static_assert(noiseReferenceRateHz == 192000.0,
                   "filterNoiseVoltsDerived hard-codes the 192 kHz reference "
                   "rate because it is computed at namespace scope");
-    voice.noiseState = xorshift32(voice.noiseState);
-    const float microscopicNoise = parameters.enableCardJohnsonFloor
-        ? 0.0f : bipolarFromState(voice.noiseState) * filterNoiseVoltsVoiced;
-    std::array<double, 4> stageNoise {};
-    if (parameters.enableCardJohnsonFloor)
-        for (std::size_t stage = 0; stage < stageNoise.size(); ++stage)
-        {
-            if (stage != 0)
-                voice.noiseState = xorshift32(voice.noiseState);
-            stageNoise[stage] = bipolarFromState(voice.noiseState)
-                * filterNoiseVoltsDerived * noiseRateScale_
-                * card.johnsonTemperatureScale;
-        }
-    voice.filter.setStageNoise(stageNoise);
+    float microscopicNoise = 0.0f;
+    if (!voiceFilterRateIslandEnabled())
+    {
+        voice.noiseState = xorshift32(voice.noiseState);
+        microscopicNoise = parameters.enableCardJohnsonFloor
+            ? 0.0f : bipolarFromState(voice.noiseState) * filterNoiseVoltsVoiced;
+        std::array<double, 4> stageNoise {};
+        if (parameters.enableCardJohnsonFloor)
+            for (std::size_t stage = 0; stage < stageNoise.size(); ++stage)
+            {
+                if (stage != 0)
+                    voice.noiseState = xorshift32(voice.noiseState);
+                stageNoise[stage] = bipolarFromState(voice.noiseState)
+                    * filterNoiseVoltsDerived * noiseRateScale_
+                    * card.johnsonTemperatureScale;
+            }
+        voice.filter.setStageNoise(stageNoise);
+    }
 
     // --- Filter, amplifier -------------------------------------------------
     // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the
@@ -11793,10 +11866,15 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         // fixtures retain1. Divide the compatibility attenuation only once.
         // Inactive cards run the same solve, preserving real capacitor charge;
         // the old freewheel mean is invalid for this nonlinear network.
-        const auto node = voice.coupledMixer.process(c, coupledMixerCoefficients_,
-            c.sourceBiasVolts + c.sourceScale * mixed,
-            CoupledSubMixer::railFullScaleVolts * subCv_,
-            0.5 * (1.0 + subTrack));
+        const auto node = parameters.enableCoupledMixerBandlimitedSwitch
+            ? voice.coupledMixer.processBandlimitedSwitch(c, coupledMixerCoefficients_,
+                c.sourceBiasVolts + c.sourceScale * mixed,
+                CoupledSubMixer::railFullScaleVolts * subCv_,
+                0.5 * (1.0 + subTrack))
+            : voice.coupledMixer.process(c, coupledMixerCoefficients_,
+                c.sourceBiasVolts + c.sourceScale * mixed,
+                CoupledSubMixer::railFullScaleVolts * subCv_,
+                0.5 * (1.0 + subTrack));
         coupled = static_cast<float>(node.filterVolts * c.pinToCoreGain / filterInputAttenuation);
     }
     else
@@ -11857,7 +11935,8 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
                 mappedAnalogCounts, calibrationFeedback,
                 (parameters.useServiced439522VcfCalibration && !parameters.useOriginalCardVcfCalibration) ? voice.cardIndex : -1);
             const float limited = std::min(
-                cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
+                cutoffHz, static_cast<float>(oversampledRate_) * 0.45f
+                    * (voiceFilterRateIslandEnabled() ? voiceVcaAntialiasKernel_.factor : 1));
             const float baseOmega = twoPi * limited
                                   * inverseOversampledRate_;
             return VcfControl {
@@ -11872,14 +11951,16 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         const VcfControl mappedEnd {
             effectiveFilterOmegaStep, voice.feedback
         };
-        const double previousOmega = voice.filter.parameterHistoryPrimed
-            ? voice.filter.previousOmegaStep
+        const bool island = voiceFilterRateIslandEnabled();
+        const bool primed = island ? voice.islandControlPrimed : voice.filter.parameterHistoryPrimed;
+        const double previousOmega = primed
+            ? (island ? voice.islandPreviousOmega : voice.filter.previousOmegaStep)
             : static_cast<double>(effectiveFilterOmegaStep);
-        const double previousFeedback = voice.filter.parameterHistoryPrimed
-            ? voice.filter.previousFeedback
+        const double previousFeedback = primed
+            ? (island ? voice.islandPreviousFeedback : voice.filter.previousFeedback)
             : static_cast<double>(voice.feedback);
-        const double previousHeadroom = voice.filter.parameterHistoryPrimed
-            ? voice.filter.previousHeadroom
+        const double previousHeadroom = primed
+            ? (island ? voice.islandPreviousHeadroom : voice.filter.previousHeadroom)
             : static_cast<double>(dynamicHeadroom);
         for (std::size_t point = 1;
              point + 1u < OtaCascade::controlNodePositions.size(); ++point)
@@ -11956,15 +12037,23 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
 }
 
 float YouKnowEngine::applyVoiceFilterShotNoise(
-    Voice& voice, const VoiceFilterFrame& frame, float filtered) noexcept
+    Voice& voice, const VoiceFilterFrame& frame, float filtered,
+    const VoiceFilterIslandContext* context) noexcept
 {
-    if (!activeParameters_.enableOtaShotNoise) return filtered;
+    const bool local = context != nullptr;
+    const auto has = [&](VoiceFilterIslandContext::Flag f, bool original) {
+        return local ? context->has(f) : original;
+    };
+    if (!has(VoiceFilterIslandContext::Shot, activeParameters_.enableOtaShotNoise)) return filtered;
+    const double rate = local ? oversampledRate_ * voiceVcaAntialiasKernel_.factor : oversampledRate_;
+    const double inverseRate = local ? 1.0 / rate : inverseOversampledRate_;
+    const bool cubicEarly = local ? context->has(VoiceFilterIslandContext::CubicEarly) : useCubicEarly_;
     OtaShotNoise::Vector normal {};
     for (double& value : normal) value = voice.filterShotRandom.next();
     // Unit Character is the established floor-amplitude policy: zero is
     // the deterministic calibrated reference; one is the physical density.
     // Apply its square to PSD, retaining independent chronology at zero.
-    const double character=activeParameters_.calibration;
+    const double character=local ? context->character : activeParameters_.calibration;
     if(character==0) return filtered;
     const double h = frame.shotNoiseHeadroom;
     if (!(h>0 && frame.shotNoiseOmega>0)) return filtered;
@@ -11978,7 +12067,7 @@ float YouKnowEngine::applyVoiceFilterShotNoise(
     // Reuse the already qualified pair kernel on the shipped numerical
     // path (absolute tanh error <=4.31e-7); Exact retains libm. Noise density
     // introduces no differently voiced saturation or fitted amplitude.
-    const auto pair=[fast=activeParameters_.vcfTanhMode!=VcfTanhMode::Exact](double x) {
+    const auto pair=[fast=(local ? context->tanhMode : activeParameters_.vcfTanhMode)!=VcfTanhMode::Exact](double x) {
         return fast?polyZonedTanhImpl(x):std::tanh(x);
     };
     const double resY=pair((midpoint[3]
@@ -11994,18 +12083,18 @@ float YouKnowEngine::applyVoiceFilterShotNoise(
     // The voiced Early multiplier affects incremental transfer below, but
     // does not establish a different control-tail current or excess-noise
     // amplitude; only the declared bare-pair collector term is generated.
-    const double tail=frame.shotNoiseOmega*oversampledRate_*240.0e-12*h;
+    const double tail=frame.shotNoiseOmega*rate*240.0e-12*h;
     for (std::size_t i=0;i<4;++i)
     {
         const double y=pair((previous-midpoint[i]+filter.offsetVoltage[i])/h);
         const double sensitivity=std::max(0.0,1-y*y);
         const double omegaDt=frame.shotNoiseOmega*filter.gScale[i];
         const double c=240.0e-12/filter.gScale[i];
-        const double earlyAmount=activeParameters_.enableVcfEarlyEffect
-            ? otaEarlyEffectCoefficient*activeParameters_.calibration : 0;
+        const double earlyAmount=has(VoiceFilterIslandContext::Early, activeParameters_.enableVcfEarlyEffect)
+            ? otaEarlyEffectCoefficient*character : 0;
         const double earlyArgument=midpoint[i]/h;
-        const double earlyY=useCubicEarly_?OtaCascade::cubicEarlyTanh(earlyArgument):pair(earlyArgument);
-        const double earlySlope=useCubicEarly_
+        const double earlyY=cubicEarly?OtaCascade::cubicEarlyTanh(earlyArgument):pair(earlyArgument);
+        const double earlySlope=cubicEarly
             ? std::max(0.0,1-(4.0/9.0)*earlyArgument*earlyArgument) : 1-earlyY*earlyY;
         const double early=1+earlyAmount*earlyY;
         const double slope=omegaDt*early*sensitivity;
@@ -12015,7 +12104,7 @@ float YouKnowEngine::applyVoiceFilterShotNoise(
         // Single-sided current PSD divided by2*C^2 is the SDE diffusion;
         // covariance() expects its integral over this physical interval.
         diffusion[i]=OtaShotNoise::currentPsd(tail,y)
-            *inverseOversampledRate_/(2*c*c);
+            *inverseRate/(2*c*c);
         previous=midpoint[i];
     }
     // Resonance OTA output current reaches the first stage through the 68k
@@ -12025,23 +12114,23 @@ float YouKnowEngine::applyVoiceFilterShotNoise(
     // allowing live warm-up to re-trim the grounded-base control stage.
     const double serviceKelvin=voiceCardCelsius(
         activeParameters_,voice.cardIndex,1.0f)+273.15;
-    const double serviceLoopH=filter.resonanceHeadroomFollowsStage
+    const double serviceLoopH=local ? context->serviceLoopHeadroom : filter.resonanceHeadroomFollowsStage
         ? resonanceHeadroomFor(otaHeadroomVolts*serviceKelvin/298.15) : loopH;
     const double resTail=frame.shotNoiseFeedback*serviceLoopH/68000.0;
-    const double noiseGainPerAmp=firstSlope*oversampledRate_*68000.0;
+    const double noiseGainPerAmp=firstSlope*rate*68000.0;
     // The physical BA662 has IN+ from VCF IN and IN- from VCF OUT.
     // resY is the opposite differential: the loop subtracts its return.
     // Mirror routing must therefore read -resY; its noise is still an
     // output-current source BEFORE the first IR3109 pair, not a second
     // independent state-node floor or an inferred IR3109 mirror term.
     const double resPsd=OtaShotNoise::currentPsd(resTail,resY)
-        +(activeParameters_.enableBa662OutputMirrorNoise
+        +(has(VoiceFilterIslandContext::Mirror, activeParameters_.enableBa662OutputMirrorNoise)
             ? Ba662Noise::outputMirrorCurrentPsd(resTail,-resY) : 0.0)
-        +(activeParameters_.enableBa662TailMirrorNoise
-            ? Ba662Noise::tailMirrorCurrentPsd(resTail,-resY,voiceCardCelsius(
+        +(has(VoiceFilterIslandContext::TailMirror, activeParameters_.enableBa662TailMirrorNoise)
+            ? Ba662Noise::tailMirrorCurrentPsd(resTail,-resY, local ? context->kelvin : voiceCardCelsius(
                 activeParameters_,voice.cardIndex,thermalWarmupFraction_)+273.15) : 0.0);
     diffusion[0]+=resPsd
-        *noiseGainPerAmp*noiseGainPerAmp*inverseOversampledRate_/2;
+        *noiseGainPerAmp*noiseGainPerAmp*inverseRate/2;
     for(double& value:diffusion)value*=character*character;
     const auto innovation=voice.filterShotCache.next(jacobian,diffusion,normal);
     for(std::size_t i=0;i<4;++i) filter.state[i]+=innovation[i];
@@ -12172,6 +12261,226 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
     return std::isfinite(output) ? output : 0.0f;
 }
 
+bool YouKnowEngine::voiceFilterRateIslandEnabled() const noexcept
+{
+    return activeParameters_.enableVoiceFilterRateIsland
+        && activeParameters_.enableVoiceVcaAntialias
+        && voiceVcaAntialiasKernel_.factor > 1;
+}
+
+void YouKnowEngine::resetVoiceFilterIsland(Voice& voice, bool warm) noexcept
+{
+    // Rebuild numerical support at the safety fade's zero. Physical filter
+    // and C59 charges survive; a warm history uses the last known controls
+    // and held input rather than running 24 fictitious zero-input frames.
+    VoiceFilterIslandContext previous;
+    if (warm && voice.filterIsland.frames > 0)
+    {
+        previous = voice.filterIsland.contexts[static_cast<std::size_t>(
+            (voice.filterIsland.frames - 1) & (VoiceRateIsland<VoiceFilterIslandContext>::ringSize - 1))];
+        const double ratio = voice.islandBaseRate > 0 ? voice.islandBaseRate / oversampledRate_ : 1.0;
+        for (auto& omega : previous.omega) omega = static_cast<float>(omega * ratio);
+        previous.couplingG = static_cast<float>(std::tan(std::atan(static_cast<double>(previous.couplingG))
+            * ratio * voice.islandFactor / voiceVcaAntialiasKernel_.factor));
+    }
+    else if (warm)
+        voice.islandLastInput = static_cast<float>(voice.filter.inputHistory[0]);
+    voice.filterIsland.reset(previous);
+    voice.vcaAntialias.reset();
+    if (warm)
+        voice.vcaAntialias.inputs.fill(voice.islandLastInput);
+    voice.islandControlPrimed = false;
+    voice.islandWarmStart = warm;
+    voice.islandCouplingBase = -1.0f;
+    voice.cutoffChainCounts = -1.0e30f;
+}
+
+float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
+                                             const VoiceFilterFrame& frame) noexcept
+{
+    using Context = VoiceFilterIslandContext;
+    const auto& parameters = activeParameters_;
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    const int factor = voiceVcaAntialiasKernel_.factor;
+    const double localRate = oversampledRate_ * factor;
+    Context context;
+    context.headroom = frame.headroom;
+    context.gain = voice.active ? voice.vca : 0.0f;
+    context.character = parameters.calibration;
+    context.inputScale = voice.vcaInputTrim * card.signalVcaDriveScale;
+    if (voice.islandCouplingBase != card.vcaInputCouplingG || voice.islandFactor != factor)
+    {
+        voice.islandCouplingBase = card.vcaInputCouplingG;
+        voice.islandCouplingLocal = static_cast<float>(
+            std::tan(std::atan(static_cast<double>(card.vcaInputCouplingG)) / factor));
+        voice.islandFactor = factor;
+    }
+    context.couplingG = voice.islandCouplingLocal;
+    const bool evidence = parameters.enableEvidenceVcaCalibration;
+    const bool junction = voiceVcaJunctionTemperatureEnabled(parameters);
+    context.vcaHeadroom = static_cast<float>(junction ? card.vcaJunctionHeadroomVolts
+        : evidence ? evidenceVcaCalibration().headroomVolts() : VoiceVcaSignalLaw::headroomVolts);
+    context.serviceGain = parameters.enableVoiceVcaServiceGain
+        ? (junction ? card.vcaJunctionServiceGain : evidence
+            ? static_cast<float>(evidenceVcaCalibration().serviceGain()) : VoiceVcaSignalLaw::serviceGain())
+        : 1.0f;
+    context.kelvin = voiceCardCelsius(parameters, voice.cardIndex, thermalWarmupFraction_) + 273.15f;
+    context.serviceLoopHeadroom = static_cast<float>(parameters.enableResonanceHeadroomTemperature
+        ? resonanceHeadroomFor(otaHeadroomVolts *
+            (voiceCardCelsius(parameters, voice.cardIndex, 1.0f) + 273.15) / 298.15)
+        : VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+    context.peakTailAmps = static_cast<float>(junction
+        ? card.vcaJunctionServiceEmitterAmps * EvidenceVcaCalibration::beta / (EvidenceVcaCalibration::beta + 1.0)
+        : evidence ? evidenceVcaCalibration().referenceTailAmps()
+        : VoiceVcaSignalLaw::fullControlTailAmps / VoiceVcaControlLaw::gain(4064.0f / 4095.0f));
+    context.johnsonScale = card.johnsonTemperatureScale;
+    context.compensation = VoicedResonanceCompatibilityProfile::compensationCoefficient(
+        parameters.resonanceCompensationShape);
+    const float amount = parameters.enableVcfStageOffsets ? parameters.calibration : 0.0f;
+    context.resonanceOffset = card.resonanceOtaOffset
+        * VoicedResonanceCompatibilityProfile::loopDividerRatio
+        * (parameters.enableResonanceOtaOffset ? parameters.calibration : 0.0f)
+        * (parameters.useBa662AResonanceOffsetEstimate ? 0.000250f / 0.0015f : 1.0f);
+    for (std::size_t stage = 0; stage < 4; ++stage)
+    {
+        context.offset[stage] = card.vcfStageOffsets[stage] / stageAttenuation * amount;
+        context.gScale[stage] = 1.0f + card.vcfStageGErrors[stage] * vcfStageCapacitorTolerance * amount;
+    }
+    const auto flag = [&](bool on, Context::Flag f) { if (on) context.flags |= f; };
+    flag(parameters.enableVcfEarlyEffect, Context::Early);
+    flag(parameters.enableResonanceHeadroomTemperature, Context::FollowHeadroom);
+    flag(parameters.enableCardJohnsonFloor, Context::Johnson);
+    flag(parameters.enableOtaShotNoise, Context::Shot);
+    flag(parameters.enableBa662OutputMirrorNoise, Context::Mirror);
+    flag(parameters.enableBa662TailMirrorNoise, Context::TailMirror);
+    flag(evidence, Context::EvidenceVca);
+    flag(parameters.enableVoiceVcaSignalSaturation, Context::Saturate);
+    flag(useCubicEarly_, Context::CubicEarly);
+    context.tanhMode = parameters.vcfTanhMode;
+    context.solverMode = parameters.vcfSolverMode;
+    for (std::size_t point = 0; point < context.omega.size(); ++point)
+    {
+        const double position = OtaCascade::controlNodePositions[point];
+        context.omega[point] = static_cast<float>(frame.hasTrajectory ? frame.trajectory.omegaStep[point]
+            : voice.islandControlPrimed ? voice.islandPreviousOmega
+                + position * (frame.omegaStep - voice.islandPreviousOmega) : frame.omegaStep);
+        context.feedback[point] = static_cast<float>(frame.hasTrajectory ? frame.trajectory.feedback[point]
+            : voice.islandControlPrimed ? voice.islandPreviousFeedback
+                + position * (voice.feedback - voice.islandPreviousFeedback) : voice.feedback);
+    }
+    voice.islandPreviousOmega = frame.omegaStep;
+    voice.islandPreviousFeedback = voice.feedback;
+    voice.islandPreviousHeadroom = frame.headroom;
+    if (!voice.islandControlPrimed && voice.filterIsland.frames == 0)
+    {
+        if (!voice.islandWarmStart || voice.filterIsland.contexts.front().gScale.front() <= 0)
+        {
+            auto prehistory = context;
+            if (!voice.islandWarmStart) prehistory.gain = 0.0f;
+            voice.filterIsland.reset(prehistory);
+        }
+    }
+    voice.islandControlPrimed = true;
+    voice.islandLastInput = frame.input;
+    voice.islandBaseRate = oversampledRate_;
+    const auto circuit = [&](float input,
+        const VoiceRateIsland<Context>::Interval& interval) noexcept -> float {
+        // FIR prehistory is numerical zero, not physical time before reset.
+        if (interval.frame < 0 && !voice.islandWarmStart) return 0.0f;
+        const auto& c = interval.current;
+        auto& filter = voice.filter;
+        filter.gScale = c.gScale;
+        filter.offsetVoltage = c.offset;
+        filter.resonanceOffsetVolts = c.resonanceOffset;
+        filter.inputCompensationCoefficient = c.compensation;
+        filter.resonanceHeadroomFollowsStage = c.has(Context::FollowHeadroom);
+        const auto sample = [](const std::array<float, 7>& values, double position) noexcept {
+            std::size_t right = 1;
+            while (right + 1 < values.size() && position > OtaCascade::controlNodePositions[right]) ++right;
+            const double leftPosition = OtaCascade::controlNodePositions[right - 1];
+            const double fraction = (position - leftPosition) /
+                (OtaCascade::controlNodePositions[right] - leftPosition);
+            return values[right - 1] + fraction * (values[right] - values[right - 1]);
+        };
+        VoiceFilterFrame local;
+        local.input = input;
+        local.hasTrajectory = true;
+        for (std::size_t point = 0; point < 7; ++point)
+        {
+            const double position = interval.begin + (interval.end - interval.begin)
+                * OtaCascade::controlNodePositions[point];
+            local.trajectory.omegaStep[point] = sample(c.omega, position) / factor;
+            local.trajectory.feedback[point] = sample(c.feedback, position);
+            local.trajectory.headroom[point] = interval.previous.headroom
+                + position * (c.headroom - interval.previous.headroom);
+        }
+        local.omegaStep = static_cast<float>(local.trajectory.omegaStep.back());
+        local.headroom = static_cast<float>(local.trajectory.headroom.back());
+        local.shotNoiseOrigin = filter.state;
+        local.shotNoiseInput = .5 * (input + filter.inputHistory[0]);
+        local.shotNoiseOmega = local.trajectory.omegaStep[3];
+        local.shotNoiseFeedback = local.trajectory.feedback[3];
+        local.shotNoiseHeadroom = local.trajectory.headroom[3];
+        std::array<double, 4> stageNoise {};
+        for (std::size_t stage = 0; stage < (c.has(Context::Johnson) ? 4u : 1u); ++stage)
+        {
+            voice.noiseState = xorshift32(voice.noiseState);
+            const double white = bipolarFromState(voice.noiseState) * voiceIslandNoiseRateScale_;
+            if (c.has(Context::Johnson)) stageNoise[stage] = white * filterNoiseVoltsDerived * c.johnsonScale;
+            else input += static_cast<float>(white * filterNoiseVoltsVoiced);
+        }
+        filter.setStageNoise(stageNoise);
+        const float feedback = static_cast<float>(local.trajectory.feedback.back());
+        const float filtered = c.has(Context::CubicEarly)
+            ? filter.process<true>(input, local.omegaStep, feedback, local.headroom,
+                c.has(Context::Early), c.character, &local.trajectory, c.tanhMode, c.solverMode)
+            : filter.process<false>(input, local.omegaStep, feedback, local.headroom,
+                c.has(Context::Early), c.character, &local.trajectory, c.tanhMode, c.solverMode);
+        const float noisy = applyVoiceFilterShotNoise(voice, local, filtered, &c);
+        const float vcaInput = voice.vcaInputCoupling.process(noisy, c.couplingG, 0.0f, 1.0f);
+        voice.vcaInputVolts = vcaInput;
+        const float drive = vcaInput * c.inputScale;
+        float shaped = drive;
+        if (c.has(Context::Saturate))
+        {
+            if (!c.has(Context::EvidenceVca)) shaped = VoiceVcaSignalLaw::shape(drive);
+            else
+            {
+                const double normalized = drive / static_cast<double>(c.vcaHeadroom);
+                const double square = normalized * normalized;
+                shaped = static_cast<float>(c.vcaHeadroom * (square < 1
+                    ? normalized * vcfInnerTanhFactor(square) : OtaCascade::zonedHermiteTanh(normalized)));
+            }
+        }
+        const double gain = interval.interpolate(interval.previous.gain, c.gain);
+        const float signal = static_cast<float>(shaped * gain * c.serviceGain * voltsToSample);
+        double outputNoise = 0;
+        if (c.has(Context::Shot))
+        {
+            const double normal = voice.vcaShotRandom.next();
+            if (c.character != 0 && gain > 0)
+            {
+                const double tail = c.peakTailAmps * gain;
+                const double pair = polyZonedTanhImpl(drive / static_cast<double>(c.vcaHeadroom));
+                const double psd = OtaShotNoise::currentPsd(tail, pair)
+                    + (c.has(Context::Mirror) ? Ba662Noise::outputMirrorCurrentPsd(tail, pair) : 0.0)
+                    + (c.has(Context::TailMirror) ? Ba662Noise::tailMirrorCurrentPsd(tail, pair, c.kelvin) : 0.0);
+                outputNoise = normal * c.character * VoiceVcaSignalLaw::loadOhms
+                    * voltsToSample * std::sqrt(psd * localRate / 2);
+            }
+        }
+        // The uncalibrated energy-to-rail proxy now reads the delayed physical
+        // circuit. Its existing 5.208ms follower gains 24/baseRate seconds of
+        // transport delay; no duplicate coarse-grid VCF is invented for it.
+        // Component/noise chronology stays at the reconstructed timestamp.
+        voice.energy += voiceIslandEnergyFollower_ * (std::abs(signal) - voice.energy);
+        return static_cast<float>(signal + outputNoise);
+    };
+    const float output = voice.filterIsland.process(frame.input, context,
+        voiceVcaAntialiasKernel_, voice.vcaAntialias, circuit);
+    return std::isfinite(output) ? output : 0.0f;
+}
+
 template <bool useCubicEarly>
 float YouKnowEngine::renderVoice(Voice& voice,
                                     const EngineParameters& parameters,
@@ -12180,6 +12489,8 @@ float YouKnowEngine::renderVoice(Voice& voice,
     auto frame = prepareVoiceFilter(voice, parameters, noiseSample);
     if (!frame.needsFilter)
         return 0.0f;
+    if (voiceFilterRateIslandEnabled())
+        return renderVoiceFilterIsland(voice, frame);
     const auto* trajectory = frame.hasTrajectory ? &frame.trajectory : nullptr;
     const float filtered = voice.filter.process<useCubicEarly>(
         frame.input, frame.omegaStep, voice.feedback, frame.headroom,
@@ -12198,6 +12509,9 @@ std::array<float, 2> YouKnowEngine::renderVoicePair(
     Voice& first, Voice& second, const EngineParameters& parameters,
     float noiseSample) noexcept
 {
+    if (voiceFilterRateIslandEnabled())
+        return {renderVoice<true>(first, parameters, noiseSample),
+                renderVoice<true>(second, parameters, noiseSample)};
     auto firstFrame = prepareVoiceFilter(first, parameters, noiseSample);
     auto secondFrame = prepareVoiceFilter(second, parameters, noiseSample);
     std::array<float, 2> filtered {};
@@ -12251,6 +12565,13 @@ std::array<float, 4> YouKnowEngine::renderVoiceQuad(
     const std::array<Voice*, 4>& voices,
     const EngineParameters& parameters, float noiseSample) noexcept
 {
+    if (voiceFilterRateIslandEnabled())
+    {
+        std::array<float, 4> output {};
+        for (std::size_t lane = 0; lane < voices.size(); ++lane)
+            output[lane] = renderVoice<true>(*voices[lane], parameters, noiseSample);
+        return output;
+    }
     std::array<VoiceFilterFrame, 4> frames;
     for (std::size_t lane = 0; lane < voices.size(); ++lane)
         frames[lane] = prepareVoiceFilter(
@@ -12417,7 +12738,9 @@ OutputSummerAntialias::Context YouKnowEngine::outputSummerHostNoiseContext() noe
     // anchors the first: add (M-1)/M. The physical95tap centres give
     // 23.5host samples at2x and35.25 at4x relative to this last substep.
     // Raw selection retains its historical immediate host-noise timing.
-    if (!activeParameters_.enableOutputSummerAntialias)
+    if (!activeParameters_.enableOutputSummerAntialias
+        && !(activeParameters_.enableChorusRateIsland
+             && chorusRateIslandKernel_.factor > 1))
         return outputSummerDelayedContext_;
     const int w = outputSummerHostContextWrite_;
     outputSummerHostContexts_[static_cast<std::size_t>(w)] = outputSummerDelayedContext_;
@@ -12435,8 +12758,30 @@ OutputSummerAntialias::Context YouKnowEngine::outputSummerHostNoiseContext() noe
             fraction < 0.5 ? a.wetConnected : b.wetConnected};
 }
 
+ChorusRateIsland::Controls YouKnowEngine::chorusRateControls(
+    const EngineParameters& p) const noexcept
+{
+    ChorusRateIsland::Controls c;
+    c.mode=p.chorus;
+    c.hardwareMode=activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay
+        ? ((firmwareSerialIc40_ & 2u) ? ChorusMode::Two : ChorusMode::One) : ChorusMode::Off;
+    c.timing=p.chorusTimingProfile;
+    c.noise=p.chorusNoise * chorusNoiseCalibrationScale(p.chorusNoiseCalibrationProfile);
+    c.calibration=p.calibration;
+    c.transferFraction=p.chorusNoiseTransferFraction;
+    c.transferCorrelation=p.chorusNoiseTransferCorrelation;
+    c.narrow=p.enableNarrowOneTwoChorus;
+    c.muteDrive=p.enableChorusMuteDrive;
+    c.clockMute=p.enableChorusClockMuteCircuit;
+    c.finiteMute=p.enableChorusFiniteMuteDrive;
+    c.correlatedNoise=p.enableChorusCorrelatedNoise;
+    c.finiteTr5=p.enableChorusFiniteTr5Drive;
+    return c;
+}
+
 void YouKnowEngine::processOutputSummer(float& wetLeft,float& wetRight,
-                                      const EngineParameters& parameters) noexcept
+                                      const EngineParameters& parameters,
+                                      const OutputSummerAntialias::Context* islandContext) noexcept
 {
     const auto& coefficients=processingCoefficients_;
     // TA75558S IC6 has finite loaded output swing inside its +/-15 V
@@ -12445,7 +12790,13 @@ void YouKnowEngine::processOutputSummer(float& wetLeft,float& wetRight,
     // scale them.
     const OutputSummerAntialias::Context currentContext {
         chorus_.wetInputConductanceRatio(), chorus_.isWetInputConnected() };
-    if (parameters.enableOutputSummerAntialias)
+    if (islandContext != nullptr)
+    {
+        // The shared island already clipped at its local rate and returned
+        // the gate at the output-decimator timestamp. Do not filter twice.
+        outputSummerDelayedContext_ = *islandContext;
+    }
+    else if (parameters.enableOutputSummerAntialias)
     {
         const auto corrected = outputSummerAntialias_.processStereo(wetLeft,wetRight,
             currentContext,voiceVcaAntialiasKernel_,[](float x) { return outputSummerClip(x); });
@@ -13549,34 +13900,47 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             // IC40's mode and mute pins are independent. Keep the selected
             // clock programme alive even while muted; the physical clock-mute
             // circuit still decides whether individual BBD shifts run.
-            const bool serialChorus = activeConverterTimingProfile_
-                == ConverterTimingProfile::FirmwareSerialReplay;
-            chorus_.setHardwareModeSelection(serialChorus
-                ? ((firmwareSerialIc40_ & 2u) ? ChorusMode::Two : ChorusMode::One)
-                : ChorusMode::Off);
-            if (serialChorus || parameters.chorus != ChorusMode::Off
-                || parameters.vcfTanhMode == VcfTanhMode::Exact
-                || parameters.enableChorusClockMuteCircuit
-                || parameters.enableChorusFiniteMuteDrive
-                || parameters.enableChorusFiniteTr5Drive
-                || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
-                                                       wetRight))
-                chorus_.process(levelled, parameters.chorus,
-                                chorusNoiseScale,
-                                wetLeft, wetRight,
-                                parameters.calibration,
-                                parameters.enableNarrowOneTwoChorus,
-                                parameters.enableChorusMuteDrive,
-                                true, // fixed MN3009 insertion-gain spread
-                                parameters.chorusTimingProfile,
-                                parameters.enableChorusClockMuteCircuit,
-                                parameters.enableChorusFiniteMuteDrive,
-                                parameters.enableChorusCorrelatedNoise,
-                                parameters.chorusNoiseTransferFraction,
-                                parameters.chorusNoiseTransferCorrelation,
-                                parameters.enableChorusFiniteTr5Drive);
+            if (parameters.enableChorusRateIsland && chorusRateIslandKernel_.factor > 1)
+            {
+                const auto result=chorusRateIsland_.process(levelled,
+                    chorusRateControls(parameters),chorusRateIslandKernel_,chorus_,
+                    [](float x) { return outputSummerClip(x); });
+                wetLeft=result.left;
+                wetRight=result.right;
+                processOutputSummer(wetLeft,wetRight,parameters,&result.context);
+            }
+            else
+            {
+                const bool serialChorus = activeConverterTimingProfile_
+                    == ConverterTimingProfile::FirmwareSerialReplay;
+                chorus_.setHardwareModeSelection(serialChorus
+                    ? ((firmwareSerialIc40_ & 2u) ? ChorusMode::Two : ChorusMode::One)
+                    : ChorusMode::Off);
+                if (serialChorus || parameters.chorus != ChorusMode::Off
+                    || parameters.vcfTanhMode == VcfTanhMode::Exact
+                    || parameters.enableChorusClockMuteCircuit
+                    || parameters.enableChorusFiniteMuteDrive
+                    || parameters.enableChorusFiniteTr5Drive
+                    || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
+                                                           wetRight))
+                    chorus_.process(levelled, parameters.chorus,
+                                    chorusNoiseScale,
+                                    wetLeft, wetRight,
+                                    parameters.calibration,
+                                    parameters.enableNarrowOneTwoChorus,
+                                    parameters.enableChorusMuteDrive,
+                                    true, // fixed MN3009 insertion-gain spread
+                                    parameters.chorusTimingProfile,
+                                    parameters.enableChorusClockMuteCircuit,
+                                    parameters.enableChorusFiniteMuteDrive,
+                                    parameters.enableChorusCorrelatedNoise,
+                                    parameters.chorusNoiseTransferFraction,
+                                    parameters.chorusNoiseTransferCorrelation,
+                                    parameters.enableChorusFiniteTr5Drive);
 
-            processOutputSummer(wetLeft,wetRight,parameters);
+                processOutputSummer(wetLeft,wetRight,parameters);
+
+            }
 
             stageLeft[static_cast<std::size_t>(step)] = wetLeft;
             stageRight[static_cast<std::size_t>(step)] = wetRight;
