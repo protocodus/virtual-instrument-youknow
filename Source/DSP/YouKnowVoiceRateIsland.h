@@ -38,6 +38,8 @@ struct VoiceRateIsland
         double end {};
         int factor {1};
         std::int64_t frame {};
+        // The local-rate phase, 0..factor-1, that produced begin and end.
+        int phase {};
 
         [[nodiscard]] double interpolate(double before, double after) const noexcept
         { return end == 1.0 ? after : before + end * (after - before); }
@@ -76,7 +78,7 @@ struct VoiceRateIsland
             const double end = phase == 0 ? 1.0 : phase * reciprocal;
             const Interval interval {contexts[static_cast<std::size_t>(previous)],
                 contexts[static_cast<std::size_t>(index)], begin, end,
-                kernel.factor, frames - delay + next};
+                kernel.factor, frames - delay + next, phase};
             ++phase;
             return circuit(reconstructed, interval);
         };

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <type_traits>
 #include "YouKnowCompatibility.h"
 
 namespace youknow
@@ -43,11 +44,24 @@ struct VoiceVcaAntialias
 
     [[nodiscard]] static int factorForRate(double rate) noexcept
     { return rate < 88200.0 ? 4 : rate < 176400.0 ? 2 : 1; }
+    // The halved law keeps a local grid of at least 88.2 kHz instead.
+    [[nodiscard]] static int factorForRate(double rate, bool halved) noexcept
+    {
+        const int full = factorForRate(rate);
+        return halved && full > 1 ? full / 2 : full;
+    }
 
     [[nodiscard]] static Kernel prepare(double rate) noexcept
     {
+        return prepareFactor(factorForRate(rate));
+    }
+
+    // The kernel depends only on its integer factor (1, 2 or 4); a caller
+    // that selects a lower local rate than factorForRate prepares that one.
+    [[nodiscard]] static Kernel prepareFactor(int factor) noexcept
+    {
         Kernel k;
-        k.factor = factorForRate(rate);
+        k.factor = factor >= 4 ? 4 : factor >= 2 ? 2 : 1;
         if (k.factor == 1) return k;
         k.taps = delaySamples * k.factor + 1;
         const int centre = (k.taps - 1) / 2;
@@ -171,42 +185,44 @@ struct VoiceVcaAntialias
             t1=temperatures[static_cast<std::size_t>((inputWrite-lookBack+1+inputRingSize)&(inputRingSize-1))];
         }
         std::array<double, maximumFactor> reconstructed {};
-        if (k.factor == 4)
-        {
-            // These phases read the same 48 past samples. Share each ring
-            // index/load while retaining every phase's tap accumulation
-            // order and double precision. Adjacent quarter-phase lanes allow
-            // ordinary compiler SLP; the half phase stays a separate sum.
-            // Only reconstruction is batched: the output loop below retains
-            // shape/noise callbacks, RNG chronology and phase-zero decimation.
-            std::array<double, 2> quarter {};
-            double half = 0;
-            for (int tap = 0; tap < delaySamples; ++tap)
+        // Every reconstructed phase is a 48-tap dot product over the same past
+        // samples. Share each ring load across the phases, and give each phase
+        // four interleaved partial sums instead of one 48-term dependency
+        // chain: the same taps and double products, with only the rounding of
+        // the final additions changed (2026-10-16 CPU pass). Only
+        // reconstruction is batched: the output loop below retains shape/noise
+        // callbacks, RNG chronology and phase-zero decimation.
+        const auto reconstruct = [&](auto phaseCount) noexcept {
+            constexpr int phases = decltype(phaseCount)::value;
+            std::array<std::array<double, 4>, phases> partial {};
+            for (int tap = 0; tap < delaySamples; tap += 4)
+                for (int lane = 0; lane < 4; ++lane)
+                {
+                    const double sample = inputs[static_cast<std::size_t>(
+                        (inputWrite - tap - lane + inputRingSize) & (inputRingSize - 1))];
+                    for (int phase = 0; phase < phases; ++phase)
+                        partial[static_cast<std::size_t>(phase)][static_cast<std::size_t>(lane)]
+                            += k.interpolation[static_cast<std::size_t>(phase + 1)]
+                                   [static_cast<std::size_t>(tap + lane)] * sample;
+                }
+            for (int phase = 0; phase < phases; ++phase)
             {
-                const double sample = inputs[static_cast<std::size_t>(
-                    (inputWrite-tap+inputRingSize) & (inputRingSize-1))];
-                quarter[0] += k.interpolation[1][static_cast<std::size_t>(tap)] * sample;
-                quarter[1] += k.interpolation[3][static_cast<std::size_t>(tap)] * sample;
-                half += k.interpolation[2][static_cast<std::size_t>(tap)] * sample;
+                const auto& sum = partial[static_cast<std::size_t>(phase)];
+                reconstructed[static_cast<std::size_t>(phase + 1)] =
+                    (sum[0] + sum[1]) + (sum[2] + sum[3]);
             }
-            reconstructed[1] = quarter[0];
-            reconstructed[2] = half;
-            reconstructed[3] = quarter[1];
-        }
+        };
+        static_assert(delaySamples % 4 == 0);
+        if (k.factor == 4)
+            reconstruct(std::integral_constant<int, 3>{});
+        else
+            reconstruct(std::integral_constant<int, 1>{});
         for (int phase = 0; phase < k.factor; ++phase)
         {
-            double drive = 0;
-            if (phase == 0)
-                drive = inputs[static_cast<std::size_t>(
-                    (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
-            else if (k.factor == 4)
-                drive = reconstructed[static_cast<std::size_t>(phase)];
-            else
-                for (int tap = 0; tap < delaySamples; ++tap)
-                    drive += k.interpolation[static_cast<std::size_t>(phase)]
-                        [static_cast<std::size_t>(tap)]
-                        * inputs[static_cast<std::size_t>(
-                            (inputWrite - tap + inputRingSize) & (inputRingSize - 1))];
+            const double drive = phase == 0
+                ? static_cast<double>(inputs[static_cast<std::size_t>(
+                    (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))])
+                : reconstructed[static_cast<std::size_t>(phase)];
             // The physical control hold is slow and continuous; reconstruct
             // it linearly at the SAME delayed timestamp as the audio input.
             // Gain is inside the high-rate nonlinear path, so its sidebands
@@ -229,19 +245,27 @@ struct VoiceVcaAntialias
             if (phase == 0)
             {
                 const int centre = (k.taps - 1) / 2;
-                double y = k.decimation[static_cast<std::size_t>(centre)]
-                    * outputs[static_cast<std::size_t>(
-                        (outputWrite - centre + outputRingSize) & (outputRingSize - 1))];
-                for (int index = 0; index < k.pairCount; ++index)
-                {
+                // The same symmetric pair products, in four partial sums.
+                std::array<double, 4> partial {};
+                const auto pairTerm = [&](int index) noexcept {
                     const auto& pair = k.pairs[static_cast<std::size_t>(index)];
                     const int opposite = k.taps - 1 - pair.tap;
                     const double a = outputs[static_cast<std::size_t>(
                         (outputWrite - pair.tap + outputRingSize) & (outputRingSize - 1))];
                     const double b = outputs[static_cast<std::size_t>(
                         (outputWrite - opposite + outputRingSize) & (outputRingSize - 1))];
-                    y += pair.weight * (a + b);
-                }
+                    return pair.weight * (a + b);
+                };
+                int index = 0;
+                for (; index + 4 <= k.pairCount; index += 4)
+                    for (int lane = 0; lane < 4; ++lane)
+                        partial[static_cast<std::size_t>(lane)] += pairTerm(index + lane);
+                for (; index < k.pairCount; ++index)
+                    partial[0] += pairTerm(index);
+                const double y = k.decimation[static_cast<std::size_t>(centre)]
+                    * outputs[static_cast<std::size_t>(
+                        (outputWrite - centre + outputRingSize) & (outputRingSize - 1))]
+                    + ((partial[0] + partial[1]) + (partial[2] + partial[3]));
                 result = static_cast<float>(y);
             }
             outputWrite = (outputWrite + 1) & (outputRingSize - 1);

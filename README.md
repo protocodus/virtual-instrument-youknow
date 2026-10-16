@@ -117,6 +117,30 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-16
+
+- Processing costs roughly 30% less with the same modelled circuits. The
+  voice filter's high-rate stage factors its transistor-noise covariance once
+  per internal sample instead of at every local step, device noise uses an
+  exact faster Gaussian sampler, and the voice-amplifier reconstruction, its
+  control interpolation and the amplifier temperature model use cheaper
+  equivalent arithmetic. Noise levels and spectra are unchanged; the random
+  realizations differ, so renders are not sample-identical to 15 October's.
+- A new engine setting, `CircuitRate`, selects the local rate of the
+  voice-filter and chorus stages. Max, the plug-in's and the engine's
+  default, keeps the reference grid of at least 176.4 kHz. Normal halves it
+  to at least 88.2 kHz and lets idle voice cards skip that stage while their
+  filter keeps running, roughly halving processing with six voices sounding.
+  Latency is unchanged. On a bright open chord Normal measured up to 0.33 dB
+  more level at 14–20 kHz than Max. The Rack Extension exposes the setting on
+  its rear panel.
+- An engaged chorus keeps hissing in hosts that stop rendering a silent
+  instrument. The new `processHoldingIdleCards` renders the shared output path
+  exactly as `process()` does while no voice sounds, with the six silent cards
+  holding their state, at about a quarter of the full idle cost. The Rack
+  Extension now uses it, so its chorus hisses with no notes playing, as the
+  hardware does; the plug-in already rendered every callback and is unchanged.
+
 ### Unreleased — 2026-10-15
 
 - The coupled WAVE/SUB mixer reconstructs Tr19's two physical switch states
@@ -3051,6 +3075,54 @@ This is a host-specific cost measurement, not a DAW deadline qualification.
 Fixed engine storage grew from 475,264 to 564,176 bytes; delayed control
 histories are preallocated and processing remains allocation-free.
 
+The 16 October CPU pass recovers much of that cost without moving a circuit
+value. The voice-filter stage factors the OTA collector-noise covariance at
+the first local interval of each internal sample and reuses it for the rest
+(`enableVoiceIslandFrameShotCovariance`, product profile); the device-noise
+streams draw from an exact ziggurat Gaussian sampler with Marsaglia's tail;
+and the voice FIR, island control interpolation and junction-temperature
+RK4 use reorganized but equivalent arithmetic. The Gaussian moment and tail
+screens qualify the sampler; a paired render with identical draws puts the
+shared factor's change to the isolated collector noise below 0.0001 dB, with
+a signed residual 82 dB beneath it. On one Linux cloud vCPU, the Rack product
+workload (48 kHz / 1×, 64-frame blocks, Poly/Cubic/Normal solver, the
+performance probe's bright resonant patch with chorus II) fell from 1.38 to
+0.95 CPU seconds per audio second with six held voices (−31%), and by
+27–32% with one or three voices. These are median-of-minimum figures from
+five alternating rounds against `0e56818`, not a bound for other CPUs.
+
+`CircuitRate` then selects the local rate of the two rate islands. Max keeps
+the voice and chorus FIRs' own grid (4× at 44.1/48 kHz); Normal halves it,
+down to the direct law once the internal grid reaches 88.2 kHz, and rests an
+idle card's island: its output is not summed, so its filter and C59 advance
+one internal-grid step per sample, as on the direct path, and its noise
+streams keep their chronology until a note wakes it. The latency pad keeps
+the report and the delivered alignment unchanged where Normal drops a FIR.
+On the same workload Normal measured 0.67 CPU seconds per audio second with
+six voices (−51% against `0e56818`), 0.51 with three (−64%) and 0.40 with
+one (−69%); with six voices it saved 46–52% across Quality 2×, 44.1 kHz,
+chorus off and a half-closed filter. In a five-take product comparison
+Normal's signed residual against `0e56818` was −42 to −46 dBc, with band
+levels within 0.02 dB below 8 kHz and +0.15 to +0.33 dB at 14–20 kHz, where
+nonlinear products above its lower local Nyquist fold back instead of being
+removed; its open-filter pole cap (0.45 of the local rate) stays above the
+audio band. Free self-oscillation keeps its level but loses sample-phase
+identity. The plug-in and the engine default stay at Max.
+
+The chorus hiss is calibrated against the instrument's idle floor, so it is
+present whenever the chorus is engaged, notes or not. A host that stops
+calling `process()` once its voices are silent would cut it off;
+`processHoldingIdleCards()` is the alternative for such hosts. With no voice
+sounding and no assignment pending, the summed voice bus is exactly zero
+(only active cards are summed, and a retired card's amplifier is shut), so
+the jacks carry the shared path alone: common VCA, chorus, output summer and
+network. The call renders that path unchanged and skips the six cards, which
+hold their complete state as they would across skipped callbacks. A paired
+test confirms bit-identical output in every chorus mode at both circuit
+rates. On the Rack product workload above, with no notes held, it measured
+0.08 CPU seconds per audio second at Normal, against 0.35 for `process()`
+and 0.40 with one voice sounding.
+
 The VCF SOLVER selector descends a solver ladder (Max/High/Normal) for the
 nonlinear filter. Normal — the cheapest rung, roughly half the filter's
 CPU — ships as the default, chosen by a blind listening test (2026-08-23)
@@ -3277,7 +3349,10 @@ Deliberate, each with its reason recorded:
   unusually low host rates, the bounded available grids retain limitations;
   chorus settings that cannot reuse an existing support cache keep the older
   path and its full output-clip antialias factor. Raw diagnostic fixtures
-  retain their original numerical limits.
+  retain their original numerical limits. `CircuitRate::Normal` trades part
+  of that margin for cost: at 44.1/48 kHz its local stages run at half the
+  reference rate, so its open-filter pole cap and nonlinear-product band sit
+  an octave lower than Max's.
 - **Selected estimates remain estimates.** The accepted five-mechanism
   product profile uses a recording-derived effective Mode-I chorus fit,
   schematic-ratio Mode-II timing, the named Tr20 component prior, nominal
