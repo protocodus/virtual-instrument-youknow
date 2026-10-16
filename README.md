@@ -3097,10 +3097,11 @@ six voices (−51% against `0e56818`), 0.51 with three (−64%) and 0.40 with
 one (−69%); with six voices it saved 46–52% across Quality 2×, 44.1 kHz,
 chorus off and a half-closed filter. In a five-take product comparison
 Normal's signed residual against `0e56818` was −42 to −46 dBc, with band
-levels within 0.02 dB below 8 kHz and +0.15 to +0.33 dB at 14–20 kHz, where its
-lower open-filter pole cap (0.45 of the local rate) and the earlier removal
-of nonlinear products act. Free self-oscillation keeps its level but loses
-sample-phase identity. The plug-in and the engine default stay at Max.
+levels within 0.02 dB below 8 kHz and +0.15 to +0.33 dB at 14–20 kHz, where
+nonlinear products above its lower local Nyquist fold back instead of being
+removed; its open-filter pole cap (0.45 of the local rate) stays above the
+audio band. Free self-oscillation keeps its level but loses sample-phase
+identity. The plug-in and the engine default stay at Max.
 
 The VCF SOLVER selector descends a solver ladder (Max/High/Normal) for the
 nonlinear filter. Normal — the cheapest rung, roughly half the filter's

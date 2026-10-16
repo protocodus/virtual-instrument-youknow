@@ -1843,7 +1843,8 @@ five product takes moved by at most 0.04 dB in any band, with residuals of
 islands' local factors and rests idle physical cards' islands while their
 filter and C59 track the internal grid. Its cost is local Nyquist margin: at
 48 kHz the open-filter pole cap is 43.2 kHz instead of 86.4 kHz, and
-nonlinear products are removed an octave lower. On the same takes Normal
+nonlinear products above its 48 kHz local Nyquist (96 kHz at Max) fold
+back rather than being removed. On the same takes Normal
 measured −42 to −46 dBc against `0e56818`, within 0.02 dB below 8 kHz and
 +0.15 to +0.33 dB at 14–20 kHz. A frozen rest was rejected: holding an idle
 card's filter left a low-band step about 45 dB below the note when a
