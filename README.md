@@ -134,6 +134,12 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
   Latency is unchanged. On a bright open chord Normal measured up to 0.33 dB
   more level at 14–20 kHz than Max. The Rack Extension exposes the setting on
   its rear panel.
+- An engaged chorus keeps hissing in hosts that stop rendering a silent
+  instrument. The new `processHoldingIdleCards` renders the shared output path
+  exactly as `process()` does while no voice sounds, with the six silent cards
+  holding their state, at about a quarter of the full idle cost. The Rack
+  Extension now uses it, so its chorus hisses with no notes playing, as the
+  hardware does; the plug-in already rendered every callback and is unchanged.
 
 ### Unreleased — 2026-10-15
 
@@ -3102,6 +3108,20 @@ nonlinear products above its lower local Nyquist fold back instead of being
 removed; its open-filter pole cap (0.45 of the local rate) stays above the
 audio band. Free self-oscillation keeps its level but loses sample-phase
 identity. The plug-in and the engine default stay at Max.
+
+The chorus hiss is calibrated against the instrument's idle floor, so it is
+present whenever the chorus is engaged, notes or not. A host that stops
+calling `process()` once its voices are silent would cut it off;
+`processHoldingIdleCards()` is the alternative for such hosts. With no voice
+sounding and no assignment pending, the summed voice bus is exactly zero
+(only active cards are summed, and a retired card's amplifier is shut), so
+the jacks carry the shared path alone: common VCA, chorus, output summer and
+network. The call renders that path unchanged and skips the six cards, which
+hold their complete state as they would across skipped callbacks. A paired
+test confirms bit-identical output in every chorus mode at both circuit
+rates. On the Rack product workload above, with no notes held, it measured
+0.08 CPU seconds per audio second at Normal, against 0.35 for `process()`
+and 0.40 with one voice sounding.
 
 The VCF SOLVER selector descends a solver ladder (Max/High/Normal) for the
 nonlinear filter. Normal — the cheapest rung, roughly half the filter's

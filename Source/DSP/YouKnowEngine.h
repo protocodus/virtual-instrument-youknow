@@ -1018,6 +1018,17 @@ public:
     void setModWheel(float amount) noexcept;
     void setSustainPedal(bool down) noexcept;
     void process(float* left, float* right, int numSamples);
+    // For hosts that stop calling process() once the voices fall silent. With
+    // no voice sounding and no assignment pending, the summed voice bus is
+    // exactly zero: only active cards are summed, and a retired card's
+    // amplifier is shut. What the jacks carry then comes from the shared path
+    // alone -- the common VCA, the chorus with its BBD hiss while it is
+    // engaged, the output summer and network -- and this renders it exactly
+    // as process() would. The physical cards hold their complete state
+    // instead of free-running, as they would across the host's skipped
+    // callbacks, so the next note starts where a skipped interval leaves it.
+    // Otherwise this is process().
+    void processHoldingIdleCards(float* left, float* right, int numSamples);
     // Call only for a silent interval the host wrapper does not process().
     // Preserve tempo timing without rendering the dormant audio circuitry.
     void advanceSilentLfoSync(int numSamples) noexcept;
@@ -4174,6 +4185,8 @@ private:
     float rescanUnisonMidi_ { 60.0f };
     bool prepared_ { false };
     bool anyVoiceActive_ { false };
+    // Set only inside processHoldingIdleCards(): inactive cards are skipped.
+    bool holdIdleCards_ { false };
     int activeVoiceCount_ { 0 };
     std::uint64_t generation_ { 0 };
 

@@ -8,6 +8,15 @@
 #include <limits>
 #include "YouKnowCompatibility.h"
 
+// The sampler's rare branch stays out of line on every compiler.
+#if defined(_MSC_VER)
+#define YOUKNOW_OTA_NOINLINE __declspec(noinline)
+#elif defined(__clang__) || defined(__GNUC__)
+#define YOUKNOW_OTA_NOINLINE __attribute__((noinline))
+#else
+#define YOUKNOW_OTA_NOINLINE
+#endif
+
 namespace youknow {
 namespace ota_shot_noise_detail {
 // Constant-expression exp/log/sqrt for building the Gaussian tables below at
@@ -128,7 +137,7 @@ struct OtaShotNoise {
         // Each ziggurat attempt is an independent exact trial, so falling back
         // after four rejected attempts to the polar method keeps the Gaussian
         // law exactly and bounds the callback's work.
-        [[gnu::noinline]] double beyondCore(std::size_t layer,double u) noexcept {
+        YOUKNOW_OTA_NOINLINE double beyondCore(std::size_t layer,double u) noexcept {
             const auto& z=ota_shot_noise_detail::gaussianZiggurat;
             constexpr double tailStart=ota_shot_noise_detail::GaussianZiggurat::tailStart;
             for(int attempt=0;attempt<4;++attempt) {
@@ -384,3 +393,5 @@ struct OtaShotNoise {
     };
 };
 }
+
+#undef YOUKNOW_OTA_NOINLINE

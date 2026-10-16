@@ -9327,6 +9327,15 @@ void YouKnowEngine::sampleSyncedLfo() noexcept
     lfoValue_ = lfoPolarity_ * static_cast<float>(lfoAccumulator_) / 8191.0f;
 }
 
+void YouKnowEngine::processHoldingIdleCards(float* left, float* right, int numSamples)
+{
+    // A sounding voice or a pending (re)assignment needs every card's
+    // interval; holding is only for the bus that is silent by construction.
+    holdIdleCards_ = !anyVoiceActive_ && !assignmentRescanPending_;
+    process(left, right, numSamples);
+    holdIdleCards_ = false;
+}
+
 void YouKnowEngine::advanceSilentLfoSync(int numSamples) noexcept
 {
     if (!prepared_ || numSamples <= 0)
@@ -13793,6 +13802,13 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 for (int slot = 0; slot < maxVoices;)
                 {
                     auto& voice = voices_[static_cast<std::size_t>(slot)];
+                    if (holdIdleCards_ && !anyVoiceActive_ && !voice.active)
+                    {
+                        // processHoldingIdleCards(): a card that is not
+                        // summed keeps its complete state for its next note.
+                        ++slot;
+                        continue;
+                    }
                     updateVoiceForInterval(slot);
 
 #if defined(YOUKNOW_HAS_VCF_PAIR_SIMD) \

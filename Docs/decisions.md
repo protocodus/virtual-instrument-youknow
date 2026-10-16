@@ -1857,6 +1857,27 @@ A lettered set rendered through the Rack product path (A the shipping
 `0e56818`, two candidates) was sent to the owner with its key outside the
 repository. No preference between the letters has been recorded.
 
+## 2026-10-16 — Idle chorus hiss in hosts that skip silence
+
+The owner observed that the real unit hisses whenever its chorus is engaged,
+with no note playing, and asked for that to be modelled. The engine already
+does: its chorus hiss is calibrated against #439522's idle floors
+(`IdleFloor439522`). The Rack adapter, however, stopped rendering 0.2 s after
+the last voice, which silenced it.
+
+**Selection:** an owner direction implemented as an adapter correction with
+a supporting engine call, not a new calibration. With no voice sounding, the
+summed voice bus is exactly zero, so `processHoldingIdleCards()` renders the
+shared output path unchanged while the silent cards hold their state, as they
+already did across the adapter's skipped callbacks. A paired test shows its
+output bit-identical to `process()` in all four chorus modes at both circuit
+rates. The Rack renders it while the chorus is engaged, its hiss is above
+zero and an output is cabled; otherwise the instrument sleeps after the usual
+tail, as before. That idle rendering is CPU the sleeping adapter did not
+spend, about a fifth of its one-note cost at Normal (the Rack's CPU
+evidence records the measurement); Chorus Off or hiss at zero restores the
+sleep. The plug-in renders every callback and is unchanged.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
