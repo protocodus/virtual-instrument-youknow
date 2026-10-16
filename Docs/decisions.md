@@ -1855,7 +1855,33 @@ Normal 51–69% of the 15 October product cost for one to six held voices.
 
 A lettered set rendered through the Rack product path (A the shipping
 `0e56818`, two candidates) was sent to the owner with its key outside the
-repository. No preference between the letters has been recorded.
+repository; the verdict follows below.
+
+## 2026-10-16 — Circuit Rate listening verdict
+
+**Decided:** whether the Rack Extension ships CIRCUIT RATE at Normal or Max,
+and whether the transparent changes common to both are acceptable.
+
+**Letters:** five takes rendered through `RackProductConfiguration` with
+identical notes, seeds and controls, level-matched on whole-file stereo RMS
+(trims within 0.005 dB):
+
+- A: the shipping `0e56818`.
+- B: the CPU pass at Max.
+- C: the same at Normal.
+
+They covered an open bright chord, resonant sweeps, a staccato line with
+idle gaps, a chorus pad and self-oscillation.
+
+**Verdict, by ear:** the owner heard no difference between A, B and C. The
+owner also gave a direction: ship decent sound with usable performance by
+default, and let users buy more quality with CPU. That licenses keeping
+Normal as the Rack default, with Max on the rear panel, and keeping the
+transparent changes. The standing preference for the more complete model
+when listening is inconclusive is met by Max staying available and remaining
+the engine and plug-in default; the owner's explicit direction decides the
+Rack default. This is a listening choice, not a measurement. The measured
+Normal differences recorded above remain the known cost.
 
 ## 2026-10-16 — Idle chorus hiss in hosts that skip silence
 
