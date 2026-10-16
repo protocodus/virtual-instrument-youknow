@@ -107,6 +107,27 @@ enum class VcfSolverMode
     Rk4Single = 2
 };
 
+// Local rate of the two numerical rate islands at ordinary host rates: the
+// voice filter, C59 and voice amplifier inside the voice VCA reconstruction
+// FIR (VoiceVcaAntialias and its voice-filter island), and the chorus with
+// IC6's output clip inside the output-stage island (ChorusRateIsland). Max is
+// those FIRs' own grid: at least 176.4 kHz at every supported rate, four times
+// a 44.1/48 kHz internal grid. Normal halves both local factors, keeping at
+// least 88.2 kHz: 2x there, and the direct law once the internal grid itself
+// reaches 88.2 kHz. Where a factor stays above one its FIR keeps the fixed
+// 48-sample delay; where Normal reaches the direct law the latency pad
+// supplies that delay, so the reported and delivered latency are unchanged.
+// Numerical cost and accuracy selector only: every circuit value, control law
+// and noise density is the same. What Normal gives up is bounded by its local
+// Nyquist: the open-filter pole cap (0.45 of the local rate, 43.2 kHz against
+// 86.4 kHz on a 48 kHz grid), the chorus support filters' bilinear warping,
+// and the band in which nonlinear products are removed rather than folded.
+// Normal also rests an idle physical card's island: the card's output is not
+// summed, so its filter and C59 run one internal-grid step per sample, as on
+// the direct path, until a note wakes the island from that tracked state.
+// Published ordinals are stored by session state.
+enum class CircuitRate { Max = 0, Normal = 1 };
+
 // The assign mode latched by the two momentary POLY buttons. A single press
 // selects that mode; pressing both selects Solo Unison. Firmware never leaves
 // both lamps off. `false, false` is accepted only as a compatibility input and
@@ -469,6 +490,14 @@ struct EngineParameters
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
+    // Inside that island, factor the OTA collector-noise covariance at the
+    // first local interval of each internal sample and reuse the factor for
+    // that sample's remaining local intervals; every interval still draws its
+    // own independent innovations. The covariance is a statistical density,
+    // so its signal and control dependence is sampled on the internal grid
+    // instead of at every local interval. Numerical cost selector, no new
+    // hardware value. Product on, raw off.
+    bool enableVoiceIslandFrameShotCovariance { false };
     // Product-selected IC6 loading: the delayed Tr11/12 gate opens its
     // 39k wet input, removing that branch's noise gain and Johnson source.
     // Raw references retain their always-connected amplifier convention.
@@ -694,6 +723,8 @@ struct EngineParameters
             && enableOutputSummerAntialias == other.enableOutputSummerAntialias
             && enableChorusRateIsland == other.enableChorusRateIsland
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
+            && enableVoiceIslandFrameShotCovariance
+                == other.enableVoiceIslandFrameShotCovariance
             && enableOutputSummerMuteLoading == other.enableOutputSummerMuteLoading
             && enableCardJohnsonFloor == other.enableCardJohnsonFloor
             && enableOtaShotNoise == other.enableOtaShotNoise
@@ -762,11 +793,48 @@ public:
     // is deferred until the instrument is idle, and the return value says
     // whether it has been applied yet.
     bool setOversamplingFactor(int factor) noexcept;
+    // Requests the rate islands' local rate (CircuitRate). It is part of
+    // the same numerical grid as the quality rung: deferred until the
+    // instrument is idle, applied under the same safety fade, and the return
+    // value says whether it has been applied yet. Max is the default.
+    bool setCircuitRate(CircuitRate rate) noexcept;
+    // The fade-free initial selection, for the same pre-audio moment as
+    // setInitialOversamplingFactor. Before prepare() it is simply retained.
+    void setInitialCircuitRate(CircuitRate rate) noexcept;
+    [[nodiscard]] CircuitRate getCircuitRate() const noexcept
+    {
+        return circuitRateApplied_;
+    }
+    // The local factor of the running voice circuit: 1, 2 or 4.
+    [[nodiscard]] int getVoiceCircuitFactor() const noexcept
+    {
+        return voiceVcaAntialiasKernel_.factor;
+    }
+    // The voice circuit's local factor `rate` selects on an internal grid of
+    // `processingRate`.
+    [[nodiscard]] static int voiceCircuitFactorFor(
+        double processingRate, CircuitRate rate) noexcept
+    {
+        return VoiceVcaAntialias::factorForRate(processingRate,
+                                                rate == CircuitRate::Normal);
+    }
     // Hosts that suspend silent callbacks must keep rendering through fade-in.
     [[nodiscard]] bool isOversamplingReady() const noexcept
     {
         return rateTransition_ == RateTransition::Idle
-            && effectiveOversampleFactor(oversamplingRequested_) == oversampling_;
+            && runsGrid(effectiveOversampleFactor(oversamplingRequested_),
+                        circuitRateRequested_);
+    }
+    // Whether the running grid is the one this quality factor and circuit
+    // rate select: the internal factor and both islands' local factors.
+    [[nodiscard]] bool runsGrid(int factor, CircuitRate rate) const noexcept
+    {
+        const double processingRate = sampleRate_ * factor;
+        return factor == oversampling_
+            && voiceCircuitFactorFor(processingRate, rate)
+                   == voiceVcaAntialiasKernel_.factor
+            && ChorusRateIsland::factorForRate(processingRate, factor,
+                   rate == CircuitRate::Normal) == chorusRateIslandKernel_.factor;
     }
     void reset();
     // A host's transport stop is not a power cycle. `reset()` above is the
@@ -3372,7 +3440,7 @@ private:
         enum Flag : std::uint32_t {
             Early = 1u, FollowHeadroom = 2u, Johnson = 4u, Shot = 8u,
             Mirror = 16u, TailMirror = 32u, EvidenceVca = 64u,
-            Saturate = 128u, CubicEarly = 256u
+            Saturate = 128u, CubicEarly = 256u, ShotFrame = 512u
         };
         std::uint32_t flags {};
         VcfTanhMode tanhMode { VcfTanhMode::Exact };
@@ -3519,6 +3587,9 @@ private:
         std::uint32_t noiseState { 1u };
         OtaShotNoise::Random filterShotRandom {}, vcaShotRandom {};
         OtaShotNoise::Cache filterShotCache {};
+        // The island frame whose first local interval last refreshed
+        // filterShotCache; -1 when no frame owns it.
+        std::int64_t filterShotFactorFrame { -1 };
         Envelope envelope {};
         Dco dco {};
         OtaCascade filter {};
@@ -3542,6 +3613,11 @@ private:
         double islandBaseRate {};
         int islandFactor { 1 };
         bool islandControlPrimed {}, islandWarmStart {};
+        // Under CircuitRate::Normal an idle physical card rests its island
+        // (restVoiceFilterIsland): its filter and C59 keep running on the
+        // internal grid and its noise streams keep their chronology, while
+        // the closed amplifier and the island's local histories are idle.
+        bool islandResting {};
 
         // The pin 9 node itself, held after each internal sample: the value
         // the voice VCA multiplies, in volts. It is what the service
@@ -3853,6 +3929,11 @@ private:
     {
         OtaShotNoise::Vector shotNoiseOrigin {};
         double shotNoiseInput {}, shotNoiseOmega {}, shotNoiseFeedback {}, shotNoiseHeadroom {};
+        // Island frame of this local interval when its shot-noise factor may
+        // be shared within the frame (-1 otherwise), and whether this is the
+        // frame's first interval, which refreshes the factor.
+        std::int64_t shotFactorFrame { -1 };
+        bool shotFactorRefresh { true };
         float input {};
         float omegaStep {};
         float headroom {};
@@ -3866,6 +3947,7 @@ private:
     [[nodiscard]] bool voiceFilterRateIslandEnabled() const noexcept;
     [[nodiscard]] float renderVoiceFilterIsland(Voice& voice, const VoiceFilterFrame& frame) noexcept;
     void resetVoiceFilterIsland(Voice& voice, bool warm) noexcept;
+    void restVoiceFilterIsland(Voice& voice, const VoiceFilterFrame& frame) noexcept;
     [[nodiscard]] VoiceFilterFrame prepareVoiceFilter(
         Voice& voice, const EngineParameters& parameters,
         float noiseSample) noexcept;
@@ -3901,6 +3983,8 @@ private:
     void updateProcessingRate(bool preserveFreeRunningState = false) noexcept;
     void refreshLatencyPad() noexcept;
     [[nodiscard]] double runningLatencySamples(int factor) const noexcept;
+    [[nodiscard]] double runningLatencySamples(int factor,
+        CircuitRate rate) const noexcept;
     [[nodiscard]] double maximumLatencySamples() const noexcept;
     void rebuildRateDependentVoiceState() noexcept;
     bool applyPendingOversamplingIfIdle() noexcept;
@@ -3991,6 +4075,8 @@ private:
     // only while a deferred change waits for the instrument to fall idle.
     int oversamplingApplied_ { maximumOversampleFactor };
     int oversamplingRequested_ { maximumOversampleFactor };
+    CircuitRate circuitRateApplied_ { CircuitRate::Max };
+    CircuitRate circuitRateRequested_ { CircuitRate::Max };
     // How long the voices have been silent, and how long the output path needs
     // to run dry once they are: the delay lines' longest setting plus the
     // decimation and filter stages' group delay.
@@ -4151,6 +4237,9 @@ private:
     NoiseC41LowPass noiseSourceMagnitude_;
     VoiceVcaAntialias::Kernel voiceVcaAntialiasKernel_ {};
     VoiceVcaAntialias::Kernel chorusRateIslandKernel_ {};
+    // IC6's own FIR outside the shared chorus island. It keeps the full
+    // factorForRate law whatever the voice circuit rate selects.
+    VoiceVcaAntialias::Kernel outputSummerAntialiasKernel_ {};
     float noiseSourceHighPassG_ { 0.01f };
     float noiseSourceLowPassG_ { 0.1f };
 
@@ -4368,6 +4457,16 @@ private:
     // changed.
     float voiceEnergyFollower_ { 0.0f };
     float voiceIslandEnergyFollower_ {}, voiceIslandNoiseRateScale_ { 1.0f };
+    // Each island phase samples the context's seven-node control arrays at
+    // fixed positions, so their bracketing node, fraction and position are
+    // prepared with the kernel rather than searched and divided per interval.
+    struct VoiceIslandNode
+    {
+        std::size_t right { 1 };
+        double fraction {}, position {};
+    };
+    std::array<std::array<VoiceIslandNode, OtaCascade::controlNodePositions.size()>,
+               VoiceVcaAntialias::maximumFactor> voiceIslandNodes_ {};
 
     // The envelope generator is the one shared digital processor: ATTACK,
     // DECAY and RELEASE resolve to the same increment/multiplier for every

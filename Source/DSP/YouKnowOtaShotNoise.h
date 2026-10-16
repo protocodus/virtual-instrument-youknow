@@ -9,6 +9,74 @@
 #include "YouKnowCompatibility.h"
 
 namespace youknow {
+namespace ota_shot_noise_detail {
+// Constant-expression exp/log/sqrt for building the Gaussian tables below at
+// compile time (the embedded target forbids run-time initialised globals).
+// They agree with libm to a few units in the last place, which only moves the
+// equal-area layer edges by that much.
+constexpr double ln2 = 0.693147180559945309417232121458;
+constexpr double scaleByPowerOfTwo(double value, int exponent) noexcept {
+    for (; exponent > 0; --exponent) value *= 2.0;
+    for (; exponent < 0; ++exponent) value *= 0.5;
+    return value;
+}
+constexpr double exponential(double x) noexcept {
+    const double t = x / ln2;
+    const int k = static_cast<int>(t < 0 ? t - 0.5 : t + 0.5);
+    const double r = x - k * ln2;
+    double term = 1.0, sum = 1.0;
+    for (int n = 1; n < 30; ++n) { term *= r / n; sum += term; }
+    return scaleByPowerOfTwo(sum, k);
+}
+constexpr double logarithm(double x) noexcept {
+    int exponent = 0;
+    for (; x >= 2.0; x *= 0.5) ++exponent;
+    for (; x < 1.0; x *= 2.0) --exponent;
+    const double s = (x - 1.0) / (x + 1.0), squared = s * s;
+    double term = s, sum = 0.0;
+    for (int n = 1; n < 80; n += 2) { sum += term / n; term *= squared; }
+    return 2.0 * sum + exponent * ln2;
+}
+constexpr double squareRoot(double x) noexcept {
+    double y = x > 1.0 ? x : 1.0;
+    for (int i = 0; i < 200; ++i) {
+        const double next = 0.5 * (y + x / y);
+        if (next == y) break;
+        y = next;
+    }
+    return y;
+}
+// Marsaglia & Tsang's ziggurat, J. Stat. Softw. 5(8), 2000:
+// https://doi.org/10.18637/jss.v005.i08
+// 128 equal-area layers of the standard normal density with their published
+// R and V; Doornik's layout (edges x[0]=V/f(R), x[1]=R ... x[128]=0), "An
+// Improved Ziggurat Method to Generate Normal Random Samples", 2005:
+// https://www.doornik.com/research/ziggurat.pdf
+struct GaussianZiggurat {
+    static constexpr int layers = 128;
+    static constexpr double tailStart = 3.442619855899;
+    static constexpr double layerArea = 9.91256303526217e-3;
+    std::array<double, layers + 1> edge {};
+    std::array<double, layers + 1> density {};
+    std::array<double, layers> coreRatio {};
+};
+constexpr GaussianZiggurat makeGaussianZiggurat() noexcept {
+    GaussianZiggurat z;
+    const auto f = [](double x) { return exponential(-0.5 * x * x); };
+    z.edge[0] = GaussianZiggurat::layerArea / f(GaussianZiggurat::tailStart);
+    z.edge[1] = GaussianZiggurat::tailStart;
+    for (int i = 2; i < GaussianZiggurat::layers; ++i)
+        z.edge[i] = squareRoot(-2.0 * logarithm(
+            GaussianZiggurat::layerArea / z.edge[i - 1] + f(z.edge[i - 1])));
+    z.edge[GaussianZiggurat::layers] = 0.0;
+    for (int i = 0; i <= GaussianZiggurat::layers; ++i) z.density[i] = f(z.edge[i]);
+    for (int i = 0; i < GaussianZiggurat::layers; ++i)
+        z.coreRatio[i] = z.edge[i + 1] / z.edge[i];
+    return z;
+}
+inline constexpr GaussianZiggurat gaussianZiggurat = makeGaussianZiggurat();
+} // namespace ota_shot_noise_detail
+
 // Collector noise of the declared bare bipolar differential pairs. This is
 // NOT a fitted full-IC floor: original BA662/IR3109 mirror, base-resistance
 // and flicker spectra remain unknown. For each transistor S_Ic=2*q*Ic;
@@ -34,12 +102,60 @@ struct OtaShotNoise {
     struct Random {
         std::uint32_t state {1}; double spare {}; bool hasSpare {};
         void seed(std::uint32_t value) noexcept {state=value|1u;spare=0;hasSpare=false;}
-        [[nodiscard]] double uniform() noexcept {
+        [[nodiscard]] std::uint32_t bits() noexcept {
             state^=state<<13;state^=state>>17;state^=state<<5;
-            return (static_cast<double>(state)+.5)/4294967296.0;
+            return state;
+        }
+        [[nodiscard]] double uniform() noexcept {
+            return (static_cast<double>(bits())+.5)/4294967296.0;
         }
         [[nodiscard]] double next() noexcept {
             if(hasSpare){hasSpare=false;return spare;}
+            // The ziggurat above (Marsaglia & Tsang, Doornik layout). One
+            // xorshift word supplies the layer (7 bits) and a signed abscissa
+            // (25 bits); about 98.8% of draws end here, in a layer's
+            // always-accepted core, with no libm call. That is why it replaced
+            // the polar method as the island's per-interval sampler
+            // (2026-10-16). Wedges, the tail and retries stay out of line.
+            const auto& z=ota_shot_noise_detail::gaussianZiggurat;
+            const std::uint32_t word=bits();
+            const std::size_t layer=word&127u;
+            const double u=(static_cast<double>(word>>7)+.5)*(1.0/16777216.0)-1.0;
+            if(u<z.coreRatio[layer]&&u>-z.coreRatio[layer]) return u*z.edge[layer];
+            return beyondCore(layer,u);
+        }
+    private:
+        // Each ziggurat attempt is an independent exact trial, so falling back
+        // after four rejected attempts to the polar method keeps the Gaussian
+        // law exactly and bounds the callback's work.
+        [[gnu::noinline]] double beyondCore(std::size_t layer,double u) noexcept {
+            const auto& z=ota_shot_noise_detail::gaussianZiggurat;
+            constexpr double tailStart=ota_shot_noise_detail::GaussianZiggurat::tailStart;
+            for(int attempt=0;attempt<4;++attempt) {
+                if(attempt>0) {
+                    const std::uint32_t word=bits();
+                    layer=word&127u;
+                    u=(static_cast<double>(word>>7)+.5)*(1.0/16777216.0)-1.0;
+                    if(u<z.coreRatio[layer]&&u>-z.coreRatio[layer]) return u*z.edge[layer];
+                }
+                if(layer==0) {
+                    // Marsaglia's tail beyond R (same paper). Each proposal
+                    // accepts with probability about 0.937; after eight
+                    // rejections (about 2e-10 per tail visit, 1e-13 per
+                    // draw) the last proposal is returned to bound the work.
+                    double excess=0;
+                    for(int proposal=0;proposal<8;++proposal) {
+                        excess=-std::log(uniform())/tailStart;
+                        if(-2*std::log(uniform())>=excess*excess) break;
+                    }
+                    return u<0 ? -(tailStart+excess) : tailStart+excess;
+                }
+                // The wedge between this layer's core and its edge.
+                const double x=u*z.edge[layer];
+                if(z.density[layer]+uniform()*(z.density[layer+1]-z.density[layer])
+                        <std::exp(-.5*x*x))
+                    return x;
+            }
             // Marsaglia & Bray, SIAM Review6(3),1964,pp260-264:
             // https://doi.org/10.1137/1006063
             // Four bounded polar attempts avoid sin/cos in almost all pairs.
@@ -149,11 +265,18 @@ struct OtaShotNoise {
                 term=next;
             }
             for(int square=0;square<squares;++square) {
-                const auto propagated=multiply(multiply(f,q),transpose(f));
-                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];
-                f=multiply(f,f);
+                // q stays exactly symmetric, and so is f*q*f': accumulate its
+                // lower triangle (the same ordered sums the full product used)
+                // and mirror it. The final doubling's f*f has no reader.
+                const auto fq=multiply(f,q);
+                for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
+                    double value=0;
+                    for(std::size_t k=0;k<4;++k)value+=fq[i][k]*f[j][k];
+                    q[i][j]+=value;
+                    if(i!=j)q[j][i]=q[i][j];
+                }
+                if(square+1<squares)f=multiply(f,f);
             }
-            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
         }
         return q;
     }

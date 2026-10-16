@@ -1814,6 +1814,48 @@ their own provenance manifest and separate `key.md`, unread by design for
 listening. No user preference between the letters has been recorded. Earlier
 audio evidence remains frozen.
 
+## 2026-10-16 — CPU pass: shared noise factors and a circuit-rate selector
+
+The owner asked for a 50–70% CPU reduction, sacrificing audio quality only
+where necessary, with a lettered comparison and an explanation of the
+tradeoff, or a rear-panel quality control, wherever quality changes.
+Profiling the Rack product workload (48 kHz / 1×, 64-frame blocks, six
+voices) put most of the 15 October cost in the voice-filter island's local
+steps, its per-step collector-noise covariance, the Gaussian generator and
+the idle cards' continuous island solves.
+
+**Selection, every configuration:** delegated engineering selection of
+statistically transparent arithmetic. The island factors its collector-noise
+covariance at the first local interval of each internal sample and reuses
+that factor for the sample's remaining intervals, with no draw skipped; the
+device-noise generator is an exact ziggurat sampler with Marsaglia's tail;
+the covariance doubling exploits symmetry; the voice FIR's dot products use
+four partial sums; island control interpolation reads per-grid tables; and
+the junction-temperature RK4 multiplies by reciprocals. No circuit value,
+noise density or control law changed. Paired with identical draws, the
+shared factor moves the isolated collector noise by under 0.0001 dB with a
+signed residual 82 dB below it; the four-sum reordering stays under 1e-15 of
+the term magnitude. Renders are no longer sample-identical to `0e56818`:
+five product takes moved by at most 0.04 dB in any band, with residuals of
+−66 to −80 dBc, and free self-oscillation decorrelates in phase (−33 dBc).
+
+**Added, not selected here:** `CircuitRate::Normal` halves both rate
+islands' local factors and rests idle physical cards' islands while their
+filter and C59 track the internal grid. Its cost is local Nyquist margin: at
+48 kHz the open-filter pole cap is 43.2 kHz instead of 86.4 kHz, and
+nonlinear products are removed an octave lower. On the same takes Normal
+measured −42 to −46 dBc against `0e56818`, within 0.02 dB below 8 kHz and
++0.15 to +0.33 dB at 14–20 kHz. A frozen rest was rejected: holding an idle
+card's filter left a low-band step about 45 dB below the note when a
+self-oscillating card woke; tracking the filter keeps that excess 67–71 dB
+down. The engine and plug-in keep Max; the Rack Extension's default is
+recorded in its own repository. On one Linux cloud vCPU Max saved 27–32% and
+Normal 51–69% of the 15 October product cost for one to six held voices.
+
+A lettered set rendered through the Rack product path (A the shipping
+`0e56818`, two candidates) was sent to the owner with its key outside the
+repository. No preference between the letters has been recorded.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

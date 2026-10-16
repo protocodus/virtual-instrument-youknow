@@ -135,7 +135,7 @@ namespace
 using namespace youknow;
 constexpr double pi = std::numbers::pi;
 void require(bool ok, const char* message) {if (!ok) throw std::runtime_error(message);}
-// Frozen pre-batching arithmetic with explicitly sequenced shape/noise calls.
+// Frozen per-phase arithmetic with explicitly sequenced shape/noise calls.
 // The original shape(...)*gain + noise(...) did not define which callback ran
 // first, so compiler-selected operand order cannot serve as the oracle. Use
 // the same prepared kernel to check batching against the original FIR design.
@@ -143,8 +143,15 @@ void require(bool ok, const char* message) {if (!ok) throw std::runtime_error(me
 // loop shapes use the same rounding policy. Exact callback-drive parity here
 // checks the arithmetic under that policy, not compiler-dependent contraction
 // choices in a default build. The linked DSP target keeps its production flags.
+// Since the 2026-10-16 CPU pass every dot product is specified as four
+// interleaved partial sums (tap or pair index modulo four, each in order,
+// combined as (0+1)+(2+3)). The oracle states that order one phase at a time;
+// it also keeps the original single running sum, and the two must agree to
+// rounding, which is all the four-sum specification changed.
 struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
 {
+    // Largest |four-sum - single-sum| over the sum of |terms| seen so far.
+    double worstReordering = 0;
     template <bool addNoise, bool withTemperature=false, class Shape, class OutputNoise>
     [[nodiscard]] float processOriginal(float input, float gain, const Kernel& k,
         Shape&& shape, OutputNoise&& noise,float kelvin) noexcept
@@ -181,11 +188,23 @@ struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
                 drive = inputs[static_cast<std::size_t>(
                     (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
             else
+            {
+                std::array<double, 4> lane {};
+                double single = 0, magnitude = 0;
                 for (int tap = 0; tap < delaySamples; ++tap)
-                    drive += k.interpolation[static_cast<std::size_t>(phase)]
+                {
+                    const double term = k.interpolation[static_cast<std::size_t>(phase)]
                         [static_cast<std::size_t>(tap)]
                         * inputs[static_cast<std::size_t>(
                             (inputWrite - tap + inputRingSize) & (inputRingSize - 1))];
+                    lane[static_cast<std::size_t>(tap % 4)] += term;
+                    single += term;
+                    magnitude += std::abs(term);
+                }
+                drive = (lane[0] + lane[1]) + (lane[2] + lane[3]);
+                worstReordering = std::max(worstReordering,
+                    std::abs(drive - single) / std::max(magnitude, 1e-300));
+            }
             // The physical control hold is slow and continuous; reconstruct
             // it linearly at the SAME delayed timestamp as the audio input.
             // Gain is inside the high-rate nonlinear path, so its sidebands
@@ -208,9 +227,12 @@ struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
             if (phase == 0)
             {
                 const int centre = (k.taps - 1) / 2;
-                double y = k.decimation[static_cast<std::size_t>(centre)]
+                const double middle = k.decimation[static_cast<std::size_t>(centre)]
                     * outputs[static_cast<std::size_t>(
                         (outputWrite - centre + outputRingSize) & (outputRingSize - 1))];
+                std::array<double, 4> lane {};
+                double single = middle, magnitude = std::abs(middle);
+                const int whole = k.pairCount - k.pairCount % 4;
                 for (int index = 0; index < k.pairCount; ++index)
                 {
                     const auto& pair = k.pairs[static_cast<std::size_t>(index)];
@@ -219,8 +241,16 @@ struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
                         (outputWrite - pair.tap + outputRingSize) & (outputRingSize - 1))];
                     const double b = outputs[static_cast<std::size_t>(
                         (outputWrite - opposite + outputRingSize) & (outputRingSize - 1))];
-                    y += pair.weight * (a + b);
+                    const double term = pair.weight * (a + b);
+                    // A pair count that is not a multiple of four leaves its
+                    // last pairs to the first partial sum, in order.
+                    lane[static_cast<std::size_t>(index < whole ? index % 4 : 0)] += term;
+                    single += term;
+                    magnitude += std::abs(term);
                 }
+                const double y = middle + ((lane[0] + lane[1]) + (lane[2] + lane[3]));
+                worstReordering = std::max(worstReordering,
+                    std::abs(y - single) / std::max(magnitude, 1e-300));
                 result = static_cast<float>(y);
             }
             outputWrite = (outputWrite + 1) & (outputRingSize - 1);
@@ -323,11 +353,15 @@ void phaseBatchingBitEquivalence()
         return double(random) / 4294967295.;
     };
     unsigned compared = 0;
+    double worstReordering = 0;
     for (double rate : {44100., 48000., 96000., 192000.})
         for (int mode : {0, 1, 2})
         {
             VoiceVcaAntialias candidate;
             FrozenVoiceVcaAntialias reference;
+            const auto keepWorst = [&]() {
+                worstReordering = std::max(worstReordering, reference.worstReordering);
+            };
             Callbacks actual, expected;
             auto kernel = VoiceVcaAntialias::prepare(rate);
             for (int frame = 0; frame < 2048; ++frame)
@@ -391,10 +425,13 @@ void phaseBatchingBitEquivalence()
                     "VCA phase batching changed shape/noise drive, control, temperature or RNG chronology");
                 ++compared;
             }
+            keepWorst();
         }
     require(allocations == 0, "VCA phase batching allocated");
+    require(worstReordering < 1e-13, "four partial sums changed more than the rounding");
     std::cout << "VCA batched interpolation fixed-rounding bit/history/callback parity: "
-              << compared << " random/hot/startup/reset/rate frames\n";
+              << compared << " random/hot/startup/reset/rate frames; four-sum reordering "
+              << worstReordering << " of the term magnitude\n";
 }
 void linearResponseAndDelay()
 {

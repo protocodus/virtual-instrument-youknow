@@ -149,11 +149,12 @@ public:
 
     constexpr VcaJunctionTemperatureCircuit(double span,
         const std::array<Row, maximumCelsius - minimumCelsius + 1>& rows) noexcept
-        : span_(span), rows_(rows)
+        : span_(span), inverseSpanCapacitance_(1.0 / (span * capacitanceFarads)), rows_(rows)
     {
     }
 
-    explicit VcaJunctionTemperatureCircuit(double span) noexcept : span_(span)
+    explicit VcaJunctionTemperatureCircuit(double span) noexcept
+        : span_(span), inverseSpanCapacitance_(1.0 / (span * capacitanceFarads))
     {
         const double emitterReference = EvidenceVcaCalibration::referenceCollectorAmps
             * (1 + 1 / EvidenceVcaCalibration::beta);
@@ -221,10 +222,15 @@ public:
     {
         if (!(seconds > 0.0)) return charge;
         const double dt = seconds / std::max(steps, 1);
+        // The four RK stages are one serial chain. Multiplying by these fixed
+        // reciprocals instead of dividing by the RC products keeps divider
+        // latency off that chain; the results differ only in final-bit
+        // rounding, about 1e-16 of the charge.
+        constexpr double inverseInputTime =
+            1.0 / (EvidenceVcaCalibration::inputOhms * capacitanceFarads);
         const auto derivative = [&](double q, double target) noexcept {
-            return (std::clamp(target, 0.0, 1.0) - q)
-                       / (EvidenceVcaCalibration::inputOhms * capacitanceFarads)
-                - emitterAmpsAtCharge(q, celsius, cache) / (span_ * capacitanceFarads);
+            return (std::clamp(target, 0.0, 1.0) - q) * inverseInputTime
+                - emitterAmpsAtCharge(q, celsius, cache) * inverseSpanCapacitance_;
         };
         for (int step = 0; step < std::max(steps, 1); ++step)
         {
@@ -233,7 +239,7 @@ public:
             const double b = derivative(charge + .5 * dt * a, drive(t + .5 * dt));
             const double c = derivative(charge + .5 * dt * b, drive(t + .5 * dt));
             const double d = derivative(charge + dt * c, drive(t + dt));
-            charge = std::clamp(charge + dt * (a + 2*b + 2*c + d) / 6,
+            charge = std::clamp(charge + dt * (a + 2*b + 2*c + d) * (1.0 / 6.0),
                                 minimumCharge, maximumCharge);
         }
         return charge;
@@ -269,30 +275,35 @@ private:
         constexpr double inverseChargeSpan = 1.0 / (maximumCharge - minimumCharge);
         const double normalized = (charge - minimumCharge) * inverseChargeSpan;
         const double position = std::clamp(normalized, 0.0, 1.0) * tableSteps;
-        const auto index = static_cast<std::size_t>(std::min(static_cast<int>(position), tableSteps - 1));
+        // Convert the cell through int, not size_t: the same value, without the
+        // unsigned-to-double sequence on the RK stages' serial chain.
+        const int cell = std::min(static_cast<int>(position), tableSteps - 1);
+        const auto index = static_cast<std::size_t>(cell);
         if (!cache.valid || cache.index != index || cache.celsius != celsius || cache.span != span_)
-        {
-            const double temperature = std::clamp(celsius,
-                static_cast<double>(minimumCelsius), static_cast<double>(maximumCelsius)) - minimumCelsius;
-            const auto low = static_cast<std::size_t>(std::min(static_cast<int>(temperature),
-                maximumCelsius - minimumCelsius - 1));
-            const double fraction = temperature - low;
-            const auto knot = [&](std::size_t at) {
-                const double first = rows_[low].capacitor[at];
-                const double difference = rows_[low+1].capacitor[at] - first;
-                return first + fraction * difference + fraction * (1-fraction)
-                    * ((1-fraction) * rows_[low].capacitorTemperatureSlope[at]
-                        - fraction * rows_[low+1].capacitorTemperatureSlope[at]
-                        + (2*fraction-1) * difference);
-            };
-            const double first = knot(index);
-            cache = {celsius, span_, first, knot(index+1)-first, index, true};
-        }
+            refreshCache(index, celsius, cache);
         // Temperature interpolation and charge interpolation commute. Cache
         // only the two knots of the current cell, preserving all 8192 cells,
         // every RK4 evaluation and the exact temperature. This reassociation
         // changes double rounding only; no control is quantized or held.
-        return cache.first + (position-index) * cache.difference;
+        return cache.first + (position - cell) * cache.difference;
+    }
+    void refreshCache(std::size_t index, double celsius, CurrentCache& cache) const noexcept
+    {
+        const double temperature = std::clamp(celsius,
+            static_cast<double>(minimumCelsius), static_cast<double>(maximumCelsius)) - minimumCelsius;
+        const auto low = static_cast<std::size_t>(std::min(static_cast<int>(temperature),
+            maximumCelsius - minimumCelsius - 1));
+        const double fraction = temperature - low;
+        const auto knot = [&](std::size_t at) {
+            const double first = rows_[low].capacitor[at];
+            const double difference = rows_[low+1].capacitor[at] - first;
+            return first + fraction * difference + fraction * (1-fraction)
+                * ((1-fraction) * rows_[low].capacitorTemperatureSlope[at]
+                    - fraction * rows_[low+1].capacitorTemperatureSlope[at]
+                    + (2*fraction-1) * difference);
+        };
+        const double first = knot(index);
+        cache = {celsius, span_, first, knot(index+1)-first, index, true};
     }
     [[nodiscard]] double sample(double coordinate, double celsius, bool capacitor) const noexcept
     {
@@ -321,6 +332,7 @@ private:
                 + (2*fraction-1) * difference);
     }
     double span_;
+    double inverseSpanCapacitance_;
     std::array<Row, maximumCelsius - minimumCelsius + 1> rows_ {};
 };
 } // namespace youknow

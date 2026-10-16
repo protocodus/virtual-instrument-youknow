@@ -1,5 +1,6 @@
 #include "DSP/YouKnowEngine.h"
 #include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowProductHardwareRealism.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -496,6 +497,45 @@ void lifecycle() {
         &&YouKnowTestAccess::extensionCacheEmpty(*e),"extension retirement retained frozen device history");
     std::cout<<"actual engine lifecycle: all rates/qualities; Character0, RNG, reset, idle, block, noalloc passed\n";
 }
+// The product's rate island factors the collector-noise covariance at the
+// first local interval of each internal sample and reuses that factor for the
+// sample's remaining intervals. The draws are the same either way, and so is
+// everything else the card renders, so differences against a render without
+// collector noise isolate the collector noise, and a paired render isolates
+// the factor difference: its power and signed residual against per-interval
+// factoring, at an open and a resonant operating point, for both circuit rates.
+std::vector<float> frameNoise(bool frameFactor,CircuitRate rate,float cutoff,float resonance,bool shot) {
+    auto e=std::make_unique<YouKnowEngine>();ProductHardwareRealismProfile::configureBeforePrepare(*e);
+    e->prepare(48000,64,1);e->setInitialCircuitRate(rate);
+    EngineParameters p;ProductHardwareRealismProfile::applyTo(p);
+    p.enableVoiceIslandFrameShotCovariance=frameFactor;p.enableOtaShotNoise=shot;
+    p.sawEnabled=p.pulseEnabled=false;p.subLevel=p.noiseLevel=p.chorusNoise=0;p.chorus=ChorusMode::Off;
+    p.cutoff=cutoff;p.resonance=resonance;p.envDepth=p.keyFollow=0;p.attack=0;p.decay=1;p.sustain=1;p.polyphony=6;
+    e->setParameters(p);for(int note:{48,55,64})e->noteOn(note,1);
+    std::vector<float> left(48000),right(48000);
+    for(int at=0;at<12000;at+=64)e->process(left.data(),right.data(),64);
+    for(int at=0;at<48000;at+=64)e->process(left.data()+at,right.data()+at,64);
+    return left;
+}
+void frameFactorReuse() {
+    for(CircuitRate rate:{CircuitRate::Max,CircuitRate::Normal})
+        for(const auto& [cutoff,resonance]:{std::pair{.8f,.5f},std::pair{.5f,.85f}}) {
+            const auto shared=frameNoise(true,rate,cutoff,resonance,true);
+            const auto each=frameNoise(false,rate,cutoff,resonance,true);
+            const auto quiet=frameNoise(true,rate,cutoff,resonance,false);
+            double reference=0,power=0,residual=0,rest=0;
+            for(std::size_t i=0;i<shared.size();++i) {
+                const double a=double(each[i])-quiet[i],b=double(shared[i])-quiet[i];
+                reference+=a*a;power+=b*b;residual+=(b-a)*(b-a);rest+=double(quiet[i])*quiet[i];
+            }
+            require(reference>1e-9*rest,"the fixture carried no collector noise");
+            const double level=10*std::log10(power/reference),difference=10*std::log10(residual/reference);
+            std::cout<<"frame-shared OTA factor "<<(rate==CircuitRate::Max?"Max":"Normal")<<" cut="<<cutoff
+                <<" res="<<resonance<<": collector-noise power "<<level<<" dB, paired residual "
+                <<difference<<" dB (collector noise "<<10*std::log10(reference/rest)<<" dB re the rest)\n";
+            require(std::abs(level)<.05&&difference<-25,"frame-shared OTA factor changed the collector-noise statistics");
+        }
+}
 double cost(bool enabled,int voices,int quality) {
     auto e=std::make_unique<YouKnowEngine>();EngineParameters p;
     ProductFidelityProfile::applyTo(p);p.enableOtaShotNoise=enabled;
@@ -515,4 +555,4 @@ void costs(){for(int voices:{6,16})for(int q:{1,4}){
         <<" s / .4 s audio (ratio "<<after/before<<")\n";
 }}
 }
-int main(){try{randomChecks();sharedPositiveCovarianceParity();currentAndCovariance();sparseDiffusion();filterPsd();highCutoffVariance();vcaChecks();lifecycle();costs();}catch(const std::exception&e){guardAllocation=false;std::cerr<<e.what()<<'\n';return 1;}return 0;}
+int main(){try{randomChecks();sharedPositiveCovarianceParity();currentAndCovariance();sparseDiffusion();filterPsd();highCutoffVariance();vcaChecks();lifecycle();frameFactorReuse();costs();}catch(const std::exception&e){guardAllocation=false;std::cerr<<e.what()<<'\n';return 1;}return 0;}

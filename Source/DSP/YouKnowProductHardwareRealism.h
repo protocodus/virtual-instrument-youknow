@@ -57,6 +57,9 @@ struct ProductHardwareRealismProfile
         parameters.enableCoupledMixerBandlimitedSwitch = true;
         parameters.enableChorusRateIsland = true;
         parameters.enableVoiceFilterRateIsland = true;
+        // 2026-10-16 CPU pass: the island's collector-noise covariance is
+        // factored once per internal sample (see the parameter's note).
+        parameters.enableVoiceIslandFrameShotCovariance = true;
     }
 };
 } // namespace youknow
