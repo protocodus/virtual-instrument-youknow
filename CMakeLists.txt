@@ -35,7 +35,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(YouKnow VERSION 1.3.1 LANGUAGES C CXX)
+project(YouKnow VERSION 1.3.2 LANGUAGES C CXX)
 
 # Keep the three-part host version stable; the build identity X.Y.Z-build.<run>
 # (portfolio standard B4/B5) names downloads and appears in About YouKnow and
@@ -848,6 +848,14 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowOutputSummerMuteTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.OutputSummerMute COMMAND YouKnowOutputSummerMuteTests)
     set_tests_properties(YouKnow.OutputSummerMute PROPERTIES TIMEOUT 60)
+    add_executable(YouKnowChorusNoiseCacheTests Tests/YouKnowChorusNoiseCacheTests.cpp)
+    target_link_libraries(YouKnowChorusNoiseCacheTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusNoiseCache COMMAND YouKnowChorusNoiseCacheTests)
+    add_executable(YouKnowEmbeddedChorusNoiseCacheTests Tests/YouKnowChorusNoiseCacheTests.cpp)
+    target_link_libraries(YouKnowEmbeddedChorusNoiseCacheTests PRIVATE YouKnowDSPCxx17)
+    set_target_properties(YouKnowEmbeddedChorusNoiseCacheTests PROPERTIES CXX_STANDARD 17)
+    add_test(NAME YouKnow.EmbeddedChorusNoiseCache COMMAND YouKnowEmbeddedChorusNoiseCacheTests)
+    set_tests_properties(YouKnow.ChorusNoiseCache YouKnow.EmbeddedChorusNoiseCache PROPERTIES TIMEOUT 120)
     add_executable(YouKnowChorusBucketNoiseTests Tests/YouKnowChorusBucketNoiseTests.cpp)
     target_link_libraries(YouKnowChorusBucketNoiseTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.ChorusBucketNoise COMMAND YouKnowChorusBucketNoiseTests)

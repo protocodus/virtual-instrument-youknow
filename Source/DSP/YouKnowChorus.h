@@ -1080,6 +1080,10 @@ private:
     // Set while the settled-bypass path skips the muted lines; the next
     // engaged process() rebuilds the wet path from silence before use.
     bool wetPathFlushPending_ { false };
+    // The per-line structs retain the last mix; only their clock-dependent
+    // A-weighted scale changes while these source controls stay fixed.
+    bool bucketNoiseCoefficientsValid_ { false };
+    float bucketNoiseTransferFraction_ {};
     const std::array<double, noiseMomentIntervals + 1>* noiseCosineMoments_ { nullptr };
     // Bypass mutes the wet return but retains the last-selected I/II noise
     // profile, matching the clock-program behaviour this model already had.
@@ -1106,6 +1110,7 @@ private:
     float lineGainA_ { 1.0f };
     float lineGainB_ { 1.0f };
     float lineGainCalibration_ { 0.0f };
+    float bucketNoiseTransferCorrelation_ {};
 };
 
 } // namespace youknow

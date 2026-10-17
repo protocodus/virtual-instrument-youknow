@@ -1160,7 +1160,7 @@ using FollowerPairMatrix = std::array<FollowerPair, 2>;
 // collector-current correction in amperes / nodeVoltsPerUnit; the existing
 // gm/rpi network already carries the constant and first-order currents.
 bool followerResidualCurrent(
-    const FollowerPair& thermalJunction, const FollowerPair& collectorCurrent,
+    const FollowerPair& thermalJunction, const FollowerPair& collectorScale,
     FollowerPair& current, FollowerPair& derivative) noexcept
 {
     for (std::size_t port = 0; port < 2; ++port)
@@ -1194,7 +1194,7 @@ bool followerResidualCurrent(
             exponentialMinusOne = std::expm1(y);
             remainder = exponentialMinusOne - y;
         }
-        const double scale = collectorCurrent[port] / Chorus::nodeVoltsPerUnit;
+        const double scale = collectorScale[port];
         current[port] = scale * remainder;
         derivative[port] = scale * exponentialMinusOne;
         if (!std::isfinite(current[port]) || !std::isfinite(derivative[port]))
@@ -1217,6 +1217,12 @@ bool solveFollowerJunctions(
     constexpr unsigned iterationLimit = 20;
     constexpr unsigned backtrackLimit = 12;
     constexpr double tolerance = 2.0e-12;
+    // The bias currents stay fixed throughout every Newton/backtrack trial.
+    // Retain the same divisions, once per solve rather than once per trial.
+    const FollowerPair collectorScale {{
+        ports.collectorCurrentAmps[0] / Chorus::nodeVoltsPerUnit,
+        ports.collectorCurrentAmps[1] / Chorus::nodeVoltsPerUnit
+    }};
     FollowerPair base {};
     FollowerPairMatrix coupling {};
     for (std::size_t port = 0; port < 2; ++port)
@@ -1231,7 +1237,7 @@ bool solveFollowerJunctions(
     auto residual = [&](const FollowerPair& y, FollowerPair& q,
                         FollowerPair& derivative, FollowerPair& error)
     {
-        if (!followerResidualCurrent(y, ports.collectorCurrentAmps, q, derivative))
+        if (!followerResidualCurrent(y, collectorScale, q, derivative))
             return std::numeric_limits<double>::infinity();
         for (std::size_t port = 0; port < 2; ++port)
             error[port] = y[port] - base[port]
@@ -2738,6 +2744,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     const double continuingPhase = lfoPhase_;
     lineA_.reset(0x9e3779b9u);
     lineB_.reset(0x85ebca6bu);
+    bucketNoiseCoefficientsValid_ = false;
     inputSupport_.reset();
     wetPathFlushPending_ = false;
     lfoPhase_ = preserveLfoPhase ? continuingPhase : 0.0;
@@ -3030,6 +3037,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetPathFlushPending_ = false;
         lineA_.reset(0x9e3779b9u);
         lineB_.reset(0x85ebca6bu);
+        bucketNoiseCoefficientsValid_ = false;
         inputSupport_.reset();
     }
 
@@ -3153,15 +3161,34 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const double clockB = clocksStopped_ ? 0.0 : clock[1];
     if(enableCorrelatedNoise)
     {
-        auto mix=ChorusBucketNoise::coefficients(noiseTransferFraction,noiseTransferCorrelation);
-        lineA_.bucketNoise=mix;lineB_.bucketNoise=mix;
-        if(mix.eta!=0.0)
+        if (!bucketNoiseCoefficientsValid_
+            || noiseTransferFraction != bucketNoiseTransferFraction_
+            || noiseTransferCorrelation != bucketNoiseTransferCorrelation_
+            || (noiseTransferFraction == 0.0f
+                && std::signbit(noiseTransferFraction) != std::signbit(bucketNoiseTransferFraction_))
+            || (noiseTransferCorrelation == 0.0f
+                && std::signbit(noiseTransferCorrelation) != std::signbit(bucketNoiseTransferCorrelation_)))
+        {
+            const auto mix = ChorusBucketNoise::coefficients(
+                noiseTransferFraction, noiseTransferCorrelation);
+            lineA_.bucketNoise = mix;
+            lineB_.bucketNoise = mix;
+            bucketNoiseTransferFraction_ = noiseTransferFraction;
+            bucketNoiseTransferCorrelation_ = noiseTransferCorrelation;
+            bucketNoiseCoefficientsValid_ = true;
+        }
+        if(lineA_.bucketNoise.eta!=0.0)
         {
             ChorusBucketNoise::normalize(lineA_.bucketNoise,bucketNoiseCosineMoment(clock[0]));
             ChorusBucketNoise::normalize(lineB_.bucketNoise,bucketNoiseCosineMoment(clock[1]));
         }
     }
-    else {lineA_.bucketNoise={};lineB_.bucketNoise={};}
+    else
+    {
+        lineA_.bucketNoise = {};
+        lineB_.bucketNoise = {};
+        bucketNoiseCoefficientsValid_ = false;
+    }
 
     // C28/C25 see the 39 kOhm mixer legs through Tr11/Tr12, so their
     // loading follows the RC-delayed gate, including continuous finite
