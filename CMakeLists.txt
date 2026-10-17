@@ -1362,9 +1362,8 @@ if(BUILD_TESTING)
     if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS)
         # A timeout is per-test, not per-configuration, and CTest runs one
         # configuration at a time: widen whenever any of them is instrumented,
-        # because a longer bound never turns a healthy run red.
-        set(YOUKNOW_ENGINE_TEST_TIMEOUT 600)
-        set(YOUKNOW_CIRCUIT_TEST_TIMEOUT 900)
+        # because a longer bound never turns a healthy run red. Every test's
+        # bound is scaled once registration is complete, at the end of this file.
         # The suites also have to know, because one of them asserts the engine
         # renders faster than realtime and instrumentation makes that false.
         # Compiler macros do not cover the cases this branch does -- GCC with
@@ -1382,16 +1381,15 @@ if(BUILD_TESTING)
             target_compile_definitions(${target} PRIVATE
                 "${YOUKNOW_SANITIZER_DEFINITION}")
         endforeach()
-    else()
-        # The warm-up fixture advances up to 900 s of internal samples for
-        # four configurations. With the accepted circuit reconstruction the
-        # complete suite takes 805 s on Linux CI (631 s Windows, 405 s macOS),
-        # leaving too little runner-speed margin under the former 900 s bound.
-        # Keep every assertion and warm-up interval; this is a bounded hang
-        # guard, separate from the suite's explicit performance assertions.
-        set(YOUKNOW_ENGINE_TEST_TIMEOUT 1800)
-        set(YOUKNOW_CIRCUIT_TEST_TIMEOUT 90)
     endif()
+    # The warm-up fixture advances up to 900 s of internal samples for
+    # four configurations. With the accepted circuit reconstruction the
+    # complete suite takes 805 s on Linux CI (631 s Windows, 405 s macOS),
+    # leaving too little runner-speed margin under the former 900 s bound.
+    # Keep every assertion and warm-up interval; this is a bounded hang
+    # guard, separate from the suite's explicit performance assertions.
+    set(YOUKNOW_ENGINE_TEST_TIMEOUT 1800)
+    set(YOUKNOW_CIRCUIT_TEST_TIMEOUT 90)
     set_tests_properties(YouKnow.Engine PROPERTIES
         TIMEOUT ${YOUKNOW_ENGINE_TEST_TIMEOUT})
     set_tests_properties(YouKnow.Circuit PROPERTIES
@@ -1453,9 +1451,6 @@ if(BUILD_TESTING)
         target_compile_features(YouKnowControlFuzz PRIVATE cxx_std_20)
         add_test(NAME YouKnow.ControlFuzz COMMAND YouKnowControlFuzz --quick)
         set_tests_properties(YouKnow.ControlFuzz PROPERTIES TIMEOUT 90)
-        if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS)
-            set_tests_properties(YouKnow.ControlFuzz PROPERTIES TIMEOUT 300)
-        endif()
 
         if(YOUKNOW_BUILD_CLAP)
             find_package(Threads REQUIRED)
@@ -1532,5 +1527,14 @@ foreach(test IN LISTS youknow_tests)
         set_tests_properties(${test} PROPERTIES LABELS fuzz)
     else()
         set_tests_properties(${test} PROPERTIES LABELS unit)
+    endif()
+    # Timeouts are hang guards sized for uninstrumented builds; ASan + UBSan
+    # run the same work about ten times slower.
+    if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS)
+        get_test_property(${test} TIMEOUT timeout)
+        if(timeout)
+            math(EXPR timeout "${timeout} * 10")
+            set_tests_properties(${test} PROPERTIES TIMEOUT ${timeout})
+        endif()
     endif()
 endforeach()

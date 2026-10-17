@@ -253,7 +253,7 @@ jobs:
   sanitizers:
     name: Unit and fuzz tiers under ASan + UBSan (Linux)
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 300
     env:
       # Leaks are off: these binaries have never been leak-checked, and an
       # unreviewed leak verdict should not become the gate.
@@ -293,10 +293,28 @@ jobs:
       - name: Build, including the C++17 Rack proof YouKnowDSPCxx17
         run: cmake --build build-asan --parallel
 
+      # Instrumented, the unit tier is several CPU-hours; run it across the
+      # runner's cores. The build scales every test timeout for sanitizers.
       - name: Unit and fuzz tiers
         run: |
           xvfb-run --auto-servernum ctest --test-dir build-asan \
+            --parallel "$(nproc)" \
             -L "^(unit|fuzz)$" --output-on-failure --no-tests=error
+
+      # Temporary diagnosis: on Linux the editor scenario of ControlFuzz stops
+      # on an asynchronous X11 BadAtom error. Make Xlib synchronous and break
+      # in its error path so the backtrace names the failing request.
+      - name: Locate the ControlFuzz X11 error
+        if: failure()
+        run: |
+          sudo apt-get install -y --no-install-recommends gdb
+          xvfb-run --auto-servernum gdb -batch \
+            -ex 'set breakpoint pending on' \
+            -ex 'break XOpenDisplay' -ex run \
+            -ex 'set var *(int*)&_Xdebug = 1' \
+            -ex 'delete' -ex 'break _XError' -ex continue \
+            -ex 'thread apply all bt 40' \
+            --args build-asan/YouKnowControlFuzz --quick || true
 
   refresh-previews:
     name: Refresh the committed screenshot, audio demos and packages

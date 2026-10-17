@@ -23,6 +23,8 @@ void* operator new(std::size_t n) { if (counting) ++allocations; if (void* p=std
 void* operator new[](std::size_t n) { return ::operator new(n); }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 namespace youknow {
 struct YouKnowTestAccess {
  static const auto& transition(const Chorus& c,bool connected=true) { return connected?c.support_.exactOutputConnected:c.support_.exactOutputMuted; }

@@ -18,6 +18,8 @@ void* operator new(std::size_t n) { if(watch) ++allocations; if(auto p=std::mall
 void* operator new[](std::size_t n) { return ::operator new(n); }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 static void check(bool b,const char* message) { if(!b) { std::fprintf(stderr,"FAIL: %s\n",message); std::abort(); } }
 using namespace youknow;
 using E=YouKnowEngine;

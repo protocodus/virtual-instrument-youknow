@@ -34,6 +34,8 @@ void *operator new(std::size_t n) {
 void *operator new[](std::size_t n) { return ::operator new(n); }
 void operator delete(void *p) noexcept { std::free(p); }
 void operator delete[](void *p) noexcept { std::free(p); }
+void operator delete(void *p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void *p, std::size_t) noexcept { std::free(p); }
 using namespace youknow;
 using S = FirmwareSerialTrace;
 using K = S::EventKind;
