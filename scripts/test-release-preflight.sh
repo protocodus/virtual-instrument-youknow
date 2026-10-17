@@ -7,11 +7,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/youknow-preflight.XXXXXX")"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 mkdir -p "${TEST_ROOT}/project/scripts" "${TEST_ROOT}/project/ThirdParty" \
+    "${TEST_ROOT}/project/Docs/guide" \
     "${TEST_ROOT}/bin" "${TEST_ROOT}/project/build-macos/dist"
 cp "${SCRIPT_DIR}/sign-and-package-macos.sh" "${SCRIPT_DIR}/release-macos.sh" \
     "${TEST_ROOT}/project/scripts/"
-for document in LICENSE USER_GUIDE.md THIRD_PARTY_NOTICES.md \
-    INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md \
+for document in LICENSE Docs/guide/USER_GUIDE.md THIRD_PARTY_NOTICES.md \
+    Docs/guide/INSTALL_MACOS.md Docs/guide/INSTALL_WINDOWS.md Docs/guide/INSTALL_LINUX.md \
     ThirdParty/JUCE-LICENSE.md ThirdParty/CLAP-LICENSE.md PRIVACY.md; do
     printf 'Fixture document\n' > "${TEST_ROOT}/project/${document}"
 done
@@ -85,13 +86,13 @@ mv "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md" "${TEST_ROOT}/CLAP-LICENSE.
 expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
 mv "${TEST_ROOT}/CLAP-LICENSE.md" "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md"
 for guide in INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md; do
-    mv "${TEST_ROOT}/project/${guide}" "${TEST_ROOT}/${guide}"
+    mv "${TEST_ROOT}/project/Docs/guide/${guide}" "${TEST_ROOT}/${guide}"
     expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
-    grep -F -- "/project/${guide}" "${TEST_ROOT}/output" >/dev/null
-    touch "${TEST_ROOT}/project/${guide}"
+    grep -F -- "/project/Docs/guide/${guide}" "${TEST_ROOT}/output" >/dev/null
+    touch "${TEST_ROOT}/project/Docs/guide/${guide}"
     expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
-    grep -F -- "/project/${guide}" "${TEST_ROOT}/output" >/dev/null
-    mv "${TEST_ROOT}/${guide}" "${TEST_ROOT}/project/${guide}"
+    grep -F -- "/project/Docs/guide/${guide}" "${TEST_ROOT}/output" >/dev/null
+    mv "${TEST_ROOT}/${guide}" "${TEST_ROOT}/project/Docs/guide/${guide}"
 done
 printf '### 1.1.0 — unreleased (2026-09-05)\n' > "${TEST_ROOT}/project/README.md"
 expect_failure 'dated' "${PACKAGER}" --preflight

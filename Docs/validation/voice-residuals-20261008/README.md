@@ -2,7 +2,7 @@
 
 These software tests validate the explicitly estimated residuals introduced
 above `41bc471985d1706be54f45ced6cbecd14fa78715`; they are not hardware measurements.
-The model choices and evidence limits are in `../../unison-hardware.md`.
+The model choices and evidence limits are in `../../research/unison-hardware.md`.
 
 - `voice-residual-red.log` links the new fixture against the unchanged prior
   native DSP. It fails because a full service residual is still 10 cents

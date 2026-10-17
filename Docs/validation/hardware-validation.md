@@ -8,7 +8,7 @@ results below are retained as the baseline.
 
 ## September 5 circuit and benchmark review
 
-The [research assessment](modeling-research-2026-09.md) evaluates recent
+The [research assessment](../research/modeling-research-2026-09.md) evaluates recent
 differentiable circuit, wave-digital, antialiasing and adaptive-solver methods.
 This pass makes two bounded DSP corrections without fitting either to audio:
 
@@ -42,7 +42,7 @@ ultrasonic energy. Neither this correction nor the C59 change explains the
 large noise-level residual.
 
 The later five-source take now has a retained analyzer,
-[`AnalyzeHardwareIsolators.py`](../Tools/AnalyzeHardwareIsolators.py), instead
+[`AnalyzeHardwareIsolators.py`](../../Tools/AnalyzeHardwareIsolators.py), instead
 of relying on an ignored session script. It verifies the known 192 kHz PCM
 prefix, exports the hash-pinned MIDI prefix and reports source ratios,
 dominant frequencies and subwindow variability. Those subwindows describe
@@ -57,7 +57,7 @@ transmission timing. The measured steady source windows have chorus Off;
 the dedicated bypass test covers the host's mute-underflow condition.
 
 Final measurements and input, source, executable and audio hashes are retained
-in the [benchmark record](benchmarks/hardware-2026-09-05.json). The source
+in the [benchmark record](../benchmarks/hardware-2026-09-05.json). The source
 hashes and copied renderer binary remained unchanged across the final renders.
 The baseline full calibration render also reproduces the previously saved
 nominal WAV byte for byte.
@@ -87,7 +87,7 @@ The source-level defaults remain provisional. Original-card captures with
 documented noise trim and TP8 voltage are still the highest-priority evidence,
 alongside original chorus captures. No market-wide ranking was performed.
 
-The [harmonic comparison](benchmarks/harmonics-2026-09-05.json) measures
+The [harmonic comparison](../benchmarks/harmonics-2026-09-05.json) measures
 H2–H8 at each recording's independently estimated pitch using coherent Hann
 projections. It uses the later take's **PWM0/approximately 50% pulse**, not
 the earlier PWM64 pulse. Synthetic checks cover non-integer-cycle windows,
@@ -137,8 +137,8 @@ positions for A21, A22, A48, A63, A66, B56, B64 and B76 and rerendering those
 eight complete scores gives a final bank whose maximum peak is −7.065 dBFS
 and maximum gated RMS is −28.512 dBFS, inside the existing −1/−28.5 dBFS
 limits. The other 120 measured rows remain valid; no original tone bytes or
-other product controls changed. The [factory report](audio/factory-presets/README.md)
-and [full metrics](audio/factory-presets/metrics.csv) contain the final values.
+other product controls changed. The [factory report](../audio/factory-presets/README.md)
+and [full metrics](../audio/factory-presets/metrics.csv) contain the final values.
 This is product loudness maintenance, not a fit to the hardware recordings;
 the calibration renderer uses volume 1 and does not load factory VR1 controls.
 Its rebuilt executable remains byte-identical to the recorded benchmark binary
@@ -173,7 +173,7 @@ does not lose provenance. Unknown recordings are explicitly unverified.
 Third-party audio and MIDI remain in the ignored `out/hardware-validation/`
 folder, alongside comparison JSON and model audio.
 
-The local [source audition](../out/hardware-validation/source-ab.wav) plays
+The local [source audition](../../out/hardware-validation/source-ab.wav) plays
 hardware then model for saw, pulse, sub and noise. One constant gain per
 instrument matches the saw RMS, preserving the other sources' relative
 differences. Its resampling and short fades are for listening only; measurements

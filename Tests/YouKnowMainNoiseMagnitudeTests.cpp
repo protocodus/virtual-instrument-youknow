@@ -1,8 +1,8 @@
 // Independent continuous RC magnitude and zero-current charge-decay oracles.
 // The full engine checks source chronology, block partitions, control order,
 // hard reset and live quality rebuilds; no fitted level/EQ enters the oracle.
-#include "DSP/YouKnowEngine.h"
-#include "DSP/YouKnowProductFidelity.h"
+#include "../Source/DSP/YouKnowEngine.h"
+#include "../Source/DSP/YouKnowProductFidelity.h"
 
 #include <algorithm>
 #include <array>
@@ -10,7 +10,6 @@
 #include <complex>
 #include <iostream>
 #include <memory>
-#include <numbers>
 #include <stdexcept>
 #include <tuple>
 #include <vector>
@@ -38,7 +37,11 @@ struct YouKnowTestAccess
         e.oversamplingIdleSamples_ = e.oversamplingQuietSamples_;
         e.rateTransition_ = YouKnowEngine::RateTransition::FadingOut;
         e.rateTransitionGain_ = 0;
-        return e.setOversamplingFactor(factor);
+        // The return value reports host readiness and stays false through the
+        // fade-in; check the installed grid rather than treating it as
+        // rebuild completion.
+        (void) e.setOversamplingFactor(factor);
+        return e.getOversamplingFactor() == factor;
     }
 };
 }
@@ -46,7 +49,7 @@ struct YouKnowTestAccess
 namespace
 {
 using namespace youknow;
-constexpr double pi = std::numbers::pi;
+constexpr double pi = 3.141592653589793238462643383279502884;
 constexpr double tau = 330000.0 * 100e-12;
 constexpr double hpTau = 4700.0 * 1e-6;
 void require(bool ok, const char* message)
@@ -188,8 +191,13 @@ void actualEngine()
     EngineParameters p;
     ProductFidelityProfile::applyTo(p);
     require(p.enableMainNoiseMagnitudePole, "product omitted C41 magnitude correction");
+    auto changed = p;
+    changed.enableMainNoiseMagnitudePole = false;
+    require(!(changed == p), "parameter comparison ignored C41 selection");
     for (double rate : {8000., 44100., 48000., 96000., 192000.})
     {
+        require(prepared(rate, true)->getProcessingLatencySamples() == 41,
+                "C41 correction changed the raw reference latency");
         const auto old = render(rate, false, 128);
         const auto current = render(rate, true, 128);
         require(current.left == render(rate, true, 1).left,

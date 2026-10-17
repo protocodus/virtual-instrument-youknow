@@ -1,6 +1,6 @@
 # YouKnow — Linux installation
 
-For **x86_64 Linux**. The download includes **VST3 and a standalone program**.
+For **x86_64 Linux**. The download includes **VST3, CLAP and a standalone program**.
 The current download is built on Ubuntu 24.04; other distributions need
 compatible system libraries. An ARM system cannot run this binary natively.
 
@@ -45,6 +45,19 @@ and needs no administrator access. When updating, remove the previous
 Reopen your Linux VST3-compatible music host and rescan its plug-ins. Add
 **YouKnow** to an instrument track, select a preset and enable MIDI input or
 record monitoring.
+
+## Install CLAP for your user
+
+For a CLAP host such as Bitwig Studio or REAPER, copy the plug-in file into
+`~/.clap/`, the standard per-user CLAP location:
+
+```sh
+mkdir -p "$HOME/.clap"
+cp "$HOME/.local/share/Protocodus/YouKnow/CLAP/YouKnow.clap" "$HOME/.clap/"
+```
+
+Rescan plug-ins in your host. Archives built before CLAP was added for Linux
+have no `CLAP` folder; use VST3 with those.
 
 ## Play without a music host
 

@@ -47,6 +47,14 @@ def invalid_build_caches():
     yield "unsafe distribution version", valid.replace(distribution_entry, b"YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=../bad\n")
 
 
+GUIDES = {"USER_GUIDE.md", "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md"}
+
+
+def source(project: Path, relative: str) -> Path:
+    # Customer guides live in Docs/guide but ship at the archive root.
+    return project / "Docs/guide" / relative if relative in GUIDES else project / relative
+
+
 def write(path: Path, contents: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(contents)
@@ -215,7 +223,7 @@ class WindowsPackagingTests(unittest.TestCase):
             "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
         )
         for relative in self.notices:
-            write(self.project / relative, relative.encode())
+            write(source(self.project, relative), relative.encode())
 
     def package(self):
         return subprocess.run(
@@ -246,7 +254,7 @@ class WindowsPackagingTests(unittest.TestCase):
             self.artifacts / "VST3/YouKnow.vst3/Contents/x86_64-win/YouKnow.vst3",
             self.artifacts / "CLAP/YouKnow.clap",
             self.artifacts / "Standalone/YouKnow.exe",
-            *(self.project / relative for relative in self.notices),
+            *(source(self.project, relative) for relative in self.notices),
         ]
         for path in required:
             original = path.read_bytes()
@@ -355,7 +363,7 @@ class MacPackagingVersionTests(unittest.TestCase):
             "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
             "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
         ):
-            write(self.project / relative, relative.encode())
+            write(source(self.project, relative), relative.encode())
         self.plists = {}
         for relative, identifier in (
             ("VST3/YouKnow.vst3", "cz.protocodus.youknow.vst3"),
@@ -425,6 +433,7 @@ class LinuxPackagingTests(unittest.TestCase):
         self.artifacts = self.project / "build-dsp/YouKnow_artefacts/Release"
         self.payload = {
             "VST3/YouKnow.vst3/Contents/x86_64-linux/YouKnow.so": b"vst3 binary",
+            "CLAP/YouKnow.clap": b"clap binary",
             "Standalone/YouKnow": b"standalone binary",
         }
         for relative, contents in self.payload.items():
@@ -436,22 +445,15 @@ class LinuxPackagingTests(unittest.TestCase):
             "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
         )
         for relative in self.documents:
-            write(self.project / relative, relative.encode())
-        # Execute the actual inline CI packaging step without a YAML dependency.
-        workflow = (SCRIPTS.parent / ".github/workflows/ci.yml").read_text()
-        step = workflow.split("      - name: Package Linux VST3 and standalone\n", 1)[1]
-        run_block = step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
-        self.script = textwrap.dedent(run_block)
+            write(source(self.project, relative), relative.encode())
+        self.script = self.project / "scripts/package-linux.py"
+        self.script.parent.mkdir()
+        shutil.copyfile(SCRIPTS / "package-linux.py", self.script)
         self.archive = self.project / f"build-dsp/dist/YouKnow-{DISTRIBUTION_VERSION}-Linux-x64.tar.gz"
 
     def package(self):
-        # macOS tar adds AppleDouble files by default; the production step runs
-        # on Linux, so keep the local fixture archive equivalent to that output.
-        environment = os.environ.copy()
-        environment["COPYFILE_DISABLE"] = "1"
         return subprocess.run(
-            ["bash", "-c", self.script], cwd=self.project,
-            env=environment,
+            [sys.executable, str(self.script), "--build-dir", str(self.project / "build-dsp")],
             capture_output=True, text=True, check=False,
         )
 
@@ -477,7 +479,7 @@ class LinuxPackagingTests(unittest.TestCase):
 
     def test_missing_or_empty_document_fails_before_archiving(self):
         for relative in self.documents:
-            path = self.project / relative
+            path = source(self.project, relative)
             original = path.read_bytes()
             for empty in (False, True):
                 with self.subTest(document=relative, empty=empty):

@@ -36,10 +36,11 @@ the guide, licences and notices from the archive with your installation.
 
 Extract the versioned archive ending in `-Linux-x64.tar.gz` into a permanent
 folder. Copy the whole
-`VST3/YouKnow.vst3` folder to `~/.vst3/`, creating that destination if needed.
+`VST3/YouKnow.vst3` folder to `~/.vst3/`, or `CLAP/YouKnow.clap` to `~/.clap/`,
+creating that destination if needed.
 Run `Standalone/YouKnow` from the extracted folder to play without a host.
 Keep the guide, licences and notices with the extracted files. This x86_64
-package includes VST3 and Standalone; the current CI build uses Ubuntu 24.04.
+package includes VST3, CLAP and Standalone; the current CI build uses Ubuntu 24.04.
 
 ### In your music host
 

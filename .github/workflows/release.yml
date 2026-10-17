@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "youknow-v*"
+      - "v*"
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   macos:
-    name: Sign, notarize and publish macOS
+    name: Sign and notarize macOS, draft the release
     needs: ci
     runs-on: macos-15
     environment: youknow-production
@@ -78,7 +78,7 @@ jobs:
               .target == "tag" and .enforcement == "active" and
               (.bypass_actors | length == 0) and
               ((.conditions.ref_name.include // []) |
-                index("refs/tags/youknow-v*") != null) and
+                index("refs/tags/v*") != null) and
               ((.conditions.ref_name.exclude // []) | length == 0) and
               ([.rules[]?.type] | index("update") != null) and
               ([.rules[]?.type] | index("deletion") != null)
@@ -110,11 +110,11 @@ jobs:
             -H "X-GitHub-Api-Version: ${api_version}" \
             "repos/${GITHUB_REPOSITORY}/environments/youknow-production/deployment-branch-policies")"
           tag_policies="$(jq \
-            '[.branch_policies[] | select(.name == "youknow-v*" and .type == "tag")] | length' \
+            '[.branch_policies[] | select(.name == "v*" and .type == "tag")] | length' \
             <<< "${deployment_policies}")"
           policy_count="$(jq '.total_count' <<< "${deployment_policies}")"
           if (( tag_policies != 1 || policy_count != 1 )); then
-            echo "error: the release environment must allow only one youknow-v* tag policy" >&2
+            echo "error: the release environment must allow only one v* tag policy" >&2
             exit 1
           fi
 
@@ -183,7 +183,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           dist="build-macos/dist"
-          version="${GITHUB_REF_NAME#youknow-v}"
+          version="${GITHUB_REF_NAME#v}"
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "error: invalid release tag: ${GITHUB_REF_NAME}" >&2
             exit 1
@@ -293,9 +293,26 @@ jobs:
           fi
           (cd "${dist}" && shasum -a 256 -c "$(basename "${checksum}")")
 
-      - name: Publish the immutable GitHub release
+      # The Windows and Linux packages come from the ci job above, built from
+      # this same tagged commit.
+      - name: Download the Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-windows
+          path: ${{ runner.temp }}/youknow-release/windows
+
+      - name: Download the Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-linux
+          path: ${{ runner.temp }}/youknow-release/linux
+
+      # A draft: the owner reviews it and publishes. Publishing then makes it
+      # immutable, as the settings check above requires.
+      - name: Create the draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          OTHER_PLATFORMS: ${{ runner.temp }}/youknow-release
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -315,23 +332,29 @@ jobs:
             exit 1
           fi
 
+          version="${GITHUB_REF_NAME#v}"
           distribution_version="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' \
             build-macos/CMakeCache.txt)"
+          windows=("${OTHER_PLATFORMS}"/windows/YouKnow-"${version}"-build.*-Windows-x64.zip)
+          linux=("${OTHER_PLATFORMS}"/linux/YouKnow-"${version}"-build.*-Linux-x64.tar.gz)
+          if (( ${#windows[@]} != 1 || ${#linux[@]} != 1 )); then
+            echo "error: expected one Windows and one Linux package for ${version}" >&2
+            exit 1
+          fi
+          (cd "${OTHER_PLATFORMS}/windows" && shasum -a 256 -c SHA256SUMS.txt)
+          (cd "${OTHER_PLATFORMS}/linux" && shasum -a 256 -c SHA256SUMS.txt)
+          # The Windows and Linux files keep their CI build number; together
+          # with the source commit it identifies exactly what was built.
           assets=(
             "build-macos/dist/YouKnow-${distribution_version}-macOS-universal.pkg"
             "build-macos/dist/YouKnow-${distribution_version}-macOS-universal.manifest.txt"
             "build-macos/dist/YouKnow-${distribution_version}-macOS-universal-SHA256SUMS.txt"
+            "${windows[0]}"
+            "${linux[0]}"
           )
           gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
-            --verify-tag --title "YouKnow ${distribution_version}" \
-            --notes "Signed, notarized and stapled commercial macOS release."
-
-          immutable="$(gh release view "${GITHUB_REF_NAME}" \
-            --json isImmutable --jq '.isImmutable')"
-          if [[ "${immutable}" != "true" ]]; then
-            echo "error: GitHub did not make the published release immutable" >&2
-            exit 1
-          fi
+            --draft --verify-tag --title "YouKnow ${version}" \
+            --notes "Signed and notarized macOS package; Windows and Linux packages built by CI from ${head_commit}."
 
       - name: Remove temporary signing material
         if: always()

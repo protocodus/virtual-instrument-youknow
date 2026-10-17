@@ -1,5 +1,7 @@
-name: Nightly
+name: Main build
 
+# Pushes to main already run the full build and refresh through ci.yml; this
+# adds the nightly rebuild of unchanged main and a manual trigger.
 on:
   schedule:
     - cron: "0 3 * * *" # 03:00 UTC daily

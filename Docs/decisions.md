@@ -657,7 +657,7 @@ and INIT; the raw DSP defaults and reference audit fixtures are unchanged.
 
 ## 2026-09-05 — Schematic coupling bound and preserved chorus control state
 
-The [research assessment](modeling-research-2026-09.md) reviews current
+The [research assessment](research/modeling-research-2026-09.md) reviews current
 virtual-analog methods through DAFx 2026. The strongest next direction is
 bounded identification of the existing circuit against held-out original-unit
 recordings. Neural residuals, generated wave-digital kernels and adaptive DAE
@@ -682,7 +682,7 @@ reference on every tested sample at 48/192 kHz, including interrupted charge
 intervals. This preserves the existing approximate circuit equations and
 does not claim to measure a real unit's switching time.
 
-The [updated hardware benchmark](hardware-validation.md) uses shared
+The [updated hardware benchmark](validation/hardware-validation.md) uses shared
 20 Hz–20 kHz measurement bandwidth and retains a reproducible analyzer for
 the later noise/true-self-oscillation capture. The final nominal deficit is
 still 8.299 dB for that ratio; the nominal noise/saw deficit is 11.683 dB in
@@ -703,7 +703,7 @@ The maintained demos, full metrics and fixed previews were regenerated.
 
 ## 2026-09-04 — Identified hardware comparison and complete-voice calibration
 
-The [hardware validation report](hardware-validation.md) supersedes the noise
+The [hardware validation report](validation/hardware-validation.md) supersedes the noise
 certainty in the entry below. The corrected 96 kHz calibration recording from
 Juno-106 #439522 (Borish replacement voice cards, serviced 2022) puts noise
 relative to saw about 11.7 dB above this model, independently corroborated by

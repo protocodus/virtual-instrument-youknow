@@ -51,7 +51,7 @@ jobs:
       - name: Build and test DSP engine
         run: |
           cmake --build build-dsp --parallel
-          ctest --test-dir build-dsp --output-on-failure
+          ctest --test-dir build-dsp -L unit --output-on-failure --no-tests=error
 
       # The count is the point of the check: it is what turns "the renderer ran"
       # into "the renderer rendered the whole set", so a take that silently
@@ -121,62 +121,8 @@ jobs:
               --output-on-failure -R "^YouKnow\\.${suite}$" --no-tests=error
           done
 
-      - name: Package Linux VST3 and standalone
-        run: |
-          set -euo pipefail
-          artefacts="build-dsp/YouKnow_artefacts/Release"
-          test -d "$artefacts/VST3/YouKnow.vst3"
-          # A bundle directory or executable bit survives an interrupted or
-          # truncated build; require both actual payloads before archiving.
-          for binary in VST3/YouKnow.vst3/Contents/x86_64-linux/YouKnow.so \
-            Standalone/YouKnow; do
-            if [[ ! -s "$artefacts/$binary" ]]; then
-              echo "error: missing or empty Linux x64 binary: $artefacts/$binary" >&2
-              exit 1
-            fi
-          done
-          test -x "$artefacts/Standalone/YouKnow"
-          cache="build-dsp/CMakeCache.txt"
-          version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$cache")"
-          build_number="$(sed -n 's/^YOUKNOW_BUILD_NUMBER:STRING=//p' "$cache")"
-          distribution_version="$(sed -n 's/^YOUKNOW_DISTRIBUTION_VERSION:INTERNAL=//p' "$cache")"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
-              || ! "$build_number" =~ ^[1-9][0-9]*(\.[1-9][0-9]*)?$ \
-              || "$distribution_version" != "$version-build.$build_number" ]]; then
-            echo "error: invalid or inconsistent build version metadata" >&2
-            exit 1
-          fi
-          dist="build-dsp/dist"
-          mkdir -p "$dist"
-          archive_name="YouKnow-${distribution_version}-Linux-x64.tar.gz"
-          archive="$dist/$archive_name"
-          # Ship the customer guide and its linked installation/privacy docs
-          # alongside the required licence and third-party notices.
-          contents=("VST3/YouKnow.vst3" "Standalone/YouKnow")
-          for document in LICENSE THIRD_PARTY_NOTICES.md PRIVACY.md \
-            ThirdParty/JUCE-LICENSE.md ThirdParty/CLAP-LICENSE.md \
-            INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md; do
-            test -s "$document"
-            mkdir -p "$artefacts/$(dirname "$document")"
-            cp "$document" "$artefacts/$document"
-            contents+=("$document")
-          done
-          test -s USER_GUIDE.md
-          cp USER_GUIDE.md "$artefacts/README.md"
-          contents+=("README.md")
-          # Retain the licence filename shipped in earlier Linux archives.
-          cp ThirdParty/JUCE-LICENSE.md "$artefacts/JUCE-LICENSE.md"
-          contents+=("JUCE-LICENSE.md")
-          # Keep the upload glob and checksum set aligned when reusing a build.
-          # Only remove previous generated archives after validating the payload.
-          rm -f "$dist"/YouKnow-*-Linux-x64.tar.gz "$dist/YouKnow-Linux-x64.tar.gz"
-          tar -czf "$archive" -C "$artefacts" "${contents[@]}"
-          test -s "$archive"
-          tar -tzf "$archive" >/dev/null
-          (
-            cd "$dist"
-            shasum -a 256 "$archive_name" > SHA256SUMS.txt
-          )
+      - name: Package Linux VST3, CLAP and standalone
+        run: python3 scripts/package-linux.py --build-dir build-dsp
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v4
@@ -286,6 +232,71 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  embedded-tables:
+    name: Immutable DSP tables (Linux)
+    runs-on: ubuntu-24.04
+    # Exact transcendental reproduction uses the generation environment's
+    # GCC 14 / glibc 2.41 family; the Rack SDK build consumes the fixed values.
+    container: debian:trixie
+    timeout-minutes: 15
+    steps:
+      - name: Install the table generator toolchain
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git g++ python3
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Native builders and embedded accessors agree
+        run: python3 Tools/generate_frozen_tables.py --check --cxx g++
+
+  sanitizers:
+    name: Unit and fuzz tiers under ASan + UBSan (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      # Leaks are off: these binaries have never been leak-checked, and an
+      # unreviewed leak verdict should not become the gate.
+      ASAN_OPTIONS: detect_leaks=0
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install JUCE Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config xvfb xauth \
+            libasound2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev
+
+      # The plug-in is built too: the fuzz tier drives the shipping processor.
+      - name: Configure
+        run: |
+          cmake \
+            -S . \
+            -B build-asan \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DYOUKNOW_ENABLE_SANITIZERS=ON \
+            -DYOUKNOW_BUILD_PLUGIN=ON \
+            -DYOUKNOW_BUILD_CLAP=OFF \
+            -DBUILD_TESTING=ON
+
+      - name: Build, including the C++17 Rack proof YouKnowDSPCxx17
+        run: cmake --build build-asan --parallel
+
+      - name: Unit and fuzz tiers
+        run: |
+          xvfb-run --auto-servernum ctest --test-dir build-asan \
+            -L "^(unit|fuzz)$" --output-on-failure --no-tests=error
+
   refresh-previews:
     name: Refresh the committed screenshot, audio demos and packages
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -362,7 +373,7 @@ jobs:
       - name: Build and test DSP engine
         run: |
           cmake --build build-win --config Release --parallel
-          ctest --test-dir build-win -C Release --output-on-failure
+          ctest --test-dir build-win -C Release -L unit --output-on-failure --no-tests=error
 
       - name: Configure Windows plug-in build
         run: |

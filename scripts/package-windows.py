@@ -46,10 +46,14 @@ def package(build_dir: Path) -> Path:
     for relative in (
         "LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md",
         "ThirdParty/JUCE-LICENSE.md", "ThirdParty/CLAP-LICENSE.md",
-        "INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md",
     ):
         files[relative] = project_dir / relative
-    files["README.md"] = project_dir / "USER_GUIDE.md"
+    # The customer guide and the installation guides it links sit together at
+    # the archive root.
+    guide = project_dir / "Docs" / "guide"
+    for name in ("INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md"):
+        files[name] = guide / name
+    files["README.md"] = guide / "USER_GUIDE.md"
     for path in files.values():
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"Missing or empty distribution file: {path}")

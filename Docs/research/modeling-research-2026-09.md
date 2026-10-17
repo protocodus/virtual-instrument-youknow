@@ -17,7 +17,7 @@ Its support transitions are prepared outside the audio callback. These are
 appropriate modern techniques, not a generic oscillator/filter/chorus sketch.
 The domain audits separate numerical error from physical-model assumptions.
 
-The [hardware report](hardware-validation.md) binds an identified Juno-106
+The [hardware report](../validation/hardware-validation.md) binds an identified Juno-106
 recording to its MIDI and PCM hashes. That instrument has replacement voice
 cards and original oscillator chips. Its results therefore establish behavior
 of that serviced unit, with useful source and control evidence, while leaving
@@ -154,7 +154,7 @@ at once would obscure the confirmed state-continuity fix.
 ## 2026-09-12 capture tooling
 
 The capture protocol and take definitions live in
-[`Tools/MakeCalibrationTakes.cpp`](../Tools/MakeCalibrationTakes.cpp).
+[`Tools/MakeCalibrationTakes.cpp`](../../Tools/MakeCalibrationTakes.cpp).
 `10b-chorus-transients` provides long windows around Off/I/Off/II/Off
 switching. `long/L4-chorus-one-two.mid` contains notes only and requires
 manual I+II selection on a reference that supports it; the original tone

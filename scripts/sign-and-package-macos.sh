@@ -17,7 +17,8 @@ PACKAGE_ROOT="${BUILD_DIR}/package-root"
 CACHE_FILE="${BUILD_DIR}/CMakeCache.txt"
 CMAKE_FILE="${PROJECT_DIR}/CMakeLists.txt"
 RELEASE_NOTES_FILE="${PROJECT_DIR}/README.md"
-USER_GUIDE_FILE="${PROJECT_DIR}/USER_GUIDE.md"
+GUIDE_DIR="${PROJECT_DIR}/Docs/guide"
+USER_GUIDE_FILE="${GUIDE_DIR}/USER_GUIDE.md"
 INSTALL_GUIDES=(INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md)
 CUSTOMER_LICENSE_FILE="${PROJECT_DIR}/LICENSE"
 PRODUCT_NAME="YouKnow"
@@ -91,8 +92,8 @@ for document in "${CUSTOMER_LICENSE_FILE}" "${RELEASE_NOTES_FILE}" "${USER_GUIDE
 done
 
 for guide in "${INSTALL_GUIDES[@]}"; do
-    if [[ ! -s "${PROJECT_DIR}/${guide}" ]]; then
-        echo "error: missing or empty distribution document: ${PROJECT_DIR}/${guide}" >&2
+    if [[ ! -s "${GUIDE_DIR}/${guide}" ]]; then
+        echo "error: missing or empty distribution document: ${GUIDE_DIR}/${guide}" >&2
         exit 1
     fi
 done
@@ -175,7 +176,7 @@ if [[ "${RELEASE_MODE}" == "1" ]]; then
         printf '%s\n' "${SOURCE_CHANGES}" >&2
         exit 1
     fi
-    EXPECTED_TAG="youknow-v${PROJECT_VERSION}"
+    EXPECTED_TAG="v${PROJECT_VERSION}"
     HEAD_COMMIT="$(git -C "${PROJECT_DIR}" rev-parse HEAD)"
     TAG_COMMIT="$(git -C "${PROJECT_DIR}" rev-parse -q --verify \
         "refs/tags/${EXPECTED_TAG}^{commit}" 2>/dev/null || true)"
@@ -566,7 +567,7 @@ stage_documentation() {
     # Ship the self-contained customer guide; developer notes stay in the repo.
     ditto "${USER_GUIDE_FILE}" "${destination}/README.md"
     for relative_path in "${INSTALL_GUIDES[@]}"; do
-        ditto "${PROJECT_DIR}/${relative_path}" "${destination}/${relative_path}"
+        ditto "${GUIDE_DIR}/${relative_path}" "${destination}/${relative_path}"
     done
     ditto "${PROJECT_DIR}/PRIVACY.md" "${destination}/PRIVACY.md"
     ditto "${REPOSITORY_JUCE_LICENSE}" "${destination}/ThirdParty/JUCE-LICENSE.md"

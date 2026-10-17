@@ -27,7 +27,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
-#include <span>
+#include "../Source/DSP/YouKnowCompatibility.h"
 #include <string>
 #include <tuple>
 #include <vector>
@@ -93,7 +93,7 @@ struct Run
     std::vector<S::Event> events;
     std::size_t consumed = 0;
 };
-Run advance(S::State s, std::span<const S::ByteReady> bytes, std::uint64_t target,
+Run advance(S::State s, youknow::Span<const S::ByteReady> bytes, std::uint64_t target,
             S::Configuration cfg = {}, unsigned chunk = 0, unsigned drainAt = 0)
 {
     Run out;
@@ -615,7 +615,7 @@ void pitWitness()
 void invalidInputs()
 {
     auto invalid =
-        [](S::State s, S::Configuration c, std::span<const S::ByteReady> b, std::uint64_t target)
+        [](S::State s, S::Configuration c, youknow::Span<const S::ByteReady> b, std::uint64_t target)
     {
         S::Events e;
         auto r = S::advanceTo(s, table, inputs, c, b, target, e);
@@ -722,7 +722,7 @@ S::State initial(unsigned command)
     state.registers.portf = 0x55;
     return state;
 }
-Run execute(S::State state, const S::Tables &lookup, std::span<const S::ByteReady> bytes,
+Run execute(S::State state, const S::Tables &lookup, youknow::Span<const S::ByteReady> bytes,
             unsigned target, unsigned chunk = 10000, bool forceDrain = false)
 {
     Run result;

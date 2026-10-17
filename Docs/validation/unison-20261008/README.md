@@ -8,7 +8,7 @@ JUNO-106 recording or exact host-event/serial timing equivalence.
   with its default `NormalizedServiceChart` timing versus A-5/UART/B-2
   observations; it did not select the Rack `MeasuredChartGeometry` profile.
   The bounded interpretation is in
-  `../../unison-hardware.md`.
+  `../../research/unison-hardware.md`.
 - `unison-hardware-red.log` demonstrates the original six-card startup failure
   against the unchanged baseline DSP objects.
 - `unison-hardware-native-v2.log` compiles the current core and new contract
