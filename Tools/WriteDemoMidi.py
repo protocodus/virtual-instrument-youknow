@@ -9,7 +9,7 @@ archival programs A11..B88, then the 16 original product presets YB1..YP8
 (bass lines, brass stabs, string and choir voicings, organ comping, clav and
 funk riffs, mallets and bells, leads and reeds, drums, effects) rather than a
 shared score. The product presets reuse the phrases of their committed
-session library (Docs/audio/youknow-originals/MIDI), repeated as often as
+session library (Docs/audio/youknow-originals/midi), repeated as often as
 fits the demo length.
 
 Scores are written as the keys a player presses, on the hardware's 61-key
@@ -32,7 +32,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'Docs' / 'audio' / 'midi'
-ORIGINALS = ROOT / 'Docs' / 'audio' / 'youknow-originals' / 'MIDI'
+ORIGINALS = ROOT / 'Docs' / 'audio' / 'youknow-originals' / 'midi'
 PPQ = 960
 # The hardware's 61 keys, C1..C6.
 LOWEST_KEY, HIGHEST_KEY = 36, 96
