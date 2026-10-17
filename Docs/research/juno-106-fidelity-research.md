@@ -869,7 +869,7 @@ unchanged.
 
 | Proposal | Assessment |
 | --- | --- |
-| IR3109 stage input offsets (1.5 mV) giving even harmonics | Already shipped: `enableVcfStageOffsets` draws ±1.5 mV per stage under Unit Character. In the [harmonic record](../benchmarks/harmonics-2026-09-05.json) the shipping render's self-oscillation H2 is −57.4 dBc against the identified unit's −61.1 dBc, and −125.7 dBc at Character 0. No second offset term is added. |
+| IR3109 stage input offsets (1.5 mV) giving even harmonics | Already shipped: `enableVcfStageOffsets` draws ±1.5 mV per stage under Unit Character. In the [harmonic record](https://github.com/protocodus/virtual-instrument-youknow/blob/2fbfee540eb41953d3d2f555904ec05ae3938e67/Docs/benchmarks/harmonics-2026-09-05.json) the shipping render's self-oscillation H2 is −57.4 dBc against the identified unit's −61.1 dBc, and −125.7 dBc at Character 0. No second offset term is added. |
 | Resonance-loop soft limiting, exponent 1.7 | Already shipped: the implicitly solved loop uses the generalized algebraic clip with that fixed exponent, which the serviced-card fit holds constant (`YouKnowReferenceVcf.h`). |
 | D6 dynamic junction resistance modulated by the WAVE node | The product now selects the fully coupled `CoupledSubMixer`, preserving the measured SUB-only aggregate with an explicit source-impedance/bias prior. Mixed-source loading follows the joint diode/node solve; installed impedance and bias remain unmeasured (OQ-15). |
 | Large-signal transconductance droop lowering cutoff | Inherent in the tanh stages solved as their continuous equations — the [filter section](../../README.md#what-is-modelled) records that the cascade retains its own amplitude-dependent frequency droop. A separate `tanh(A)/A` factor would count it twice. |

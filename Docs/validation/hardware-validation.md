@@ -57,7 +57,7 @@ transmission timing. The measured steady source windows have chorus Off;
 the dedicated bypass test covers the host's mute-underflow condition.
 
 Final measurements and input, source, executable and audio hashes are retained
-in the [benchmark record](../benchmarks/hardware-2026-09-05.json). The source
+in the [benchmark record](https://github.com/protocodus/virtual-instrument-youknow/blob/2fbfee540eb41953d3d2f555904ec05ae3938e67/Docs/benchmarks/hardware-2026-09-05.json). The source
 hashes and copied renderer binary remained unchanged across the final renders.
 The baseline full calibration render also reproduces the previously saved
 nominal WAV byte for byte.
@@ -87,7 +87,7 @@ The source-level defaults remain provisional. Original-card captures with
 documented noise trim and TP8 voltage are still the highest-priority evidence,
 alongside original chorus captures. No market-wide ranking was performed.
 
-The [harmonic comparison](../benchmarks/harmonics-2026-09-05.json) measures
+The [harmonic comparison](https://github.com/protocodus/virtual-instrument-youknow/blob/2fbfee540eb41953d3d2f555904ec05ae3938e67/Docs/benchmarks/harmonics-2026-09-05.json) measures
 H2–H8 at each recording's independently estimated pitch using coherent Hann
 projections. It uses the later take's **PWM0/approximately 50% pulse**, not
 the earlier PWM64 pulse. Synthetic checks cover non-integer-cycle windows,

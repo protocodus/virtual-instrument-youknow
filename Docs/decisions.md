@@ -689,7 +689,7 @@ still 8.299 dB for that ratio; the nominal noise/saw deficit is 11.683 dB in
 the earlier calibration sequence. No gain correction was fitted to those
 results. The shipping kernels now have an explicit renderer mode; at the
 same character setting they change the later ratio by only 0.001435 dB.
-The [tracked record](benchmarks/hardware-2026-09-05.json) pins the input,
+The [tracked record](https://github.com/protocodus/virtual-instrument-youknow/blob/2fbfee540eb41953d3d2f555904ec05ae3938e67/Docs/benchmarks/hardware-2026-09-05.json) pins the input,
 source, renderer and output identities. One serviced replacement-card unit
 still cannot establish original-card fidelity or market leadership.
 

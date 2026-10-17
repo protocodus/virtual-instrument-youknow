@@ -321,7 +321,7 @@ forty-year-old unit will null against the plug-in.
   where `b = 1/(2*pi*f*tau)`. At 130.0797 Hz with assumed gain 2000,
   399 kΩ and 1 nF, H2 is only 0.00000765 dB above the ideal `1/2` ratio;
   it does not explain the 0.0286 dB deficit in the
-  [historical steady-output benchmark](Docs/benchmarks/harmonics-2026-09-05.json).
+  [historical steady-output benchmark](https://github.com/protocodus/virtual-instrument-youknow/blob/2fbfee540eb41953d3d2f555904ec05ae3938e67/Docs/benchmarks/harmonics-2026-09-05.json).
   That recording includes replacement VCF/VCA cards and the recording chain;
   its harmonic magnitudes do not identify a DCO component or an attack transient.
   Charge injection likewise needs a measured switch waveform: `Q/C` gives
