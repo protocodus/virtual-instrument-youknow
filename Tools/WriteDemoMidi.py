@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Write the committed per-preset demo MIDI sources in Docs/audio/midi/.
 
-One Standard MIDI File per factory preset, in host program order: the 128
+One Standard MIDI File per factory preset, in host program order, named
+<NNN>-<slug of "<slot> <preset name>">.mid as the shared preset demo renderer
+expects (Tools/PresetDemoRenderer.h): the 128
 archival programs A11..B88, then the 16 original product presets YB1..YP8
 (standard G3a). Each phrase is written for the patch's role on the instrument
 (bass lines, brass stabs, string and choir voicings, organ comping, clav and
 funk riffs, mallets and bells, leads and reeds, drums, effects) rather than a
 shared score. The product presets reuse the phrases of their committed
-session library (Docs/audio/youknow-originals/MIDI), played twice.
+session library (Docs/audio/youknow-originals/MIDI), repeated as often as
+fits the demo length.
 
 Scores are written as the keys a player presses, on the hardware's 61-key
 range; each preset's DCO range and saved transpose then place the sound where
@@ -51,10 +54,10 @@ BANK = [
     ('A23', 'Combo Organ', 6, 'combo_organ', 'A', 'minor', 132, 0),
     ('A24', 'Calliope', 6, 'calliope', 'C', 'major', 138, 0),
     ('A25', 'Donald Pluck', 6, 'quack', 'F', 'major', 120, 0),
-    ('A26', 'Celeste', 6, 'celeste', 'C', 'major', 92, 0),
+    ('A26', 'Celeste* (1 oct.up)', 6, 'celeste', 'C', 'major', 92, 0),
     ('A27', 'Elect. Piano I', 6, 'epiano', 'F', 'major', 88, 0),
     ('A28', 'Elect. Piano II', 6, 'epiano', 'D', 'dorian', 96, 1),
-    ('A31', 'Clock Chimes', 6, 'chimes', 'E', 'major', 72, 0),
+    ('A31', 'Clock Chimes* (1 oct. up)', 6, 'chimes', 'E', 'major', 72, 0),
     ('A32', 'Steel Drums', 6, 'steel_drum', 'C', 'major', 120, 0),
     ('A33', 'Xylophone', 6, 'xylophone', 'F', 'major', 132, 0),
     ('A34', 'Brass III', 6, 'brass_swell', 'C', 'minor', 80, 2),
@@ -69,7 +72,7 @@ BANK = [
     ('A45', 'Koto', 6, 'koto', 'A', 'in', 84, 0),
     ('A46', 'Dark Pluck', 6, 'pluck', 'C', 'minor', 108, 0),
     ('A47', 'Funky I', 6, 'funk', 'E', 'dorian', 100, 0),
-    ('A48', 'Synth Bass I', 1, 'bass', 'D', 'minor', 116, 0),
+    ('A48', 'Synth Bass I (unison)', 1, 'bass', 'D', 'minor', 116, 0),
     ('A51', 'Lead I', 6, 'lead', 'A', 'minor', 108, 0),
     ('A52', 'Lead II', 6, 'lead', 'E', 'minor', 96, 1),
     ('A53', 'Lead III', 6, 'lead', 'D', 'dorian', 104, 2),
@@ -81,9 +84,9 @@ BANK = [
     ('A61', 'Piano II', 6, 'piano', 'G', 'major', 104, 1),
     ('A62', 'Clav', 6, 'clav', 'D', 'dorian', 100, 0),
     ('A63', 'Frontier Organ', 6, 'organ', 'D', 'major', 120, 2),
-    ('A64', 'Snare Drum', 1, 'snare', 'D', 'major', 112, 0),
-    ('A65', 'Tom Toms', 1, 'toms', 'A', 'major', 104, 0),
-    ('A66', 'Timpani', 1, 'timpani', 'D', 'major', 84, 0),
+    ('A64', 'Snare Drum (unison)', 1, 'snare', 'D', 'major', 112, 0),
+    ('A65', 'Tom Toms (unison)', 1, 'toms', 'A', 'major', 104, 0),
+    ('A66', 'Timpani (unison)', 1, 'timpani', 'D', 'major', 84, 0),
     ('A67', 'Shaker', 6, 'shaker', 'C', 'major', 116, 0),
     ('A68', 'Synth Pad', 6, 'pad', 'F', 'major', 84, 0),
     ('A71', 'Sweep I', 6, 'sweep', 'C', 'minor', 80, 0),
@@ -94,9 +97,9 @@ BANK = [
     ('A76', 'Dark Synth Piano', 6, 'piano', 'C', 'minor', 88, 2),
     ('A77', 'Sustainer', 6, 'pad', 'Bb', 'major', 80, 1),
     ('A78', 'Wah Release', 6, 'wah', 'G', 'minor', 100, 1),
-    ('A81', 'Gong', 6, 'gong', 'C', 'minor', 60, 0),
+    ('A81', 'Gong (play low chords)', 6, 'gong', 'C', 'minor', 60, 0),
     ('A82', 'Resonance Funk', 6, 'res_funk', 'E', 'minor', 108, 0),
-    ('A83', 'Drum Booms', 6, 'booms', 'A', 'minor', 96, 0),
+    ('A83', 'Drum Booms* (1 oct. down)', 6, 'booms', 'A', 'minor', 96, 0),
     ('A84', 'Dust Storm', 6, 'storm', 'D', 'minor', 70, 0),
     ('A85', 'Rocket Men', 6, 'rocket', 'C', 'major', 80, 0),
     ('A86', 'Hand Claps', 6, 'claps', 'C', 'major', 108, 0),
@@ -991,6 +994,16 @@ def tail_beats(bpm):
     return 2.5 * bpm / 60.0
 
 
+def demo_seconds(bpm, notes):
+    # The shared renderer plays to the last key-up plus a 2.5 s tail and
+    # requires 10-20 s.
+    return max(b + length for b, length, _, _ in notes) * 60 / bpm + 2.5
+
+
+def file_name(index, slot, name):
+    return f'{index:03d}-{slug(f"{slot} {name}")}.mid'
+
+
 def build():
     files, problems = {}, []
     for index, (slot, name, limit, role, tonic, mode, bpm, variant) in enumerate(BANK, start=1):
@@ -1010,17 +1023,23 @@ def build():
             check_gates(slot, notes, limit)
         except ValueError as error:
             problems.append(str(error))
-        seconds = (score.end + tail_beats(bpm)) * 60 / bpm
-        if not 9.5 <= seconds <= 20.5:
+        seconds = demo_seconds(bpm, notes)
+        if not 10 <= seconds <= 20:
             problems.append(f'{slot}: {seconds:.1f} s, not 10-20 s')
         title = f'{slot} {name}'
-        files[f'{index:03d}-{slot.lower()}-{slug(name)}.mid'] = smf(title, bpm, notes, score.end + tail_beats(bpm))
+        files[file_name(index, slot, name)] = smf(title, bpm, notes, score.end + tail_beats(bpm))
     for index, (slot, name, source, limit) in enumerate(PRODUCT, start=len(BANK) + 1):
         bpm, notes, end = read_smf((ORIGINALS / source).read_bytes())
-        played = notes + [(b + end, l, k, v) for b, l, k, v in notes]
+        passes = 1
+        while demo_seconds(bpm, [(b + passes * end, l, k, v) for b, l, k, v in notes]) <= 20:
+            passes += 1
+        played = [(b + p * end, l, k, v) for p in range(passes) for b, l, k, v in notes]
         check_gates(slot, played, 128 if limit == 1 else limit)
-        files[f'{index:03d}-{slot.lower()}-{slug(name)}.mid'] = smf(
-            f'{slot} {name}', bpm, played, 2 * end + tail_beats(bpm))
+        seconds = demo_seconds(bpm, played)
+        if not 10 <= seconds <= 20:
+            problems.append(f'{slot}: {seconds:.1f} s, not 10-20 s')
+        files[file_name(index, slot, name)] = smf(
+            f'{slot} {name}', bpm, played, passes * end + tail_beats(bpm))
     if problems:
         raise ValueError('; '.join(problems))
     return files
