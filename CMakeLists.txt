@@ -169,6 +169,22 @@ else()
     target_compile_options(YouKnowDSP PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Clang libFuzzer target for the same harness (U4). It compiles its own DSP
+# copy so coverage reaches the engine without instrumenting shipping targets.
+option(YOUKNOW_BUILD_FUZZER "Build the Clang libFuzzer DSP input harness" OFF)
+if(YOUKNOW_BUILD_FUZZER)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "YOUKNOW_BUILD_FUZZER requires Clang and libFuzzer")
+    endif()
+    add_executable(YouKnowDspFuzz Tests/DspFuzz.cpp ${YOUKNOW_DSP_SOURCES})
+    target_include_directories(YouKnowDspFuzz PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_compile_features(YouKnowDspFuzz PRIVATE cxx_std_20)
+    target_compile_options(YouKnowDspFuzz PRIVATE
+        -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all
+        -fno-omit-frame-pointer)
+    target_link_options(YouKnowDspFuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
+
 if(YOUKNOW_BUILD_PLUGIN)
     if(YOUKNOW_JUCE_PATH)
         if(NOT EXISTS "${YOUKNOW_JUCE_PATH}/CMakeLists.txt")
@@ -1164,6 +1180,15 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.VcaTemperature COMMAND YouKnowVcaTemperatureTests)
     set_tests_properties(YouKnow.VcaTemperature PROPERTIES TIMEOUT 90)
 
+    # The U4 input fuzzer's portable build: replays reproducer files given on
+    # the command line, then a fixed seed's random inputs, on any compiler.
+    add_executable(YouKnowDspFuzzReplay Tests/DspFuzz.cpp)
+    target_link_libraries(YouKnowDspFuzzReplay PRIVATE YouKnowDSP)
+    target_compile_definitions(YouKnowDspFuzzReplay PRIVATE PROTOCODUS_FUZZ_MAIN)
+    target_compile_features(YouKnowDspFuzzReplay PRIVATE cxx_std_20)
+    add_test(NAME YouKnow.DspFuzz COMMAND YouKnowDspFuzzReplay -seed=1 -runs=200)
+    set_tests_properties(YouKnow.DspFuzz PROPERTIES TIMEOUT 300)
+
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)
     target_compile_features(YouKnowEngineTests PRIVATE cxx_std_20)
@@ -1463,6 +1488,19 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.ControlFuzz COMMAND YouKnowControlFuzz --quick)
         set_tests_properties(YouKnow.ControlFuzz PROPERTIES TIMEOUT 90)
 
+        # The U4 parameter-extremes matrix (Tests/ParameterMatrix.h). The
+        # test runs one rotated shard of 256; main-build.yml runs them all.
+        add_executable(YouKnowParameterMatrixTests Tests/ParameterMatrixTests.cpp)
+        target_link_libraries(YouKnowParameterMatrixTests PRIVATE YouKnow)
+        target_include_directories(YouKnowParameterMatrixTests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source"
+            "$<TARGET_PROPERTY:YouKnow,JUCE_GENERATED_SOURCES_DIRECTORY>"
+            "$<TARGET_PROPERTY:YouKnow,INCLUDE_DIRECTORIES>")
+        target_compile_features(YouKnowParameterMatrixTests PRIVATE cxx_std_20)
+        add_test(NAME YouKnow.ParameterMatrix
+            COMMAND YouKnowParameterMatrixTests --jobs 4 --rotation --shard 0/256)
+        set_tests_properties(YouKnow.ParameterMatrix PROPERTIES TIMEOUT 600)
+
         if(YOUKNOW_BUILD_CLAP)
             find_package(Threads REQUIRED)
             add_executable(YouKnowCLAPBundleSmokeTests
@@ -1530,12 +1568,12 @@ if(BUILD_TESTING)
 endif()
 
 # Test tiers: every registered test carries exactly one label so CI selects
-# tiers with `ctest -L <tier>`. Control fuzzing is the fuzz tier, the preset
-# demos the audio tier, the editor screenshot the render tier; everything else
-# is a unit contract.
+# tiers with `ctest -L <tier>`. Control and DSP input fuzzing and the
+# parameter matrix are the fuzz tier, the preset demos the audio tier, the
+# editor screenshot the render tier; everything else is a unit contract.
 get_property(youknow_tests DIRECTORY PROPERTY TESTS)
 foreach(test IN LISTS youknow_tests)
-    if(test STREQUAL "YouKnow.ControlFuzz")
+    if(test MATCHES "^YouKnow[.](ControlFuzz|DspFuzz|ParameterMatrix)$")
         set_tests_properties(${test} PROPERTIES LABELS fuzz)
     elseif(test STREQUAL "YouKnow.AudioDemos")
         set_tests_properties(${test} PROPERTIES LABELS audio)

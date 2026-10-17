@@ -340,6 +340,33 @@ jobs:
             --parallel "$(nproc)" \
             -L "^(unit|fuzz)$" --output-on-failure --no-tests=error
 
+      # libFuzzer needs Clang; it builds its own instrumented DSP copy.
+      - name: Build the libFuzzer DSP harness
+        run: |
+          sudo apt-get install -y --no-install-recommends clang
+          cmake -S . -B build-fuzz -G Ninja \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DYOUKNOW_BUILD_PLUGIN=OFF -DYOUKNOW_BUILD_FUZZER=ON -DBUILD_TESTING=OFF
+          cmake --build build-fuzz --parallel --target YouKnowDspFuzz
+
+      - name: Fuzz the DSP input boundary (fixed seed, 2 minutes)
+        run: |
+          mkdir -p build-fuzz/corpus build-fuzz/fuzz-artifacts
+          build-fuzz/YouKnowDspFuzz build-fuzz/corpus \
+            -seed=20261017 -max_total_time=120 -max_len=4096 \
+            -timeout=60 -rss_limit_mb=2048 \
+            -artifact_prefix=build-fuzz/fuzz-artifacts/
+
+      - name: Upload fuzz reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsp-fuzz-reproducers
+          path: build-fuzz/fuzz-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
   dsp-tests-windows:
     name: DSP tests and plug-in package (Windows x64)
     runs-on: windows-2025
