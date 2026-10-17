@@ -16,6 +16,15 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # A pinned pluginval release, each archive checked against its SHA-256.
+  # The main build and release.yml both run this workflow, so their plug-ins
+  # are validated here (pluginval does not load CLAP).
+  PLUGINVAL_VERSION: v1.0.4
+  PLUGINVAL_LINUX_SHA256: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
+  PLUGINVAL_MACOS_SHA256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
+  PLUGINVAL_WINDOWS_SHA256: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
+
 jobs:
   dsp-tests:
     name: DSP tests (JUCE-free, Linux)
@@ -121,6 +130,16 @@ jobs:
               --output-on-failure -R "^YouKnow\\.${suite}$" --no-tests=error
           done
 
+      - name: Validate the VST3 with pluginval
+        working-directory: build-dsp
+        run: |
+          set -euo pipefail
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Linux.zip"
+          echo "${PLUGINVAL_LINUX_SHA256}  pluginval.zip" | sha256sum -c -
+          unzip -q -o pluginval.zip
+          xvfb-run -a ./pluginval --strictness-level 10 --verbose \
+            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+
       - name: Package Linux VST3, CLAP and standalone
         run: python3 scripts/package-linux.py --build-dir build-dsp
 
@@ -181,6 +200,26 @@ jobs:
             exit 1
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
+
+      - name: Validate the AU with auval
+        run: |
+          set -euo pipefail
+          components="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$components"
+          ditto "build-macos/YouKnow_artefacts/Release/AU/YouKnow.component" "$components/YouKnow.component"
+          # The registrar caches the component list; restarting it rescans.
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -strict -v aumu Yk06 Ykno
+
+      - name: Validate the VST3 with pluginval
+        working-directory: build-macos
+        run: |
+          set -euo pipefail
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
+          echo "${PLUGINVAL_MACOS_SHA256}  pluginval.zip" | shasum -a 256 -c -
+          ditto -x -k pluginval.zip .
+          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --verbose \
+            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
 
       - name: Archive the refreshed editor screenshot
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -397,6 +436,16 @@ jobs:
             ctest --test-dir build-win -C Release --output-on-failure \
               -R "^YouKnow\\.${suite}$" --no-tests=error
           done
+
+      - name: Validate the VST3 with pluginval
+        working-directory: build-win
+        run: |
+          set -euo pipefail
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
+          echo "${PLUGINVAL_WINDOWS_SHA256}  pluginval.zip" | sha256sum -c -
+          7z x -y pluginval.zip
+          ./pluginval.exe --strictness-level 10 --verbose \
+            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
 
       - name: Package Windows VST3, CLAP and standalone
         run: python scripts/package-windows.py --build-dir build-win
