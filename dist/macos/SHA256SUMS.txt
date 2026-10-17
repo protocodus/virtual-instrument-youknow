@@ -1,2 +1,0 @@
-8697acd3967de178bbd8c9f7f3d12f15705fa08530e3eda5f76fc6d4942ef59d  YouKnow-1.3.0-build.39038028263.1-macOS-universal.zip
-1ff1a9fab00e71bc99f34219ac15d4af59383b147af30cbd83b4cde5d303ed44  YouKnow-1.3.0-build.39038028263.1-macOS-universal.pkg

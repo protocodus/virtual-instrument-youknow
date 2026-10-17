@@ -341,7 +341,7 @@ jobs:
             -L "^(unit|fuzz)$" --output-on-failure --no-tests=error
 
   refresh-previews:
-    name: Refresh the committed screenshot, audio demos and packages
+    name: Refresh the committed screenshot and audio demos
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [dsp-tests, plugin-macos, dsp-tests-windows]
     runs-on: ubuntu-24.04
@@ -351,10 +351,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          # The publication gate walks `git log -- dist`; blobs stay lazy so
-          # the growing package history is not downloaded every run.
-          fetch-depth: 0
-          filter: blob:none
 
       - name: Download the rendered audio demos and peak table
         uses: actions/download-artifact@v4
@@ -368,31 +364,10 @@ jobs:
           name: ci-editor-preview
           path: ${{ runner.temp }}/youknow-previews
 
-      # The three customer packages of this run, one directory per platform,
-      # each with the SHA256SUMS.txt its packaging step wrote.
-      - name: Download the macOS packages
-        uses: actions/download-artifact@v4
-        with:
-          name: ci-macos
-          path: ${{ runner.temp }}/youknow-dist/macos
-
-      - name: Download the Windows package
-        uses: actions/download-artifact@v4
-        with:
-          name: ci-windows
-          path: ${{ runner.temp }}/youknow-dist/windows
-
-      - name: Download the Linux package
-        uses: actions/download-artifact@v4
-        with:
-          name: ci-linux
-          path: ${{ runner.temp }}/youknow-dist/linux
-
-      - name: Commit the refreshed previews and packages if they changed
+      - name: Commit the refreshed previews if they changed
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_DIR: ${{ runner.temp }}/youknow-previews
-          DIST_DIR: ${{ runner.temp }}/youknow-dist
         run: bash scripts/refresh-previews.sh
 
   dsp-tests-windows:
