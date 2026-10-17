@@ -301,21 +301,6 @@ jobs:
             --parallel "$(nproc)" \
             -L "^(unit|fuzz)$" --output-on-failure --no-tests=error
 
-      # Temporary diagnosis: on Linux the editor scenario of ControlFuzz stops
-      # on an asynchronous X11 BadAtom error. Make Xlib synchronous and break
-      # in its error path so the backtrace names the failing request.
-      - name: Locate the ControlFuzz X11 error
-        if: failure()
-        run: |
-          sudo apt-get install -y --no-install-recommends gdb
-          xvfb-run --auto-servernum gdb -batch \
-            -ex 'set breakpoint pending on' \
-            -ex 'break XOpenDisplay' -ex run \
-            -ex 'set var *(int*)&_Xdebug = 1' \
-            -ex 'delete' -ex 'break _XError' -ex continue \
-            -ex 'thread apply all bt 40' \
-            --args build-asan/YouKnowControlFuzz --quick || true
-
   refresh-previews:
     name: Refresh the committed screenshot, audio demos and packages
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

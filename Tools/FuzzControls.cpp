@@ -508,7 +508,12 @@ std::vector<juce::Component*> editorControls (juce::Component& root)
             const auto name = (button->getName() + " " + button->getButtonText()).toLowerCase();
             const bool fileAction = (name.contains ("load") && ! name.contains ("reload"))
                                  || name.contains ("save");
-            if (! fileAction && ! name.contains ("about") && ! name.contains ("help")
+            // These two open a PopupMenu, which changes nothing until a user
+            // picks an item. On Linux, Xvfb without a window manager also
+            // rejects JUCE's menu window (BadAtom on XChangeProperty).
+            const bool menuAction = name.contains ("performance timing")
+                                 || name.contains ("output connections");
+            if (! fileAction && ! menuAction && ! name.contains ("about") && ! name.contains ("help")
                 && name.trim().isNotEmpty())
                 controls.push_back (child);
         }
