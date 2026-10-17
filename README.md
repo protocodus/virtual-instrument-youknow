@@ -15,6 +15,154 @@ oversampling rung, at 48 kHz, and encoded as 192 kbps MP3. Every main build
 renders them and rewrites this table.
 
 <!-- audio-demos-begin -->
+
+| # | Preset | Demo | Length | Peak |
+| --- | --- | --- | --- | --- |
+| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.mp3](Docs/audio/001-a11-brass-set-1.mp3) | 12.7 s | -14.3 dBFS |
+| 2 | A12 Brass Swell | [002-a12-brass-swell.mp3](Docs/audio/002-a12-brass-swell.mp3) | 18.2 s | -22.6 dBFS |
+| 3 | A13 Trumpet | [003-a13-trumpet.mp3](Docs/audio/003-a13-trumpet.mp3) | 11.6 s | -22.2 dBFS |
+| 4 | A14 Flutes | [004-a14-flutes.mp3](Docs/audio/004-a14-flutes.mp3) | 12.1 s | -24.6 dBFS |
+| 5 | A15 Moving Strings | [005-a15-moving-strings.mp3](Docs/audio/005-a15-moving-strings.mp3) | 18.2 s | -18.0 dBFS |
+| 6 | A16 Brass & Strings | [006-a16-brass-strings.mp3](Docs/audio/006-a16-brass-strings.mp3) | 17.5 s | -19.1 dBFS |
+| 7 | A17 Choir | [007-a17-choir.mp3](Docs/audio/007-a17-choir.mp3) | 19.0 s | -17.4 dBFS |
+| 8 | A18 Piano I | [008-a18-piano-i.mp3](Docs/audio/008-a18-piano-i.mp3) | 14.4 s | -15.7 dBFS |
+| 9 | A21 Organ I | [009-a21-organ-i.mp3](Docs/audio/009-a21-organ-i.mp3) | 13.5 s | -22.6 dBFS |
+| 10 | A22 Organ II | [010-a22-organ-ii.mp3](Docs/audio/010-a22-organ-ii.mp3) | 12.7 s | -20.5 dBFS |
+| 11 | A23 Combo Organ | [011-a23-combo-organ.mp3](Docs/audio/011-a23-combo-organ.mp3) | 10.7 s | -21.5 dBFS |
+| 12 | A24 Calliope | [012-a24-calliope.mp3](Docs/audio/012-a24-calliope.mp3) | 10.5 s | -19.0 dBFS |
+| 13 | A25 Donald Pluck | [013-a25-donald-pluck.mp3](Docs/audio/013-a25-donald-pluck.mp3) | 11.0 s | -28.7 dBFS |
+| 14 | A26 Celeste* (1 oct.up) | [014-a26-celeste-1-oct-up.mp3](Docs/audio/014-a26-celeste-1-oct-up.mp3) | 14.7 s | -19.1 dBFS |
+| 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.mp3](Docs/audio/015-a27-elect-piano-i.mp3) | 15.5 s | -11.2 dBFS |
+| 16 | A28 Elect. Piano II | [016-a28-elect-piano-ii.mp3](Docs/audio/016-a28-elect-piano-ii.mp3) | 14.4 s | -15.3 dBFS |
+| 17 | A31 Clock Chimes* (1 oct. up) | [017-a31-clock-chimes-1-oct-up.mp3](Docs/audio/017-a31-clock-chimes-1-oct-up.mp3) | 17.4 s | -22.7 dBFS |
+| 18 | A32 Steel Drums | [018-a32-steel-drums.mp3](Docs/audio/018-a32-steel-drums.mp3) | 10.4 s | -16.7 dBFS |
+| 19 | A33 Xylophone | [019-a33-xylophone.mp3](Docs/audio/019-a33-xylophone.mp3) | 10.2 s | -26.9 dBFS |
+| 20 | A34 Brass III | [020-a34-brass-iii.mp3](Docs/audio/020-a34-brass-iii.mp3) | 19.0 s | -20.4 dBFS |
+| 21 | A35 Fanfare | [021-a35-fanfare.mp3](Docs/audio/021-a35-fanfare.mp3) | 12.0 s | -21.4 dBFS |
+| 22 | A36 String III | [022-a36-string-iii.mp3](Docs/audio/022-a36-string-iii.mp3) | 20.0 s | -17.9 dBFS |
+| 23 | A37 Pizzicato | [023-a37-pizzicato.mp3](Docs/audio/023-a37-pizzicato.mp3) | 10.9 s | -5.0 dBFS |
+| 24 | A38 High Strings | [024-a38-high-strings.mp3](Docs/audio/024-a38-high-strings.mp3) | 15.1 s | -18.4 dBFS |
+| 25 | A41 Bass clarinet | [025-a41-bass-clarinet.mp3](Docs/audio/025-a41-bass-clarinet.mp3) | 15.9 s | -28.1 dBFS |
+| 26 | A42 English Horn | [026-a42-english-horn.mp3](Docs/audio/026-a42-english-horn.mp3) | 15.7 s | -21.6 dBFS |
+| 27 | A43 Brass Ensemble | [027-a43-brass-ensemble.mp3](Docs/audio/027-a43-brass-ensemble.mp3) | 12.0 s | -17.7 dBFS |
+| 28 | A44 Guitar | [028-a44-guitar.mp3](Docs/audio/028-a44-guitar.mp3) | 13.5 s | -13.7 dBFS |
+| 29 | A45 Koto | [029-a45-koto.mp3](Docs/audio/029-a45-koto.mp3) | 12.1 s | -15.4 dBFS |
+| 30 | A46 Dark Pluck | [030-a46-dark-pluck.mp3](Docs/audio/030-a46-dark-pluck.mp3) | 12.5 s | -17.6 dBFS |
+| 31 | A47 Funky I | [031-a47-funky-i.mp3](Docs/audio/031-a47-funky-i.mp3) | 12.4 s | -28.3 dBFS |
+| 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.mp3](Docs/audio/032-a48-synth-bass-i-unison.mp3) | 11.6 s | -20.0 dBFS |
+| 33 | A51 Lead I | [033-a51-lead-i.mp3](Docs/audio/033-a51-lead-i.mp3) | 11.3 s | -30.6 dBFS |
+| 34 | A52 Lead II | [034-a52-lead-ii.mp3](Docs/audio/034-a52-lead-ii.mp3) | 12.4 s | -32.2 dBFS |
+| 35 | A53 Lead III | [035-a53-lead-iii.mp3](Docs/audio/035-a53-lead-iii.mp3) | 10.5 s | -30.5 dBFS |
+| 36 | A54 Funky II | [036-a54-funky-ii.mp3](Docs/audio/036-a54-funky-ii.mp3) | 12.0 s | -12.8 dBFS |
+| 37 | A55 Synth Bass II | [037-a55-synth-bass-ii.mp3](Docs/audio/037-a55-synth-bass-ii.mp3) | 12.6 s | -25.5 dBFS |
+| 38 | A56 Funky III | [038-a56-funky-iii.mp3](Docs/audio/038-a56-funky-iii.mp3) | 12.8 s | -31.6 dBFS |
+| 39 | A57 Thud Wah | [039-a57-thud-wah.mp3](Docs/audio/039-a57-thud-wah.mp3) | 14.2 s | -19.9 dBFS |
+| 40 | A58 Going Up | [040-a58-going-up.mp3](Docs/audio/040-a58-going-up.mp3) | 13.2 s | -22.8 dBFS |
+| 41 | A61 Piano II | [041-a61-piano-ii.mp3](Docs/audio/041-a61-piano-ii.mp3) | 13.5 s | -16.7 dBFS |
+| 42 | A62 Clav | [042-a62-clav.mp3](Docs/audio/042-a62-clav.mp3) | 12.4 s | -11.0 dBFS |
+| 43 | A63 Frontier Organ | [043-a63-frontier-organ.mp3](Docs/audio/043-a63-frontier-organ.mp3) | 12.0 s | -22.5 dBFS |
+| 44 | A64 Snare Drum (unison) | [044-a64-snare-drum-unison.mp3](Docs/audio/044-a64-snare-drum-unison.mp3) | 11.3 s | -15.6 dBFS |
+| 45 | A65 Tom Toms (unison) | [045-a65-tom-toms-unison.mp3](Docs/audio/045-a65-tom-toms-unison.mp3) | 12.1 s | -12.3 dBFS |
+| 46 | A66 Timpani (unison) | [046-a66-timpani-unison.mp3](Docs/audio/046-a66-timpani-unison.mp3) | 14.6 s | -17.8 dBFS |
+| 47 | A67 Shaker | [047-a67-shaker.mp3](Docs/audio/047-a67-shaker.mp3) | 10.6 s | -21.4 dBFS |
+| 48 | A68 Synth Pad | [048-a68-synth-pad.mp3](Docs/audio/048-a68-synth-pad.mp3) | 17.5 s | -18.4 dBFS |
+| 49 | A71 Sweep I | [049-a71-sweep-i.mp3](Docs/audio/049-a71-sweep-i.mp3) | 19.0 s | -16.3 dBFS |
+| 50 | A72 Pluck Sweep | [050-a72-pluck-sweep.mp3](Docs/audio/050-a72-pluck-sweep.mp3) | 13.8 s | -14.1 dBFS |
+| 51 | A73 Repeater | [051-a73-repeater.mp3](Docs/audio/051-a73-repeater.mp3) | 14.5 s | -17.2 dBFS |
+| 52 | A74 Sweep II | [052-a74-sweep-ii.mp3](Docs/audio/052-a74-sweep-ii.mp3) | 19.9 s | -17.5 dBFS |
+| 53 | A75 Pluck Bell | [053-a75-pluck-bell.mp3](Docs/audio/053-a75-pluck-bell.mp3) | 11.9 s | -23.6 dBFS |
+| 54 | A76 Dark Synth Piano | [054-a76-dark-synth-piano.mp3](Docs/audio/054-a76-dark-synth-piano.mp3) | 15.5 s | -17.4 dBFS |
+| 55 | A77 Sustainer | [055-a77-sustainer.mp3](Docs/audio/055-a77-sustainer.mp3) | 18.2 s | -20.2 dBFS |
+| 56 | A78 Wah Release | [056-a78-wah-release.mp3](Docs/audio/056-a78-wah-release.mp3) | 13.3 s | -16.8 dBFS |
+| 57 | A81 Gong (play low chords) | [057-a81-gong-play-low-chords.mp3](Docs/audio/057-a81-gong-play-low-chords.mp3) | 18.0 s | -20.3 dBFS |
+| 58 | A82 Resonance Funk | [058-a82-resonance-funk.mp3](Docs/audio/058-a82-resonance-funk.mp3) | 12.2 s | -22.8 dBFS |
+| 59 | A83 Drum Booms* (1 oct. down) | [059-a83-drum-booms-1-oct-down.mp3](Docs/audio/059-a83-drum-booms-1-oct-down.mp3) | 13.1 s | -22.9 dBFS |
+| 60 | A84 Dust Storm | [060-a84-dust-storm.mp3](Docs/audio/060-a84-dust-storm.mp3) | 16.2 s | -18.6 dBFS |
+| 61 | A85 Rocket Men | [061-a85-rocket-men.mp3](Docs/audio/061-a85-rocket-men.mp3) | 16.8 s | -24.3 dBFS |
+| 62 | A86 Hand Claps | [062-a86-hand-claps.mp3](Docs/audio/062-a86-hand-claps.mp3) | 11.6 s | -12.8 dBFS |
+| 63 | A87 FX Sweep | [063-a87-fx-sweep.mp3](Docs/audio/063-a87-fx-sweep.mp3) | 16.0 s | -17.9 dBFS |
+| 64 | A88 Caverns | [064-a88-caverns.mp3](Docs/audio/064-a88-caverns.mp3) | 15.8 s | -20.4 dBFS |
+| 65 | B11 Strings | [065-b11-strings.mp3](Docs/audio/065-b11-strings.mp3) | 19.1 s | -19.0 dBFS |
+| 66 | B12 Violin | [066-b12-violin.mp3](Docs/audio/066-b12-violin.mp3) | 15.3 s | -28.4 dBFS |
+| 67 | B13 Chorus Vibes | [067-b13-chorus-vibes.mp3](Docs/audio/067-b13-chorus-vibes.mp3) | 12.0 s | -19.1 dBFS |
+| 68 | B14 Organ 1 | [068-b14-organ-1.mp3](Docs/audio/068-b14-organ-1.mp3) | 13.1 s | -21.1 dBFS |
+| 69 | B15 Harpsichord 1 | [069-b15-harpsichord-1.mp3](Docs/audio/069-b15-harpsichord-1.mp3) | 10.9 s | -16.4 dBFS |
+| 70 | B16 Recorder | [070-b16-recorder.mp3](Docs/audio/070-b16-recorder.mp3) | 13.4 s | -34.3 dBFS |
+| 71 | B17 Perc. Pluck | [071-b17-perc-pluck.mp3](Docs/audio/071-b17-perc-pluck.mp3) | 12.1 s | -17.6 dBFS |
+| 72 | B18 Noise Sweep | [072-b18-noise-sweep.mp3](Docs/audio/072-b18-noise-sweep.mp3) | 12.5 s | -27.1 dBFS |
+| 73 | B21 Space Chimes | [073-b21-space-chimes.mp3](Docs/audio/073-b21-space-chimes.mp3) | 13.2 s | -20.6 dBFS |
+| 74 | B22 Nylon Guitar | [074-b22-nylon-guitar.mp3](Docs/audio/074-b22-nylon-guitar.mp3) | 14.9 s | -14.9 dBFS |
+| 75 | B23 Orchestral Pad | [075-b23-orchestral-pad.mp3](Docs/audio/075-b23-orchestral-pad.mp3) | 20.0 s | -16.7 dBFS |
+| 76 | B24 Bright Pluck | [076-b24-bright-pluck.mp3](Docs/audio/076-b24-bright-pluck.mp3) | 11.5 s | -11.9 dBFS |
+| 77 | B25 Organ Bell | [077-b25-organ-bell.mp3](Docs/audio/077-b25-organ-bell.mp3) | 12.4 s | -22.1 dBFS |
+| 78 | B26 Accordion | [078-b26-accordion.mp3](Docs/audio/078-b26-accordion.mp3) | 10.3 s | -17.3 dBFS |
+| 79 | B27 FX Rise 1 | [079-b27-fx-rise-1.mp3](Docs/audio/079-b27-fx-rise-1.mp3) | 13.9 s | -19.1 dBFS |
+| 80 | B28 FX Rise 2 | [080-b28-fx-rise-2.mp3](Docs/audio/080-b28-fx-rise-2.mp3) | 13.9 s | -22.4 dBFS |
+| 81 | B31 Brass | [081-b31-brass.mp3](Docs/audio/081-b31-brass.mp3) | 12.3 s | -17.3 dBFS |
+| 82 | B32 Helicopter | [082-b32-helicopter.mp3](Docs/audio/082-b32-helicopter.mp3) | 12.5 s | -29.4 dBFS |
+| 83 | B33 Lute | [083-b33-lute.mp3](Docs/audio/083-b33-lute.mp3) | 12.7 s | -20.5 dBFS |
+| 84 | B34 Chorus Funk | [084-b34-chorus-funk.mp3](Docs/audio/084-b34-chorus-funk.mp3) | 12.4 s | -20.9 dBFS |
+| 85 | B35 Tomita | [085-b35-tomita.mp3](Docs/audio/085-b35-tomita.mp3) | 17.4 s | -34.0 dBFS |
+| 86 | B36 FX Sweep 1 | [086-b36-fx-sweep-1.mp3](Docs/audio/086-b36-fx-sweep-1.mp3) | 16.7 s | -21.2 dBFS |
+| 87 | B37 Sharp Reed | [087-b37-sharp-reed.mp3](Docs/audio/087-b37-sharp-reed.mp3) | 12.1 s | -33.0 dBFS |
+| 88 | B38 Bass Pluck | [088-b38-bass-pluck.mp3](Docs/audio/088-b38-bass-pluck.mp3) | 11.9 s | -21.7 dBFS |
+| 89 | B41 Resonant Rise | [089-b41-resonant-rise.mp3](Docs/audio/089-b41-resonant-rise.mp3) | 13.0 s | -21.4 dBFS |
+| 90 | B42 Harpsichord 2 | [090-b42-harpsichord-2.mp3](Docs/audio/090-b42-harpsichord-2.mp3) | 10.5 s | -15.6 dBFS |
+| 91 | B43 Dark Ensemble | [091-b43-dark-ensemble.mp3](Docs/audio/091-b43-dark-ensemble.mp3) | 20.0 s | -19.9 dBFS |
+| 92 | B44 Contact Wah | [092-b44-contact-wah.mp3](Docs/audio/092-b44-contact-wah.mp3) | 12.7 s | -22.2 dBFS |
+| 93 | B45 Noise Sweep 2 | [093-b45-noise-sweep-2.mp3](Docs/audio/093-b45-noise-sweep-2.mp3) | 18.5 s | -24.1 dBFS |
+| 94 | B46 Glassy Wah | [094-b46-glassy-wah.mp3](Docs/audio/094-b46-glassy-wah.mp3) | 12.9 s | -17.3 dBFS |
+| 95 | B47 Phase Ensemble | [095-b47-phase-ensemble.mp3](Docs/audio/095-b47-phase-ensemble.mp3) | 19.1 s | -17.1 dBFS |
+| 96 | B48 Chorused Bell | [096-b48-chorused-bell.mp3](Docs/audio/096-b48-chorused-bell.mp3) | 13.6 s | -24.0 dBFS |
+| 97 | B51 Clav | [097-b51-clav.mp3](Docs/audio/097-b51-clav.mp3) | 12.0 s | -12.7 dBFS |
+| 98 | B52 Organ 2 | [098-b52-organ-2.mp3](Docs/audio/098-b52-organ-2.mp3) | 13.9 s | -19.8 dBFS |
+| 99 | B53 Bassoon | [099-b53-bassoon.mp3](Docs/audio/099-b53-bassoon.mp3) | 12.4 s | -27.8 dBFS |
+| 100 | B54 Auto Release Noise Sweep | [100-b54-auto-release-noise-sweep.mp3](Docs/audio/100-b54-auto-release-noise-sweep.mp3) | 13.9 s | -20.1 dBFS |
+| 101 | B55 Brass Ensemble | [101-b55-brass-ensemble.mp3](Docs/audio/101-b55-brass-ensemble.mp3) | 13.1 s | -18.3 dBFS |
+| 102 | B56 Ethereal | [102-b56-ethereal.mp3](Docs/audio/102-b56-ethereal.mp3) | 18.0 s | -19.7 dBFS |
+| 103 | B57 Chorus Bell 2 | [103-b57-chorus-bell-2.mp3](Docs/audio/103-b57-chorus-bell-2.mp3) | 11.8 s | -24.2 dBFS |
+| 104 | B58 Blizzard | [104-b58-blizzard.mp3](Docs/audio/104-b58-blizzard.mp3) | 17.0 s | -26.7 dBFS |
+| 105 | B61 E. Piano with Tremolo | [105-b61-e-piano-with-tremolo.mp3](Docs/audio/105-b61-e-piano-with-tremolo.mp3) | 16.1 s | -16.7 dBFS |
+| 106 | B62 Clarinet | [106-b62-clarinet.mp3](Docs/audio/106-b62-clarinet.mp3) | 12.4 s | -28.2 dBFS |
+| 107 | B63 Thunder | [107-b63-thunder.mp3](Docs/audio/107-b63-thunder.mp3) | 15.5 s | -27.6 dBFS |
+| 108 | B64 Reedy Organ | [108-b64-reedy-organ.mp3](Docs/audio/108-b64-reedy-organ.mp3) | 14.4 s | -21.0 dBFS |
+| 109 | B65 Flute / Horn | [109-b65-flute-horn.mp3](Docs/audio/109-b65-flute-horn.mp3) | 14.4 s | -27.0 dBFS |
+| 110 | B66 Toy Rhodes | [110-b66-toy-rhodes.mp3](Docs/audio/110-b66-toy-rhodes.mp3) | 11.6 s | -18.2 dBFS |
+| 111 | B67 Surf's Up | [111-b67-surf-s-up.mp3](Docs/audio/111-b67-surf-s-up.mp3) | 15.8 s | -19.2 dBFS |
+| 112 | B68 OW Bass | [112-b68-ow-bass.mp3](Docs/audio/112-b68-ow-bass.mp3) | 14.0 s | -26.3 dBFS |
+| 113 | B71 Piccolo | [113-b71-piccolo.mp3](Docs/audio/113-b71-piccolo.mp3) | 10.6 s | -30.3 dBFS |
+| 114 | B72 Melodic Taps | [114-b72-melodic-taps.mp3](Docs/audio/114-b72-melodic-taps.mp3) | 12.3 s | -17.5 dBFS |
+| 115 | B73 Meow Brass | [115-b73-meow-brass.mp3](Docs/audio/115-b73-meow-brass.mp3) | 12.2 s | -30.0 dBFS |
+| 116 | B74 Violin (high) | [116-b74-violin-high.mp3](Docs/audio/116-b74-violin-high.mp3) | 13.3 s | -29.0 dBFS |
+| 117 | B75 High Bells | [117-b75-high-bells.mp3](Docs/audio/117-b75-high-bells.mp3) | 10.2 s | -21.5 dBFS |
+| 118 | B76 Rolling Wah | [118-b76-rolling-wah.mp3](Docs/audio/118-b76-rolling-wah.mp3) | 13.8 s | -19.7 dBFS |
+| 119 | B77 Ping Bell | [119-b77-ping-bell.mp3](Docs/audio/119-b77-ping-bell.mp3) | 12.2 s | -15.3 dBFS |
+| 120 | B78 Brassy Organ | [120-b78-brassy-organ.mp3](Docs/audio/120-b78-brassy-organ.mp3) | 12.3 s | -22.6 dBFS |
+| 121 | B81 Low Dark Strings | [121-b81-low-dark-strings.mp3](Docs/audio/121-b81-low-dark-strings.mp3) | 19.9 s | -20.6 dBFS |
+| 122 | B82 Piccolo Trumpet | [122-b82-piccolo-trumpet.mp3](Docs/audio/122-b82-piccolo-trumpet.mp3) | 11.7 s | -30.1 dBFS |
+| 123 | B83 Cello | [123-b83-cello.mp3](Docs/audio/123-b83-cello.mp3) | 17.4 s | -29.2 dBFS |
+| 124 | B84 High Strings | [124-b84-high-strings.mp3](Docs/audio/124-b84-high-strings.mp3) | 14.4 s | -16.0 dBFS |
+| 125 | B85 Rocket Men | [125-b85-rocket-men.mp3](Docs/audio/125-b85-rocket-men.mp3) | 16.1 s | -24.8 dBFS |
+| 126 | B86 Forbidden Planet | [126-b86-forbidden-planet.mp3](Docs/audio/126-b86-forbidden-planet.mp3) | 15.7 s | -22.4 dBFS |
+| 127 | B87 Froggy | [127-b87-froggy.mp3](Docs/audio/127-b87-froggy.mp3) | 11.3 s | -29.5 dBFS |
+| 128 | B88 Owgan | [128-b88-owgan.mp3](Docs/audio/128-b88-owgan.mp3) | 13.3 s | -18.5 dBFS |
+| 129 | YB1 Round Sub | [129-yb1-round-sub.mp3](Docs/audio/129-yb1-round-sub.mp3) | 15.8 s | -25.0 dBFS |
+| 130 | YB2 Pulse Pluck | [130-yb2-pulse-pluck.mp3](Docs/audio/130-yb2-pulse-pluck.mp3) | 17.4 s | -14.2 dBFS |
+| 131 | YB3 Solid Saw | [131-yb3-solid-saw.mp3](Docs/audio/131-yb3-solid-saw.mp3) | 18.9 s | -23.3 dBFS |
+| 132 | YB4 Rubber Bass | [132-yb4-rubber-bass.mp3](Docs/audio/132-yb4-rubber-bass.mp3) | 18.4 s | -21.1 dBFS |
+| 133 | YB5 Octave Weight | [133-yb5-octave-weight.mp3](Docs/audio/133-yb5-octave-weight.mp3) | 16.5 s | -23.7 dBFS |
+| 134 | YB6 Short PWM | [134-yb6-short-pwm.mp3](Docs/audio/134-yb6-short-pwm.mp3) | 16.8 s | -16.3 dBFS |
+| 135 | YB7 Glide Mono | [135-yb7-glide-mono.mp3](Docs/audio/135-yb7-glide-mono.mp3) | 19.9 s | -23.4 dBFS |
+| 136 | YB8 Hollow Square | [136-yb8-hollow-square.mp3](Docs/audio/136-yb8-hollow-square.mp3) | 16.0 s | -33.4 dBFS |
+| 137 | YP1 Warm Ensemble | [137-yp1-warm-ensemble.mp3](Docs/audio/137-yp1-warm-ensemble.mp3) | 15.8 s | -19.1 dBFS |
+| 138 | YP2 Slow Horizon | [138-yp2-slow-horizon.mp3](Docs/audio/138-yp2-slow-horizon.mp3) | 11.9 s | -19.3 dBFS |
+| 139 | YP3 Glass Halo | [139-yp3-glass-halo.mp3](Docs/audio/139-yp3-glass-halo.mp3) | 17.7 s | -14.5 dBFS |
+| 140 | YP4 Velvet PWM | [140-yp4-velvet-pwm.mp3](Docs/audio/140-yp4-velvet-pwm.mp3) | 18.4 s | -18.6 dBFS |
+| 141 | YP5 Hollow Choir | [141-yp5-hollow-choir.mp3](Docs/audio/141-yp5-hollow-choir.mp3) | 16.7 s | -17.9 dBFS |
+| 142 | YP6 Brass Cloud | [142-yp6-brass-cloud.mp3](Docs/audio/142-yp6-brass-cloud.mp3) | 17.1 s | -17.9 dBFS |
+| 143 | YP7 Resonant Mist | [143-yp7-resonant-mist.mp3](Docs/audio/143-yp7-resonant-mist.mp3) | 18.4 s | -16.0 dBFS |
+| 144 | YP8 Dark Motion | [144-yp8-dark-motion.mp3](Docs/audio/144-yp8-dark-motion.mp3) | 15.5 s | -19.3 dBFS |
+
 <!-- audio-demos-end -->
 
 ### More demos
@@ -110,7 +258,7 @@ Or hear one mechanism at a time:
 ## Downloads
 
 <!-- build-download-begin -->
-The first main build replaces this line with links to its packages.
+**[Download main build 5](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/39072985562/artifacts/12118356241)**, built from [`d031f1f28ae7`](https://github.com/protocodus/virtual-instrument-youknow/commit/d031f1f28ae7d5f86e8339677cd6a9bc55bcca0f). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
 <!-- build-download-end -->
 
 Each main build holds the macOS universal `.pkg` installer and manual-install
