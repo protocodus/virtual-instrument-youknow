@@ -275,6 +275,9 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev
 
       # The plug-in is built too: the fuzz tier drives the shipping processor.
+      # GCC, not Clang: Clang links the ASan runtime only into executables, so
+      # the plug-in modules' no-undefined link leaves __asan_* unresolved; GCC
+      # links the shared libasan into every module.
       - name: Configure
         run: |
           cmake \
@@ -282,8 +285,6 @@ jobs:
             -B build-asan \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
             -DYOUKNOW_ENABLE_SANITIZERS=ON \
             -DYOUKNOW_BUILD_PLUGIN=ON \
             -DYOUKNOW_BUILD_CLAP=OFF \
