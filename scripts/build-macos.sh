@@ -7,6 +7,8 @@ BUILD_DIR="${BUILD_DIR:-${PROJECT_DIR}/build-macos}"
 CONFIG="${CONFIG:-Release}"
 MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 BUILD_UNIVERSAL="${BUILD_UNIVERSAL:-ON}"
+# A ctest label expression, such as '^render$', limits the suite to that tier.
+TEST_LABEL="${TEST_LABEL:-}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "error: this script requires macOS and Xcode" >&2
@@ -58,7 +60,11 @@ fi
 
 cmake "${cmake_args[@]}"
 cmake --build "${BUILD_DIR}" --config "${CONFIG}" --parallel
-ctest --test-dir "${BUILD_DIR}" -C "${CONFIG}" --output-on-failure
+ctest_args=(--test-dir "${BUILD_DIR}" -C "${CONFIG}" --output-on-failure)
+if [[ -n "${TEST_LABEL}" ]]; then
+    ctest_args+=(-L "${TEST_LABEL}" --no-tests=error)
+fi
+ctest "${ctest_args[@]}"
 
 ARTIFACT_DIR="${BUILD_DIR}/YouKnow_artefacts/${CONFIG}"
 artifacts=(

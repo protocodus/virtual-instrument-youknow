@@ -37,12 +37,12 @@ endif()
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
 project(YouKnow VERSION 1.3.0 LANGUAGES C CXX)
 
-# Keep the three-part host version stable; the build identity distinguishes
-# downloads and appears in About YouKnow and macOS CFBundleVersion. GitHub's
-# run ID is shared by all jobs and does not collide across workflows.
+# Keep the three-part host version stable; the build identity X.Y.Z-build.<run>
+# (portfolio standard B4/B5) names downloads and appears in About YouKnow and
+# macOS CFBundleVersion. Every job of one run shares the run number.
 set(youknow_default_build_number "1")
-if(DEFINED ENV{GITHUB_RUN_ID} AND NOT "$ENV{GITHUB_RUN_ID}" STREQUAL "")
-    set(youknow_default_build_number "$ENV{GITHUB_RUN_ID}.$ENV{GITHUB_RUN_ATTEMPT}")
+if(DEFINED ENV{GITHUB_RUN_NUMBER} AND NOT "$ENV{GITHUB_RUN_NUMBER}" STREQUAL "")
+    set(youknow_default_build_number "$ENV{GITHUB_RUN_NUMBER}")
 endif()
 set(YOUKNOW_BUILD_NUMBER "${youknow_default_build_number}" CACHE STRING
     "Build identifier: positive integer, optionally followed by .attempt")
@@ -51,7 +51,7 @@ if(NOT YOUKNOW_BUILD_NUMBER MATCHES "^[1-9][0-9]*(\\.[1-9][0-9]*)?$")
 endif()
 set(YOUKNOW_DISTRIBUTION_VERSION "${PROJECT_VERSION}-build.${YOUKNOW_BUILD_NUMBER}"
     CACHE INTERNAL "Version used in customer download filenames" FORCE)
-set(YOUKNOW_DISPLAY_VERSION "${PROJECT_VERSION} (build ${YOUKNOW_BUILD_NUMBER})")
+set(YOUKNOW_DISPLAY_VERSION "${YOUKNOW_DISTRIBUTION_VERSION}")
 message(STATUS "YouKnow ${YOUKNOW_DISPLAY_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -380,12 +380,15 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderShowcase PRIVATE YouKnowDSP Threads::Threads)
     target_compile_features(YouKnowRenderShowcase PRIVATE cxx_std_20)
 
-    add_executable(YouKnowRenderPresetDemos
+    # The shared preset demo renderer (README G3): one MP3 per preset from
+    # Docs/audio/midi. The main build runs it; YouKnow.AudioDemos checks it.
+    add_executable(RenderYouKnowPresetDemos
         Tools/RenderPresetDemos.cpp
+        Tools/PresetDemoRenderer.h
         Tools/PresetScores.h)
-    target_link_libraries(YouKnowRenderPresetDemos PRIVATE YouKnowDSP Threads::Threads)
-    target_include_directories(YouKnowRenderPresetDemos PRIVATE Tools)
-    target_compile_features(YouKnowRenderPresetDemos PRIVATE cxx_std_20)
+    target_link_libraries(RenderYouKnowPresetDemos PRIVATE YouKnowDSP Threads::Threads)
+    target_include_directories(RenderYouKnowPresetDemos PRIVATE Tools)
+    target_compile_features(RenderYouKnowPresetDemos PRIVATE cxx_std_20)
 
     add_executable(YouKnowRenderOriginalPresets Tools/RenderOriginalPresets.cpp)
     target_link_libraries(YouKnowRenderOriginalPresets PRIVATE YouKnowDSP)
@@ -414,8 +417,7 @@ if(YOUKNOW_BUILD_TOOLS)
         COMMAND YouKnowRenderDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
         COMMAND YouKnowRenderComposition "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
         COMMAND YouKnowRenderShowcase "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
-        COMMAND YouKnowRenderPresetDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
-        DEPENDS YouKnowRenderDemos YouKnowRenderComposition YouKnowRenderShowcase YouKnowRenderPresetDemos
+        DEPENDS YouKnowRenderDemos YouKnowRenderComposition YouKnowRenderShowcase
         COMMENT "Rebuilding all audio demos and updating README.md tables"
         USES_TERMINAL)
 
@@ -607,7 +609,7 @@ if(YOUKNOW_BUILD_TOOLS)
         target_compile_options(YouKnowRenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderComposition PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderShowcase PRIVATE /W4 /permissive-)
-        target_compile_options(YouKnowRenderPresetDemos PRIVATE /W4 /permissive-)
+        target_compile_options(RenderYouKnowPresetDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowRenderOriginalPresets PRIVATE /W4 /permissive-)
         target_compile_options(YouKnowAuditFactoryPresets PRIVATE
             /W4 /permissive-)
@@ -1243,10 +1245,11 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.ShowcaseScores COMMAND YouKnowRenderShowcase --check)
         set_tests_properties(YouKnow.ShowcaseScores PROPERTIES TIMEOUT 30)
 
-        add_test(NAME YouKnow.RenderPresetDemos
-                 COMMAND YouKnowRenderPresetDemos --smoke
-                         "${CMAKE_CURRENT_BINARY_DIR}/preset-demos-smoke")
-        set_tests_properties(YouKnow.RenderPresetDemos PROPERTIES TIMEOUT 60)
+        # Renders all 144 presets twice: about two hours on four cores.
+        add_test(NAME YouKnow.AudioDemos
+                 COMMAND RenderYouKnowPresetDemos --check
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/midi")
+        set_tests_properties(YouKnow.AudioDemos PROPERTIES TIMEOUT 14400)
 
         add_test(NAME YouKnow.RenderOriginalPresets
                  COMMAND YouKnowRenderOriginalPresets --smoke
@@ -1437,6 +1440,11 @@ if(BUILD_TESTING)
         # (macOS completes in 114 s). Keep every assertion and render unchanged,
         # with a bounded hang guard that permits slower shared CI machines.
         set_tests_properties(YouKnow.PluginProcessor PROPERTIES TIMEOUT 480)
+        # The render tier writes the README screenshot (G2) into the build
+        # directory; the main build publishes it as Docs/screenshots/youknow.png.
+        add_test(NAME YouKnow.EditorRender COMMAND YouKnowPluginProcessorTests)
+        set_tests_properties(YouKnow.EditorRender PROPERTIES TIMEOUT 120
+            ENVIRONMENT "YOUKNOW_EDITOR_RENDER_TEST_ONLY=1;YOUKNOW_EDITOR_SNAPSHOT=${CMAKE_BINARY_DIR}/render/youknow.png")
 
         # Exercise the shipping processor and editor with reproducible control
         # storms. Timing is reported separately from correctness: shared CI
@@ -1522,12 +1530,17 @@ if(BUILD_TESTING)
 endif()
 
 # Test tiers: every registered test carries exactly one label so CI selects
-# tiers with `ctest -L <tier>`. Control fuzzing is the fuzz tier; everything
-# else is a unit contract.
+# tiers with `ctest -L <tier>`. Control fuzzing is the fuzz tier, the preset
+# demos the audio tier, the editor screenshot the render tier; everything else
+# is a unit contract.
 get_property(youknow_tests DIRECTORY PROPERTY TESTS)
 foreach(test IN LISTS youknow_tests)
     if(test STREQUAL "YouKnow.ControlFuzz")
         set_tests_properties(${test} PROPERTIES LABELS fuzz)
+    elseif(test STREQUAL "YouKnow.AudioDemos")
+        set_tests_properties(${test} PROPERTIES LABELS audio)
+    elseif(test STREQUAL "YouKnow.EditorRender")
+        set_tests_properties(${test} PROPERTIES LABELS render)
     else()
         set_tests_properties(${test} PROPERTIES LABELS unit)
     endif()

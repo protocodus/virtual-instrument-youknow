@@ -4,7 +4,7 @@ These are source-level software receipts for the canonical engine change on top
 of `ded94edc84af697d66f0590dda8286b1308e0d2c`. They do not claim a physical
 JUNO-106 recording or exact host-event/serial timing equivalence.
 
-- `oracle_probe.cpp` and `baseline-oracle.log` record the original direct-engine
+- [`oracle_probe.cpp`](../../../Experiments/unison-oracle-probe-2026-10-08.cpp) (now in `Experiments/`) and `baseline-oracle.log` record the original direct-engine
   with its default `NormalizedServiceChart` timing versus A-5/UART/B-2
   observations; it did not select the Rack `MeasuredChartGeometry` profile.
   The bounded interpretation is in

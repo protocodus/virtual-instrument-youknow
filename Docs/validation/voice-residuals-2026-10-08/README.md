@@ -21,7 +21,7 @@ The model choices and evidence limits are in `../../research/unison-hardware.md`
   service acceptance. Reproduce with `YOUKNOW_VOICE_RESIDUAL_TESTS_ONLY=1`.
 - `native-circuit-voice-control.log` runs the existing independent envelope/VCA
   laws, including the revised worst-case control-offset silence assertion.
-  `circuit-voice-control.cpp` is the small same-translation-unit selector.
+  [`circuit-voice-control.cpp`](../../../Experiments/circuit-voice-control-2026-10-08.cpp) (now in `Experiments/`) is the small same-translation-unit selector.
 - `native-unison-hardware.log` passes 33,148 assertions. The phase suite in
   `native-unison-phase.log` still finds equal settled counts and stable relative
   phase across the current product Character/Aging endpoints.

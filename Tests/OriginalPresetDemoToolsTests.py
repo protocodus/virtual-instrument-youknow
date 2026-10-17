@@ -331,18 +331,18 @@ class OriginalPresetDemoToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "collection"
             scratch = Path(temporary) / "receipts"
-            (output / "MIDI").mkdir(parents=True)
+            (output / "midi").mkdir(parents=True)
             scratch.mkdir()
             receipts = []
             for number, performance in enumerate(self.performances, 1):
                 stem = f'{number:02d}-{performance["slot"]}'
-                wav, midi = output / f"{stem}.wav", output / "MIDI" / f"{stem}.mid"
+                wav, midi = output / f"{stem}.wav", output / "midi" / f"{stem}.mid"
                 with wave.open(str(wav), "wb") as audio:
                     audio.setparams((2, 3, 96000, 0, "NONE", "not compressed"))
                     audio.writeframes(b"\0" * 6)
                 TOOLS.write_midi(midi, performance)
                 receipt = {key: value for key, value in performance.items() if key != "notes"}
-                receipt.update(seconds=1 / 96000, wav=wav.name, midi=f"MIDI/{midi.name}",
+                receipt.update(seconds=1 / 96000, wav=wav.name, midi=f"midi/{midi.name}",
                                provenance={"source_sha256": source_digest},
                                wav_sha256=hashlib.sha256(wav.read_bytes()).hexdigest(),
                                midi_sha256=hashlib.sha256(midi.read_bytes()).hexdigest())

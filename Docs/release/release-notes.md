@@ -3,6 +3,419 @@
 Moved from the [README](../../README.md) on 2026-10-17; the
 [version history](../../README.md#version-history) there is the summary.
 
+## Version narratives
+
+The README's per-version change lists as they stood on 2026-10-17, before
+its version history became a short ledger.
+
+### 1.3.0 — 2026-10-17 — Circuit Rate, about 30% less CPU, Original timing by default, PHONES output
+
+#### 2026-10-16
+
+- Processing costs roughly 30% less with the same modelled circuits. The
+  voice filter's high-rate stage factors its transistor-noise covariance once
+  per internal sample instead of at every local step, device noise uses an
+  exact faster Gaussian sampler, and the voice-amplifier reconstruction, its
+  control interpolation and the amplifier temperature model use cheaper
+  equivalent arithmetic. Noise levels and spectra are unchanged; the random
+  realizations differ, so renders are not sample-identical to 15 October's.
+- A new engine setting, `CircuitRate`, selects the local rate of the
+  voice-filter and chorus stages. Max, the plug-in's and the engine's
+  default, keeps the reference grid of at least 176.4 kHz. Normal halves it
+  to at least 88.2 kHz and lets idle voice cards skip that stage while their
+  filter keeps running, roughly halving processing with six voices sounding.
+  Latency is unchanged. On a bright open chord Normal measured up to 0.33 dB
+  more level at 14–20 kHz than Max. The Rack Extension exposes the setting on
+  its rear panel.
+- An engaged chorus keeps hissing in hosts that stop rendering a silent
+  instrument. The new `processHoldingIdleCards` renders the shared output path
+  exactly as `process()` does while no voice sounds, with the six silent cards
+  holding their state, at about a quarter of the full idle cost. The Rack
+  Extension now uses it, so its chorus hisses with no notes playing, as the
+  hardware does; the plug-in already rendered every callback and is unchanged.
+
+#### 2026-10-15
+
+- The coupled WAVE/SUB mixer reconstructs Tr19's two physical switch states
+  with the signed bandlimited edge. Clipping that edge or treating its
+  intermediate values as fractional switch conductance added folded tones,
+  especially on high SUB notes. Circuit values and source balance are unchanged.
+- At ordinary host rates, the existing chorus and IC6 output clip share the
+  output stage's higher-rate reconstruction. The chorus support filters now
+  retain their high-grid response at default Quality without adding latency.
+  Unusually low-rate settings that cannot reuse a prepared grid retain the
+  previous chorus/output-stage path.
+- The filter, C59 coupling and voice amplifier share the existing amplifier
+  reconstruction stage. At default Quality this removes the premature
+  open-filter cutoff limit, with controls and noise evaluated at the same
+  reconstructed time. These three numerical corrections have seven fresh
+  auditions; no additional oscillator detune or Unison voicing was invented.
+- HOLD pedal reversals in Original timing retain the latest requested state,
+  removing an adapter bug that could leave notes and Unison stacks held. The
+  product also corrects the original firmware's OFF-before-ON service order
+  when opposite requests arrive before service. This is an intentional
+  firmware behavior correction; literal ROM diagnostics retain the original
+  behavior.
+- Repressing an on-screen/programmatic key after a transpose change releases
+  its old MIDI fallback pitch before assigning the replacement. The Direct
+  engine API also treats zero-velocity Note On as Note Off, matching the
+  plug-in MIDI path's existing behavior.
+- Switching Original/Direct timing preserves held pitch-bend, modulation and HOLD
+  controls. MIDI All Sound Off silences the circuit while retaining bend,
+  modulation and HOLD for subsequent notes; Reset All Controllers remains the
+  separate command that returns those controls to rest.
+- The sub oscillator's existing Tr19 storage delay now survives sample
+  boundaries. Chorus input/output clock events follow the continuously changing
+  clock within each sample. These complete existing timing models; neither
+  introduces a new hardware calibration or a claimed audible tone improvement.
+- Original Unison honors the authored bass presets' one- or two-voice stacks.
+  The voice limit selects audible cards before the shared audio circuit while
+  all six cards retain their firmware timing and pitch histories. Changing the
+  count fades over 5 ms. Original Poly modes retain the six-card allocator.
+  Existing Original Unison sessions with a voice limit below six also use
+  the smaller stack; reloading a bundled preset recalls its new calibration.
+- Preset Output Trims are calibrated against both Direct and Original playback;
+  B15 Harpsichord 1 and B42 Harpsichord 2 are recalibrated after the filter
+  correction. Recalling these bundled presets loads their updated digital
+  trims while preserving the session's playback mode. Saved sessions retain
+  their explicit trim values. All other preset trims, tone bytes and analog
+  Volume positions are unchanged.
+
+#### 2026-10-14
+
+- All 144 bundled sounds recall a calibrated Output Trim for a consistent
+  playing level. The visible TRIM knob applies gain after the modeled circuit,
+  preserving each sound's tone, envelopes and analog Volume setting. Existing
+  sessions retain their saved level; older sessions without the new control
+  restore unity trim.
+- The shared DSP supports embedded C++17 hosts with immutable generated tables
+  and opt-in note, CV and tuning policies, retaining the latest native circuit
+  model and CPU optimizations.
+- Unison plays 1.94 dB quieter: a fixed, requested 0.8 gain applied after the
+  complete circuit and chorus, so internal drive and saturation are
+  unchanged. Poly 1 and Poly 2 keep unity gain, and changing mode ramps the
+  level over 5 ms. This is a level convenience, not a claim that the original
+  hardware attenuates Unison. Sessions saved in Unison play back quieter. The
+  bundled sounds' Output Trims are recalibrated with it, so their Unison
+  sounds keep the common playing level.
+- With portamento, Unison cards glide from their own retained pitch, as the
+  B-2 voice firmware does. A card that has not played starts from its
+  power-on pitch (MIDI note 60), and entering Unison from Poly no longer moves
+  unused cards to the new note before the glide.
+- At the default 100% Unit Character, the seeded per-card residuals left after
+  service are smaller, conservative estimates:
+  - VCF FREQ/WIDTH endpoints: ±2.5 cents, down from ±10.
+  - Slow cutoff wander: about 0.485 cents RMS, down from 2.425.
+  - Resonance trim: ±0.002 normalized CV, down from ±0.02.
+  - VCA input trim: ±1%, down from ±3%.
+  - VCA control offset: ±0.001 normalized control, down from ±0.004.
+  - Compensated VCF temperature coefficient: 0.033%/°C, down from 0.33%/°C.
+
+  The six cards therefore differ less in filter tuning, resonance and level,
+  and their filters drift less while warming. These are engineering priors
+  for a serviced instrument, not measured original-card spreads. Roland's
+  ±10-cent filter acceptance window is unchanged.
+
+#### 2026-10-09
+
+- Reduced CPU usage by reusing temperature-interpolated voice-amplifier
+  table cells, simplifying near-zero chorus calculations, and removing
+  redundant firmware UART work. Existing circuit, timing and quality settings
+  are preserved. Native Linux measurements at 48 kHz/1× saved a median
+  7.12% in Original and 8.65% in Direct against `a0c6b08`; all 20 audio
+  comparisons were byte-identical. The [archived measurement record](https://github.com/protocodus/virtual-instrument-youknow/blob/d6fc72e5d48a2523890d9b6d274c609e55bd6515/Docs/cpu-optimization-2026-10-09.md)
+  records the workload, toolchain and limits.
+
+#### 2026-10-07
+
+- A11 Brass Set 1 receives a 0.38 dB output-volume trim to restore the factory
+  bank's loudness limit after the component-profile update. Its hardware tone
+  bytes are unchanged.
+
+#### 2026-10-05
+
+- The default component profile now includes a named +2.3 dB MN3009
+  insertion-gain estimate, temperature-dependent Tr20 envelope current and
+  C58 loading, and a smaller 250 µV resonance-BA662 offset span. These alter
+  chorus balance, quiet envelope tails and resonance coloration. The gain
+  comes from a same-chip Juno-60 measurement; the transistor coefficient and
+  offset span are explicit estimates, not an original-Juno calibration.
+- New instances use Original timing automatically. Physical slider edits
+  enter the firmware ADC scan, while incoming full-tone SysEx retains its
+  original framing and incremental parameter delivery. A 24-byte dump is no
+  longer expanded into as many as 126 bytes of individual edits. Sessions
+  saved with Direct timing, including older states without a timing field,
+  keep Direct; the TIMING menu remains available.
+- The five-change B comparison is now the product default, chosen by ear
+  against frozen `8f51dc8`: revised chorus motion from the original-board
+  effective fit, quieter late VCA tails from the named Tr20 model, nominal
+  original-hybrid filter tuning, interacting WAVE/SUB mixer loading, and
+  the serviced-bias BBD transfer estimate. Existing sessions retain their
+  control values and use the selected sound model. Component/source priors
+  remain estimates; original-card resonance-versus-byte calibration is open.
+
+#### 2026-10-04
+
+- Loud LINE chords produce fewer folded digital harmonics from the shared
+  output amplifier. Local oversampling evaluates its existing clipping curve
+  before the existing slew and bandwidth response. Product latency rises
+  from 72 to 120 host samples at ordinary rates (one additional millisecond
+  at 48 kHz); 176.4 kHz and higher retain 41 samples.
+- The shared VCA control resistors now add their derived thermal noise as
+  tiny signal-dependent gain fluctuations before the dry/chorus split.
+  The nominal 25 °C model gives about 2.39 ppm RMS modulation over
+  10 Hz–20 kHz. This subtle component follows signal and temperature;
+  it does not increase the zero-input floor.
+
+#### 2026-10-03
+
+- Quiet filter output and voice-amplifier tails now include the bipolar
+  pairs' current-dependent collector shot noise. It follows cutoff,
+  resonance and envelope current, with independent card streams and matched
+  amplifier latency. Unit Character zero remains deterministic. This adds
+  a supported noise component, not a measured full-IC hiss calibration.
+- Low resonance now follows Tr18's gradual exponential junction rather than
+  an abrupt 0.6 V turn-on. Its nominal 2SA1015 current and drawn trimmer are
+  solved against the existing service endpoint; exact RES zero and full
+  self-oscillation calibration stay fixed. Installed junction data remain open.
+- Chorus hiss now uses a physical packet-covariance model calibrated against
+  the original chorus board of #439522. Its shared-clock, held-out spectral
+  error falls from 4.29 to 0.99 dB while retaining the existing A-weighted
+  noise budget. The hiss becomes brighter with less low-band wash. This is
+  one unit’s effective covariance; internal storage/transfer proportions and
+  a population calibration remain unknown.
+- Chorus switching now follows finite Tr4 collector drive and a continuous
+  JFET channel prior. Under the named 25 °C typical-part assumptions, the wet
+  return closes around 88.1 ms after OFF and begins returning around 107.8 ms
+  after ON, instead of 81.8/116.7 ms plus a software fade. Filter loading and
+  output resistor noise follow the same conductance. Installed transistor
+  gain, JFET cutoff and switching transients remain unmeasured.
+- **PHONES output:** OUTPUT... can select the separate headphone amplifier
+  with a declared 32, 80, 300 or 600 Ω electrical load. Its nominal 3.6 gain,
+  47 µF coupling capacitors and 220 Ω output resistors change bass and level
+  with the load (32 Ω: 13.44 Hz coupling corner). LINE remains the default,
+  and older sessions retain their connections. This is a linear electrical
+  route, assuming LINE unplugged; headphone acoustic response and amplifier
+  overload are not inferred. Route/load choices survive preset recalls.
+
+- **Original performance timing:** the session TIMING menu can run the original
+  A-5 foreground/voice allocator, its module UART and the B-2 processor for
+  notes, HOLD, modulation, bend and tone edits. Chord attacks and fast retriggers
+  follow the firmware's actual scan phase. Original uses six voices and the
+  hardware's tone/velocity resolution (I+II stores as II), costs more CPU and
+  clears held notes/tails when switching. Its initial release retained Direct
+  as the compatible default; new instances now use Original as noted above.
+  Host timestamps explicitly start nominal 31.25-kbaud DIN messages; this is a
+  declared input convention, not a measured host-to-hardware latency.
+- Bright, high notes now produce fewer folded harmonics from the voice
+  amplifier: its existing BA662 saturation and envelope multiply run with
+  local oversampling on coarse grids. The physical gain/headroom stay fixed.
+  This initially made product latency 72 samples at ordinary host rates on every
+  quality rung; already-high grids retain the direct amplifier law.
+- Main NOISE keeps more of the real C41/R79 circuit's treble at ordinary
+  quality settings. At 48 kHz/1×, excess loss at 16/20 kHz falls from
+  3.85/8.59 dB to 0.32/0 dB, with the source level and density unchanged.
+  Its stored capacitor voltage still decays with the physical 33 µs time
+  constant when NOISE closes; interpolation and phase remain approximate.
+- **OUTPUT...** now offers cable/input capacitance alongside receiver
+  resistance: 0 pF, Canare GS-6 3 m/6 m (480/960 pF), and explicit 2000/5000 pF
+  external loads. This softens treble and shapes the output resistor floor
+  through the original coupled jack network; mono uses one shared cable.
+  The 0 pF default preserves existing audio and older sessions. Connection
+  choices survive preset recalls; the cable values use
+  [Canare's nominal 160 pF/m specification](https://www.canare.com/guitarinstrumentcable),
+  rather than a measurement of the connected equipment.
+- Low NOISE settings now follow Tr22's gradual transistor-junction onset,
+  making quiet noise and level changes enter more smoothly. Full NOISE and
+  the existing calibration are unchanged. The model uses a named 25 °C
+  2SA1015 prior and the existing nominal trimmer setting; the original unit's
+  junction current and factory trimmer position remain unmeasured.
+
+#### 2026-10-02
+
+- The unipolar saw now keeps its mean voltage at the WAVE node until the
+  voice's C56/C50 coupling capacitor removes it. Switching SAW off or on
+  therefore produces the capacitor's low-frequency transient; powered
+  startup and idle-card tracking retain the stored charge. Settled saw tone
+  is unchanged. The existing mixer scale and ideal-zero off clamp remain
+  explicit model assumptions, rather than measured original-unit voltages.
+- The TA75558 output summer retains its component-derived bandwidth loss at
+  ordinary sample rates, where the previous exponential update effectively
+  bypassed it. The nominal loss is only 0.00625 dB at 20 kHz; this is a subtle
+  numerical correction, with approximate phase, rather than a new tone curve.
+- The output summer's noise and bandwidth now follow the chorus's delayed
+  series mute switch. Opening the wet return removes its 39 kΩ resistor
+  contribution, lowering that resistor-noise layer by 2.60 dB and making the
+  complete dry idle floor 0.19 dB quieter in the 48 kHz test fixture. This
+  follows the existing binary
+  mute model; the installed JFET's leakage and transition shape remain open.
+
+### 1.2.0 — 2026-09-29 (development packages)
+
+- The chorus now includes finite transistor gain and mutual loading in its
+  input and reconstruction filters, including signal-dependent transistor
+  currents. The nominal circuit gives a slightly quieter, darker wet signal
+  and hiss; the transistor assumptions remain explicit, with no compensating
+  gain adjustment.
+- The moving chorus clock now integrates between audio samples, removing a
+  sample-rate-dependent timing bias while retaining the chosen rate and depth.
+  Input sampling and output updates also use the MN3009's complementary
+  clock phases, removing an extra half-period from the modeled delay.
+  At high quality, each input capture evaluates the input filter at its own
+  clock instant, reducing an additional interpolation error.
+- Each voice's bass coupling now follows its inferred service trim and fixed
+  service temperature. The nominal C59 corner is about 1.32 Hz, replacing the
+  1.94 Hz upper-bound approximation; capacitor tolerance and installed
+  amplifier impedances remain unmeasured.
+- The common VCA's output amplifier now includes its drawn 33 kΩ / 22 pF
+  feedback roll-off before the dry/chorus split. Its small treble loss comes
+  from the nominal components, without changing the calibrated noise floor.
+- The pulse leg is 1.34 dB quieter relative to saw, calibrated to an
+  identified unit's original DCOs. Disjoint capture windows put the remaining
+  pulse/saw error within 0.06 dB; this is a one-unit calibration.
+- Chorus hiss uses the corrected A-weighted capture target: its calibration
+  factor moves from 3.98 to 2.37 (−4.50 dB), with the HISS control and stored
+  positions unchanged. The captured spectrum and Mode II calibration remain
+  open.
+- The **OUTPUT...** menu in the Session area exposes High/Medium/Low and
+  receiver input resistance (Open, 10 kΩ, 47 kΩ, 100 kΩ or 1 MΩ). The circuit
+  includes load-dependent bass coupling, treble roll-off and internal resistor
+  noise, including the shared load on a mono jack. High/Open remains the
+  default; connection settings persist in sessions and survive preset recalls.
+- The 2.2 kΩ output-jack resistors now contribute their circuit-derived
+  thermal noise, including the very quiet residual at zero Volume. Unit
+  Character zero retains exact digital silence.
+- The chorus switch now follows the shared C13/C15/C16 circuit, including
+  transistor base loading and delayed BBD clock stop/restart. Capacitor and
+  bucket state survive interrupted toggles. The timing uses labelled nominal
+  junction assumptions; preserving this state costs more CPU with chorus off.
+- Original assigner and voice-board firmware can now run together through
+  the serial link in an explicit comparison API, including live controls and
+  block-by-block audio. Normal plug-in MIDI handling remains unchanged; this
+  higher-cost path is not selected for ordinary playback.
+- The nonlinear chorus followers add about 17–20% CPU over the finite-linear
+  version in the local six-voice comparison. Later numerical corrections have
+  separate measurements, not a single cumulative cost figure. Existing
+  sessions retain their controls but use the updated sound model.
+
+### 1.1.0 — development history (no tagged release)
+
+- Four listening decisions of 2026-09-22 (`Docs/decisions.md`) now ship. The
+  shared noise source is 7.2 dB louder, reading Roland's TP8 noise trim as
+  the trace's dense core. The oscillators drive the filter and VCA 2.6 dB
+  less hard, at the MKS-7 service window's 4.8 Vp-p, with their loudness
+  returned at the output, so noise, resonance and chorus hiss stand 2.6 dB
+  higher against them. The chorus hiss rises about 14 dB against the notes
+  at the unchanged Chorus Noise position, towards an identified unit's
+  captured level; version 1.2.0 corrects this earlier calibration. Chorus Mode II
+  sweeps Mode I's blended excursion at its own 0.852 Hz. Fifteen factory programs that this carried over the
+  bank's gated loudness ceiling get lower VR1 shaft trims; their tone bytes
+  are untouched.
+- The PWM slider now stops where the hardware's loaded pot does: full travel
+  reaches byte 105, about 96.5 % pulse width, the highest PWM byte in
+  Roland's own factory bank, instead of running on into the seven-bit
+  overrange that silenced the pulse. Sessions and presets keep their values;
+  a byte above the pot's reach is held at the top.
+- The resonance return's headroom now warms with the stages' — both OTAs are
+  2 Vt through a resistor ratio inside one potted module — and each card's
+  RES adjustment sets its settled full-RES self-oscillation on the service
+  procedure's 4.8 Vp-p, pole spread and gradient included. A cold card
+  oscillates about 5 % lower and grows into the figure as it warms; without
+  the adjustment the warm return would carry it 5–6 % over. Unit Character
+  zero is unchanged.
+- The chassis gradient across the cards now develops on the warm-up clock
+  instead of standing at full strength at power-on, and the output stage's
+  resistor floors follow the jack board's temperature as the cards' floors
+  already did.
+- The sub's switch transistor leaves saturation later than it enters it, so
+  the sub carries a small second harmonic that rises with pitch (−64 dBc at
+  the 4′ top key); a part-class storage time, not a fitted one.
+- Chorus Mode I now sweeps where the owner put it by ear: between the clone
+  measurement the engine shipped and the identified unit's two readings,
+  weighted towards the spectral fit (3.49 ms centre, ±2.04 ms, 0.5248 Hz;
+  `Docs/decisions.md`). Mode II is unchanged. The shorter centre lifted
+  A11 Brass Set 1 0.08 dB over the bank's gated loudness ceiling, so its
+  VR1 shaft trim goes from 0.800 to 0.788; its tone bytes are untouched.
+- In the product every converter hold now leaks between the scan's writes
+  at the mux and follower sheets' typicals (a hundredth of an LSB per
+  4.2 ms pass, more on a warm board; the engine's reference configuration
+  keeps ideal holds for its exactness tests), and the card rail carries the
+  rectifier ripple the M5230L's typical 68 dB leaves (80 µV peak at 120 Hz,
+  0.003 cents of cutoff under Unit Character). Both sit far below
+  audibility and ship because their numbers are sourced; Unit Character
+  zero keeps the ripple out of the cutoff exactly.
+- The resonance BA662's own input offset now rides its control current into
+  the filter under Unit Character, inside the BA6110 sibling sheet's 3 mV
+  maximum: fast RES moves under a held note thump slightly and self-oscillation
+  settles per card, as an un-nulled OTA does. Unit Character zero is unchanged.
+- The voice input's C56 coupling now uses the documented hybrid resistor
+  network's nominal reduction, shortening mean-shift settling from 330 ms
+  to about 39.7 ms. PWM and SUB changes retain their continuous capacitor
+  history through the nonlinear filter.
+- Each voice's four filter-resistor noise sources now follow its local
+  temperature through the Johnson–Nyquist law, including while the card is
+  idle. The shared NOISE source keeps its existing calibration.
+- Voice-VCA service gain now reaches the specified 6 Vp-p from the 4.8 Vp-p
+  filter test signal. A reciprocal final digital trim preserves ordinary
+  loudness while the shared analog stages receive the corrected voltage.
+- HOLD release and immediate note reassignment now preserve the firmware's
+  running-voice snapshot for oscillator reset and vibrato fade-in decisions.
+- DCO charge now follows the held control current causally through pitch and
+  range changes. Each card retains one C54 tolerance and three range-resistor
+  tolerances; the comparator's service adjustment stays fixed.
+- Envelope attack/decay phase latches now follow B-2's gate snapshot and
+  retrigger paths, including HOLD and interrupted passes. Explicit comparison
+  circuits add finite oscillator reset, independent envelope hold capacitors,
+  and full nominal B-2 control-loop timing; their unmeasured physical values
+  are not inferred as shipping calibration.
+
+- Voice-VCA gain and distortion now follow each card's temperature around
+  its fixed service trim, retaining the existing calibrated warm signal law.
+  Output-volume trims for 14 factory and four original presets keep both cold
+  and full-phrase renders within the existing loudness limits; tone bytes remain
+  unchanged.
+- Shared DCO clock now follows the temperature model using a named Murata
+  component proxy. Startup uses a 3-second thermal time constant; voice-card
+  heat differences remain in the analog paths, and pitch movement is shared.
+- 144 presets: the original 128 factory tones plus 16 YouKnow bass and pad
+  sounds, with preset navigation and hardware-format SysEx import/export.
+- VST3, CLAP and Standalone on macOS and Windows, plus Audio Unit on macOS.
+- Unit Character, Aging, velocity, adjustable polyphony, unison and tuning
+  controls, with a scalable panel and contextual help.
+- Circuit-model, output-balance and chorus refinements, plus more reliable
+  preset/session recall and MIDI handling.
+- Hardware-calibrated SUB response, coupled voice-VCA control and chorus-mute
+  circuits; measured noise/Chorus I and firmware DCO-timing profiles remain
+  explicit comparison options while their unit-specific assumptions are open.
+- Corrected PWM control smoothing, reconstruction of clocked chorus noise,
+  and fixed filter service trimming, with additional component and
+  original-recording comparisons.
+- The measured six-card filter profile and coupled HPF circuit now run in
+  the product, including restored sessions, following the owner's choice
+  of candidate B. Their unit-specific calibration limits remain documented.
+- Restored firmware precision in filter envelopes/key follow, corrected the
+  chorus input's electrical loading, and preserved the output circuit's gentle
+  treble roll-off at ordinary sample rates. The [fidelity research](../research/juno-106-fidelity-research.md#juno-106-fidelity-research)
+  gives the evidence, measured gains and listening implications.
+- Corrected control-DAC voltage spans and both distribution buffers from the
+  detailed resistor networks. Expect small envelope-tail and control-response
+  changes plus about 0.35 dB more raw level; level-matched factory renders
+  retain almost the same overall brightness. See [DAC research](../research/juno-106-fidelity-research.md#control-dac-circuitry).
+- More reliable keyboard releases, session recall and patch files: duplicate
+  on-screen presses no longer stick, non-finite state is rejected, CLAP hosts
+  refresh restored controls, and SysEx saves include the latest MIDI edits.
+  Saving an extensionless patch name also protects existing `.syx` files.
+  The POLY 1, POLY 2 and UNISON keys write their pair as one transaction, so
+  a host saving state from the first notification no longer captures the
+  contact between the two writes.
+- RANGE changes now preserve ramp charge while changing its charging current;
+  envelope and portamento updates follow the recovered firmware order.
+  Chorus mute retains both capacitor charges, and each filter stage receives
+  its own resistor noise. See [the five corrections](../research/juno-106-fidelity-research.md#further-circuit-and-firmware-corrections)
+  for checks, CPU cost and remaining hardware uncertainty.
+
+## Detailed notes
+
 ### Product selection — 2026-10-05
 
 The owner chose the complete five-mechanism B profile by ear against the
@@ -249,7 +662,7 @@ they are not signed and notarized production installers.
   high-frequency attenuation at ordinary host rates. Existing sessions inherit
   the gentle treble correction; there are no new parameters or state-format
   changes. Its phase and external-load limitations remain documented in the
-  [research assessment](../../README.md#juno-106-fidelity-research).
+  [research assessment](../research/juno-106-fidelity-research.md).
 - The LFO delay re-arms on the firmware's running-voice mask rather than on
   the held keys. B-2 rebuilds that mask each pass as the gate bits, OR-ed
   with their previous value while HOLD is down, and re-arms on the first

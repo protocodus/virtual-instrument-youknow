@@ -9610,6 +9610,16 @@ int main()
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
+    // The render tier (YouKnow.EditorRender): the README screenshot and its
+    // minimum, maximum and edited-patch siblings, checked for size and detail.
+    if (std::getenv ("YOUKNOW_EDITOR_RENDER_TEST_ONLY") != nullptr)
+    {
+        expect (std::getenv ("YOUKNOW_EDITOR_SNAPSHOT") != nullptr,
+                "the render tier needs YOUKNOW_EDITOR_SNAPSHOT");
+        testEditorBuildsAndRenders();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     if (std::getenv ("YOUKNOW_PRODUCT_FIDELITY_TEST_ONLY") != nullptr)
     {
         testProductFidelitySurvivesHostLifecycle();

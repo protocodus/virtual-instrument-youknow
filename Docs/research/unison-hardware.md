@@ -281,8 +281,8 @@ the unused direct cards' words with 72; their firmware-path words remained
 software paths, independently supported by the B-2 startup instructions.
 
 Probe source and baseline output were recorded as
-`validation/unison-20261008/oracle_probe.cpp` and
-`validation/unison-20261008/baseline-oracle.log`.
+`Experiments/unison-oracle-probe-2026-10-08.cpp` and
+`Docs/validation/unison-2026-10-08/baseline-oracle.log`.
 
 Passing these software checks establishes their explicit scenarios. Exact
 analogue onset, scan-phase-dependent command timing, and behavior across

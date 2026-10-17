@@ -5,8 +5,8 @@ oscillators, filters and stereo chorus.
 
 ## Install
 
-Detailed installation instructions: [macOS](INSTALL_MACOS.md) ·
-[Windows](INSTALL_WINDOWS.md) · [Linux](INSTALL_LINUX.md).
+Detailed installation instructions: [macOS](install-macos.md) ·
+[Windows](install-windows.md) · [Linux](install-linux.md).
 
 ### macOS
 

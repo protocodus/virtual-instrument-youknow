@@ -248,12 +248,12 @@ def render_performance(performance, renderer, output, scratch, identity):
         engine = json.loads(command(renderer, slot, score, temporary).stdout)
         temporary.replace(raw)
         write_json(cache, dict(signature=signature, engine=engine, raw_sha256=sha256(raw)))
-    wav, midi = output / f'{stem}.wav', output / 'MIDI' / f'{stem}.mid'
+    wav, midi = output / f'{stem}.wav', output / 'midi' / f'{stem}.mid'
     finishing = master_audio(raw, wav, engine['frames'])
     write_midi(midi, performance)
     result = {key: value for key, value in performance.items() if key != 'notes'}
     result.update(seconds=round(engine['frames'] / RATE, 3), note_count=len(performance['notes']),
-                  wav=wav.name, midi=f'MIDI/{midi.name}', engine=engine, provenance=signature,
+                  wav=wav.name, midi=f'midi/{midi.name}', engine=engine, provenance=signature,
                   wav_sha256=sha256(wav), midi_sha256=sha256(midi), **finishing)
     write_json(scratch / f'{stem}.finished.json', result)
     print(f'Finished {slot}: {result["seconds"]:.1f}s, {result["lufs"]:.1f} LUFS', flush=True)
@@ -353,7 +353,7 @@ def main():
     if not 1 <= args.jobs <= 8 or (args.only and args.package_only):
         parser.error('--jobs must be 1–8; --only cannot be combined with --package-only')
     args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / 'MIDI').mkdir(exist_ok=True)
+    (args.output / 'midi').mkdir(exist_ok=True)
     args.scratch.mkdir(parents=True, exist_ok=True)
     if args.package_only:
         package(args.output, args.scratch)

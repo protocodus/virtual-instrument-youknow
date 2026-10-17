@@ -55,9 +55,9 @@ def package(build_dir: Path) -> Path:
     # The customer guide and the installation guides it links sit together at
     # the archive root.
     guide = project_dir / "Docs" / "guide"
-    for name in ("INSTALL_MACOS.md", "INSTALL_WINDOWS.md", "INSTALL_LINUX.md"):
+    for name in ("install-macos.md", "install-windows.md", "install-linux.md"):
         files[name] = guide / name
-    files["README.md"] = guide / "USER_GUIDE.md"
+    files["README.md"] = guide / "user-guide.md"
     # Retain the licence filename shipped in earlier Linux archives.
     files["JUCE-LICENSE.md"] = project_dir / "ThirdParty" / "JUCE-LICENSE.md"
     for path in files.values():

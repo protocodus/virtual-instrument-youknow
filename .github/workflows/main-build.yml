@@ -1,19 +1,332 @@
 name: Main build
 
-# Pushes to main already run the full build and refresh through ci.yml; this
-# adds the nightly rebuild of unchanged main and a manual trigger.
+# Every push to main, nightly and on demand: render the README's screenshot and
+# demos, validate and package every platform, collect one downloadable set,
+# then commit the refreshed media and README blocks if main has not moved.
+# The test tiers run in ci.yml; this workflow builds what it publishes.
 on:
+  push:
+    branches: [main]
   schedule:
-    - cron: "0 3 * * *" # 03:00 UTC daily
+    - cron: "0 3 * * *" # 03:00 UTC
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# No shared concurrency group: GitHub would otherwise replace pending runs,
+# skipping builds when several pushes arrive close together.
+
+env:
+  BUILD_NUMBER: ${{ github.run_number }}
+  PLUGINVAL_VERSION: v1.0.4
+  PLUGINVAL_LINUX_SHA256: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
+  PLUGINVAL_MACOS_SHA256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
+  PLUGINVAL_WINDOWS_SHA256: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
+
 jobs:
-  refresh:
-    name: Build packages and refresh previews
+  render-preset-demos:
+    name: Render one MP3 demo per preset
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install ffmpeg and Ninja
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg ninja-build
+
+      - name: Build the preset demo renderer
+        run: |
+          cmake -S . -B build-dsp -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
+          cmake --build build-dsp --parallel --target RenderYouKnowPresetDemos
+
+      # Fails unless every preset has its MIDI source and renders finite,
+      # audible, within the ceiling and 10-20 s long (G3, G6).
+      - name: Render and encode the demos
+        run: ./build-dsp/RenderYouKnowPresetDemos Docs/audio/midi generated-media/preset-demos
+
+      - name: Upload the preset demos
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-preset-demos
+          path: generated-media
+          if-no-files-found: error
+          retention-days: 30
+
+  # The mechanism demos, showcases and composition (README "More demos"),
+  # with the README peak and composition tables they regenerate.
+  render-more-demos:
+    name: Render the showcase and mechanism demos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Render the demos into the checkout
+        run: |
+          cmake -S . -B build-dsp -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
+          cmake --build build-dsp --parallel --target YouKnowRebuildDemos
+
+      - name: Archive the demos and README tables
+        run: |
+          mkdir -p generated-media
+          tar -czf generated-media/audio-previews.tar.gz README.md Docs/audio/*.wav \
+            Docs/audio/showcase-manifest.json
+
+      - name: Upload the demos
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-more-demos
+          path: generated-media
+          if-no-files-found: error
+          retention-days: 30
+
+  build-macos:
+    name: macOS universal VST3, AU, CLAP and standalone
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build universal plug-in and render the editor screenshot (render tier)
+        env:
+          BUILD_UNIVERSAL: "ON"
+          TEST_LABEL: "^render$"
+        run: ./scripts/build-macos.sh
+
+      # Archived only after the render tier passed: a run whose editor
+      # assertions failed may still have written a PNG.
+      - name: Archive the rendered screenshot
+        run: |
+          set -euo pipefail
+          mkdir -p Docs/screenshots generated-media
+          cp build-macos/render/youknow.png Docs/screenshots/youknow.png
+          tar -czf generated-media/editor-preview.tar.gz Docs/screenshots/youknow.png
+
+      - name: Upload the rendered screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-screenshot
+          path: generated-media
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Validate the AU with auval
+        run: |
+          set -euo pipefail
+          components="$HOME/Library/Audio/Plug-Ins/Components"
+          mkdir -p "$components"
+          ditto "build-macos/YouKnow_artefacts/Release/AU/YouKnow.component" "$components/YouKnow.component"
+          # The registrar caches the component list; restarting it rescans.
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -strict -v aumu Yk06 Ykno
+
+      - name: Validate the VST3 with pluginval
+        working-directory: build-macos
+        run: |
+          set -euo pipefail
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
+          echo "${PLUGINVAL_MACOS_SHA256}  pluginval.zip" | shasum -a 256 -c -
+          ditto -x -k pluginval.zip .
+          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 \
+            --random-seed 0x594b4e4f --timeout-ms 120000 \
+            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+
+      - name: Package (ad-hoc-signed bundles)
+        run: ./scripts/sign-and-package-macos.sh
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-build-packages-${{ github.run_number }}-macos
+          path: |
+            build-macos/dist/YouKnow-*-build.${{ github.run_number }}-macOS-universal.zip
+            build-macos/dist/YouKnow-*-build.${{ github.run_number }}-macOS-universal.pkg
+          if-no-files-found: error
+          retention-days: 30
+
+  build-linux:
+    name: Linux VST3, CLAP and standalone
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install JUCE Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config xvfb xauth \
+            libasound2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev
+
+      - name: Build Linux VST3, CLAP and standalone
+        run: |
+          cmake -S . -B build-plugin -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=ON -DYOUKNOW_BUILD_CLAP=ON -DBUILD_TESTING=OFF
+          cmake --build build-plugin --parallel --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone
+
+      - name: Validate the VST3 with pluginval
+        working-directory: build-plugin
+        run: |
+          set -euo pipefail
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Linux.zip"
+          echo "${PLUGINVAL_LINUX_SHA256}  pluginval.zip" | sha256sum -c -
+          unzip -q -o pluginval.zip
+          xvfb-run -a ./pluginval --strictness-level 10 --random-seed 0x594b4e4f \
+            --timeout-ms 120000 --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+
+      - name: Package Linux VST3, CLAP and standalone
+        run: python3 scripts/package-linux.py --build-dir build-plugin
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-build-packages-${{ github.run_number }}-linux
+          path: build-plugin/dist/YouKnow-*-build.${{ github.run_number }}-Linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  build-windows:
+    name: Windows x64 VST3, CLAP and standalone
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Windows VST3, CLAP and standalone
+        run: |
+          cmake -S . -B build-win -A x64 -DYOUKNOW_BUILD_PLUGIN=ON -DYOUKNOW_BUILD_CLAP=ON -DBUILD_TESTING=OFF
+          cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone
+
+      - name: Validate the VST3 with pluginval
+        working-directory: build-win
+        run: |
+          set -euo pipefail
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
+          echo "${PLUGINVAL_WINDOWS_SHA256}  pluginval.zip" | sha256sum -c -
+          7z x -y pluginval.zip
+          ./pluginval.exe --strictness-level 10 --random-seed 0x594b4e4f \
+            --timeout-ms 120000 --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+
+      - name: Package Windows VST3, CLAP and standalone
+        run: python scripts/package-windows.py --build-dir build-win
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-build-packages-${{ github.run_number }}-windows
+          path: build-win/dist/YouKnow-*-build.${{ github.run_number }}-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  collect:
+    name: Collect youknow-main-build-${{ github.run_number }}
+    needs: [render-preset-demos, render-more-demos, build-macos, build-linux, build-windows]
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact-url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      - name: Download every package
+        uses: actions/download-artifact@v4
+        with:
+          pattern: main-build-packages-${{ github.run_number }}-*
+          merge-multiple: true
+          path: dist
+
+      - name: Check the package set
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(dist/YouKnow-*-build."${BUILD_NUMBER}"-*)
+          printf 'Package: %s\n' "${packages[@]}"
+          for suffix in macOS-universal.zip macOS-universal.pkg Linux-x64.tar.gz Windows-x64.zip; do
+            matches=(dist/YouKnow-*-build."${BUILD_NUMBER}"-"$suffix")
+            if (( ${#matches[@]} != 1 )) || [[ ! -s "${matches[0]}" ]]; then
+              echo "error: expected one non-empty *-$suffix package" >&2
+              exit 1
+            fi
+          done
+          versions="$(printf '%s\n' "${packages[@]##*/}" | sed -E 's/^YouKnow-([0-9.]+)-build\..*/\1/' | sort -u)"
+          if (( ${#packages[@]} != 4 )) || [[ "$(wc -l <<<"$versions")" != 1 ]]; then
+            echo "error: expected four packages of one version" >&2
+            exit 1
+          fi
+
+      - name: Write BUILD.txt and SHA256SUMS
+        working-directory: dist
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf 'Repository: %s\nCommit: %s\nBuild number: %s\nRun: %s\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$BUILD_NUMBER" "$RUN_URL" > BUILD.txt
+          sha256sum YouKnow-* BUILD.txt > SHA256SUMS
+
+      - name: Upload youknow-main-build-${{ github.run_number }}
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: youknow-main-build-${{ github.run_number }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-media:
+    name: Commit screenshot, demos and README blocks
+    if: github.ref == 'refs/heads/main'
+    needs: collect
+    runs-on: ubuntu-24.04
     permissions:
-      # The called workflow grants write access only to its preview commit job.
       contents: write
-    uses: ./.github/workflows/ci.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download the rendered media
+        uses: actions/download-artifact@v4
+        with:
+          pattern: generated-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/youknow-previews
+
+      - name: Commit refreshed media if main still matches this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_DIR: ${{ runner.temp }}/youknow-previews
+          DISTRIBUTION_URL: ${{ needs.collect.outputs.artifact-url }}
+        run: bash scripts/refresh-previews.sh

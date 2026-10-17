@@ -21,7 +21,7 @@
       "seconds": 5.519,
       "note_count": 11,
       "wav": "01-YB1.wav",
-      "midi": "MIDI/01-YB1.mid",
+      "midi": "midi/01-YB1.mid",
       "engine": {
         "slot": "YB1",
         "frames": 529867,
@@ -61,7 +61,7 @@
       "seconds": 4.791,
       "note_count": 13,
       "wav": "02-YB2.wav",
-      "midi": "MIDI/02-YB2.mid",
+      "midi": "midi/02-YB2.mid",
       "engine": {
         "slot": "YB2",
         "frames": 459974,
@@ -101,7 +101,7 @@
       "seconds": 4.988,
       "note_count": 10,
       "wav": "03-YB3.wav",
-      "midi": "MIDI/03-YB3.mid",
+      "midi": "midi/03-YB3.mid",
       "engine": {
         "slot": "YB3",
         "frames": 478841,
@@ -141,7 +141,7 @@
       "seconds": 5.109,
       "note_count": 10,
       "wav": "04-YB4.wav",
-      "midi": "MIDI/04-YB4.mid",
+      "midi": "midi/04-YB4.mid",
       "engine": {
         "slot": "YB4",
         "frames": 490426,
@@ -181,7 +181,7 @@
       "seconds": 5.94,
       "note_count": 8,
       "wav": "05-YB5.wav",
-      "midi": "MIDI/05-YB5.mid",
+      "midi": "midi/05-YB5.mid",
       "engine": {
         "slot": "YB5",
         "frames": 570286,
@@ -221,7 +221,7 @@
       "seconds": 4.432,
       "note_count": 14,
       "wav": "06-YB6.wav",
-      "midi": "MIDI/06-YB6.mid",
+      "midi": "midi/06-YB6.mid",
       "engine": {
         "slot": "YB6",
         "frames": 425481,
@@ -261,7 +261,7 @@
       "seconds": 5.598,
       "note_count": 8,
       "wav": "07-YB7.wav",
-      "midi": "MIDI/07-YB7.mid",
+      "midi": "midi/07-YB7.mid",
       "engine": {
         "slot": "YB7",
         "frames": 537431,
@@ -301,7 +301,7 @@
       "seconds": 5.637,
       "note_count": 8,
       "wav": "08-YB8.wav",
-      "midi": "MIDI/08-YB8.mid",
+      "midi": "midi/08-YB8.mid",
       "engine": {
         "slot": "YB8",
         "frames": 541143,
@@ -341,7 +341,7 @@
       "seconds": 12.742,
       "note_count": 8,
       "wav": "09-YP1.wav",
-      "midi": "MIDI/09-YP1.mid",
+      "midi": "midi/09-YP1.mid",
       "engine": {
         "slot": "YP1",
         "frames": 1223187,
@@ -381,7 +381,7 @@
       "seconds": 18.714,
       "note_count": 9,
       "wav": "10-YP2.wav",
-      "midi": "MIDI/10-YP2.mid",
+      "midi": "midi/10-YP2.mid",
       "engine": {
         "slot": "YP2",
         "frames": 1796563,
@@ -421,7 +421,7 @@
       "seconds": 12.322,
       "note_count": 11,
       "wav": "11-YP3.wav",
-      "midi": "MIDI/11-YP3.mid",
+      "midi": "midi/11-YP3.mid",
       "engine": {
         "slot": "YP3",
         "frames": 1182945,
@@ -461,7 +461,7 @@
       "seconds": 11.793,
       "note_count": 9,
       "wav": "12-YP4.wav",
-      "midi": "MIDI/12-YP4.mid",
+      "midi": "midi/12-YP4.mid",
       "engine": {
         "slot": "YP4",
         "frames": 1132118,
@@ -501,7 +501,7 @@
       "seconds": 12.841,
       "note_count": 9,
       "wav": "13-YP5.wav",
-      "midi": "MIDI/13-YP5.mid",
+      "midi": "midi/13-YP5.mid",
       "engine": {
         "slot": "YP5",
         "frames": 1232783,
@@ -541,7 +541,7 @@
       "seconds": 10.729,
       "note_count": 8,
       "wav": "14-YP6.wav",
-      "midi": "MIDI/14-YP6.mid",
+      "midi": "midi/14-YP6.mid",
       "engine": {
         "slot": "YP6",
         "frames": 1029988,
@@ -581,7 +581,7 @@
       "seconds": 16.362,
       "note_count": 11,
       "wav": "15-YP7.wav",
-      "midi": "MIDI/15-YP7.mid",
+      "midi": "midi/15-YP7.mid",
       "engine": {
         "slot": "YP7",
         "frames": 1570752,
@@ -621,7 +621,7 @@
       "seconds": 13.397,
       "note_count": 10,
       "wav": "16-YP8.wav",
-      "midi": "MIDI/16-YP8.mid",
+      "midi": "midi/16-YP8.mid",
       "engine": {
         "slot": "YP8",
         "frames": 1286106,

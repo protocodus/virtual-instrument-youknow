@@ -11,8 +11,8 @@ mkdir -p "${TEST_ROOT}/project/scripts" "${TEST_ROOT}/project/ThirdParty" \
     "${TEST_ROOT}/bin" "${TEST_ROOT}/project/build-macos/dist"
 cp "${SCRIPT_DIR}/sign-and-package-macos.sh" "${SCRIPT_DIR}/release-macos.sh" \
     "${TEST_ROOT}/project/scripts/"
-for document in LICENSE Docs/guide/USER_GUIDE.md THIRD_PARTY_NOTICES.md \
-    Docs/guide/INSTALL_MACOS.md Docs/guide/INSTALL_WINDOWS.md Docs/guide/INSTALL_LINUX.md \
+for document in LICENSE Docs/guide/user-guide.md THIRD_PARTY_NOTICES.md \
+    Docs/guide/install-macos.md Docs/guide/install-windows.md Docs/guide/install-linux.md \
     ThirdParty/JUCE-LICENSE.md ThirdParty/CLAP-LICENSE.md PRIVACY.md; do
     printf 'Fixture document\n' > "${TEST_ROOT}/project/${document}"
 done
@@ -85,7 +85,7 @@ expect_failure 'full Xcode' env TEST_NO_XCODE=1 bash "${TEST_ROOT}/project/scrip
 mv "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md" "${TEST_ROOT}/CLAP-LICENSE.md"
 expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
 mv "${TEST_ROOT}/CLAP-LICENSE.md" "${TEST_ROOT}/project/ThirdParty/CLAP-LICENSE.md"
-for guide in INSTALL_MACOS.md INSTALL_WINDOWS.md INSTALL_LINUX.md; do
+for guide in install-macos.md install-windows.md install-linux.md; do
     mv "${TEST_ROOT}/project/Docs/guide/${guide}" "${TEST_ROOT}/${guide}"
     expect_failure 'missing or empty distribution document' "${PACKAGER}" --preflight
     grep -F -- "/project/Docs/guide/${guide}" "${TEST_ROOT}/output" >/dev/null

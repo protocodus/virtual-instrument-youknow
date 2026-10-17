@@ -18,8 +18,8 @@ concurrency:
 
 env:
   # A pinned pluginval release, each archive checked against its SHA-256.
-  # The main build and release.yml both run this workflow, so their plug-ins
-  # are validated here (pluginval does not load CLAP).
+  # release.yml runs this workflow, so its plug-ins are validated here;
+  # main-build.yml validates its own (pluginval does not load CLAP).
   PLUGINVAL_VERSION: v1.0.4
   PLUGINVAL_LINUX_SHA256: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
   PLUGINVAL_MACOS_SHA256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
@@ -33,6 +33,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Test CI packaging and preview refresh
         run: python3 scripts/test-ci-packaging.py
@@ -65,17 +69,16 @@ jobs:
       # The count is the point of the check: it is what turns "the renderer ran"
       # into "the renderer rendered the whole set", so a take that silently
       # stopped being written fails CI instead of leaving a stale WAV committed
-      # forever. Adding or removing a take means updating the number here in the
-      # Verifies that all 31 demo WAVs (10 mechanism demos, 1 composition,
-      # 5 musical showcases, and 15 factory preset demos) and the showcase
-      # manifest are rendered into Docs/audio and meet size requirements.
+      # forever. Adding or removing a take means updating the number here.
+      # The 16 are the README's "More demos": 10 mechanism demos, the
+      # composition and 5 showcases. The per-preset MP3s are the audio tier.
       - name: Render and verify demo audio
         run: |
           set -euo pipefail
           cmake --build build-dsp --target YouKnowRebuildDemos --parallel
           rendered=$(find Docs/audio -maxdepth 1 -name '*.wav' | wc -l)
-          if (( rendered != 31 )); then
-            echo "error: rendered $rendered demo WAVs, expected 31" >&2
+          if (( rendered != 16 )); then
+            echo "error: rendered $rendered demo WAVs, expected 16" >&2
             exit 1
           fi
           test -f Docs/audio/showcase-manifest.json
@@ -87,21 +90,6 @@ jobs:
             exit 1
           fi
           echo "YouKnow: rendered all $rendered demo WAVs and verified composition ($bytes bytes)"
-
-      - name: Archive the refreshed audio demos and peak table
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: |
-          tar -czf audio-previews.tar.gz README.md Docs/audio/*.wav \
-            Docs/audio/showcase-manifest.json
-
-      - name: Upload the refreshed audio demos
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-audio-previews
-          path: audio-previews.tar.gz
-          if-no-files-found: error
-          retention-days: 1
 
       - name: Configure Linux plug-in build
         run: |
@@ -153,6 +141,30 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The audio tier renders all 144 preset demos twice and compares the bytes.
+  audio-demos:
+    name: Audio tier (every preset demo, deterministic)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Build the preset demo renderer
+        run: |
+          cmake -S . -B build-dsp -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
+          cmake --build build-dsp --parallel --target RenderYouKnowPresetDemos
+
+      - name: Audio tier
+        run: ctest --test-dir build-dsp -L '^audio$' --no-tests=error --output-on-failure
+
   plugin-macos:
     name: Plug-in build and package (macOS)
     runs-on: macos-15
@@ -161,6 +173,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # The bundle-version checks require macOS and are skipped by the Linux
       # script job. Preflight uses disposable sources and mocked signing tools.
       - name: Test macOS packaging and release preflight
@@ -168,27 +184,19 @@ jobs:
           python3 scripts/test-ci-packaging.py
           bash scripts/test-release-preflight.sh
 
-      # Clearing the committed screenshot first is what makes the check after
-      # the build meaningful: the file can only be there afterwards because this
-      # run's suite rendered it.
-      - name: Clear screenshot before rendering
-        run: rm -f Docs/screenshots/youknow-standalone.png
-
-      # PRs check the runner's native architecture. Main pushes and manual runs
-      # build both arm64 and x86_64 for the downloadable distribution.
-      - name: Build plug-in and run tests
+      # Every tier but audio (its own job), including the render tier's screenshot.
+      - name: Build universal plug-in and run tests
         env:
-          BUILD_UNIVERSAL: ${{ github.event_name == 'pull_request' && 'OFF' || 'ON' }}
-          YOUKNOW_EDITOR_SNAPSHOT: "${{ github.workspace }}/Docs/screenshots/youknow-standalone.png"
+          BUILD_UNIVERSAL: "ON"
+          TEST_LABEL: "^(unit|render|fuzz)$"
         run: ./scripts/build-macos.sh
 
-      - name: Check that the editor screenshot was rendered
+      - name: Check that the render tier wrote the editor screenshot
         run: |
           set -euo pipefail
-          screenshot="Docs/screenshots/youknow-standalone.png"
+          screenshot="build-macos/render/youknow.png"
           if [[ ! -s "$screenshot" ]]; then
-            echo "error: the suite did not render $screenshot" >&2
-            echo "The suite must honour YOUKNOW_EDITOR_SNAPSHOT." >&2
+            echo "error: the render tier did not write $screenshot" >&2
             exit 1
           fi
           if [[ "$(head -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "89504e470d0a1a0a" ]]; then
@@ -221,25 +229,18 @@ jobs:
           pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --verbose \
             --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
 
-      - name: Archive the refreshed editor screenshot
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: tar -czf editor-preview.tar.gz Docs/screenshots/youknow-standalone.png
-
-      - name: Upload the refreshed editor screenshot
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      - name: Upload the rendered editor screenshot
         uses: actions/upload-artifact@v4
         with:
-          name: ci-editor-preview
-          path: editor-preview.tar.gz
+          name: ci-screenshot
+          path: build-macos/render/youknow.png
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
       - name: Package macOS VST3, Audio Unit, CLAP and standalone
-        if: github.event_name != 'pull_request'
         run: ./scripts/sign-and-package-macos.sh
 
       - name: Verify macOS packages and write checksums
-        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           cache="build-macos/CMakeCache.txt"
@@ -260,7 +261,6 @@ jobs:
           shasum -a 256 "$base.zip" "$base.pkg" > SHA256SUMS.txt
 
       - name: Upload macOS packages
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: ci-macos
@@ -269,7 +269,7 @@ jobs:
             build-macos/dist/YouKnow-*-macOS-universal.pkg
             build-macos/dist/SHA256SUMS.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   embedded-tables:
     name: Immutable DSP tables (Linux)
@@ -340,36 +340,6 @@ jobs:
             --parallel "$(nproc)" \
             -L "^(unit|fuzz)$" --output-on-failure --no-tests=error
 
-  refresh-previews:
-    name: Refresh the committed screenshot and audio demos
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: [dsp-tests, plugin-macos, dsp-tests-windows]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Download the rendered audio demos and peak table
-        uses: actions/download-artifact@v4
-        with:
-          name: ci-audio-previews
-          path: ${{ runner.temp }}/youknow-previews
-
-      - name: Download the rendered screenshot
-        uses: actions/download-artifact@v4
-        with:
-          name: ci-editor-preview
-          path: ${{ runner.temp }}/youknow-previews
-
-      - name: Commit the refreshed previews if they changed
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIEW_DIR: ${{ runner.temp }}/youknow-previews
-        run: bash scripts/refresh-previews.sh
-
   dsp-tests-windows:
     name: DSP tests and plug-in package (Windows x64)
     runs-on: windows-2025
@@ -380,6 +350,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Test Windows archive replacement and payload checks
         run: python scripts/test-ci-packaging.py WindowsPackagingTests
@@ -433,4 +407,4 @@ jobs:
             build-win/dist/YouKnow-*-Windows-x64.zip
             build-win/dist/SHA256SUMS.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
