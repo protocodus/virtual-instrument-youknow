@@ -11,10 +11,13 @@
 // The sampler's rare branch stays out of line on every compiler.
 #if defined(_MSC_VER)
 #define YOUKNOW_OTA_NOINLINE __declspec(noinline)
+#define YOUKNOW_OTA_ALWAYS_INLINE __forceinline
 #elif defined(__clang__) || defined(__GNUC__)
 #define YOUKNOW_OTA_NOINLINE __attribute__((noinline))
+#define YOUKNOW_OTA_ALWAYS_INLINE inline __attribute__((always_inline))
 #else
 #define YOUKNOW_OTA_NOINLINE
+#define YOUKNOW_OTA_ALWAYS_INLINE inline
 #endif
 
 namespace youknow {
@@ -104,6 +107,13 @@ struct OtaShotNoise {
     static constexpr double electronCharge=1.602176634e-19;
     using Vector=std::array<double,4>;
     using Matrix=std::array<Vector,4>;
+    // The covariance scaling count is explicitly bounded to 0..12 below.
+    // These binary fractions are exactly ldexp(1.0,-squares), including the
+    // no-scaling case; selecting one needs no run-time libm call.
+    inline static constexpr std::array<double,13> covarianceScales {
+        1.0, .5, .25, .125, .0625, .03125, .015625, .0078125,
+        .00390625, .001953125, .0009765625, .00048828125, .000244140625
+    };
     [[nodiscard]] static double currentPsd(double tailAmps,double pairOutput) noexcept {
         return 2*electronCharge*std::max(0.0,tailAmps)
             * std::max(0.0,1-pairOutput*pairOutput);
@@ -205,7 +215,7 @@ struct OtaShotNoise {
     [[nodiscard]] static Matrix covariance(Matrix a,Vector intervalDiffusion) noexcept {
         double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=std::abs(x);norm=std::max(norm,sum);}
         int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
-        const double scale=std::ldexp(1.0,-squares);
+        const double scale=covarianceScales[static_cast<std::size_t>(squares)];
         for(auto&row:a)for(double&x:row)x*=scale;
         Matrix f{},term{},q{};
         for(std::size_t i=0;i<4;++i){f[i][i]=term[i][i]=1;q[i][i]=intervalDiffusion[i]*scale;}
@@ -226,6 +236,21 @@ struct OtaShotNoise {
     // the SAME series; exp(A) is unnecessary when no doubling is required.
     // This sparse solve itself reads the current interval without quantization;
     // Cache below separately reuses its factor within declared error tolerances.
+    template<int Order,int Terms>
+    static YOUKNOW_OTA_ALWAYS_INLINE void cascadeCovarianceTerms(const Vector&diagonal,const Vector&neighbour,
+                                       Matrix&term,Matrix&q) noexcept {
+        Matrix next{};
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
+            const double value=((diagonal[i]+diagonal[j])*term[i][j]
+                +neighbour[i]*term[(i+3)&3][j]
+                +neighbour[j]*term[i][(j+3)&3])/(Order+1);
+            next[i][j]=next[j][i]=value;q[i][j]+=value;
+            if(i!=j)q[j][i]+=value;
+        }
+        term=next;
+        if constexpr(Order<Terms)
+            cascadeCovarianceTerms<Order+1,Terms>(diagonal,neighbour,term,q);
+    }
     [[nodiscard]] static Matrix cascadeCovariance(const Matrix&a,const Vector&intervalDiffusion) noexcept {
         const auto [minimum,maximum]=std::minmax_element(intervalDiffusion.begin(),intervalDiffusion.end());
         // Truncating a Lyapunov series need not preserve PSD when only one
@@ -240,7 +265,7 @@ struct OtaShotNoise {
             norm=std::max(norm,std::abs(diagonal[i])+std::abs(neighbour[i]));
         }
         int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
-        const double scale=std::ldexp(1.0,-squares);
+        const double scale=covarianceScales[static_cast<std::size_t>(squares)];
         Matrix q{},term{};
         // Relative covariance accuracy is screened at 1e-5 against an
         // independent continuous ODE oracle. The physical model does not
@@ -250,17 +275,8 @@ struct OtaShotNoise {
             diagonal[i]*=scale;neighbour[i]*=scale;
             q[i][i]=term[i][i]=intervalDiffusion[i]*scale;
         }
-        for(int order=1;order<=terms;++order) {
-            Matrix next{};
-            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
-                const double value=((diagonal[i]+diagonal[j])*term[i][j]
-                    +neighbour[i]*term[(i+3)&3][j]
-                    +neighbour[j]*term[i][(j+3)&3])/(order+1);
-                next[i][j]=next[j][i]=value;q[i][j]+=value;
-                if(i!=j)q[j][i]+=value;
-            }
-            term=next;
-        }
+        if(terms==4)cascadeCovarianceTerms<1,4>(diagonal,neighbour,term,q);
+        else cascadeCovarianceTerms<1,6>(diagonal,neighbour,term,q);
         if(squares>0) {
             Matrix f{};term={};
             for(std::size_t i=0;i<4;++i)f[i][i]=term[i][i]=1;
@@ -293,7 +309,7 @@ struct OtaShotNoise {
     [[nodiscard]] static Matrix positiveCovariance(Matrix a,Vector d) noexcept {
         double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=std::abs(x);norm=std::max(norm,sum);}
         int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
-        const double scale=std::ldexp(1.0,-squares);
+        const double scale=covarianceScales[static_cast<std::size_t>(squares)];
         for(auto&row:a)for(double&x:row)x*=scale;
         for(double&x:d)x*=scale;
         constexpr Vector nodes{.06943184420297371,.33000947820757187,.6699905217924281,.9305681557970262};
@@ -395,3 +411,4 @@ struct OtaShotNoise {
 }
 
 #undef YOUKNOW_OTA_NOINLINE
+#undef YOUKNOW_OTA_ALWAYS_INLINE

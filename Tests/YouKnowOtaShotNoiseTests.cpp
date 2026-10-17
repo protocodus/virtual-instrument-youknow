@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -113,6 +114,106 @@ template<class Reference> double error(const Matrix&a,const Reference&b) {
     long double difference=0,power=0;
     for(int i=0;i<4;++i)for(int j=0;j<4;++j){const auto delta=a[i][j]-b[i][j];difference+=delta*delta;power+=b[i][j]*b[i][j];}
     return power>0?std::sqrt(difference/power):difference==0?0:std::numeric_limits<double>::infinity();
+}
+// Frozen pre-optimization sparse recurrence for balanced diffusion. Keep the
+// runtime order loop and ldexp independent of the compile-time production
+// dispatch. The unchanged matrix helpers only supply its doubling products.
+// This exact-arithmetic regression supplements, rather than replaces, the
+// independent continuous ODE and positive-quadrature screens below.
+Matrix frozenSparseCovariance(const Matrix&a,const Vector&d) {
+    Vector diagonal{},neighbour{};double norm=0;
+    for(std::size_t i=0;i<4;++i) {
+        diagonal[i]=a[i][i];neighbour[i]=a[i][(i+3)&3];
+        norm=std::max(norm,std::abs(diagonal[i])+std::abs(neighbour[i]));
+    }
+    int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
+    const double scale=std::ldexp(1.0,-squares);
+    Matrix q{},term{};const int terms=norm<=.125?4:6;
+    for(std::size_t i=0;i<4;++i) {
+        diagonal[i]*=scale;neighbour[i]*=scale;
+        q[i][i]=term[i][i]=d[i]*scale;
+    }
+    for(int order=1;order<=terms;++order) {
+        Matrix next{};
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
+            const double value=((diagonal[i]+diagonal[j])*term[i][j]
+                +neighbour[i]*term[(i+3)&3][j]
+                +neighbour[j]*term[i][(j+3)&3])/(order+1);
+            next[i][j]=next[j][i]=value;q[i][j]+=value;
+            if(i!=j)q[j][i]+=value;
+        }
+        term=next;
+    }
+    if(squares>0) {
+        Matrix f{};term={};for(std::size_t i=0;i<4;++i)f[i][i]=term[i][i]=1;
+        for(int order=1;order<=terms;++order) {
+            Matrix next{};
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j) {
+                next[i][j]=(diagonal[i]*term[i][j]
+                    +neighbour[i]*term[(i+3)&3][j])/order;
+                f[i][j]+=next[i][j];
+            }
+            term=next;
+        }
+        for(int square=0;square<squares;++square) {
+            const auto fq=OtaShotNoise::multiply(f,q);
+            for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
+                double value=0;for(std::size_t k=0;k<4;++k)value+=fq[i][k]*f[j][k];
+                q[i][j]+=value;if(i!=j)q[j][i]=q[i][j];
+            }
+            if(square+1<squares)f=OtaShotNoise::multiply(f,f);
+        }
+    }
+    return q;
+}
+void sparseCovarianceExactParity() {
+    const auto same=[](double actual,double expected) {
+        require(bitCast<std::uint64_t>(actual)==bitCast<std::uint64_t>(expected),
+            "specialized sparse covariance changed a double bit pattern");
+    };
+    const auto sameMatrix=[&](const Matrix&actual,const Matrix&expected) {
+        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)same(actual[i][j],expected[i][j]);
+    };
+    for(std::size_t i=0;i<OtaShotNoise::covarianceScales.size();++i)
+        same(OtaShotNoise::covarianceScales[i],std::ldexp(1.0,-static_cast<int>(i)));
+    std::vector<double> intervalNorms{0.0,.0001,.0625};
+    const auto boundary=[&](double value) {
+        intervalNorms.push_back(std::nextafter(value,0.0));
+        intervalNorms.push_back(value);
+        intervalNorms.push_back(std::nextafter(value,std::numeric_limits<double>::infinity()));
+    };
+    boundary(.125);
+    for(int level=0;level<=12;++level)boundary(std::ldexp(.25,level));
+    constexpr std::array<Vector,5> spreads{{Vector{1,1,1,1},Vector{.95,1.05,.2,1.7},
+        Vector{1,1e-6,.02,.8},Vector{1,0,1,1},Vector{0,1,1,1}}};
+    constexpr std::array<Vector,4> diffusions{{Vector{},Vector{1,1,1,1},
+        Vector{.01,1,.5,.25},Vector{1e-30,2e-30,3e-30,4e-30}}};
+    std::size_t cases=0;
+    for(const auto&spread:spreads)for(double intervalNorm:intervalNorms)
+        for(double feedback:{0.0,4.504,8.0}) {
+            Matrix a{};double norm=0;
+            for(std::size_t i=0;i<4;++i) {
+                a[i][i]=-spread[i];a[i][(i+3)&3]=spread[i]*(i==0?-feedback:1);
+                norm=std::max(norm,std::abs(a[i][i])+std::abs(a[i][(i+3)&3]));
+            }
+            for(auto&row:a)for(double&value:row)value*=intervalNorm/norm;
+            for(const auto&d:diffusions) {
+                const auto expected=frozenSparseCovariance(a,d);
+                const auto actual=OtaShotNoise::cascadeCovariance(a,d);
+                sameMatrix(actual,expected);
+                bool actualValid=false,expectedValid=false;
+                const auto actualL=OtaShotNoise::factor(actual,&actualValid);
+                const auto expectedL=OtaShotNoise::factor(expected,&expectedValid);
+                require(actualValid==expectedValid,"specialized sparse covariance changed factor validity");
+                sameMatrix(actualL,expectedL);
+                constexpr Vector normal{.3,-.7,1.1,-.4};
+                const auto innovation=OtaShotNoise::applyFactor(actualL,normal);
+                const auto reference=OtaShotNoise::applyFactor(expectedL,normal);
+                for(std::size_t i=0;i<4;++i)same(innovation[i],reference[i]);
+                ++cases;
+            }
+        }
+    std::cout<<"sparse covariance frozen exact parity cases="<<cases<<"\n";
 }
 // Frozen pre-optimization positive quadrature. Keep this recurrence explicit
 // and independent of the shared-power/Horner implementation: it pins the
@@ -555,4 +656,4 @@ void costs(){for(int voices:{6,16})for(int q:{1,4}){
         <<" s / .4 s audio (ratio "<<after/before<<")\n";
 }}
 }
-int main(){try{randomChecks();sharedPositiveCovarianceParity();currentAndCovariance();sparseDiffusion();filterPsd();highCutoffVariance();vcaChecks();lifecycle();frameFactorReuse();costs();}catch(const std::exception&e){guardAllocation=false;std::cerr<<e.what()<<'\n';return 1;}return 0;}
+int main(){try{randomChecks();sparseCovarianceExactParity();sharedPositiveCovarianceParity();currentAndCovariance();sparseDiffusion();filterPsd();highCutoffVariance();vcaChecks();lifecycle();frameFactorReuse();costs();}catch(const std::exception&e){guardAllocation=false;std::cerr<<e.what()<<'\n';return 1;}return 0;}

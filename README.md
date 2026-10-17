@@ -49,6 +49,14 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.2 — 2026-10-17 — Active playback CPU
+
+- Reuses fixed chorus terms and specializes the voice-noise covariance
+  calculation. Circuit equations, processing rates and noise chronology stay
+  unchanged; deterministic output comparisons retain identical sample bits.
+- [Measurement and validation](Docs/benchmarks/active-playback-2026-10-17.md)
+  distinguish native processing measurements from Reason-host performance.
+
 ### 1.3.1 — 2026-10-17 — Dense bend and modulation automation in Original timing
 
 - In Original timing, pitch-bend and modulation messages that arrive faster
