@@ -49,6 +49,14 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.1 — 2026-10-17 — Dense bend and modulation automation in Original timing
+
+- In Original timing, pitch-bend and modulation messages that arrive faster
+  than the emulated MIDI cable carries them (about 1,040 a second) now merge:
+  a newer value replaces an older one still waiting to be sent. Dense host
+  automation no longer delays notes by up to a second or cuts a held chord.
+  Direct timing is unchanged.
+
 ### 1.3.0 — 2026-10-17 — Circuit Rate, about 30% less CPU, Original timing by default, PHONES output
 
 - About 30% less processing for the same circuits, and a new Circuit Rate
@@ -2099,11 +2107,11 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `1.3.0-build.1`. To identify a local build, pass
+Local builds default to `1.3.1-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses the workflow's `GITHUB_RUN_NUMBER`; the configured
-number is saved in the build directory. The current host version is `1.3.0`,
-and its signed-release tag would be `v1.3.0`. Archive names and the
+number is saved in the build directory. The current host version is `1.3.1`,
+and its signed-release tag would be `v1.3.1`. Archive names and the
 About box include the build number; macOS bundle and installer build metadata
 carry it too.
 
@@ -2139,7 +2147,7 @@ tree, a dated release-history entry and a matching `v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-1.3.0 development packages remain distinct from a signed production release.
+1.3.1 development packages remain distinct from a signed production release.
 
 ## Licensing
 

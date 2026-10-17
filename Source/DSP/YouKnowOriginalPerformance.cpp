@@ -93,6 +93,22 @@ bool OriginalPerformance::message(Span<const std::uint8_t> bytes, std::uint64_t 
     nextRx_=t;
     return true;
 }
+bool OriginalPerformance::continuousMessage(const std::array<std::uint8_t,3>& bytes, std::uint64_t now) noexcept {
+    // Walk back over complete, unrouted three-byte bend/CC1 messages only:
+    // replacing across a note or tone edit would reorder the two on the wire.
+    for(std::size_t end=count_;end>=3;end-=3) {
+        const auto first=head_+end-3;
+        if(queueChannel_[first]<0 || queueChannel_[first+1]>=0 || queueChannel_[first+2]>=0) break;
+        const auto status=queue_[first].value;
+        const bool bend=(status&0xf0)==0xe0;
+        if(!bend && !((status&0xf0)==0xb0 && queue_[first+1].value==1)) break;
+        if(status==bytes[0] && (bend || queue_[first+1].value==bytes[1])) {
+            queue_[first+1].value=bytes[1]; queue_[first+2].value=bytes[2];
+            return true;
+        }
+    }
+    return message(bytes,now);
+}
 bool OriginalPerformance::keyboardNoteOn(int sourceNote, int midiPitch) noexcept {
     if(sourceNote<0 || sourceNote>=128 || midiPitch<0 || midiPitch>=128) return false;
     (void)keyboardNoteOff(sourceNote);

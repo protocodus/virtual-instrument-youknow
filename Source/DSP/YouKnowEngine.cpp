@@ -9182,7 +9182,7 @@ void YouKnowEngine::setPitchBend(float normalisedBipolar) noexcept
         pitchBendTarget_=value;
         const unsigned bend=static_cast<unsigned>(std::clamp(std::lround(8192.f+8192.f*value),0l,16383l));
         const std::array<std::uint8_t,3> message{0xe0,static_cast<std::uint8_t>(bend&127),static_cast<std::uint8_t>(bend>>7)};
-        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        if (!originalPerformance_.continuousMessage(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
         return;
     }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)
@@ -9197,7 +9197,7 @@ void YouKnowEngine::setModWheel(float amount) noexcept
         if(value==modWheelTarget_) return;
         modWheelTarget_=value;
         const std::array<std::uint8_t,3> message{0xb0,1,static_cast<std::uint8_t>(std::lround(value*127.f))};
-        if (!originalPerformance_.message(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
+        if (!originalPerformance_.continuousMessage(message,static_cast<std::uint64_t>(firmwareSerialAudioStates_))) { allNotesOff(); originalPerformanceHealthy_=false; }
         return;
     }
     if (activeConverterTimingProfile_ == ConverterTimingProfile::FirmwareSerialReplay)

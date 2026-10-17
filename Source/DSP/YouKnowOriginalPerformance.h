@@ -34,6 +34,11 @@ public:
     [[nodiscard]] int keyboardNoteOff(int sourceNote) noexcept;
     void clearKeyboardNotes() noexcept;
     [[nodiscard]] bool message(Span<const std::uint8_t>, std::uint64_t now) noexcept;
+    // Pitch bend or CC1. DIN carries about 1,040 three-byte messages a second
+    // and hosts can send these far faster, so, like a merging MIDI interface,
+    // a newer value replaces an older one of the same controller that is
+    // still waiting among the queue's trailing bend/CC1 messages.
+    [[nodiscard]] bool continuousMessage(const std::array<std::uint8_t,3>&, std::uint64_t now) noexcept;
     [[nodiscard]] bool advance(YouKnowEngine&, std::uint64_t target) noexcept;
     void keyMode(unsigned mode) noexcept;
     [[nodiscard]] const FirmwareAssignerAudioBridge::State& state() const noexcept { return state_; }

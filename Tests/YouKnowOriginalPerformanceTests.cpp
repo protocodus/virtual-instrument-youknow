@@ -900,6 +900,31 @@ void lfoSync() {
     const float before=Access::lfo(*e); render(*e,2400,83);
     check(Access::cpuWord(*e,0x4b)==ownRate&&Access::lfo(*e)!=before,"B-2's own LFO runs again after sync ends");
 }
+// Host automation can send bend and CC1 far faster than DIN carries them.
+// Before pending values merged, a sweep at one message per sample delayed
+// notes by over a second, then overflowed the 4,096-byte input and cut a
+// held chord. The wire must stay short and the chord keep sounding.
+void denseControllerSweep(unsigned block) {
+    auto e=create(48000,1);
+    e->noteOn(60,1); e->noteOn(64,1); e->noteOn(67,1);
+    render(*e,4800,block);
+    std::array<float,256> l{},r{};
+    float tailPeak=0;
+    for(unsigned i=0;i<24000;i+=block) {
+        const float phase=float(i)/24000.f;
+        e->setPitchBend(std::sin(6.2831853f*4*phase));
+        e->setModWheel(phase);
+        // At most the message on the wire plus one waiting bend and one CC1.
+        check(e->originalPerformance().pending()<=9,"pending bend/CC1 merge into one message each");
+        e->process(l.data(),r.data(),int(block));
+        if(i>=19200) for(unsigned k=0;k<block;++k)
+            tailPeak=std::max({tailPeak,std::abs(l[k]),std::abs(r[k])});
+    }
+    check(e->originalPerformanceHealthy(),"a dense bend/CC1 sweep keeps the serial pipeline healthy");
+    check(tailPeak>0.01f,"the held chord still sounds at the end of a dense bend/CC1 sweep");
+    e->setPitchBend(0); e->setModWheel(0); render(*e,4096,block);
+    check(e->originalPerformance().state().assigner.ram[0xa2]==0,"the final CC1 value reaches A-5 after merging");
+}
 int main() {
     holdListeningFixture();
     check(coalescedHoldBursts(1)==coalescedHoldBursts(173),
@@ -919,6 +944,7 @@ int main() {
     check(repeatedMode(1)==repeatedMode(173),"same-mode contact processing is block invariant");
     burstAndRecovery();
     startupControlsAndLifecycle();
+    denseControllerSweep(1); denseControllerSweep(8);
     lowRateWireBursts();
     for(bool afterRead:{false,true})
         check(rapidContactAudio(1,afterRead)==rapidContactAudio(173,afterRead),
