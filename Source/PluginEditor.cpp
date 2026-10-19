@@ -2571,7 +2571,8 @@ void YouKnowAudioProcessorEditor::showProductInfo (bool quickStart)
           "the change takes effect when idle. PANIC stops stuck notes."
         : "YouKnow " YOUKNOW_DISPLAY_VERSION "\nBy " JucePlugin_Manufacturer
           "\n\nA circuit-modeled polyphonic synthesizer.\n\n"
-          "YouKnow is licensed under the MIT License. "
+          "Official YouKnow builds may be used for any purpose, including making music "
+          "commercially; the source is under the PolyForm Noncommercial License 1.0.0. "
           "JUCE and other dependencies retain their own licence terms; "
           "see the notices included with your download.\n\n"
           "Support: " JucePlugin_ManufacturerEmail "\n" JucePlugin_ManufacturerWebsite;

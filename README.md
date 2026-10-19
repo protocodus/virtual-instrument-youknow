@@ -2307,12 +2307,17 @@ license and dependency notices and requires macOS 11 or later. Version
 
 ## Licensing
 
-YouKnow's original code and assets are distributed under the [MIT license](LICENSE),
-which is also the customer license. The publisher has selected JUCE 8 Starter
-for JUCE; that framework and its dependencies retain their own license terms.
-[Third-party notices](THIRD_PARTY_NOTICES.md) record those terms and the
-factory-tone provenance. YouKnow has no telemetry or automatic network
-activity; see the [privacy notice](PRIVACY.md).
+YouKnow's original code and assets are available under the [PolyForm
+Noncommercial License 1.0.0](LICENSE): you may read, study, change and share
+them for any non-commercial purpose, but not sell them or use them commercially. Official
+Protocodus builds, the ones customers download, carry an additional permission
+in the same file to use them for any purpose, including making music
+commercially. Commits made before this licence change were published under MIT
+and remain so. The publisher has selected JUCE 8 Starter for JUCE; that
+framework and its dependencies retain their own license terms. [Third-party
+notices](THIRD_PARTY_NOTICES.md) record those terms and the factory-tone
+provenance. YouKnow has no telemetry or automatic network activity; see the
+[privacy notice](PRIVACY.md).
 
 Published by [Protocodus](https://protocodus.cz).
 Contact [protocodus@proton.me](mailto:protocodus@proton.me).

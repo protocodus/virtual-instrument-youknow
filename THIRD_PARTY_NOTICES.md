@@ -60,10 +60,10 @@ public archives:
   its factory PAT and decoded JSON transcription.
 
 The displayed descriptive names are archival metadata; patch-name text does not
-exist in the hardware memory records. The project's MIT license covers
+exist in the hardware memory records. The project's licence covers
 YouKnow's original code and assets and does not assert ownership of Roland
 trademarks or the historical tone states. The cited archives do not provide an
-explicit MIT grant for this corpus, so redistributors should make their own
+explicit licence grant for this corpus, so redistributors should make their own
 rights assessment. No data was taken from the separately distributed Roland
 Cloud Original 128 product.
 
@@ -79,6 +79,10 @@ distributing YouKnow with JUCE therefore requires either compliance with the
 AGPLv3 for the complete combined work or an appropriate commercial JUCE licence.
 Review the JUCE 8 licence terms before distribution:
 <https://github.com/juce-framework/JUCE/blob/8.0.14/LICENSE.md>
+
+Protocodus's official builds use JUCE under a commercial JUCE 8 Starter
+licence. YouKnow's own licence is not the AGPLv3, so anyone else who distributes
+a build needs their own commercial JUCE licence.
 
 JUCE includes or interfaces with additional third-party components. Their
 copyright notices and licence terms are listed in JUCE's own `LICENSE.md` and in

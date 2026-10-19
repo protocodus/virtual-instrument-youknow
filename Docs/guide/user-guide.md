@@ -128,7 +128,9 @@ YouKnow works offline, with no accounts, telemetry, automatic update checks or
 network licensing. Audio and MIDI are processed locally. macOS and your host
 have their own security checks and privacy settings; see [PRIVACY.md](PRIVACY.md).
 
-YouKnow uses the [MIT License](LICENSE). Dependencies retain their own terms;
+YouKnow's source is available under the PolyForm Noncommercial License 1.0.0,
+and official builds may be used for any purpose, including making music
+commercially; see [LICENSE](LICENSE). Dependencies retain their own terms;
 see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the included ThirdParty folder.
 
 Support: [protocodus@proton.me](mailto:protocodus@proton.me)
