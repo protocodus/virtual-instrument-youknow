@@ -339,6 +339,8 @@ EngineParameters parametersFor (const Preset& preset)
     parameters.chorus = patch.chorus;
 
     parameters.volume = controls.volume;
+    // Compare the physical circuit with hardware, before product Output Trim.
+    parameters.outputTrimDb = 0.0f;
     parameters.benderDcoDepth = controls.benderDco;
     parameters.benderVcfDepth = controls.benderVcf;
     parameters.benderLfoDepth = controls.benderLfo;

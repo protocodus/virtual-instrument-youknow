@@ -1,0 +1,44 @@
+Product: YouKnow
+Vendor: Protocodus
+Website: https://protocodus.cz
+Support: protocodus@proton.me
+Version: 2.0.0
+Build: 1
+Distribution version: 2.0.0-build.1
+Formats: VST3, Audio Unit, CLAP, Standalone
+Architectures: x86_64 arm64
+Minimum macOS: 11.0
+CMake: cmake version 4.0.0
+Xcode: unavailable
+macOS SDK: 26.5
+C++ compiler: Apple clang version 21.0.0 (clang-2100.1.1.101)
+Standalone bundle identifier: cz.protocodus.youknow
+Audio Unit bundle identifier: cz.protocodus.youknow.au
+VST3 bundle identifier: cz.protocodus.youknow.vst3
+CLAP bundle identifier: cz.protocodus.youknow.clap
+Package identifier: cz.protocodus.youknow.pkg
+Audio Unit identity: aumu/Yk06/Ykno
+VST3 processor CID: ABCDEF019182FAEB596B6E6F596B3036
+VST3 controller CID: ABCDEF011234ABCD596B6E6F596B3036
+Package: YouKnow-2.0.0-build.1-macOS-universal.pkg
+Package SHA-256: 7b2f3306cede8e760756e2da852730f2f35d8907d8f0a4fda050548068e6b287
+Release mode: 0
+Notarization status: not requested
+Notarization submission: none
+Source commit: 62c2a67028b1f1774c4e56b83e6b2e0f2426847d
+Source tree: clean
+Customer licence SHA-256: f4fa485ad0d4624ba258aa4d3eb757609bc50f37893db8692e41e8384830f919
+JUCE licensing basis: JUCE 8 Starter (publisher-declared)
+JUCE LICENSE.md SHA-256: 2633539bb26d244f0966fbc4df59400ea99bdf575fa96291851c1c3ff3456146
+CLAP-LICENSE.md SHA-256: 19cc18fdf438c6fb85a6fe3d3f0c3f81a5c4755c064a53f9b473bb9ddf76d2f4
+JUCE dependency license files:
+  modules/juce_audio_plugin_client/AU/AudioUnitSDK/LICENSE.txt
+  modules/juce_audio_processors_headless/format_types/VST3_SDK/LICENSE.txt
+  modules/juce_audio_formats/codecs/flac/Flac Licence.txt
+  modules/juce_audio_formats/codecs/oggvorbis/Ogg Vorbis Licence.txt
+  modules/juce_graphics/image_formats/jpglib/README
+  modules/juce_graphics/image_formats/pnglib/LICENSE
+  modules/juce_core/zip/zlib/README
+  modules/juce_core/zip/zlib/LICENSE
+  modules/juce_graphics/fonts/harfbuzz/COPYING
+  modules/juce_graphics/unicode/sheenbidi/LICENSE

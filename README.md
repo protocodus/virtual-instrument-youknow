@@ -117,6 +117,14 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
+### Unreleased — 2026-10-14
+
+- All 144 bundled sounds recall a calibrated Output Trim for a consistent
+  playing level. The visible TRIM knob applies gain after the modeled circuit,
+  preserving each sound's tone, envelopes and analog Volume setting. Existing
+  sessions retain their saved level; older sessions without the new control
+  restore unity trim.
+
 ### Unreleased — 2026-10-07
 
 - A11 Brass Set 1 receives a 0.38 dB output-volume trim to restore the factory
@@ -2567,8 +2575,8 @@ with a stepper, family menu, RELOAD and a LOADED/EDITED indicator, in
 sync with the host's own program state. The indicator compares the whole
 setup against the product program, so a hardware Program Change or SysEx
 dump — which moves only the 18 tone bytes — reads EDITED whenever the
-retained performance controls differ from that program's own (46 factory
-tones carry a VR1 position other than the panel default).
+retained performance controls, including Output Trim, differ from that
+program's own.
 
 ### Choosing a sound
 
@@ -2600,7 +2608,8 @@ settings and the current pitch-bend and modulation positions.
 
 YouKnow includes all 128 original tone-memory states in the physical
 instrument's order, A11–A88 then B11–B88 — each the hardware's complete
-18-byte state with no corrective gain, hidden EQ or per-preset rebalancing.
+18-byte state unchanged. Product-level balancing is stored separately from
+those bytes and applies after the physical audio circuit.
 The bytes were mechanically decoded and cross-checked with zero mismatches
 across the public [Hinzen tape/PAT archive](http://www.hinzen.de/midi/juno-106/),
 the [Jarvik7 librarian factory library](https://www.jarvik7.net/juno-106/)
@@ -2609,16 +2618,37 @@ Roland independently describes the historical 64+64 set. The test suite
 locks the payload checksum, slot order and a round-trip for every tone. No
 Roland Cloud content was downloaded or extracted.
 
-What each preset carries besides its bytes is a VR1 volume shaft position —
-the one control a player moves when one patch arrives hotter than the last.
+Each preset carries both its existing analog VR1 volume shaft position and a
+visible digital **Output Trim** in dB. TRIM sits beside the monitor and changes
+only the final stereo amplitude, after all modeled saturation, filtering and
+noise. It does not compress attacks or change the sound's internal drive.
+
+`YouKnowCalibratePresets` measures every bundled sound with the same sustained
+notes, releases and six-note chord at the shipping defaults, including Original
+timing, 48 kHz/1× and Aging 50%. It targets −34 dBFS relative-gated stereo RMS
+within ±1 dB and checks
+sample peaks with chorus hiss both muted and enabled. This is a repeatable
+playing-level reference, not a LUFS measurement or a promise that every register
+and playing style has identical loudness. The complete protocol is beside the
+tool's implementation. The short noise-based hand clap uses a fixed compromise
+across 44.1, 48 and 96 kHz to stay within that band. The
+[measured bank](Docs/audio/preset-levels.csv) spans 0.914 dB at 48 kHz, down from
+26.851 dB, with a maximum sample peak of −2.646 dBFS. Twelve representative
+presets also pass the ±1 dB band at 44.1 and 96 kHz.
+Host/preset-browser recall restores the trim; saved
+sessions preserve their own value, and older sessions use 0 dB. INIT also keeps
+0 dB. Hardware MIDI Program Change and SysEx continue to change only tone bytes,
+retaining the current performance controls and Output Trim.
+
 The `YouKnowAuditFactoryPresets` tool renders all
 144 tones through the same engine the plug-in runs — the 128 archival tones
 at 48 kHz/4×, the normalised converter chart and a fresh service state, the
 16 product presets with the plug-in's shipping defaults — and enforces two
-contracts as build failures: no preset peaks above −1 dBFS and none exceeds
-−28.5 dBFS gated RMS. CI runs its `--smoke` subset; the full audit is a
-release step. The trims are attenuation only, and below those ceilings the level
-differences follow the original tone settings and current circuit model.
+contracts **before digital Output Trim** as build failures: no preset peaks
+above −1 dBFS and none exceeds −28.5 dBFS gated RMS. CI runs its `--smoke`
+subset; the full audit is a
+release step. Its historical VR1 trims are attenuation only; this circuit-level
+audit is separate from the product-level balancing above.
 The fixed filter-trim correction required small VR1 reductions for B14, B43,
 B52 and B76; their historical tone bytes and the level ceilings are unchanged.
 The 2026-09-17 chorus Mode I blend put A11 0.08 dB over the gated ceiling
@@ -3948,6 +3978,12 @@ The same build produces the audit tools whose numbers this README quotes —
 oversampling-domain, BBD, VCF, noise-source, high-pass, passive-hold, DCO-scan
 and factory-preset audits. Each takes several minutes at full length;
 `--smoke` runs the short version CI uses.
+
+To verify the calibrated bank, run
+`./build-dsp/YouKnowCalibratePresets --check out/preset-levels.csv`.
+`--raw` measures unity Output Trim and reports recommended gains for review;
+it does not edit presets. `--smoke` checks twelve representative presets with
+the full score, and `--rate 44100` or `--rate 96000` checks another host rate.
 
 The hardware comparison protocols live with their executable checks in
 [`AnalyzeSubMixerCalibration.py`](Tools/AnalyzeSubMixerCalibration.py),

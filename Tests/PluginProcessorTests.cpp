@@ -159,6 +159,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::originalPerformance, 1.0f, 1.0e-5f },
     { parameters::outputRoute, 0.0f, 1.0e-5f },
     { parameters::headphoneLoad, 0.0f, 1.0e-5f },
+    { parameters::outputTrimDb, 0.0f, 1.0e-5f },
 });
 
 float parameterValue (const YouKnowAudioProcessor& processor, const char* id)
@@ -563,6 +564,7 @@ EngineParameters fidelityReferenceParameters (const YouKnowAudioProcessor& proce
     result.highPass = patch.highPass;
     result.chorus = patch.chorus;
     result.volume = value (parameters::volume);
+    result.outputTrimDb = value (parameters::outputTrimDb);
     result.benderDcoDepth = value (parameters::benderDco);
     result.benderVcfDepth = value (parameters::benderVcf);
     result.benderLfoDepth = value (parameters::benderLfo);
@@ -1107,8 +1109,16 @@ void testParameterContract()
         return static_cast<juce::uint32> (a->paramID.hashCode())
              < static_cast<juce::uint32> (b->paramID.hashCode());
     });
-    expect (auParameters.size() == historicalAuOrder.size() + 13,
+    expect (auParameters.size() == historicalAuOrder.size() + 14,
             "the Audio Unit parameter contract has an unexpected size");
+    if (const auto* trim = processor.parameters.getParameter (parameters::outputTrimDb))
+    {
+        expect (trim->getVersionHint() == 13 && trim->isAutomatable()
+                    && auParameters.back() == trim
+                    && trim->getNormalisableRange().start == -48.0f
+                    && trim->getNormalisableRange().end == 48.0f,
+                "output trim did not append its documented range and AU position");
+    }
     if (const auto* capacitance = processor.parameters.getParameter (parameters::outputCapacitance))
     {
         expect (capacitance->getVersionHint() == 10 && !capacitance->isAutomatable()
@@ -3839,6 +3849,7 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
     // not one of the JUNO's stored tones.
     constexpr auto performanceValues = std::to_array<std::pair<const char*, float>> ({
         { parameters::volume,       0.23f },
+        { parameters::outputTrimDb, 9.5f },
         { parameters::benderDco,    0.41f },
         { parameters::benderVcf,    0.37f },
         { parameters::benderLfo,    0.29f },
@@ -3860,8 +3871,15 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
         { parameters::vcfTanhMode,  1.0f },
         { parameters::vcfFastEarlyMode, 1.0f },
     });
-    for (const auto& [id, value] : performanceValues)
+    std::array<float, performanceValues.size()> storedPerformanceValues {};
+    for (std::size_t index = 0; index < performanceValues.size(); ++index)
+    {
+        const auto& [id, value] = performanceValues[index];
         setParameterValue (processor, id, value);
+        // Host normalisation can round a wide dB range by several float ULPs.
+        // This test checks that recall preserves the actual stored value.
+        storedPerformanceValues[index] = parameterValue (processor, id);
+    }
 
     // All sixteen continuous bytes deliberately differ, so swapping or
     // omitting any two fields cannot accidentally pass. The eight stored
@@ -3925,9 +3943,12 @@ void testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls()
     expect (recalled.highPass == expected.highPass, "high-pass recalled incorrectly");
     expect (recalled.chorus == expected.chorus, "chorus mode recalled incorrectly");
 
-    for (const auto& [id, value] : performanceValues)
-        expect (same (parameterValue (processor, id), value),
+    for (std::size_t index = 0; index < performanceValues.size(); ++index)
+    {
+        const auto* id = performanceValues[index].first;
+        expect (parameterValue (processor, id) == storedPerformanceValues[index],
                 std::string ("patch recall moved non-patch control ") + id);
+    }
 }
 
 void testRandomizerPreservesQualityAndLevel()
@@ -4391,6 +4412,7 @@ void testProgramChangeRecallsEveryHardwareSlot()
     constexpr float volume = 0.413f;
     constexpr float portamento = 0.271f;
     setParameterValue (processor, parameters::volume, volume);
+    setParameterValue (processor, parameters::outputTrimDb, 7.25f);
     setParameterValue (processor, parameters::portamento, portamento);
     setParameterValue (processor, parameters::vcfFastEarlyMode, 1.0f);
 
@@ -4431,6 +4453,9 @@ void testProgramChangeRecallsEveryHardwareSlot()
         expect (std::abs (parameterValue (processor, parameters::volume) - volume)
                     < 1.0e-4f,
                 "Program Change moved non-patch volume");
+        expect (std::abs (parameterValue (processor, parameters::outputTrimDb) - 7.25f)
+                    < 1.0e-4f,
+                "Program Change moved non-patch output trim");
         expect (std::abs (parameterValue (processor, parameters::portamento)
                          - portamento) < 1.0e-4f,
                 "Program Change moved non-patch portamento");
@@ -4454,6 +4479,7 @@ void testProgramChangeAffectsFollowingNoteWithoutTheMessageThread()
 {
     constexpr int midiProgram = 2; // A13, host program index 3, chorus off.
     constexpr int hostProgram = 3;
+    constexpr float retainedTrimDb = -3.0f;
 
     YouKnowAudioProcessor midiDriven;
     YouKnowAudioProcessor reference;
@@ -4466,6 +4492,10 @@ void testProgramChangeAffectsFollowingNoteWithoutTheMessageThread()
         setParameterValue (*processor, parameters::originalPerformance, 0.0f);
         setParameterValue (*processor, parameters::calibration, 0.0f);
         setParameterValue (*processor, parameters::chorusNoise, 0.0f);
+        // The reference used a complete product recall; hardware Program
+        // Change only recalls its tone and retains the player's output trim.
+        // Match that performance setting before comparing their audio.
+        setParameterValue (*processor, parameters::outputTrimDb, retainedTrimDb);
         processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
         processor->prepareToPlay (sampleRate, blockSize);
     }
@@ -4500,6 +4530,8 @@ void testProgramChangeAffectsFollowingNoteWithoutTheMessageThread()
             midiDriven.flushPendingMidiEvents();
             expect (midiDriven.getCurrentProgram() == hostProgram,
                     "the deferred host selector missed the Program Change");
+            expect (parameterValue (midiDriven, parameters::outputTrimDb) == retainedTrimDb,
+                    "deferred Program Change reflection replaced the player's output trim");
         }
     }
 
@@ -6738,6 +6770,98 @@ void testOriginalProductProgramsPreserveFactorySlotsAndState()
     }
 }
 
+void testOutputTrimRecallsAndPreservesSavedLevels()
+{
+    YouKnowAudioProcessor processor;
+    for (int program = 0; program < processor.getNumPrograms(); ++program)
+    {
+        setParameterValue (processor, parameters::outputTrimDb, -17.25f);
+        processor.setCurrentProgram (program);
+        const auto* preset = presets::programPreset (program);
+        const float expected = preset != nullptr ? preset->controls.outputTrimDb : 0.0f;
+        expect (std::abs (parameterValue (processor, parameters::outputTrimDb) - expected)
+                    < 1.0e-5f,
+                "program " + std::to_string (program) + " did not recall its output trim");
+        expect (! processor.currentProgramIsEdited(),
+                "a recalled output trim incorrectly marks its preset edited");
+    }
+
+    // A saved edit is authoritative, even if the bank's calibration changes.
+    processor.setCurrentProgram (1);
+    setParameterValue (processor, parameters::outputTrimDb, 7.25f);
+    juce::MemoryBlock saved;
+    processor.getStateInformation (saved);
+    YouKnowAudioProcessor restored;
+    restored.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+    expect (restored.getCurrentProgram() == 1
+                && std::abs (parameterValue (restored, parameters::outputTrimDb) - 7.25f)
+                       < 1.0e-5f
+                && restored.currentProgramIsEdited(),
+            "session restore replaced a saved output-trim edit with the bank calibration");
+
+    // Older chunks contain all the physical controls, but no digital trim.
+    // Reopen one over a boosted preset to catch stale APVTS values as well as
+    // accidental use of its retained program index to choose a new gain.
+    const auto xml = juce::AudioProcessor::getXmlFromBinary (
+        saved.getData(), static_cast<int> (saved.getSize()));
+    expect (xml != nullptr, "cannot decode output-trim migration fixture");
+    if (xml == nullptr)
+        return;
+    auto legacy = juce::ValueTree::fromXml (*xml);
+    for (int child = legacy.getNumChildren(); --child >= 0;)
+        if (legacy.getChild (child).getProperty ("id").toString()
+                == parameters::outputTrimDb)
+            legacy.removeChild (child, nullptr);
+    const auto legacyXml = legacy.createXml();
+    juce::MemoryBlock legacyBytes;
+    juce::AudioProcessor::copyXmlToBinary (*legacyXml, legacyBytes);
+    restored.setCurrentProgram (32);
+    setParameterValue (restored, parameters::outputTrimDb, 18.0f);
+    restored.setStateInformation (legacyBytes.getData(),
+                                  static_cast<int> (legacyBytes.getSize()));
+    expect (restored.getCurrentProgram() == 1
+                && parameterValue (restored, parameters::outputTrimDb) == 0.0f
+                && std::abs (parameterValue (restored, parameters::volume)
+                             - parameterValue (processor, parameters::volume)) < 1.0e-6f,
+            "a legacy session adopted new factory loudness or retained the previous trim");
+}
+
+void testOutputTrimReachesHostAudio()
+{
+    auto reference = std::make_unique<YouKnowAudioProcessor>();
+    auto trimmed = std::make_unique<YouKnowAudioProcessor>();
+    constexpr float trimDb = -6.0f;
+    setParameterValue (*trimmed, parameters::outputTrimDb, trimDb);
+    reference->prepareToPlay (sampleRate, blockSize);
+    trimmed->prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> referenceAudio (2, blockSize), trimmedAudio (2, blockSize);
+    const float gain = std::pow (10.0f, trimDb / 20.0f);
+    double referenceEnergy = 0.0, errorEnergy = 0.0;
+    for (int block = 0; block < 48; ++block)
+    {
+        juce::MidiBuffer referenceMidi, trimmedMidi;
+        if (block == 0)
+        {
+            referenceMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+            trimmedMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        }
+        reference->processBlock (referenceAudio, referenceMidi);
+        trimmed->processBlock (trimmedAudio, trimmedMidi);
+        if (block < 40)
+            continue; // permit the output control's short click-free ramp
+        for (int channel = 0; channel < 2; ++channel)
+            for (int frame = 0; frame < blockSize; ++frame)
+            {
+                const double expected = referenceAudio.getSample (channel, frame) * gain;
+                const double error = trimmedAudio.getSample (channel, frame) - expected;
+                referenceEnergy += expected * expected;
+                errorEnergy += error * error;
+            }
+    }
+    expect (referenceEnergy > 1.0e-8 && errorEnergy < referenceEnergy * 1.0e-8,
+            "Output Trim did not reach host audio as a transparent final gain");
+}
+
 void testHardwareProgrammerAddressesCompleteFactoryBank()
 {
     static_assert (presets::presetCount == 2 * 8 * 8);
@@ -7279,13 +7403,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Seven extension knobs, twelve utility buttons plus the QUALITY and VCF
+    // Eight extension knobs, twelve utility buttons plus the QUALITY and VCF
     // SOLVER selectors, six factory/custom patch controls,
     // twenty-one original-programmer controls, the keybed and the bender.
     // Disabled hardware-only keys remain public so their help explains why
     // the immutable factory bank cannot perform that operation.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 7 + 14 + 6 + 21 + 1 + 1;
+        panel::controlCount + 8 + 14 + 6 + 21 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -7639,7 +7763,7 @@ void testPersistentContextHelpAndValueBubbles()
     // fixed help presentation cannot silently remove exact values.
     std::vector<juce::Slider*> sliders;
     collectDescendantsOfType (*editor, sliders);
-    int expectedSliders = 7;
+    int expectedSliders = 8; // Extension knobs, including visible Output Trim.
     for (const auto& control : panel::controls())
         if (control.kind == panel::ControlKind::Slider
             || control.kind == panel::ControlKind::Knob
@@ -8790,6 +8914,10 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
                      panel::pitchZoneWidth, "Pitch");
     checkInsideZone ("Status display", panel::monitorZoneX,
                      panel::monitorZoneWidth, "Monitor");
+    checkInsideZone ("Output Trim", panel::monitorZoneX,
+                     panel::monitorZoneWidth, "Monitor");
+    checkInsideZone ("Output Trim label", panel::monitorZoneX,
+                     panel::monitorZoneWidth, "Monitor");
     checkInsideZone ("PANIC", panel::operationsBarX,
                      panel::operationsGroupSplitX - panel::operationsBarX,
                      "Session");
@@ -9447,9 +9575,26 @@ int main()
     {
         testFactoryProgramsLoad();
         testOriginalProductProgramsPreserveFactorySlotsAndState();
+        testOutputTrimRecallsAndPreservesSavedLevels();
         testEveryProductProgramRestoresEveryParameter();
         testEditedFlagFollowsTheCompleteProgram();
         testSelectedProgramSurvivesAStateRoundTrip();
+        return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
+    if (std::getenv ("YOUKNOW_OUTPUT_TRIM_TEST_ONLY") != nullptr)
+    {
+        testPublicParameterOrderMatchesTheSharedList();
+        testParameterContract();
+        testDisplayedParameterTextIsStableWhenReentered();
+        testOutputTrimRecallsAndPreservesSavedLevels();
+        testOutputTrimReachesHostAudio();
+        testEveryProductProgramRestoresEveryParameter();
+        testEditedFlagFollowsTheCompleteProgram();
+        testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls();
+        testEveryInteractiveEditorControlExplainsItself();
+        testHelpStripPrintsEveryExplanationInFull();
+        testEditorBuildsAndRenders();
         return failureCount == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
@@ -9590,6 +9735,8 @@ int main()
     testColdStartProgramAndEditorAreInSync();
     testFactoryProgramsLoad();
     testOriginalProductProgramsPreserveFactorySlotsAndState();
+    testOutputTrimRecallsAndPreservesSavedLevels();
+    testOutputTrimReachesHostAudio();
     testHardwareProgrammerAddressesCompleteFactoryBank();
     testDerivedOriginalPanelSwitchesDriveTheirExistingParameters();
     testEveryProductProgramRestoresEveryParameter();

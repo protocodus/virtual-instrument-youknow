@@ -6886,6 +6886,8 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
         : 1.0f;
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
+    result.outputTrimDb = std::isfinite(result.outputTrimDb)
+        ? std::clamp(result.outputTrimDb, -48.0f, 48.0f) : 0.0f;
     fix01(result.velocityDepth, 0.0f);
     fix01(result.aging, 0.0f);
     if (static_cast<unsigned>(result.outputRoute) > 1u)
@@ -12051,9 +12053,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
     const float chorusNoiseScale = parameters.chorusNoise
         * chorusNoiseCalibrationScale(parameters.chorusNoiseCalibrationProfile);
 
+    const double outputTrimTargetGain = std::pow(
+        10.0, static_cast<double>(activeParameters_.outputTrimDb) / 20.0);
     if (!panelGlidePrimed_)
     {
         glidedVolume_ = parameters.volume;
+        glidedOutputTrimGain_ = outputTrimTargetGain;
         panelGlidePrimed_ = true;
     }
 
@@ -13160,6 +13165,19 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                       ? outputRight * outputBoundaryScale
                             * transitionGain
                       : 0.0f;
+
+        // Preset calibration belongs after every physical circuit, including
+        // the selected LINE/PHONES route and its noise. Keep unity's original
+        // output arithmetic intact, and advance the glide once per host sample
+        // so parameter transitions do not depend on host block boundaries.
+        glidedOutputTrimGain_ += (outputTrimTargetGain - glidedOutputTrimGain_)
+                              * coefficients.outputGlide;
+        const float outputTrimGain = static_cast<float>(glidedOutputTrimGain_);
+        if (outputTrimGain != 1.0f)
+        {
+            left[sample] *= outputTrimGain;
+            right[sample] *= outputTrimGain;
+        }
 
         if (rateTransition_ == RateTransition::FadingOut)
         {

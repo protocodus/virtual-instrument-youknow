@@ -112,6 +112,7 @@ EngineParameters parametersFor(const Preset& preset)
     parameters.chorus = patch.chorus;
 
     parameters.volume = controls.volume;
+    parameters.outputTrimDb = controls.outputTrimDb;
     parameters.benderDcoDepth = controls.benderDco;
     parameters.benderVcfDepth = controls.benderVcf;
     parameters.benderLfoDepth = controls.benderLfo;

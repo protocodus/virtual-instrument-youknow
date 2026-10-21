@@ -12,8 +12,9 @@ namespace youknow::presets
 // bank A followed by bank B, groups 1..8 and patches 1..8. Each entry is stored
 // from its original eighteen 7-bit tone bytes and decoded by the same path used
 // for a hardware SysEx dump; there are no hand-transcribed tone floats and no
-// hidden per-preset DSP gain. Factory product controls add only the documented
-// plug-in controls below, including attenuation-only output-volume positions.
+// hidden per-preset DSP gain. Factory product controls include the visible
+// Output Trim for level calibration after the circuit and the original
+// attenuation-only output-volume positions.
 // productBank() contains separately authored YouKnow basses and pads, appended
 // to the host list without changing the archival memory or MIDI addressing.
 //
@@ -40,6 +41,9 @@ struct Preset
     struct Controls
     {
         float volume { 0.80f };
+        // dB at the digital output, outside hardware tone memory and circuits.
+        // Zero preserves saved sessions from before factory level calibration.
+        float outputTrimDb { 0.0f };
         float benderDco { 0.30f };
         float benderVcf { 0.0f };
         float benderLfo { 0.0f };
