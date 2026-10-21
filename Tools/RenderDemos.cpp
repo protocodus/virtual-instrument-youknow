@@ -125,21 +125,57 @@ class Take
 public:
     // The engine is held indirectly because it is large; a take, on the other
     // hand, is returned by value from every score below.
+    static bool isBaselineMode() noexcept
+    {
+        return std::getenv ("YOUKNOW_RENDER_BASELINE") != nullptr;
+    }
+
     explicit Take (EngineParameters parameters)
         : engine_ (std::make_unique<YouKnowEngine>())
     {
-        youknow::ProductFidelityProfile::configureBeforePrepare (*engine_);
-        // The product's converter placement (Docs/decisions.md, 2026-09-04),
-        // selected exactly as the plug-in selects it before prepare().
-        engine_->selectConverterTimingProfile (
-            YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+        if (! isBaselineMode())
+        {
+            youknow::ProductFidelityProfile::configureBeforePrepare (*engine_);
+            engine_->selectConverterTimingProfile (
+                YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
+        }
         engine_->prepare (demoSampleRate, renderBlockSize, true);
         setParameters (parameters);
     }
 
     void setParameters (EngineParameters parameters)
     {
-        youknow::ProductFidelityProfile::applyTo (parameters);
+        if (isBaselineMode())
+        {
+            parameters.calibration = 0.0f;
+            parameters.enableVcfStageOffsets = false;
+            parameters.enableOpAmpSlewLimiting = false;
+            parameters.enableVcfEarlyEffect = false;
+            parameters.enableSpatialThermalGradient = false;
+            parameters.enablePulseOffWaveNodeCoupling = false;
+            parameters.enableSubHalfWaveNodeCoupling = false;
+            parameters.enableVoiceVcaSignalSaturation = false;
+            parameters.enableVoiceVcaServiceGain = false;
+            parameters.enableVoiceVcaTemperature = false;
+            parameters.enableCoupledVoiceVcaControl = false;
+            parameters.enableNoiseLevelBeforeC41 = false;
+            parameters.useCircuitDerivedNoiseLevelShape = false;
+            parameters.enableNarrowOneTwoChorus = false;
+            parameters.enableChorusMuteDrive = false;
+            parameters.enableChorusLineGainSpread = false;
+            parameters.enableHighPassDepartingLegTail = false;
+            parameters.useCircuitDerivedResonanceShape = false;
+            parameters.useFixedVcfServiceFrequencyTrim = false;
+            parameters.enableDifferentialResonanceInput = false;
+            parameters.enableCommonVcaNoise = false;
+            parameters.enableCardJohnsonFloor = false;
+            parameters.enableSubDiodeControl = false;
+            parameters.useServiced439522VcfCalibration = false;
+        }
+        else
+        {
+            youknow::ProductFidelityProfile::applyTo (parameters);
+        }
         engine_->setParameters (parameters);
     }
 
@@ -931,8 +967,11 @@ int main (int argc, char** argv)
                      renderedPeak, level.seconds);
     }
 
-    if (! updatePeaksTable (directory, levels))
-        return 1;
+    if (! Take::isBaselineMode() && directory == "Docs/audio")
+    {
+        if (! updatePeaksTable (directory, levels))
+            return 1;
+    }
 
     std::printf ("Rendered %zu demos into %s\n", demos().size(),
                  directory.string().c_str());
