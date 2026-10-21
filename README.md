@@ -117,7 +117,7 @@ currently publishes macOS only; the Windows and Linux packages come from CI.
 
 ## Release history
 
-### 1.1.0 — unreleased
+### 1.1.0 — 2026-09-21
 
 - The resonance return's headroom now warms with the stages' — both OTAs are
   2 Vt through a resistor ratio inside one potted module — and each card's
