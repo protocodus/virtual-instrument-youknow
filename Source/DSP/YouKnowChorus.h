@@ -388,7 +388,8 @@ public:
                  bool enableCorrelatedNoise = false,
                  float noiseTransferFraction = 0.0f,
                  float noiseTransferCorrelation = 1.0f,
-                 bool enableFiniteTr5Drive = false) noexcept;
+                 bool enableFiniteTr5Drive = false,
+                 bool enableContinuousMuteLoading = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -893,7 +894,8 @@ private:
     void advanceMuteDrive(bool commandMute) noexcept;
     void advanceClockMuteDrive(bool commandMute) noexcept;
     void updateWetGate() noexcept;
-    [[nodiscard]] const SupportChain::ExactTransition& finiteWetTransition() noexcept;
+    [[nodiscard]] const SupportChain::ExactTransition& finiteWetTransition(
+        double previousConductanceRatio = -1.0) noexcept;
 
     // The two parasitic mechanisms inside the BBD, kept as separate pure
     // steps so the circuit suite can check them against the part's distortion
@@ -1102,6 +1104,7 @@ private:
     double muteGateVolts_ { -14.4 };
     double wetInputConductanceRatio_ { 0.0 };
     double wetTransitionRatio_ { -1.0 };
+    double wetTransitionReadoutRatio_ { -1.0 };
     SupportChain::ExactTransition wetTransition_ {};
     double clockMuteVolts_ { -15.0 };
     bool clockMuteEnabled_ { false };

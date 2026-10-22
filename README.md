@@ -197,6 +197,18 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.4 — 2026-10-22 — Continuous circuit controls
+
+- Reconstruct the filter cutoff's curved settling between converter writes
+  inside the existing voice circuit calculation.
+- Follow the C58/Tr20 amplifier current through fast attacks, releases and
+  fractional converter writes instead of joining gain endpoints with a line.
+- Follow the changing chorus wet-switch load during its physical transition,
+  retaining endpoint readout and settled gain.
+- These numerical corrections retain the circuit values, parameter ranges,
+  preset controls, gain calibration and reported latency. Their fine-step
+  references establish improved simulation accuracy, not a new hardware fit.
+
 ### 1.3.3 — 2026-10-22 — Release version for the Reason Shop
 
 - Version number only: the sound engine, presets and parameters are the same as

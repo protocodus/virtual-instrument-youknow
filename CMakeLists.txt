@@ -35,7 +35,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(YouKnow VERSION 1.3.3 LANGUAGES C CXX)
+project(YouKnow VERSION 1.3.4 LANGUAGES C CXX)
 
 # Keep the three-part host version stable; the build identity X.Y.Z-build.<run>
 # (portfolio standard B4/B5) names downloads and appears in About YouKnow and
@@ -143,6 +143,8 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowOtaShotNoise.h
     Source/DSP/YouKnowVoiceVcaAntialias.h
     Source/DSP/YouKnowVoiceRateIsland.h
+    Source/DSP/YouKnowCutoffReconstruction.h
+    Source/DSP/YouKnowVcaControlReconstruction.h
     Source/DSP/YouKnowOutputSummerAntialias.h
     Source/DSP/YouKnowChorusRateIsland.h
     Source/DSP/YouKnowHighPassSwitch.h
@@ -916,6 +918,18 @@ if(BUILD_TESTING)
     add_executable(YouKnowVoiceRateIslandTests Tests/YouKnowVoiceRateIslandTests.cpp)
     target_link_libraries(YouKnowVoiceRateIslandTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VoiceRateIsland COMMAND YouKnowVoiceRateIslandTests)
+    add_executable(YouKnowCutoffReconstructionTests Tests/YouKnowCutoffReconstructionTests.cpp)
+    target_link_libraries(YouKnowCutoffReconstructionTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.CutoffReconstruction COMMAND YouKnowCutoffReconstructionTests)
+    set_tests_properties(YouKnow.CutoffReconstruction PROPERTIES TIMEOUT 120)
+    add_executable(YouKnowVcaControlReconstructionTests Tests/YouKnowVcaControlReconstructionTests.cpp)
+    target_link_libraries(YouKnowVcaControlReconstructionTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.VcaControlReconstruction COMMAND YouKnowVcaControlReconstructionTests)
+    set_tests_properties(YouKnow.VcaControlReconstruction PROPERTIES TIMEOUT 180)
+    add_executable(YouKnowChorusContinuousMuteTests Tests/YouKnowChorusContinuousMuteTests.cpp)
+    target_link_libraries(YouKnowChorusContinuousMuteTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusContinuousMute COMMAND YouKnowChorusContinuousMuteTests)
+    set_tests_properties(YouKnow.ChorusContinuousMute PROPERTIES TIMEOUT 120)
     add_executable(YouKnowCircuitRateTests Tests/YouKnowCircuitRateTests.cpp)
     target_link_libraries(YouKnowCircuitRateTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.CircuitRate COMMAND YouKnowCircuitRateTests)
