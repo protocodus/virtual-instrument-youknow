@@ -135,6 +135,8 @@ public:
         double celsius {}, span {}, first {}, difference {};
         std::size_t index {};
         bool valid {};
+        bool evaluationValid {};
+        double evaluatedCharge {}, evaluatedCurrent {};
     };
 
 private:
@@ -272,6 +274,17 @@ private:
     }
     [[nodiscard]] double sampleCached(double charge, double celsius, CurrentCache& cache) const noexcept
     {
+        // controlAtCharge(), the subsequent VCA gain read, and the next RK
+        // interval's first stage often query precisely the same physical
+        // charge and temperature. Reuse that exact evaluation, not merely
+        // its table cell. Ordered equality makes NaN keys miss; signed zero
+        // is interchangeable here because charge is first offset by -.01.
+        // Existing Celsius/span keys also invalidate this value when a
+        // copied cache is used by another temperature or immutable circuit.
+        if (cache.valid && cache.evaluationValid
+            && cache.evaluatedCharge == charge && cache.celsius == celsius
+            && cache.span == span_)
+            return cache.evaluatedCurrent;
         constexpr double inverseChargeSpan = 1.0 / (maximumCharge - minimumCharge);
         const double normalized = (charge - minimumCharge) * inverseChargeSpan;
         const double position = std::clamp(normalized, 0.0, 1.0) * tableSteps;
@@ -285,7 +298,11 @@ private:
         // only the two knots of the current cell, preserving all 8192 cells,
         // every RK4 evaluation and the exact temperature. This reassociation
         // changes double rounding only; no control is quantized or held.
-        return cache.first + (position - cell) * cache.difference;
+        const double current = cache.first + (position - cell) * cache.difference;
+        cache.evaluatedCharge = charge;
+        cache.evaluatedCurrent = current;
+        cache.evaluationValid = true;
+        return current;
     }
     void refreshCache(std::size_t index, double celsius, CurrentCache& cache) const noexcept
     {

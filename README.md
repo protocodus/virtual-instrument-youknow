@@ -197,6 +197,13 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.5 — 2026-10-22 — Less repeated simulation work
+
+- Reuse identical VCA current evaluations, inline finite-value classification
+  on supported floating-point layouts, and streamline covariance matrix work.
+  Circuit equations, processing defaults, presets, gain and latency stay the same.
+  [Implementation and validation method](Docs/research/efficiency-1.3.5.md).
+
 ### 1.3.4 — 2026-10-22 — Continuous circuit controls
 
 - Reconstruct the filter cutoff's curved settling between converter writes

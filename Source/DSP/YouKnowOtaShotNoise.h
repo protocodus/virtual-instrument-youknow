@@ -193,10 +193,15 @@ struct OtaShotNoise {
             spare=r*std::sin(phase);hasSpare=true;return r*std::cos(phase);
         }
     };
-    [[nodiscard]] static Matrix multiply(const Matrix&a,const Matrix&b) noexcept {
+    [[nodiscard]] static YOUKNOW_OTA_ALWAYS_INLINE Matrix multiply(const Matrix&a,const Matrix&b) noexcept {
         Matrix c{};
-        for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)
-            for(std::size_t k=0;k<4;++k)c[i][j]+=a[i][k]*b[k][j];
+        // Walk neighbouring columns together so the four independent dot
+        // products can use SIMD. Each entry still starts at +0 and consumes
+        // k=0,1,2,3 in the same order; no sum is reassociated. Inlining makes
+        // the small fixed matrix available to the covariance caller's scalar
+        // replacement instead of passing full temporaries through the stack.
+        for(std::size_t i=0;i<4;++i)for(std::size_t k=0;k<4;++k)
+            for(std::size_t j=0;j<4;++j)c[i][j]+=a[i][k]*b[k][j];
         return c;
     }
     [[nodiscard]] static Matrix transpose(const Matrix&a) noexcept {
@@ -356,7 +361,7 @@ struct OtaShotNoise {
                     f[i][j]+=coefficients[order][i][j];
             for(int square=0;square<squares;++square){const auto propagated=multiply(multiply(f,q),transpose(f));
                 for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];
-                f=multiply(f,f);}
+                if(square+1<squares)f=multiply(f,f);}
             for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
         }return q;
     }

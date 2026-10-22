@@ -1,6 +1,7 @@
 #include "YouKnowEngine.h"
 #include "YouKnowVcaControl.h"
 #include "YouKnowReferenceVcf.h"
+#include "YouKnowFinite.h"
 
 #include <algorithm>
 #include <cmath>
@@ -428,7 +429,7 @@ float clamp01(float value) noexcept
 
 float sanitised(float value, float fallback) noexcept
 {
-    return std::isfinite(value) ? value : fallback;
+    return finiteValue(value) ? value : fallback;
 }
 
 std::uint8_t storedControlByte(float value) noexcept
@@ -672,7 +673,7 @@ std::int16_t YouKnowEngine::masterTunePitchWordOffset(
     // away from the integral conversion's undefined overflow range.
     // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic29.txt#L1107-L1119
     const double extent = allowHostExtension ? 150.0 : 50.0;
-    const double bounded = std::isfinite(cents)
+    const double bounded = finiteValue(cents)
         ? std::clamp(cents, -extent, extent) : 0.0;
     const double panel = std::clamp(bounded, -50.0, 50.0);
     const long units = std::clamp(std::lround(panel * 2.56), -128L, 127L);
@@ -799,7 +800,7 @@ std::int32_t YouKnowEngine::vcfKeyFollowCountsWord(
 
 std::uint32_t YouKnowEngine::dcoDivider(double frequencyHz) noexcept
 {
-    if (!(frequencyHz > 0.0) || !std::isfinite(frequencyHz))
+    if (!(frequencyHz > 0.0) || !finiteValue(frequencyHz))
         return maximumDivider;
 
     const double midiNote = 69.0 + 12.0 * std::log2(frequencyHz / 440.0);
@@ -1587,7 +1588,7 @@ float YouKnowEngine::portamentoSeconds(float panelPosition) noexcept
 
 float YouKnowEngine::outputReferenceGain(float referenceRmsVolts) noexcept
 {
-    if (!(referenceRmsVolts > 0.0f) || !std::isfinite(referenceRmsVolts))
+    if (!(referenceRmsVolts > 0.0f) || !finiteValue(referenceRmsVolts))
         return 1.0f;
     return internalVoltsPerUnit * minus18DbfsAmplitude / referenceRmsVolts;
 }
@@ -1595,7 +1596,7 @@ float YouKnowEngine::outputReferenceGain(float referenceRmsVolts) noexcept
 float YouKnowEngine::outputSummerClip(float value) noexcept
 {
     static_assert(outputSummerClipExponent == 8.0f);
-    if (!std::isfinite(value))
+    if (!finiteValue(value))
         return 0.0f;
 
     constexpr float asymptoteUnits =
@@ -1751,7 +1752,7 @@ float nearestBytePositionByLogRatio(int minByte, int maxByte, float divisor,
 
 float YouKnowEngine::panelPositionForAttack(float seconds) noexcept
 {
-    if (!(seconds > 0.0f) || !std::isfinite(seconds))
+    if (!(seconds > 0.0f) || !finiteValue(seconds))
         return 0.0f;
     if (seconds <= envelopeAttackSeconds(0.0f))
         return 0.0f;
@@ -1764,7 +1765,7 @@ float YouKnowEngine::panelPositionForAttack(float seconds) noexcept
 
 float YouKnowEngine::panelPositionForDecay(float seconds) noexcept
 {
-    if (!(seconds > 0.0f) || !std::isfinite(seconds))
+    if (!(seconds > 0.0f) || !finiteValue(seconds))
         return 0.0f;
     if (seconds <= envelopeDecaySeconds(0.0f))
         return 0.0f;
@@ -1777,7 +1778,7 @@ float YouKnowEngine::panelPositionForDecay(float seconds) noexcept
 
 float YouKnowEngine::panelPositionForRelease(float seconds) noexcept
 {
-    if (!(seconds > 0.0f) || !std::isfinite(seconds))
+    if (!(seconds > 0.0f) || !finiteValue(seconds))
         return 0.0f;
     if (seconds <= envelopeReleaseSeconds(0.0f))
         return 0.0f;
@@ -1790,7 +1791,7 @@ float YouKnowEngine::panelPositionForRelease(float seconds) noexcept
 
 float YouKnowEngine::panelPositionForLfoRate(float hertz) noexcept
 {
-    if (!(hertz > 0.0f) || !std::isfinite(hertz))
+    if (!(hertz > 0.0f) || !finiteValue(hertz))
         return 0.0f;
     if (hertz <= lfoRateHz(0.0f))
         return 0.0f;
@@ -1802,7 +1803,7 @@ float YouKnowEngine::panelPositionForLfoRate(float hertz) noexcept
 
 float YouKnowEngine::panelPositionForLfoDelay(float seconds) noexcept
 {
-    if (!(seconds > 0.0f) || !std::isfinite(seconds))
+    if (!(seconds > 0.0f) || !finiteValue(seconds))
         return 0.0f;
     if (seconds >= lfoDelaySeconds(1.0f))
         return 1.0f;
@@ -1824,7 +1825,7 @@ float YouKnowEngine::panelPositionForLfoDelay(float seconds) noexcept
 
 float YouKnowEngine::panelPositionForPortamento(float secondsPerOctave) noexcept
 {
-    if (!(secondsPerOctave > 0.0f) || !std::isfinite(secondsPerOctave))
+    if (!(secondsPerOctave > 0.0f) || !finiteValue(secondsPerOctave))
         return 0.0f;
     if (secondsPerOctave >= portamentoSeconds(1.0f))
         return 1.0f;
@@ -1840,7 +1841,7 @@ float YouKnowEngine::panelPositionForPortamento(float secondsPerOctave) noexcept
 
 float YouKnowEngine::panelPositionForCutoff(float hertz) noexcept
 {
-    if (!(hertz > 0.0f) || !std::isfinite(hertz))
+    if (!(hertz > 0.0f) || !finiteValue(hertz))
         return 0.0f;
     const float counts = vcfCountsPerOctave
                        * std::log2(std::max(hertz, vcfBaseFrequencyHz) / vcfBaseFrequencyHz);
@@ -1960,7 +1961,7 @@ float YouKnowEngine::pwmDutyCycle(float controlVolts,
 {
     // Pulse Off writes -0.8 V. That sits below the ramp and leaves the
     // comparator permanently high while the oscillator itself keeps running.
-    if (std::isfinite(controlVolts) && controlVolts < 0.0f)
+    if (finiteValue(controlVolts) && controlVolts < 0.0f)
         return 1.0f;
 
     // The nominal ramp spans 12 V peak to peak. Its compensation hold lags a
@@ -2302,7 +2303,7 @@ float YouKnowEngine::outputBoundaryGain() noexcept
     // model's steady-state 0 dBFS policy; OQ-05 still owns the physical swing.
     const float fullScaleVolts = outputSummerSwingAsymptoteVolts
                                * outputCouplingHighGain(1.0f);
-    if (!(fullScaleVolts > 0.0f) || !std::isfinite(fullScaleVolts))
+    if (!(fullScaleVolts > 0.0f) || !finiteValue(fullScaleVolts))
         return 1.0f;
     // Expressed through the same Vref helper every other boundary question
     // uses: the reference is the RMS that lands on -18 dBFS once full scale is
@@ -2793,7 +2794,7 @@ bool YouKnowEngine::Dco::programMode3(
     // input clock keeps running while CE waits for the later LSB/MSB pair.
     // IC35/TP5 is one shared clock, so the engine supplies that global phase
     // rather than recovering six incompatible phases from the PIT counters.
-    const double nextClock = std::isfinite(clocksToNextInputEdge)
+    const double nextClock = finiteValue(clocksToNextInputEdge)
                           && clocksToNextInputEdge > 0.0
         ? clocksToNextInputEdge : 1.0;
 
@@ -3240,7 +3241,7 @@ void YouKnowEngine::OtaCascade::setStageNoise(
         history[3] = history[2];
         history[2] = history[1];
         history[1] = history[0];
-        history[0] = std::isfinite(volts[stage]) ? volts[stage] : 0.0;
+        history[0] = finiteValue(volts[stage]) ? volts[stage] : 0.0;
     }
     stageNoiseHistoryCount = std::min(stageNoiseHistoryCount + 1, 3);
 }
@@ -3316,7 +3317,7 @@ double YouKnowEngine::OtaCascade::reconstructInput(
 
 double YouKnowEngine::OtaCascade::clampOmegaStep(double value) noexcept
 {
-    return std::clamp(std::isfinite(value) ? value : 0.0,
+    return std::clamp(finiteValue(value) ? value : 0.0,
                       0.0, maximumOmegaStep);
 }
 
@@ -3326,16 +3327,16 @@ YouKnowEngine::exactVcfHoldInterval(
     float eventTarget, double intervalSeconds) noexcept
 {
     VcfHoldInterval result;
-    const double initial = std::isfinite(state)
+    const double initial = finiteValue(state)
         ? static_cast<double>(state) : 0.0;
-    const double initialTarget = std::isfinite(target)
+    const double initialTarget = finiteValue(target)
         ? static_cast<double>(target) : initial;
-    const double nextTarget = std::isfinite(eventTarget)
+    const double nextTarget = finiteValue(eventTarget)
         ? static_cast<double>(eventTarget) : initialTarget;
-    const double duration = std::isfinite(intervalSeconds)
+    const double duration = finiteValue(intervalSeconds)
         ? std::max(intervalSeconds, 0.0) : 0.0;
     const double event = std::clamp(
-        std::isfinite(eventPosition) ? eventPosition : 1.0,
+        finiteValue(eventPosition) ? eventPosition : 1.0,
         0.0, 1.0);
     const double lambda = duration
         / static_cast<double>(vcfHoldSlewSeconds);
@@ -3363,12 +3364,12 @@ YouKnowEngine::steppedHoldInterval(
     float eventTarget) noexcept
 {
     VcfHoldInterval result;
-    const double before = std::isfinite(held)
+    const double before = finiteValue(held)
         ? static_cast<double>(held) : 0.0;
-    const double after = hasEvent && std::isfinite(eventTarget)
+    const double after = hasEvent && finiteValue(eventTarget)
         ? static_cast<double>(eventTarget) : before;
     const double event = std::clamp(
-        std::isfinite(eventPosition) ? eventPosition : 1.0, 0.0, 1.0);
+        finiteValue(eventPosition) ? eventPosition : 1.0, 0.0, 1.0);
 
     for (std::size_t point = 0; point < result.value.size(); ++point)
     {
@@ -3384,24 +3385,24 @@ double YouKnowEngine::exactOnePoleHoldEndpoint(
     float eventTarget, double intervalSeconds, double timeConstantSeconds,
     double fullIntervalDecay) noexcept
 {
-    const double initial = std::isfinite(state) ? state : 0.0;
-    const double initialTarget = std::isfinite(target)
+    const double initial = finiteValue(state) ? state : 0.0;
+    const double initialTarget = finiteValue(target)
         ? static_cast<double>(target) : initial;
-    const double duration = std::isfinite(intervalSeconds)
+    const double duration = finiteValue(intervalSeconds)
         ? std::max(intervalSeconds, 0.0) : 0.0;
-    const double timeConstant = std::isfinite(timeConstantSeconds)
+    const double timeConstant = finiteValue(timeConstantSeconds)
                                     && timeConstantSeconds > 0.0
         ? timeConstantSeconds : 1.0;
-    const double decay = std::isfinite(fullIntervalDecay)
+    const double decay = finiteValue(fullIntervalDecay)
         ? std::clamp(fullIntervalDecay, 0.0, 1.0)
         : std::exp(-duration / timeConstant);
     double endpoint = initialTarget + (initial - initialTarget) * decay;
     if (hasEvent)
     {
         const double event = std::clamp(
-            std::isfinite(eventPosition) ? eventPosition : 1.0,
+            finiteValue(eventPosition) ? eventPosition : 1.0,
             0.0, 1.0);
-        const double nextTarget = std::isfinite(eventTarget)
+        const double nextTarget = finiteValue(eventTarget)
             ? static_cast<double>(eventTarget) : initialTarget;
         // Superposition needs only the response of the target step over the
         // suffix. At p=0 it is the whole interval; at p=1 expm1(0) is exactly
@@ -3416,7 +3417,7 @@ double YouKnowEngine::exactOnePoleHoldEndpoint(
 YouKnowEngine::PwmHoldCoefficients
 YouKnowEngine::pwmHoldCoefficients(double intervalSeconds) noexcept
 {
-    const double duration = std::isfinite(intervalSeconds)
+    const double duration = finiteValue(intervalSeconds)
         ? std::max(intervalSeconds, 0.0) : 0.0;
     const double firstTime = static_cast<double>(pwmHoldFirstPoleSeconds);
     const double secondTime = static_cast<double>(pwmHoldSecondPoleSeconds);
@@ -3449,17 +3450,17 @@ YouKnowEngine::PwmHoldState YouKnowEngine::exactPwmHoldEndpoint(
     double eventPosition, float eventTarget, double intervalSeconds,
     const PwmHoldCoefficients& fullIntervalCoefficients) noexcept
 {
-    const double initialTarget = std::isfinite(target)
+    const double initialTarget = finiteValue(target)
         ? static_cast<double>(target) : state.first;
     if (!hasEvent)
         return advancePwmHold(state, initialTarget, fullIntervalCoefficients);
 
-    const double duration = std::isfinite(intervalSeconds)
+    const double duration = finiteValue(intervalSeconds)
         ? std::max(intervalSeconds, 0.0) : 0.0;
     const double event = std::clamp(
-        std::isfinite(eventPosition) ? eventPosition : 1.0,
+        finiteValue(eventPosition) ? eventPosition : 1.0,
         0.0, 1.0);
-    const double nextTarget = std::isfinite(eventTarget)
+    const double nextTarget = finiteValue(eventTarget)
         ? static_cast<double>(eventTarget) : initialTarget;
     state = advancePwmHold(
         state, initialTarget, pwmHoldCoefficients(event * duration));
@@ -3744,7 +3745,7 @@ double YouKnowEngine::OtaCascade::closedLoopSpectralFactor(
     // q = feedback^(1/4) / sqrt(2). At the sanitized feedback ceiling of eight
     // that is 2.494; with the loop open it is exactly one.
     const double bounded = std::clamp(
-        std::isfinite(feedback) ? feedback : 0.0, 0.0, 8.0);
+        finiteValue(feedback) ? feedback : 0.0, 0.0, 8.0);
     const double q = std::sqrt(std::sqrt(bounded)) * 0.70710678118654752440;
     const double real = 1.0 + q;
     const double factor = std::sqrt(real * real + q * q);
@@ -3788,15 +3789,15 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const double currentOmega = clampOmegaStep(
         static_cast<double>(omegaStep));
     const double currentFeedback = std::clamp(
-        std::isfinite(feedback) ? static_cast<double>(feedback) : 0.0,
+        finiteValue(feedback) ? static_cast<double>(feedback) : 0.0,
         0.0, 8.0);
     const double currentHeadroom = std::max(
-        std::isfinite(headroom) ? static_cast<double>(headroom) : 0.0,
+        finiteValue(headroom) ? static_cast<double>(headroom) : 0.0,
         1.0e-5);
-    const double currentInput = std::isfinite(input)
+    const double currentInput = finiteValue(input)
         ? static_cast<double>(input) : 0.0;
     const double currentCalibration = std::clamp(
-        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        finiteValue(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
 
     if (!parameterHistoryPrimed)
@@ -3879,7 +3880,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 planOmega = std::max(
                     planOmega, clampOmegaStep(trajectory->omegaStep[point]));
                 const double candidate = trajectory->feedback[point];
-                if (std::isfinite(candidate))
+                if (finiteValue(candidate))
                     planFeedback = std::max(
                         planFeedback, std::clamp(candidate, 0.0, 8.0));
             }
@@ -3949,11 +3950,11 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             omegaAt[point] = clampOmegaStep(
                 trajectory->omegaStep[point]);
             feedbackAt[point] = std::clamp(
-                std::isfinite(trajectory->feedback[point])
+                finiteValue(trajectory->feedback[point])
                     ? trajectory->feedback[point] : 0.0,
                 0.0, 8.0);
             headroomAt[point] = std::max(
-                std::isfinite(trajectory->headroom[point])
+                finiteValue(trajectory->headroom[point])
                     ? trajectory->headroom[point] : 0.0,
                 1.0e-5);
         }
@@ -4399,7 +4400,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     float& firstOutput, float& secondOutput) noexcept
 {
     const double currentCalibration = std::clamp(
-        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        finiteValue(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
     const bool applyEarlyEffect = enableEarlyEffect
                                && currentCalibration > 0.0;
@@ -4429,10 +4430,10 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         const double currentOmega = clampOmegaStep(
             static_cast<double>(omegaStep));
         const double currentFeedback = std::clamp(
-            std::isfinite(feedback) ? static_cast<double>(feedback) : 0.0,
+            finiteValue(feedback) ? static_cast<double>(feedback) : 0.0,
             0.0, 8.0);
         const double currentHeadroom = std::max(
-            std::isfinite(headroom) ? static_cast<double>(headroom) : 0.0,
+            finiteValue(headroom) ? static_cast<double>(headroom) : 0.0,
             1.0e-5);
         if (!cascade.parameterHistoryPrimed
             || cascade.inputHistoryCount != 2
@@ -4456,7 +4457,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
             return false;
 
         lane.cascade = &cascade;
-        lane.input = std::isfinite(input) ? static_cast<double>(input) : 0.0;
+        lane.input = finiteValue(input) ? static_cast<double>(input) : 0.0;
         lane.omega = currentOmega;
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
@@ -4796,7 +4797,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     float& firstOutput, float& secondOutput) noexcept
 {
     const double currentCalibration = std::clamp(
-        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        finiteValue(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
     const bool applyEarlyEffect = enableEarlyEffect
                                && currentCalibration > 0.0;
@@ -4825,10 +4826,10 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         const double currentOmega = clampOmegaStep(
             static_cast<double>(omegaStep));
         const double currentFeedback = std::clamp(
-            std::isfinite(feedback) ? static_cast<double>(feedback) : 0.0,
+            finiteValue(feedback) ? static_cast<double>(feedback) : 0.0,
             0.0, 8.0);
         const double currentHeadroom = std::max(
-            std::isfinite(headroom) ? static_cast<double>(headroom) : 0.0,
+            finiteValue(headroom) ? static_cast<double>(headroom) : 0.0,
             1.0e-5);
         if (!cascade.parameterHistoryPrimed
             || cascade.inputHistoryCount != 2
@@ -4852,7 +4853,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
             return false;
 
         lane.cascade = &cascade;
-        lane.input = std::isfinite(input) ? static_cast<double>(input) : 0.0;
+        lane.input = finiteValue(input) ? static_cast<double>(input) : 0.0;
         lane.omega = currentOmega;
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
@@ -5199,7 +5200,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
     std::array<float, 4>& outputs) noexcept
 {
     const double currentCalibration = std::clamp(
-        std::isfinite(calibration) ? static_cast<double>(calibration) : 0.0,
+        finiteValue(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
     const bool applyEarlyEffect = enableEarlyEffect
                                && currentCalibration > 0.0;
@@ -5232,11 +5233,11 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         const double currentOmega = clampOmegaStep(
             static_cast<double>(omegaSteps[laneIndex]));
         const double currentFeedback = std::clamp(
-            std::isfinite(feedbacks[laneIndex])
+            finiteValue(feedbacks[laneIndex])
                 ? static_cast<double>(feedbacks[laneIndex]) : 0.0,
             0.0, 8.0);
         const double currentHeadroom = std::max(
-            std::isfinite(headrooms[laneIndex])
+            finiteValue(headrooms[laneIndex])
                 ? static_cast<double>(headrooms[laneIndex]) : 0.0,
             1.0e-5);
         if (!cascade.parameterHistoryPrimed
@@ -5261,7 +5262,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
             return false;
 
         lane.cascade = &cascade;
-        lane.input = std::isfinite(inputs[laneIndex])
+        lane.input = finiteValue(inputs[laneIndex])
             ? static_cast<double>(inputs[laneIndex]) : 0.0;
         lane.omega = currentOmega;
         lane.feedback = currentFeedback;
@@ -5635,7 +5636,7 @@ float YouKnowEngine::HighPass::process(float input, float g,
                    / (1.0 + static_cast<double>(g));
     const double low = v + state;
     state = low + v;
-    if (!std::isfinite(state))
+    if (!finiteValue(state))
         state = 0.0;
     const double high = static_cast<double>(input) - low;
     return static_cast<float>(static_cast<double>(highGain) * high
@@ -5755,8 +5756,8 @@ float YouKnowEngine::processBoostBranch(float coupled,
     }
     b.vC6 = vC6;
     b.c6State = c6State;
-    if (!std::isfinite(b.vN) || !std::isfinite(b.vC9) || !std::isfinite(b.vC6)
-        || !std::isfinite(b.linkState) || !std::isfinite(b.c6State))
+    if (!finiteValue(b.vN) || !finiteValue(b.vC9) || !finiteValue(b.vC6)
+        || !finiteValue(b.linkState) || !finiteValue(b.c6State))
         b.reset();
 
     const double y3 = selected ? u : b.vN + b.vC9;
@@ -6243,7 +6244,7 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     // a 32 kHz internal grid (VCF ceiling 3.6 kHz) that the panel readout
     // published until the real prepare arrived. A positive finite rate
     // outside the supported span is clamped into it.
-    sampleRate_ = std::isfinite(sampleRate) && sampleRate > 0.0
+    sampleRate_ = finiteValue(sampleRate) && sampleRate > 0.0
                     ? std::clamp(sampleRate, minimumSupportedSampleRate,
                                  maximumSupportedSampleRate)
                     : 48000.0;
@@ -7058,13 +7059,13 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     EngineParameters result = parameters;
 
     const auto fix01 = [](float& value, float fallback) {
-        value = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
+        value = finiteValue(value) ? std::clamp(value, 0.0f, 1.0f) : fallback;
     };
 
     fix01(result.lfoRate, 0.42f);
-    result.lfoSyncRateHz = std::isfinite(result.lfoSyncRateHz)
+    result.lfoSyncRateHz = finiteValue(result.lfoSyncRateHz)
         ? std::clamp(result.lfoSyncRateHz, 0.0f, 1000.0f) : 0.0f;
-    result.lfoSyncDelaySeconds = std::isfinite(result.lfoSyncDelaySeconds)
+    result.lfoSyncDelaySeconds = finiteValue(result.lfoSyncDelaySeconds)
         && result.lfoSyncDelaySeconds >= 0.0f
         ? std::min(result.lfoSyncDelaySeconds, 960.0f) : -1.0f;
     fix01(result.lfoDelay, 0.0f);
@@ -7085,26 +7086,26 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     fix01(result.portamento, 0.0f);
     fix01(result.benderDcoDepth, 0.30f);
     fix01(result.benderVcfDepth, 0.0f);
-    result.mainNoiseLevelScale = std::isfinite(result.mainNoiseLevelScale)
+    result.mainNoiseLevelScale = finiteValue(result.mainNoiseLevelScale)
         ? std::clamp(result.mainNoiseLevelScale, 0.0f, 4.0f)
         : 1.0f;
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
-    result.outputTrimDb = std::isfinite(result.outputTrimDb)
+    result.outputTrimDb = finiteValue(result.outputTrimDb)
         ? std::clamp(result.outputTrimDb, -48.0f, 48.0f) : 0.0f;
     fix01(result.velocityDepth, 0.0f);
     fix01(result.aging, 0.0f);
     if (static_cast<unsigned>(result.outputRoute) > 1u)
         result.outputRoute = HeadphoneOutput::Route::Line;
-    result.headphoneLoadOhms = std::isfinite(result.headphoneLoadOhms)
+    result.headphoneLoadOhms = finiteValue(result.headphoneLoadOhms)
         && result.headphoneLoadOhms > 0.0f
         ? std::clamp(result.headphoneLoadOhms, 1.0f, 1.0e9f) : 32.0f;
     if (static_cast<unsigned>(result.outputSelector) > 2u)
         result.outputSelector = OutputNetwork::Selector::High;
-    result.outputLoadOhms = std::isfinite(result.outputLoadOhms)
+    result.outputLoadOhms = finiteValue(result.outputLoadOhms)
         && result.outputLoadOhms > 0.0f
         ? std::clamp(result.outputLoadOhms, 1.0f, 1.0e9f) : 0.0f;
-    result.outputCapacitancePf = std::isfinite(result.outputCapacitancePf)
+    result.outputCapacitancePf = finiteValue(result.outputCapacitancePf)
         ? std::clamp(result.outputCapacitancePf, 0.0f, 100000.0f) : 0.0f;
     // Unlike every other 0-1 control, Unit Character extends to 2: 0 is the
     // digital reference, 1 matches real hardware, and the headroom to 2
@@ -7113,13 +7114,13 @@ EngineParameters YouKnowEngine::sanitise(const EngineParameters& parameters) noe
     // tools stopped using it, and past 1 the affine blends walk through
     // their nominals -- so the ceiling lives in `calibrationCeiling`.
     // Clamping to fix01's 0-1 would still silently discard the top half.
-    result.calibration = std::isfinite(result.calibration)
+    result.calibration = finiteValue(result.calibration)
         ? std::clamp(result.calibration, 0.0f, EngineParameters::calibrationCeiling) : 1.0f;
     fix01(result.chorusNoise, Chorus::defaultNoiseScale);
     fix01(result.chorusNoiseTransferFraction, 0.0f);
     fix01(result.chorusNoiseTransferCorrelation, 1.0f);
 
-    result.masterTuneCents = std::isfinite(result.masterTuneCents)
+    result.masterTuneCents = finiteValue(result.masterTuneCents)
                            ? std::clamp(result.masterTuneCents,
                                result.allowHostMasterTuneExtension ? -150.0f : -50.0f,
                                result.allowHostMasterTuneExtension ? 150.0f : 50.0f)
@@ -7214,7 +7215,7 @@ bool YouKnowEngine::configureCoupledMixer(
 bool YouKnowEngine::configureModuleInputCouplingResistanceOhms(
     double totalResistanceOhms) noexcept
 {
-    if (prepared_ || coupledMixerEnabled_ || !std::isfinite(totalResistanceOhms)
+    if (prepared_ || coupledMixerEnabled_ || !finiteValue(totalResistanceOhms)
         || totalResistanceOhms < 1000.0 || totalResistanceOhms > 1000000.0)
         return false;
     moduleInputCouplingResistanceOverrideOhms_ = totalResistanceOhms;
@@ -7260,7 +7261,7 @@ bool YouKnowEngine::configureChorusBbdInsertionGainProfile(ChorusBbdInsertionGai
 
 bool YouKnowEngine::configureOscillatorLevelScale(float scale) noexcept
 {
-    if (prepared_ || coupledMixerEnabled_ || !std::isfinite(scale)
+    if (prepared_ || coupledMixerEnabled_ || !finiteValue(scale)
         || scale < 0.25f || scale > 2.0f)
         return false;
     oscillatorLevelScale_ = scale;
@@ -7269,7 +7270,7 @@ bool YouKnowEngine::configureOscillatorLevelScale(float scale) noexcept
 
 bool YouKnowEngine::configurePulseLevelScale(float scale) noexcept
 {
-    if (prepared_ || coupledMixerEnabled_ || !std::isfinite(scale)
+    if (prepared_ || coupledMixerEnabled_ || !finiteValue(scale)
         || scale < 0.25f || scale > 2.0f)
         return false;
     pulseLevelScale_ = scale;
@@ -7289,7 +7290,7 @@ bool YouKnowEngine::configureEnvelopeHolds(
 
 bool YouKnowEngine::configureDcoMasterClockHz(double frequencyHz) noexcept
 {
-    if (prepared_ || !std::isfinite(frequencyHz)
+    if (prepared_ || !finiteValue(frequencyHz)
         || frequencyHz < 0.9 * masterClockHz
         || frequencyHz > 1.1 * masterClockHz)
         return false;
@@ -7374,7 +7375,7 @@ bool YouKnowEngine::configurePhysicalVoicePowerOnGlide(bool enabled) noexcept
 
 bool YouKnowEngine::configureFilterSourceBalance(float scale) noexcept
 {
-    if (prepared_ || !std::isfinite(scale) || scale < 0.25f || scale > 2.0f)
+    if (prepared_ || !finiteValue(scale) || scale < 0.25f || scale > 2.0f)
         return false;
     filterSourceBalance_ = scale;
     return true;
@@ -7382,7 +7383,7 @@ bool YouKnowEngine::configureFilterSourceBalance(float scale) noexcept
 
 bool YouKnowEngine::configureOutputGain(float gain) noexcept
 {
-    if (prepared_ || !std::isfinite(gain) || gain < 0.125f || gain > 16.0f)
+    if (prepared_ || !finiteValue(gain) || gain < 0.125f || gain > 16.0f)
         return false;
     productOutputGain_ = gain;
     return true;
@@ -7390,7 +7391,7 @@ bool YouKnowEngine::configureOutputGain(float gain) noexcept
 
 bool YouKnowEngine::configureHighPassSwitch(double resistance) noexcept
 {
-    if (prepared_ || !std::isfinite(resistance) || resistance < 50 || resistance > 1000)
+    if (prepared_ || !finiteValue(resistance) || resistance < 50 || resistance > 1000)
         return false;
     highPassSwitchResistance_ = resistance;
     return true;
@@ -10811,7 +10812,7 @@ double YouKnowEngine::dcoChargingSlope(float heldCode, DcoRange range) noexcept
     // https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=9
     constexpr double referenceRise = 7675.0 / 2000000.0
                                    - static_cast<double>(rampResetSeconds);
-    const double code = std::isfinite(heldCode)
+    const double code = finiteValue(heldCode)
         ? std::clamp(static_cast<double>(heldCode), 0.0, 4095.0) : 0.0;
     return (2.0 / referenceRise) * (code / 256.0)
          * (200000.0 / dcoChargingResistance(range));
@@ -11214,9 +11215,9 @@ void YouKnowEngine::advanceDcoPitAndRamp(
     double pitClockHz = actualRangeClockHz(range);
     auto serialClock = firmwareSerialClockStart_;
     double serialClockOrigin = 0.0;
-    const double thresholdStart = std::isfinite(previousThresholdVolts)
+    const double thresholdStart = finiteValue(previousThresholdVolts)
         ? static_cast<double>(previousThresholdVolts) : 6.0;
-    const double thresholdEnd = std::isfinite(thresholdVolts)
+    const double thresholdEnd = finiteValue(thresholdVolts)
         ? static_cast<double>(thresholdVolts) : thresholdStart;
     const double thresholdSlope = intervalSeconds > 0.0
         ? (thresholdEnd - thresholdStart) / intervalSeconds : 0.0;
@@ -12355,7 +12356,7 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
             && voiceVcaAntialiasKernel_.factor > 1)
         ? shape(drive) * voice.vca * serviceGain * voltsToSample : output;
     voice.energy += voiceEnergyFollower_ * (std::abs(energyOutput) - voice.energy);
-    return std::isfinite(output) ? output : 0.0f;
+    return finiteValue(output) ? output : 0.0f;
 }
 
 bool YouKnowEngine::voiceFilterRateIslandEnabled() const noexcept
@@ -12662,7 +12663,7 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     };
     const float output = voice.filterIsland.process(frame.input, context,
         voiceVcaAntialiasKernel_, voice.vcaAntialias, circuit);
-    return std::isfinite(output) ? output : 0.0f;
+    return finiteValue(output) ? output : 0.0f;
 }
 
 template <bool useCubicEarly>
@@ -14394,11 +14395,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
             unisonOutputGain_ = unisonOutputSamplesRemaining_ == 0
                 ? unisonOutputTarget_ : unisonOutputGain_ + unisonOutputStep_;
         }
-        left[sample] = std::isfinite(outputLeft)
+        left[sample] = finiteValue(outputLeft)
                      ? outputLeft * outputBoundaryScale
                            * transitionGain * unisonOutputGain_
                      : 0.0f;
-        right[sample] = std::isfinite(outputRight)
+        right[sample] = finiteValue(outputRight)
                       ? outputRight * outputBoundaryScale
                             * transitionGain * unisonOutputGain_
                       : 0.0f;

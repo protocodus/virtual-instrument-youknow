@@ -115,9 +115,17 @@ template<class Reference> double error(const Matrix&a,const Reference&b) {
     for(int i=0;i<4;++i)for(int j=0;j<4;++j){const auto delta=a[i][j]-b[i][j];difference+=delta*delta;power+=b[i][j]*b[i][j];}
     return power>0?std::sqrt(difference/power):difference==0?0:std::numeric_limits<double>::infinity();
 }
+// Freeze the original dot-product order independently of the production
+// matrix kernel; a shared helper would hide a rounding change in both paths.
+Matrix frozenMatrixMultiply(const Matrix& a,const Matrix& b) {
+    Matrix c{};
+    for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)
+        for(std::size_t k=0;k<4;++k)c[i][j]+=a[i][k]*b[k][j];
+    return c;
+}
 // Frozen pre-optimization sparse recurrence for balanced diffusion. Keep the
 // runtime order loop and ldexp independent of the compile-time production
-// dispatch. The unchanged matrix helpers only supply its doubling products.
+// dispatch. Its matrix products also retain the frozen dot-product order.
 // This exact-arithmetic regression supplements, rather than replaces, the
 // independent continuous ODE and positive-quadrature screens below.
 Matrix frozenSparseCovariance(const Matrix&a,const Vector&d) {
@@ -156,12 +164,12 @@ Matrix frozenSparseCovariance(const Matrix&a,const Vector&d) {
             term=next;
         }
         for(int square=0;square<squares;++square) {
-            const auto fq=OtaShotNoise::multiply(f,q);
+            const auto fq=frozenMatrixMultiply(f,q);
             for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<=i;++j) {
                 double value=0;for(std::size_t k=0;k<4;++k)value+=fq[i][k]*f[j][k];
                 q[i][j]+=value;if(i!=j)q[j][i]=q[i][j];
             }
-            if(square+1<squares)f=OtaShotNoise::multiply(f,f);
+            if(square+1<squares)f=frozenMatrixMultiply(f,f);
         }
     }
     return q;
@@ -247,9 +255,9 @@ Matrix frozenPositiveCovariance(Matrix a,Vector d) {
     }
     for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[j][i]=q[i][j];
     if(squares>0){auto f=exponential(1,8);
-        for(int square=0;square<squares;++square){const auto propagated=OtaShotNoise::multiply(OtaShotNoise::multiply(f,q),OtaShotNoise::transpose(f));
+        for(int square=0;square<squares;++square){const auto propagated=frozenMatrixMultiply(frozenMatrixMultiply(f,q),OtaShotNoise::transpose(f));
             for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<4;++j)q[i][j]+=propagated[i][j];
-            f=OtaShotNoise::multiply(f,f);}
+            f=frozenMatrixMultiply(f,f);}
         for(std::size_t i=0;i<4;++i)for(std::size_t j=0;j<i;++j)q[i][j]=q[j][i]=.5*(q[i][j]+q[j][i]);
     }return q;
 }

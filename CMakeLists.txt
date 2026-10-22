@@ -35,7 +35,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(YouKnow VERSION 1.3.4 LANGUAGES C CXX)
+project(YouKnow VERSION 1.3.5 LANGUAGES C CXX)
 
 # Keep the three-part host version stable; the build identity X.Y.Z-build.<run>
 # (portfolio standard B4/B5) names downloads and appears in About YouKnow and
@@ -143,6 +143,7 @@ set(YOUKNOW_DSP_HEADERS
     Source/DSP/YouKnowOtaShotNoise.h
     Source/DSP/YouKnowVoiceVcaAntialias.h
     Source/DSP/YouKnowVoiceRateIsland.h
+    Source/DSP/YouKnowFinite.h
     Source/DSP/YouKnowCutoffReconstruction.h
     Source/DSP/YouKnowVcaControlReconstruction.h
     Source/DSP/YouKnowOutputSummerAntialias.h
@@ -926,6 +927,23 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowVcaControlReconstructionTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.VcaControlReconstruction COMMAND YouKnowVcaControlReconstructionTests)
     set_tests_properties(YouKnow.VcaControlReconstruction PROPERTIES TIMEOUT 180)
+    add_executable(YouKnowFiniteTests Tests/YouKnowFiniteTests.cpp)
+    target_link_libraries(YouKnowFiniteTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.Finite COMMAND YouKnowFiniteTests)
+    add_executable(YouKnowEmbeddedFiniteTests Tests/YouKnowFiniteTests.cpp)
+    target_link_libraries(YouKnowEmbeddedFiniteTests PRIVATE YouKnowDSPCxx17)
+    set_target_properties(YouKnowEmbeddedFiniteTests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+    add_test(NAME YouKnow.EmbeddedFinite COMMAND YouKnowEmbeddedFiniteTests)
+    add_executable(YouKnowVcaEvaluationCacheTests Tests/YouKnowVcaEvaluationCacheTests.cpp)
+    target_include_directories(YouKnowVcaEvaluationCacheTests PRIVATE Source)
+    set_target_properties(YouKnowVcaEvaluationCacheTests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+    add_test(NAME YouKnow.VcaEvaluationCache COMMAND YouKnowVcaEvaluationCacheTests)
+    set_tests_properties(YouKnow.Finite YouKnow.EmbeddedFinite YouKnow.VcaEvaluationCache PROPERTIES TIMEOUT 90)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        target_compile_options(YouKnowFiniteTests PRIVATE -fno-builtin)
+        target_compile_options(YouKnowEmbeddedFiniteTests PRIVATE -fno-builtin)
+        target_compile_options(YouKnowVcaEvaluationCacheTests PRIVATE -fno-builtin -ffp-contract=off)
+    endif()
     add_executable(YouKnowChorusContinuousMuteTests Tests/YouKnowChorusContinuousMuteTests.cpp)
     target_link_libraries(YouKnowChorusContinuousMuteTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.ChorusContinuousMute COMMAND YouKnowChorusContinuousMuteTests)
