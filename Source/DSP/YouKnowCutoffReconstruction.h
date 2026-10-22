@@ -18,17 +18,35 @@ namespace youknow
 // at the frequency cap or when endpoint float precision runs out.
 struct CutoffReconstruction
 {
-    void reset() noexcept { count = 0; }
+    void reset() noexcept { count = 0; ready = false; }
 
-    void push(double endpoint, float heldTarget, bool boundary) noexcept
+    void advance(double endpoint, float heldTarget, bool boundary) noexcept
     {
         if (boundary || count == 0 || heldTarget != target)
             count = 0;
         target = heldTarget;
+        const double oldest = history[2];
         history[2] = history[1];
         history[1] = history[0];
         history[0] = endpoint;
         count = std::min(count + 1, 4);
+        const double a=history[0], b=history[1], c=history[2], d=oldest;
+        // A cap departure, reversal, or more than one octave between any
+        // adjacent endpoints is not a resolved smooth four-point segment.
+        // Keep the established bounded linear fallback in those intervals.
+        // The octave is a numerical admission limit, not a component value;
+        // the exhaustive RC sweep includes the minimum 8 kHz engine grid.
+        ready = count == 4 && (a-b)*(b-c)>0 && (b-c)*(c-d)>0
+            && std::max(a,b)<=2.0*std::min(a,b)
+            && std::max(b,c)<=2.0*std::min(b,c)
+            && std::max(c,d)<=2.0*std::min(c,d);
+        if (ready)
+        {
+            const double step=a-b, previous=b-c, older=c-d;
+            coefficients[0]=step/3.0+5.0*previous/6.0-older/6.0;
+            coefficients[1]=.5*(step-previous);
+            coefficients[2]=(step-2.0*previous+older)/6.0;
+        }
     }
 
     [[nodiscard]] double at(double before, double after, double position) const noexcept
@@ -36,36 +54,18 @@ struct CutoffReconstruction
         if (position == 0.0) return before;
         if (position == 1.0) return after;
         const double linear = before + position * (after - before);
-        if (count < 4 || before == after) return linear;
-        // push() has retained current, previous and previous2; previous3 is
-        // carried separately to avoid moving a larger island-context ring.
-        const double a = after, b = before, c = history[2], d = oldest;
-        // A cap departure, reversal, or more than one octave between any
-        // adjacent endpoints is not a resolved smooth four-point segment.
-        // Keep the established bounded linear fallback in those intervals.
-        // The octave is a numerical admission limit, not a component value;
-        // the exhaustive RC sweep includes the minimum 8 kHz engine grid.
-        if ((a-b)*(b-c) <= 0.0 || (b-c)*(c-d) <= 0.0
-            || std::max(a,b) > 2.0*std::min(a,b)
-            || std::max(b,c) > 2.0*std::min(b,c)
-            || std::max(c,d) > 2.0*std::min(c,d))
-            return linear;
-        const double value = a * (position * (position + 1.0) * (position + 2.0) / 6.0)
-            - b * ((position - 1.0) * (position + 1.0) * (position + 2.0) / 2.0)
-            + c * ((position - 1.0) * position * (position + 2.0) / 2.0)
-            - d * ((position - 1.0) * position * (position + 1.0) / 6.0);
+        if (!ready || before == after) return linear;
+        // Difference-form Newton polynomial avoids cancellation between four
+        // nearly equal cutoff endpoints; coefficients are built once/frame.
+        const double value = before + position*(coefficients[0]
+            +position*(coefficients[1]+position*coefficients[2]));
         return std::clamp(value, std::min(before, after), std::max(before, after));
     }
 
-    void advance(double endpoint, float heldTarget, bool boundary) noexcept
-    {
-        oldest = history[2];
-        push(endpoint, heldTarget, boundary);
-    }
-
     std::array<double, 3> history {};
-    double oldest {};
+    std::array<double, 3> coefficients {};
     float target {};
     int count {};
+    bool ready {};
 };
 } // namespace youknow

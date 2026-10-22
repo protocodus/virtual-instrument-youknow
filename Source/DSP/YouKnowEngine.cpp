@@ -12381,6 +12381,9 @@ void YouKnowEngine::resetVoiceFilterIsland(Voice& voice, bool warm) noexcept
     }
     else if (warm)
         voice.islandLastInput = static_cast<float>(voice.filter.inputHistory[0]);
+    // Rebuild prehistory at one held gain; replaying the last physical
+    // interval repeatedly would fabricate modulation before the new timeline.
+    previous.vcaControl = {};
     voice.filterIsland.reset(previous);
     voice.vcaAntialias.reset();
     if (warm)
@@ -12522,9 +12525,13 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     // its bounded causal cubic avoids linearising a curved cutoff again.
     // No new converter mapping, physical pole or latency is introduced.
     if (parameters.enableVcfSettlingReconstruction)
+    {
         voice.islandCutoffReconstruction.advance(frame.omegaStep,
             voice.cutoffCountsTarget, frame.hasTrajectory || !voice.islandControlPrimed
-                || voice.cutoffCounts == voice.cutoffCountsTarget);
+                || voice.cutoffCounts == voice.cutoffCountsTarget
+                || card.driftValue != voice.islandCutoffDrift);
+        voice.islandCutoffDrift = card.driftValue;
+    }
     for (std::size_t point = 0; point < context.omega.size(); ++point)
     {
         const double position = OtaCascade::controlNodePositions[point];
@@ -12980,6 +12987,7 @@ ChorusRateIsland::Controls YouKnowEngine::chorusRateControls(
     c.finiteMute=p.enableChorusFiniteMuteDrive;
     c.correlatedNoise=p.enableChorusCorrelatedNoise;
     c.finiteTr5=p.enableChorusFiniteTr5Drive;
+    c.continuousMuteLoading=p.enableContinuousChorusMuteLoading;
     return c;
 }
 
@@ -13769,7 +13777,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 const double control = voice.vcaJunctionCharge
                                     + EvidenceVcaCalibration::inputOhms * emitter
                                         / VoiceVcaControlLaw::controlFullScaleVolts;
-                                vcaInterval.eventGain = control > .001
+                                vcaInterval.eventGain = static_cast<float>(control) > .001f
                                     ? static_cast<float>(emitter / vcaCard.vcaJunctionServiceEmitterAmps) : 0.0f;
                                 vcaInterval.eventBeforeSlope = vcaSlope(vcaInterval.eventGain,
                                     control, physicalHoldEvent.previousTarget);
@@ -14189,7 +14197,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                     parameters.enableChorusCorrelatedNoise,
                                     parameters.chorusNoiseTransferFraction,
                                     parameters.chorusNoiseTransferCorrelation,
-                                    parameters.enableChorusFiniteTr5Drive);
+                                    parameters.enableChorusFiniteTr5Drive,
+                                    parameters.enableContinuousChorusMuteLoading);
 
                 processOutputSummer(wetLeft,wetRight,parameters);
 

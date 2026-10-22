@@ -493,6 +493,9 @@ struct EngineParameters
     // Extend the same48-sample output-summer island to the existing chorus.
     // Product numerical selector; raw stays bit-identical and high grids direct.
     bool enableChorusRateIsland { false };
+    // Reconstruct the changing Tr11/12 wet-switch load within each chorus
+    // interval; physical endpoint readout and settled gain are preserved.
+    bool enableContinuousChorusMuteLoading { false };
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
@@ -733,6 +736,7 @@ struct EngineParameters
             && enableOutputSummerMagnitudePole == other.enableOutputSummerMagnitudePole
             && enableOutputSummerAntialias == other.enableOutputSummerAntialias
             && enableChorusRateIsland == other.enableChorusRateIsland
+            && enableContinuousChorusMuteLoading == other.enableContinuousChorusMuteLoading
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
                 == other.enableVoiceIslandFrameShotCovariance
@@ -3634,6 +3638,7 @@ private:
         // cascade's local-step history. No second physical cascade is kept.
         float islandPreviousOmega {}, islandPreviousFeedback {}, islandPreviousHeadroom { 1.0f };
         CutoffReconstruction islandCutoffReconstruction {};
+        float islandCutoffDrift {};
         float islandCouplingBase { -1.0f }, islandCouplingLocal {};
         float islandLastInput {};
         double islandBaseRate {};

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "YouKnowEvidenceVca.h"
+
 namespace youknow
 {
 // Numerical reconstruction of the existing C58/Tr20 current, not a new
@@ -29,9 +31,11 @@ struct VcaControlReconstruction
         double thermalVolts, double serviceEmitterAmps) noexcept
     {
         if (!(gain > 0.0)) return 0.0;
-        constexpr double inputTime = 10000.0 * .1e-6;
+        constexpr double inputTime = EvidenceVcaCalibration::inputOhms
+            * VcaJunctionTemperatureCircuit::capacitanceFarads;
         return gain * spanVolts * (target - control) * intervalSeconds
-            / (inputTime * (thermalVolts + 22000.0 * gain * serviceEmitterAmps));
+            / (inputTime * (thermalVolts
+                + EvidenceVcaCalibration::emitterOhms * gain * serviceEmitterAmps));
     }
 
     [[nodiscard]] static double segment(double before, double after,
