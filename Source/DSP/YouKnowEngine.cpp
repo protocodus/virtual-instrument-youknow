@@ -8225,6 +8225,7 @@ void YouKnowEngine::silenceVoice(Voice& voice) noexcept
     voice.unisonMember = false;
     voice.rootMidi = -1;
     voice.vca = 0.0f;
+    voice.vcaGain = 0.0f;
     voice.vcaControlTarget = 0.0f;
     voice.vcaControl = 0.0f;
     voice.vcaControlInterval = {};

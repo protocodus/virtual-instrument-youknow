@@ -170,10 +170,41 @@ void steadyAndReset()
         }
     }
 }
+void movingNonlinear()
+{
+    auto a=std::make_unique<Chorus>(),b=std::make_unique<Chorus>();
+    for(auto* c:{a.get(),b.get()})
+    {
+        require(c->configureSupportProfile(ChorusSupportProfile::Nominal2SA1015Nonlinear),"nonlinear support rejected");
+        c->prepare(192000);
+    }
+    double maxDelta=0;
+    for(int n=0;n<96000;++n)
+    {
+        // A genuine On/Off/On transition, plus a reversed command before
+        // the capacitors settle. Both copies receive identical audio/noise.
+        const auto mode=n<5760?ChorusMode::One:n<38400?ChorusMode::Off
+            :n<48000?ChorusMode::Two:n<53760?ChorusMode::Off:ChorusMode::One;
+        const float input=.01f*std::sin(n*.0213f)+.003f*std::sin(n*.131f);
+        float al,ar,bl,br;
+        a->process(input,mode,.2f,al,ar,1,true,true,true,
+            ChorusTimingProfile::HardwareEvidence,true,true,true,.9171323f,1,true,false);
+        b->process(input,mode,.2f,bl,br,1,true,true,true,
+            ChorusTimingProfile::HardwareEvidence,true,true,true,.9171323f,1,true,true);
+        require(std::isfinite(bl)&&std::isfinite(br),"nonlinear moving load produced nonfinite output");
+        require(YouKnowTestAccess::nodes(*a)==YouKnowTestAccess::nodes(*b),"moving load altered control capacitor chronology");
+        require(YouKnowTestAccess::rng(*a)==YouKnowTestAccess::rng(*b),"moving load altered physical clock/noise chronology");
+        if(n<5760)require(al==bl&&ar==br,"moving-load selection changed settled audio");
+        maxDelta=std::max({maxDelta,std::abs(static_cast<double>(al-bl)),std::abs(static_cast<double>(ar-br))});
+    }
+    require(maxDelta>0,"continuous load absent from actual Chorus processing");
+    require(YouKnowTestAccess::fallbacks(*a)==0&&YouKnowTestAccess::fallbacks(*b)==0,"nonlinear moving-load solve recovered");
+    std::cout<<"Actual nonlinear switched chorus maximum correction "<<maxDelta<<"\n";
+}
 }
 int main()
 {
-    try{analyticRamp();endpointMaps();physicalSwitch();steadyAndReset();}
+    try{analyticRamp();endpointMaps();physicalSwitch();steadyAndReset();movingNonlinear();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
     std::cout<<"Continuous chorus mute-load checks passed\n";
 }
