@@ -197,6 +197,12 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.3 — 2026-10-22 — Release version for the Reason Shop
+
+- Version number only: the sound engine, presets and parameters are the same as
+  1.3.2. The new number lets the Reason Rack Extension ship as 1.3.3, above the
+  1.3.0 already in the Reason Shop.
+
 ### 1.3.2 — 2026-10-17 — Active playback CPU
 
 - Reuses fixed chorus terms and specializes the voice-noise covariance
