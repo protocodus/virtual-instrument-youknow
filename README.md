@@ -199,8 +199,8 @@ Or hear one mechanism at a time:
 
 ### 1.3.5 — 2026-10-22 — Less repeated simulation work
 
-- Reuse identical VCA current evaluations, inline finite-value classification
-  on supported floating-point layouts, and streamline covariance matrix work.
+- Inline finite-value classification on supported floating-point layouts to
+  avoid full runtime classification calls at repeated safety checks.
   Circuit equations, processing defaults, presets, gain and latency stay the same.
   [Implementation and validation method](Docs/research/efficiency-1.3.5.md).
 
