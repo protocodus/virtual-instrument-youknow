@@ -7490,6 +7490,13 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
         && next == targetParameters_)
         return;
 
+    // Never carry a polynomial across a host edit or recalled tone. The
+    // physical holds retain their existing state; only numerical history
+    // needs fresh endpoints after the changed mapping has taken effect.
+    if (explicitToneRecall || next != targetParameters_)
+        for (auto& voice : voices_)
+            voice.islandCutoffReconstruction.reset();
+
     if (originalPerformanceEnabled_ && prepared_) {
         firmwareSerialConfiguration_.inputs=originalPerformanceAdc(next);
         if (startupSnapshot && originalPerformance_.pending()==0) originalPerformance_.reset(next);
@@ -8220,6 +8227,7 @@ void YouKnowEngine::silenceVoice(Voice& voice) noexcept
     voice.vca = 0.0f;
     voice.vcaControlTarget = 0.0f;
     voice.vcaControl = 0.0f;
+    voice.vcaControlInterval = {};
     voice.vcaJunctionChargeInitialised = false;
     voice.energy = 0.0f;
     voice.envelope.reset();
@@ -12378,6 +12386,7 @@ void YouKnowEngine::resetVoiceFilterIsland(Voice& voice, bool warm) noexcept
     if (warm)
         voice.vcaAntialias.inputs.fill(voice.islandLastInput);
     voice.islandControlPrimed = false;
+    voice.islandCutoffReconstruction.reset();
     voice.islandWarmStart = warm;
     voice.islandCouplingBase = -1.0f;
     voice.filterShotFactorFrame = -1;
@@ -12453,6 +12462,8 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     Context context;
     context.headroom = frame.headroom;
     context.gain = voice.active ? voice.vca : 0.0f;
+    if (voice.active && parameters.enableVoiceVcaControlReconstruction)
+        context.vcaControl = voice.vcaControlInterval;
     context.character = parameters.calibration;
     context.inputScale = voice.vcaInputTrim * card.signalVcaDriveScale;
     if (voice.islandCouplingBase != card.vcaInputCouplingG || voice.islandFactor != factor)
@@ -12506,12 +12517,23 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     flag(useCubicEarly_, Context::CubicEarly);
     context.tanhMode = parameters.vcfTanhMode;
     context.solverMode = parameters.vcfSolverMode;
+    // A converter event already carries the exact C61 control trajectory.
+    // Between writes, use only history from this uninterrupted RC segment;
+    // its bounded causal cubic avoids linearising a curved cutoff again.
+    // No new converter mapping, physical pole or latency is introduced.
+    if (parameters.enableVcfSettlingReconstruction)
+        voice.islandCutoffReconstruction.advance(frame.omegaStep,
+            voice.cutoffCountsTarget, frame.hasTrajectory || !voice.islandControlPrimed
+                || voice.cutoffCounts == voice.cutoffCountsTarget);
     for (std::size_t point = 0; point < context.omega.size(); ++point)
     {
         const double position = OtaCascade::controlNodePositions[point];
         context.omega[point] = static_cast<float>(frame.hasTrajectory ? frame.trajectory.omegaStep[point]
-            : voice.islandControlPrimed ? voice.islandPreviousOmega
-                + position * (frame.omegaStep - voice.islandPreviousOmega) : frame.omegaStep);
+            : voice.islandControlPrimed ? parameters.enableVcfSettlingReconstruction
+                ? voice.islandCutoffReconstruction.at(
+                    voice.islandPreviousOmega, frame.omegaStep, position)
+                : voice.islandPreviousOmega + position * (frame.omegaStep - voice.islandPreviousOmega)
+            : frame.omegaStep);
         context.feedback[point] = static_cast<float>(frame.hasTrajectory ? frame.trajectory.feedback[point]
             : voice.islandControlPrimed ? voice.islandPreviousFeedback
                 + position * (voice.feedback - voice.islandPreviousFeedback) : voice.feedback);
@@ -12604,7 +12626,9 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
                     ? normalized * vcfInnerTanhFactor(square) : OtaCascade::zonedHermiteTanh(normalized)));
             }
         }
-        const double gain = interval.interpolate(interval.previous.gain, c.gain);
+        const double gain = c.vcaControl.valid()
+            ? c.vcaControl.sample(c.gain, interval.end)
+            : interval.interpolate(interval.previous.gain, c.gain);
         const float signal = static_cast<float>(shaped * gain * c.serviceGain * voltsToSample);
         double outputNoise = 0;
         if (c.has(Context::Shot))
@@ -12663,7 +12687,11 @@ float YouKnowEngine::renderVoice(Voice& voice,
             resetVoiceFilterIsland(voice, true);
             voice.islandLastInput = frame.input;
             voice.vcaAntialias.inputs.fill(frame.input);
-            for (auto& context : voice.filterIsland.contexts) context.gain = 0.0f;
+            for (auto& context : voice.filterIsland.contexts)
+            {
+                context.gain = 0.0f;
+                context.vcaControl = {};
+            }
         }
         return renderVoiceFilterIsland(voice, frame);
     }
@@ -13693,6 +13721,29 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca
                     && physicalHoldEvent.write.voice == slot;
+                auto& vcaInterval = voice.vcaControlInterval;
+                vcaInterval.eventPosition = -1.0f;
+                const bool reconstructVca = parameters.enableVoiceVcaControlReconstruction
+                    && voice.active && voiceFilterRateIslandEnabled()
+                    && parameters.enableCoupledVoiceVcaControl
+                    && voiceVcaJunctionTemperatureEnabled(parameters)
+                    && !(envelopeHoldsConfigured_ && slot < hardwareVoices);
+                const auto& vcaCard = cards_[static_cast<std::size_t>(voice.cardIndex)];
+                const double vcaThermal = EvidenceVcaCalibration::thermalVolts
+                    * ((vcaCard.vcaJunctionCelsius + 273.15) / 298.15);
+                const auto vcaSlope = [&](double gain, double control, double target) noexcept {
+                    return static_cast<float>(VcaControlReconstruction::gainSlope(
+                        gain, control, target, coefficients.internalIntervalSeconds,
+                        VoiceVcaControlLaw::controlFullScaleVolts, vcaThermal,
+                        vcaCard.vcaJunctionServiceEmitterAmps));
+                };
+                if (reconstructVca)
+                {
+                    vcaInterval.startGain = voice.vcaGain;
+                    vcaInterval.startSlope = vcaSlope(voice.vcaGain, voice.vcaControl,
+                        voiceVcaEvent ? physicalHoldEvent.previousTarget : voice.vcaControlTarget);
+                    vcaInterval.eventPosition = 2.0f;
+                }
                 if (envelopeHoldsConfigured_ && slot < hardwareVoices)
                 {
                     // The independent upstream capacitor and C58 have already
@@ -13711,6 +13762,21 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                             voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
                                 physicalHoldEvent.previousTarget, dt * physicalHoldEvent.position, temperature,
                                 &voice.vcaJunctionCurrentCache);
+                            if (reconstructVca)
+                            {
+                                const double emitter = circuit.emitterAmpsAtCharge(
+                                    voice.vcaJunctionCharge, temperature, &voice.vcaJunctionCurrentCache);
+                                const double control = voice.vcaJunctionCharge
+                                    + EvidenceVcaCalibration::inputOhms * emitter
+                                        / VoiceVcaControlLaw::controlFullScaleVolts;
+                                vcaInterval.eventGain = control > .001
+                                    ? static_cast<float>(emitter / vcaCard.vcaJunctionServiceEmitterAmps) : 0.0f;
+                                vcaInterval.eventBeforeSlope = vcaSlope(vcaInterval.eventGain,
+                                    control, physicalHoldEvent.previousTarget);
+                                vcaInterval.eventAfterSlope = vcaSlope(vcaInterval.eventGain,
+                                    control, physicalHoldEvent.target);
+                                vcaInterval.eventPosition = static_cast<float>(physicalHoldEvent.position);
+                            }
                             voice.vcaJunctionCharge = circuit.advance(voice.vcaJunctionCharge,
                                 physicalHoldEvent.target, dt * (1.0 - physicalHoldEvent.position), temperature,
                                 &voice.vcaJunctionCurrentCache);
@@ -13767,6 +13833,9 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 if (hasAudioCell && !freewheels)
                 {
                     updateVoiceAudio(voice, parameters);
+                    if (reconstructVca)
+                        vcaInterval.endSlope = vcaSlope(voice.vcaGain, voice.vcaControl,
+                            voice.vcaControlTarget);
                 }
             };
             const auto accountRenderedVoice = [&](Voice& voice, float output) {
