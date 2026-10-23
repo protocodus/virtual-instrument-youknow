@@ -3935,10 +3935,14 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const unsigned int nodeMask = tableauNodeMask(plannedTableau);
     prepareStageNoise(nodeMask);
 
-    std::array<double, pointCount> inputAt {};
-    std::array<double, pointCount> omegaAt {};
-    std::array<double, pointCount> feedbackAt {};
-    std::array<double, pointCount> headroomAt {};
+    // The per-node arrays below are written only at the nodes this tableau
+    // reads (nodeMask) and read only there, so they are deliberately left
+    // uninitialized: zero-filling all seven nodes was pure overhead on the
+    // three- and five-node rungs and changed no value that is ever read.
+    std::array<double, pointCount> inputAt;
+    std::array<double, pointCount> omegaAt;
+    std::array<double, pointCount> feedbackAt;
+    std::array<double, pointCount> headroomAt;
     // A settled interval -- both endpoints equal, no hold trajectory -- is
     // most of what an instrument does, and there the node interpolation
     // below is arithmetically the identity: a + p * (b - a) with b == a is
@@ -4006,8 +4010,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // the 25 C constant otherwise (EngineParameters::
     // enableResonanceHeadroomTemperature). Its reciprocal is taken here,
     // once per node, so the fast-reciprocal kernels keep their multiply.
-    std::array<double, pointCount> loopHeadroomAt {};
-    std::array<double, pointCount> inverseLoopHeadroomAt {};
+    std::array<double, pointCount> loopHeadroomAt;
+    std::array<double, pointCount> inverseLoopHeadroomAt;
     const auto loopHeadroomForNode = [&](double headroom) {
         return resonanceHeadroomFollowsStage
             ? resonanceHeadroomFor(headroom)
@@ -4079,7 +4083,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const double earlyAmount =
         static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
     std::array<double, 4> stageScale {};
-    std::array<std::array<double, 4>, pointCount> stageOffset {};
+    std::array<std::array<double, 4>, pointCount> stageOffset;
     for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
     {
         stageScale[stage] = static_cast<double>(gScale[stage]);
@@ -4088,7 +4092,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 stageOffset[point][stage] = static_cast<double>(offsetVoltage[stage])
                     + stageNoiseAt[point][stage];
     }
-    std::array<std::array<double, 4>, pointCount> stageOmegaAt {};
+    std::array<std::array<double, 4>, pointCount> stageOmegaAt;
     if (settledControls)
     {
         std::array<double, 4> rates {};
@@ -4182,7 +4186,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // interval on the default rung. Exact keeps the established division
     // expressions and their frozen rounding behavior.
     const auto headroomReciprocals = [&] {
-        std::array<double, pointCount> values {};
+        std::array<double, pointCount> values;
         if (settledControls)
             values.fill(1.0 / settledHeadroom);
         else
