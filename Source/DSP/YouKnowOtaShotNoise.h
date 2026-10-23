@@ -372,7 +372,7 @@ struct OtaShotNoise {
                 return {};
             }
             if(i!=j&&l[j][j]==0&&value!=0){if(valid)*valid=false;return {};}
-            l[i][j]=i==j?std::sqrt(std::max(0.0,value)):l[j][j]>0?value/l[j][j]:0;}}
+            l[i][j]=i==j?inlineSqrt(std::max(0.0,value)):l[j][j]>0?value/l[j][j]:0;}}
         return l;
     }
     [[nodiscard]] static Vector applyFactor(const Matrix&l,const Vector&normal) noexcept {

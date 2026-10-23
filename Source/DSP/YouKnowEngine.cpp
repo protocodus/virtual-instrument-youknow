@@ -12345,7 +12345,7 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
         // after their physical PSDs are summed. Keep all existing stream
         // draws and the local FIR's delayed control/drive timestamp.
         return normal*activeParameters_.calibration*VoiceVcaSignalLaw::loadOhms/serviceGain
-            *std::sqrt(psd*oversampledRate_*factor/2);
+            *inlineSqrt(psd*oversampledRate_*factor/2);
     };
     const auto noise=[&](double pairDrive,double currentFraction) noexcept {
         return temperatureNoise(pairDrive,currentFraction,actualKelvin);
@@ -12646,7 +12646,7 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
                     + (c.has(Context::Mirror) ? Ba662Noise::outputMirrorCurrentPsd(tail, pair) : 0.0)
                     + (c.has(Context::TailMirror) ? Ba662Noise::tailMirrorCurrentPsd(tail, pair, c.kelvin) : 0.0);
                 outputNoise = normal * c.character * VoiceVcaSignalLaw::loadOhms
-                    * voltsToSample * std::sqrt(psd * localRate / 2);
+                    * voltsToSample * inlineSqrt(psd * localRate / 2);
             }
         }
         // The uncalibrated energy-to-rail proxy now reads the delayed physical
@@ -14279,11 +14279,15 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         (void) outputNetwork_.setVolume(glidedVolume_);
         (void) outputNetwork_.setNoise(jackBoardCelsius_ + 273.15,
                                 parameters.calibration);
+        // bipolarFromState() is uniform [-1, 1] with RMS 1/sqrt(3); these
+        // stages take unit-RMS draws. One folded constant rather than eight
+        // libm calls per host sample under -fno-builtin.
+        const double unitRms = inlineSqrt(3.0);
         const auto selectedOutput = outputNetwork_.process(
             networkInputLeft * internalVoltsPerUnit,
             networkInputRight * internalVoltsPerUnit,
-            std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateRight_));
+            unitRms * bipolarFromState(outputWiperNoiseStateLeft_),
+            unitRms * bipolarFromState(outputWiperNoiseStateRight_));
         // Advance the independent PHONES route even while LINE is selected:
         // returning to it cannot resurrect stale capacitor/noise history. Its
         // RNGs are separate, preserving every historical LINE random sequence.
@@ -14297,12 +14301,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         (void) headphoneOutput_.setNoise(jackBoardCelsius_ + 273.15, parameters.calibration);
         const auto headphoneOutput = headphoneOutput_.process(
             networkInputLeft * internalVoltsPerUnit, networkInputRight * internalVoltsPerUnit,
-            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateRight_),
-            std::sqrt(3.0) * bipolarFromState(headphoneOutputNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(headphoneOutputNoiseStateRight_),
-            std::sqrt(3.0) * bipolarFromState(headphoneIntrinsicNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(headphoneIntrinsicNoiseStateRight_));
+            unitRms * bipolarFromState(headphoneNoiseStateLeft_),
+            unitRms * bipolarFromState(headphoneNoiseStateRight_),
+            unitRms * bipolarFromState(headphoneOutputNoiseStateLeft_),
+            unitRms * bipolarFromState(headphoneOutputNoiseStateRight_),
+            unitRms * bipolarFromState(headphoneIntrinsicNoiseStateLeft_),
+            unitRms * bipolarFromState(headphoneIntrinsicNoiseStateRight_));
         const float passiveNoiseScale =
             outputPassiveNoiseScale * jackBoardJohnsonScale_;
         outputLeft += bipolarFromState(outputWiperNoiseStateLeft_)
