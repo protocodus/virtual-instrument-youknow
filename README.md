@@ -197,6 +197,13 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.4 — 2026-10-23 — Active playback CPU
+
+- About 6% fewer instructions (about 7% less CPU time) for six sounding
+  voices at the fresh-instance defaults on x86-64: the voice and chorus
+  antialias filters and the VCF solver do the same arithmetic with less
+  overhead. The sound is unchanged: test renders match 1.3.3 bit for bit.
+
 ### 1.3.3 — 2026-10-22 — Release version for the Reason Shop
 
 - Version number only: the sound engine, presets and parameters are the same as

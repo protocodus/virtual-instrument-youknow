@@ -74,10 +74,12 @@ struct OutputSummerAntialias
         constexpr int lookBack = VoiceVcaAntialias::delaySamples / 2;
         const int inputCursor = left.inputWrite;
         const int outputCursor = left.outputWrite;
-        left.inputs[static_cast<std::size_t>(inputCursor)] = l;
-        right.inputs[static_cast<std::size_t>(inputCursor)] = r;
-        left.gains[static_cast<std::size_t>(inputCursor)] = 1.0f;
-        right.gains[static_cast<std::size_t>(inputCursor)] = 1.0f;
+        // Each ring is mirrored (VoiceVcaAntialias::writeRing); reads below
+        // stay in the first copy through the established masks.
+        VoiceVcaAntialias::writeRing(left.inputs, inputCursor, l);
+        VoiceVcaAntialias::writeRing(right.inputs, inputCursor, r);
+        VoiceVcaAntialias::writeRing(left.gains, inputCursor, 1.0f);
+        VoiceVcaAntialias::writeRing(right.gains, inputCursor, 1.0f);
         const int gain0 = (inputCursor-lookBack+VoiceVcaAntialias::inputRingSize) & inputMask;
         const int gain1 = (inputCursor-lookBack+1+VoiceVcaAntialias::inputRingSize) & inputMask;
         const double leftGain0 = left.gains[static_cast<std::size_t>(gain0)];
@@ -104,15 +106,15 @@ struct OutputSummerAntialias
         {
             const double fraction = static_cast<double>(phase) / kernel.factor;
             const double gain = leftGain0 + fraction * (leftGain1-leftGain0);
-            left.outputs[static_cast<std::size_t>((outputCursor+phase) & outputMask)] =
-                static_cast<float>(shape(static_cast<float>(drives[static_cast<std::size_t>(phase)][0])) * gain);
+            VoiceVcaAntialias::writeRing(left.outputs, (outputCursor+phase) & outputMask,
+                static_cast<float>(shape(static_cast<float>(drives[static_cast<std::size_t>(phase)][0])) * gain));
         }
         for (int phase = 0; phase < kernel.factor; ++phase)
         {
             const double fraction = static_cast<double>(phase) / kernel.factor;
             const double gain = rightGain0 + fraction * (rightGain1-rightGain0);
-            right.outputs[static_cast<std::size_t>((outputCursor+phase) & outputMask)] =
-                static_cast<float>(shape(static_cast<float>(drives[static_cast<std::size_t>(phase)][1])) * gain);
+            VoiceVcaAntialias::writeRing(right.outputs, (outputCursor+phase) & outputMask,
+                static_cast<float>(shape(static_cast<float>(drives[static_cast<std::size_t>(phase)][1])) * gain));
         }
 
         // General processing reads phase-zero decimation before writing
