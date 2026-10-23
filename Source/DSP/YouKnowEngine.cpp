@@ -3267,21 +3267,35 @@ void YouKnowEngine::OtaCascade::prepareStageNoise(unsigned int nodeMask) noexcep
         stageNoiseAt.front()[stage] = h[1];
         stageNoiseAt.back()[stage] = h[0];
     }
+    // The reconstruction degree is one choice per call, not per stage.
+    const int degree = stageNoiseHistoryCount <= 1 ? 1
+                     : stageNoiseHistoryCount == 2 ? 2 : 3;
     for (std::size_t point = 1; point + 1 < stageNoiseAt.size(); ++point)
     {
         if ((nodeMask >> point & 1u) == 0u)
             continue;
         const double t = controlNodePositions[point];
-        for (std::size_t stage = 0; stage < 4; ++stage)
-        {
-            const auto& h = stageNoiseHistory[stage];
-            stageNoiseAt[point][stage] = stageNoiseHistoryCount <= 1
-                ? t*h[0] + (1.0-t)*h[1]
-                : stageNoiseHistoryCount == 2
-                    ? 0.5*t*(t+1.0)*h[0] + (1.0-t*t)*h[1] + 0.5*t*(t-1.0)*h[2]
-                    : weights[point][0]*h[0] + weights[point][1]*h[1]
-                        + weights[point][2]*h[2] + weights[point][3]*h[3];
-        }
+        if (degree == 1)
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const auto& h = stageNoiseHistory[stage];
+                stageNoiseAt[point][stage] = t*h[0] + (1.0-t)*h[1];
+            }
+        else if (degree == 2)
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const auto& h = stageNoiseHistory[stage];
+                stageNoiseAt[point][stage] =
+                    0.5*t*(t+1.0)*h[0] + (1.0-t*t)*h[1] + 0.5*t*(t-1.0)*h[2];
+            }
+        else
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const auto& h = stageNoiseHistory[stage];
+                stageNoiseAt[point][stage] =
+                    weights[point][0]*h[0] + weights[point][1]*h[1]
+                    + weights[point][2]*h[2] + weights[point][3]*h[3];
+            }
     }
 }
 
@@ -3868,6 +3882,25 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // stability region ends. The trajectory's interior nodes carry the hold's
     // own curvature and can leave the endpoint interval, so they are scanned
     // when one is supplied.
+    // Per-node controls and reconstructed input. Every entry a tableau reads
+    // is written below before it is read; the nodes a cheaper tableau skips
+    // are left indeterminate on purpose rather than zero-filled on every
+    // interval. A supplied trajectory is sanitized once, here, for both of
+    // its readers: the tableau plan scans every node, the integration reads
+    // the nodes its tableau visits.
+    std::array<double, pointCount> inputAt;
+    std::array<double, pointCount> omegaAt;
+    std::array<double, pointCount> feedbackAt;
+    std::array<double, pointCount> headroomAt;
+    if (trajectory != nullptr)
+        for (std::size_t point = 0; point < pointCount; ++point)
+        {
+            omegaAt[point] = clampOmegaStep(trajectory->omegaStep[point]);
+            feedbackAt[point] = std::clamp(
+                std::isfinite(trajectory->feedback[point])
+                    ? trajectory->feedback[point] : 0.0,
+                0.0, 8.0);
+        }
     const Tableau plannedTableau = [&] {
         if (solverMode == VcfSolverMode::MersonHalfSteps)
             return Tableau::MersonHalf;
@@ -3876,12 +3909,11 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         if (trajectory != nullptr)
             for (std::size_t point = 0; point < pointCount; ++point)
             {
-                planOmega = std::max(
-                    planOmega, clampOmegaStep(trajectory->omegaStep[point]));
-                const double candidate = trajectory->feedback[point];
-                if (std::isfinite(candidate))
-                    planFeedback = std::max(
-                        planFeedback, std::clamp(candidate, 0.0, 8.0));
+                planOmega = std::max(planOmega, omegaAt[point]);
+                // A non-finite node was sanitized to zero above, and zero
+                // cannot raise this non-negative maximum: the same plan the
+                // former isfinite guard produced.
+                planFeedback = std::max(planFeedback, feedbackAt[point]);
             }
         // The stage capacitor spread scales each pole independently, and the
         // Early effect scales every stage rate by at most 1 + earlyAmount.
@@ -3904,10 +3936,6 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const unsigned int nodeMask = tableauNodeMask(plannedTableau);
     prepareStageNoise(nodeMask);
 
-    std::array<double, pointCount> inputAt {};
-    std::array<double, pointCount> omegaAt {};
-    std::array<double, pointCount> feedbackAt {};
-    std::array<double, pointCount> headroomAt {};
     // A settled interval -- both endpoints equal, no hold trajectory -- is
     // most of what an instrument does, and there the node interpolation
     // below is arithmetically the identity: a + p * (b - a) with b == a is
@@ -3946,12 +3974,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         }
         else if (trajectory != nullptr)
         {
-            omegaAt[point] = clampOmegaStep(
-                trajectory->omegaStep[point]);
-            feedbackAt[point] = std::clamp(
-                std::isfinite(trajectory->feedback[point])
-                    ? trajectory->feedback[point] : 0.0,
-                0.0, 8.0);
+            // omegaAt and feedbackAt were sanitized above for the plan.
             headroomAt[point] = std::max(
                 std::isfinite(trajectory->headroom[point])
                     ? trajectory->headroom[point] : 0.0,
@@ -3975,8 +3998,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // the 25 C constant otherwise (EngineParameters::
     // enableResonanceHeadroomTemperature). Its reciprocal is taken here,
     // once per node, so the fast-reciprocal kernels keep their multiply.
-    std::array<double, pointCount> loopHeadroomAt {};
-    std::array<double, pointCount> inverseLoopHeadroomAt {};
+    std::array<double, pointCount> loopHeadroomAt;
+    std::array<double, pointCount> inverseLoopHeadroomAt;
     const auto loopHeadroomForNode = [&](double headroom) {
         return resonanceHeadroomFollowsStage
             ? resonanceHeadroomFor(headroom)
@@ -4047,8 +4070,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                                && currentCalibration > 0.0;
     const double earlyAmount =
         static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
-    std::array<double, 4> stageScale {};
-    std::array<std::array<double, 4>, pointCount> stageOffset {};
+    std::array<double, 4> stageScale;
+    std::array<std::array<double, 4>, pointCount> stageOffset;
     for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
     {
         stageScale[stage] = static_cast<double>(gScale[stage]);
@@ -4057,7 +4080,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 stageOffset[point][stage] = static_cast<double>(offsetVoltage[stage])
                     + stageNoiseAt[point][stage];
     }
-    std::array<std::array<double, 4>, pointCount> stageOmegaAt {};
+    std::array<std::array<double, 4>, pointCount> stageOmegaAt;
     if (settledControls)
     {
         std::array<double, 4> rates {};
@@ -4151,7 +4174,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // interval on the default rung. Exact keeps the established division
     // expressions and their frozen rounding behavior.
     const auto headroomReciprocals = [&] {
-        std::array<double, pointCount> values {};
+        std::array<double, pointCount> values;
         if (settledControls)
             values.fill(1.0 / settledHeadroom);
         else
@@ -4163,7 +4186,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const auto integrate = [&](auto reciprocalTag, auto tableauTag,
                                const auto& nonlinear) {
         constexpr bool useReciprocal = decltype(reciprocalTag)::value;
-        std::array<double, pointCount> inverseHeadroomAt {};
+        // Read only through normalise() when useReciprocal; otherwise unused.
+        std::array<double, pointCount> inverseHeadroomAt;
         if constexpr (useReciprocal)
             inverseHeadroomAt = headroomReciprocals();
 
