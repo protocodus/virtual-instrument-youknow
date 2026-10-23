@@ -16,14 +16,19 @@ fi
 # Every translation unit is compiled on every run: the DSP headers are part
 # of what is measured, a timestamp test on the .cpp alone let a header-only
 # change miss the objects, and a stale object once produced a false result.
-running=0
+# The previous object is removed first and every compilation is waited for
+# by pid (a bare `wait` always returns 0), so a failed compile stops the
+# script under set -e instead of linking an old object.
+pids=()
+wait_batch() { local pid; for pid in "${pids[@]}"; do wait "$pid"; done; pids=(); }
 for s in $SRCS; do
   o="$OBJ/$(basename "$s" .cpp).o"
+  rm -f "$o"
   g++ $FLAGS -I"$TREE/Source" -c "$s" -o "$o" &
-  running=$((running+1))
-  if [ $running -ge $JOBS ]; then wait -n; running=$((running-1)); fi
+  pids+=($!)
+  if [ ${#pids[@]} -ge $JOBS ]; then wait_batch; fi
 done
-wait
+wait_batch
 g++ $FLAGS -I"$TREE/Source" -I"$TREE/Tools" -c "$HERE/$TOOL.cpp" -o "$OBJ/$TOOL.o"
 g++ $FLAGS -o "$OUT" "$OBJ/$TOOL.o" $(for s in $SRCS; do echo "$OBJ/$(basename "$s" .cpp).o"; done)
 echo "built $OUT"
