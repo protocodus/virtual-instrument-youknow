@@ -13,14 +13,15 @@ else
   FLAGS="-std=c++20 -O3 -g -DNDEBUG $EXTRA_FLAGS"
   SRCS=$(ls "$TREE"/Source/DSP/*.cpp)
 fi
+# Every translation unit is compiled on every run: the DSP headers are part
+# of what is measured, a timestamp test on the .cpp alone let a header-only
+# change miss the objects, and a stale object once produced a false result.
 running=0
 for s in $SRCS; do
   o="$OBJ/$(basename "$s" .cpp).o"
-  if [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ "$TREE/Source/DSP/YouKnowEngine.h" -nt "$o" ]; then
-    g++ $FLAGS -I"$TREE/Source" -c "$s" -o "$o" &
-    running=$((running+1))
-    if [ $running -ge $JOBS ]; then wait -n; running=$((running-1)); fi
-  fi
+  g++ $FLAGS -I"$TREE/Source" -c "$s" -o "$o" &
+  running=$((running+1))
+  if [ $running -ge $JOBS ]; then wait -n; running=$((running-1)); fi
 done
 wait
 g++ $FLAGS -I"$TREE/Source" -I"$TREE/Tools" -c "$HERE/$TOOL.cpp" -o "$OBJ/$TOOL.o"
