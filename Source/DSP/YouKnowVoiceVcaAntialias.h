@@ -170,11 +170,16 @@ struct VoiceVcaAntialias
             } else return shaped * gain;
         }
         inputs[static_cast<std::size_t>(inputWrite)] = input;
+        inputs[static_cast<std::size_t>(inputWrite + inputRingSize)] = input;
         gains[static_cast<std::size_t>(inputWrite)] = gain;
         if constexpr (withTemperature)
             temperatures[static_cast<std::size_t>(inputWrite)] = kelvin;
         float result = 0;
         constexpr int lookBack = delaySamples / 2;
+        // The mirrored second half makes the last inputRingSize inputs one
+        // contiguous descending window behind this pointer: recent[-t] is the
+        // input t samples ago, with no wrap mask per tap.
+        const float* const recent = inputs.data() + inputWrite + inputRingSize;
         const double g0 = gains[static_cast<std::size_t>(
             (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
         const double g1 = gains[static_cast<std::size_t>(
@@ -198,8 +203,7 @@ struct VoiceVcaAntialias
             for (int tap = 0; tap < delaySamples; tap += 4)
                 for (int lane = 0; lane < 4; ++lane)
                 {
-                    const double sample = inputs[static_cast<std::size_t>(
-                        (inputWrite - tap - lane + inputRingSize) & (inputRingSize - 1))];
+                    const double sample = recent[-(tap + lane)];
                     for (int phase = 0; phase < phases; ++phase)
                         partial[static_cast<std::size_t>(phase)][static_cast<std::size_t>(lane)]
                             += k.interpolation[static_cast<std::size_t>(phase + 1)]
@@ -220,8 +224,7 @@ struct VoiceVcaAntialias
         for (int phase = 0; phase < k.factor; ++phase)
         {
             const double drive = phase == 0
-                ? static_cast<double>(inputs[static_cast<std::size_t>(
-                    (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))])
+                ? static_cast<double>(recent[-lookBack])
                 : reconstructed[static_cast<std::size_t>(phase)];
             // The physical control hold is slow and continuous; reconstruct
             // it linearly at the SAME delayed timestamp as the audio input.
@@ -231,29 +234,31 @@ struct VoiceVcaAntialias
             const double fraction = static_cast<double>(phase) / k.factor;
             const double g = g0 + fraction * (g1 - g0);
             const auto shaped = shape(static_cast<float>(drive));
+            float produced;
             if constexpr (withTemperature) {
                 const auto outputNoise = noise(drive, g, t0 + fraction * (t1 - t0));
-                outputs[static_cast<std::size_t>(outputWrite)] =
-                    static_cast<float>(shaped * g + outputNoise);
+                produced = static_cast<float>(shaped * g + outputNoise);
             } else if constexpr (addNoise) {
                 const auto outputNoise = noise(drive, g);
-                outputs[static_cast<std::size_t>(outputWrite)] =
-                    static_cast<float>(shaped * g + outputNoise);
+                produced = static_cast<float>(shaped * g + outputNoise);
             } else
-                outputs[static_cast<std::size_t>(outputWrite)] =
-                    static_cast<float>(shaped * g);
+                produced = static_cast<float>(shaped * g);
+            outputs[static_cast<std::size_t>(outputWrite)] = produced;
+            outputs[static_cast<std::size_t>(outputWrite + outputRingSize)] = produced;
             if (phase == 0)
             {
                 const int centre = (k.taps - 1) / 2;
+                // As for the inputs: recentOutput[-t] is the output t local
+                // samples ago, read without a wrap mask per tap.
+                const float* const recentOutput =
+                    outputs.data() + outputWrite + outputRingSize;
                 // The same symmetric pair products, in four partial sums.
                 std::array<double, 4> partial {};
                 const auto pairTerm = [&](int index) noexcept {
                     const auto& pair = k.pairs[static_cast<std::size_t>(index)];
                     const int opposite = k.taps - 1 - pair.tap;
-                    const double a = outputs[static_cast<std::size_t>(
-                        (outputWrite - pair.tap + outputRingSize) & (outputRingSize - 1))];
-                    const double b = outputs[static_cast<std::size_t>(
-                        (outputWrite - opposite + outputRingSize) & (outputRingSize - 1))];
+                    const double a = recentOutput[-pair.tap];
+                    const double b = recentOutput[-opposite];
                     return pair.weight * (a + b);
                 };
                 int index = 0;
@@ -263,8 +268,7 @@ struct VoiceVcaAntialias
                 for (; index < k.pairCount; ++index)
                     partial[0] += pairTerm(index);
                 const double y = k.decimation[static_cast<std::size_t>(centre)]
-                    * outputs[static_cast<std::size_t>(
-                        (outputWrite - centre + outputRingSize) & (outputRingSize - 1))]
+                    * recentOutput[-centre]
                     + ((partial[0] + partial[1]) + (partial[2] + partial[3]));
                 result = static_cast<float>(y);
             }
@@ -273,9 +277,15 @@ struct VoiceVcaAntialias
         inputWrite = (inputWrite + 1) & (inputRingSize - 1);
         return result;
     }
-    std::array<float, inputRingSize> inputs {}, gains {};
+    // inputs and outputs are rings kept twice over: every write lands at
+    // [cursor] and [cursor + ringSize], so the ring's last ringSize samples
+    // are always one contiguous block ending at [cursor + ringSize]. The FIR
+    // loops read that block through a plain pointer instead of masking every
+    // tap index; the first half remains a valid ring for any masked reader.
+    std::array<float, 2 * inputRingSize> inputs {};
+    std::array<float, inputRingSize> gains {};
     std::array<float, inputRingSize> temperatures {};
-    std::array<float, outputRingSize> outputs {};
+    std::array<float, 2 * outputRingSize> outputs {};
     int inputWrite {}, outputWrite {};
 };
 }

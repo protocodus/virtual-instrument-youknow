@@ -3267,21 +3267,35 @@ void YouKnowEngine::OtaCascade::prepareStageNoise(unsigned int nodeMask) noexcep
         stageNoiseAt.front()[stage] = h[1];
         stageNoiseAt.back()[stage] = h[0];
     }
+    // The reconstruction degree is one choice per call, not per stage.
+    const int degree = stageNoiseHistoryCount <= 1 ? 1
+                     : stageNoiseHistoryCount == 2 ? 2 : 3;
     for (std::size_t point = 1; point + 1 < stageNoiseAt.size(); ++point)
     {
         if ((nodeMask >> point & 1u) == 0u)
             continue;
         const double t = controlNodePositions[point];
-        for (std::size_t stage = 0; stage < 4; ++stage)
-        {
-            const auto& h = stageNoiseHistory[stage];
-            stageNoiseAt[point][stage] = stageNoiseHistoryCount <= 1
-                ? t*h[0] + (1.0-t)*h[1]
-                : stageNoiseHistoryCount == 2
-                    ? 0.5*t*(t+1.0)*h[0] + (1.0-t*t)*h[1] + 0.5*t*(t-1.0)*h[2]
-                    : weights[point][0]*h[0] + weights[point][1]*h[1]
-                        + weights[point][2]*h[2] + weights[point][3]*h[3];
-        }
+        if (degree == 1)
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const auto& h = stageNoiseHistory[stage];
+                stageNoiseAt[point][stage] = t*h[0] + (1.0-t)*h[1];
+            }
+        else if (degree == 2)
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const auto& h = stageNoiseHistory[stage];
+                stageNoiseAt[point][stage] =
+                    0.5*t*(t+1.0)*h[0] + (1.0-t*t)*h[1] + 0.5*t*(t-1.0)*h[2];
+            }
+        else
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const auto& h = stageNoiseHistory[stage];
+                stageNoiseAt[point][stage] =
+                    weights[point][0]*h[0] + weights[point][1]*h[1]
+                    + weights[point][2]*h[2] + weights[point][3]*h[3];
+            }
     }
 }
 
@@ -3868,6 +3882,25 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // stability region ends. The trajectory's interior nodes carry the hold's
     // own curvature and can leave the endpoint interval, so they are scanned
     // when one is supplied.
+    // Per-node controls and reconstructed input. Every entry a tableau reads
+    // is written below before it is read; the nodes a cheaper tableau skips
+    // are left indeterminate on purpose rather than zero-filled on every
+    // interval. A supplied trajectory is sanitized once, here, for both of
+    // its readers: the tableau plan scans every node, the integration reads
+    // the nodes its tableau visits.
+    std::array<double, pointCount> inputAt;
+    std::array<double, pointCount> omegaAt;
+    std::array<double, pointCount> feedbackAt;
+    std::array<double, pointCount> headroomAt;
+    if (trajectory != nullptr)
+        for (std::size_t point = 0; point < pointCount; ++point)
+        {
+            omegaAt[point] = clampOmegaStep(trajectory->omegaStep[point]);
+            feedbackAt[point] = std::clamp(
+                std::isfinite(trajectory->feedback[point])
+                    ? trajectory->feedback[point] : 0.0,
+                0.0, 8.0);
+        }
     const Tableau plannedTableau = [&] {
         if (solverMode == VcfSolverMode::MersonHalfSteps)
             return Tableau::MersonHalf;
@@ -3876,12 +3909,11 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         if (trajectory != nullptr)
             for (std::size_t point = 0; point < pointCount; ++point)
             {
-                planOmega = std::max(
-                    planOmega, clampOmegaStep(trajectory->omegaStep[point]));
-                const double candidate = trajectory->feedback[point];
-                if (std::isfinite(candidate))
-                    planFeedback = std::max(
-                        planFeedback, std::clamp(candidate, 0.0, 8.0));
+                planOmega = std::max(planOmega, omegaAt[point]);
+                // A non-finite node was sanitized to zero above, and zero
+                // cannot raise this non-negative maximum: the same plan the
+                // former isfinite guard produced.
+                planFeedback = std::max(planFeedback, feedbackAt[point]);
             }
         // The stage capacitor spread scales each pole independently, and the
         // Early effect scales every stage rate by at most 1 + earlyAmount.
@@ -3904,10 +3936,6 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const unsigned int nodeMask = tableauNodeMask(plannedTableau);
     prepareStageNoise(nodeMask);
 
-    std::array<double, pointCount> inputAt {};
-    std::array<double, pointCount> omegaAt {};
-    std::array<double, pointCount> feedbackAt {};
-    std::array<double, pointCount> headroomAt {};
     // A settled interval -- both endpoints equal, no hold trajectory -- is
     // most of what an instrument does, and there the node interpolation
     // below is arithmetically the identity: a + p * (b - a) with b == a is
@@ -3946,12 +3974,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         }
         else if (trajectory != nullptr)
         {
-            omegaAt[point] = clampOmegaStep(
-                trajectory->omegaStep[point]);
-            feedbackAt[point] = std::clamp(
-                std::isfinite(trajectory->feedback[point])
-                    ? trajectory->feedback[point] : 0.0,
-                0.0, 8.0);
+            // omegaAt and feedbackAt were sanitized above for the plan.
             headroomAt[point] = std::max(
                 std::isfinite(trajectory->headroom[point])
                     ? trajectory->headroom[point] : 0.0,
@@ -3975,8 +3998,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // the 25 C constant otherwise (EngineParameters::
     // enableResonanceHeadroomTemperature). Its reciprocal is taken here,
     // once per node, so the fast-reciprocal kernels keep their multiply.
-    std::array<double, pointCount> loopHeadroomAt {};
-    std::array<double, pointCount> inverseLoopHeadroomAt {};
+    std::array<double, pointCount> loopHeadroomAt;
+    std::array<double, pointCount> inverseLoopHeadroomAt;
     const auto loopHeadroomForNode = [&](double headroom) {
         return resonanceHeadroomFollowsStage
             ? resonanceHeadroomFor(headroom)
@@ -4047,8 +4070,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                                && currentCalibration > 0.0;
     const double earlyAmount =
         static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
-    std::array<double, 4> stageScale {};
-    std::array<std::array<double, 4>, pointCount> stageOffset {};
+    std::array<double, 4> stageScale;
+    std::array<std::array<double, 4>, pointCount> stageOffset;
     for (std::size_t stage = 0; stage < stageScale.size(); ++stage)
     {
         stageScale[stage] = static_cast<double>(gScale[stage]);
@@ -4057,7 +4080,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 stageOffset[point][stage] = static_cast<double>(offsetVoltage[stage])
                     + stageNoiseAt[point][stage];
     }
-    std::array<std::array<double, 4>, pointCount> stageOmegaAt {};
+    std::array<std::array<double, 4>, pointCount> stageOmegaAt;
     if (settledControls)
     {
         std::array<double, 4> rates {};
@@ -4150,22 +4173,23 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // Character-on path, those reciprocals replace 90 RHS divisions per card
     // interval on the default rung. Exact keeps the established division
     // expressions and their frozen rounding behavior.
-    const auto headroomReciprocals = [&] {
-        std::array<double, pointCount> values {};
+    // Filled in place: the nodes this tableau skips stay indeterminate and
+    // are never read, and returning the array would copy them.
+    const auto fillHeadroomReciprocals = [&](std::array<double, pointCount>& values) {
         if (settledControls)
             values.fill(1.0 / settledHeadroom);
         else
             for (std::size_t point = 0; point < pointCount; ++point)
                 if ((nodeMask >> point & 1u) != 0u)
                     values[point] = 1.0 / headroomAt[point];
-        return values;
     };
     const auto integrate = [&](auto reciprocalTag, auto tableauTag,
                                const auto& nonlinear) {
         constexpr bool useReciprocal = decltype(reciprocalTag)::value;
-        std::array<double, pointCount> inverseHeadroomAt {};
+        // Read only through normalise() when useReciprocal; otherwise unused.
+        std::array<double, pointCount> inverseHeadroomAt;
         if constexpr (useReciprocal)
-            inverseHeadroomAt = headroomReciprocals();
+            fillHeadroomReciprocals(inverseHeadroomAt);
 
         // Four doubles are an arm64 HFA: by value keeps RK states in d0-d3;
         // a const reference forces every temporary through addressable memory.
@@ -4235,7 +4259,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // tables. The feedback return stays scalar: stage zero's argument needs
     // its result.
     const auto integratePoly = [&](auto tableauTag) {
-        const auto inverseHeadroomAt = headroomReciprocals();
+        std::array<double, pointCount> inverseHeadroomAt;
+        fillHeadroomReciprocals(inverseHeadroomAt);
 
         const auto derivative = [&](std::array<double, 4> value,
                                     double drive, std::size_t point) {
@@ -12321,7 +12346,7 @@ float YouKnowEngine::finishVoiceFilter(Voice& voice,
         // after their physical PSDs are summed. Keep all existing stream
         // draws and the local FIR's delayed control/drive timestamp.
         return normal*activeParameters_.calibration*VoiceVcaSignalLaw::loadOhms/serviceGain
-            *std::sqrt(psd*oversampledRate_*factor/2);
+            *inlineSqrt(psd*oversampledRate_*factor/2);
     };
     const auto noise=[&](double pairDrive,double currentFraction) noexcept {
         return temperatureNoise(pairDrive,currentFraction,actualKelvin);
@@ -12531,6 +12556,13 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     voice.islandControlPrimed = true;
     voice.islandLastInput = frame.input;
     voice.islandBaseRate = oversampledRate_;
+    // One frame object serves every local interval of this call: each
+    // interval rewrites every field it reads, so constructing (and
+    // zero-filling) a fresh frame per interval bought nothing. The
+    // shot-factor fields are read by applyVoiceFilterShotNoise whether or not
+    // ShotFrame is set, so an interval without it restores their defaults.
+    VoiceFilterFrame local;
+    local.hasTrajectory = true;
     const auto circuit = [&](float input,
         const VoiceRateIsland<Context>::Interval& interval) noexcept -> float {
         // FIR prehistory is numerical zero, not physical time before reset.
@@ -12543,9 +12575,7 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
         filter.inputCompensationCoefficient = c.compensation;
         filter.resonanceHeadroomFollowsStage = c.has(Context::FollowHeadroom);
         const auto& nodes = voiceIslandNodes_[static_cast<std::size_t>(interval.phase)];
-        VoiceFilterFrame local;
         local.input = input;
-        local.hasTrajectory = true;
         for (std::size_t point = 0; point < 7; ++point)
         {
             const auto& node = nodes[point];
@@ -12572,6 +12602,11 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
             // the next one, so a frame's first local interval begins at zero.
             local.shotFactorFrame = interval.frame;
             local.shotFactorRefresh = interval.begin == 0.0;
+        }
+        else
+        {
+            local.shotFactorFrame = -1;
+            local.shotFactorRefresh = true;
         }
         std::array<double, 4> stageNoise {};
         for (std::size_t stage = 0; stage < (c.has(Context::Johnson) ? 4u : 1u); ++stage)
@@ -12618,7 +12653,7 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
                     + (c.has(Context::Mirror) ? Ba662Noise::outputMirrorCurrentPsd(tail, pair) : 0.0)
                     + (c.has(Context::TailMirror) ? Ba662Noise::tailMirrorCurrentPsd(tail, pair, c.kelvin) : 0.0);
                 outputNoise = normal * c.character * VoiceVcaSignalLaw::loadOhms
-                    * voltsToSample * std::sqrt(psd * localRate / 2);
+                    * voltsToSample * inlineSqrt(psd * localRate / 2);
             }
         }
         // The uncalibrated energy-to-rail proxy now reads the delayed physical
@@ -14251,11 +14286,15 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         (void) outputNetwork_.setVolume(glidedVolume_);
         (void) outputNetwork_.setNoise(jackBoardCelsius_ + 273.15,
                                 parameters.calibration);
+        // bipolarFromState() is uniform [-1, 1] with RMS 1/sqrt(3); these
+        // stages take unit-RMS draws. One folded constant rather than eight
+        // libm calls per host sample under -fno-builtin.
+        const double unitRms = inlineSqrt(3.0);
         const auto selectedOutput = outputNetwork_.process(
             networkInputLeft * internalVoltsPerUnit,
             networkInputRight * internalVoltsPerUnit,
-            std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(outputWiperNoiseStateRight_));
+            unitRms * bipolarFromState(outputWiperNoiseStateLeft_),
+            unitRms * bipolarFromState(outputWiperNoiseStateRight_));
         // Advance the independent PHONES route even while LINE is selected:
         // returning to it cannot resurrect stale capacitor/noise history. Its
         // RNGs are separate, preserving every historical LINE random sequence.
@@ -14269,12 +14308,12 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         (void) headphoneOutput_.setNoise(jackBoardCelsius_ + 273.15, parameters.calibration);
         const auto headphoneOutput = headphoneOutput_.process(
             networkInputLeft * internalVoltsPerUnit, networkInputRight * internalVoltsPerUnit,
-            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(headphoneNoiseStateRight_),
-            std::sqrt(3.0) * bipolarFromState(headphoneOutputNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(headphoneOutputNoiseStateRight_),
-            std::sqrt(3.0) * bipolarFromState(headphoneIntrinsicNoiseStateLeft_),
-            std::sqrt(3.0) * bipolarFromState(headphoneIntrinsicNoiseStateRight_));
+            unitRms * bipolarFromState(headphoneNoiseStateLeft_),
+            unitRms * bipolarFromState(headphoneNoiseStateRight_),
+            unitRms * bipolarFromState(headphoneOutputNoiseStateLeft_),
+            unitRms * bipolarFromState(headphoneOutputNoiseStateRight_),
+            unitRms * bipolarFromState(headphoneIntrinsicNoiseStateLeft_),
+            unitRms * bipolarFromState(headphoneIntrinsicNoiseStateRight_));
         const float passiveNoiseScale =
             outputPassiveNoiseScale * jackBoardJohnsonScale_;
         outputLeft += bipolarFromState(outputWiperNoiseStateLeft_)
