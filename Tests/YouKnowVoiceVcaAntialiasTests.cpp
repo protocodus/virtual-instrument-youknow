@@ -301,13 +301,34 @@ void phaseBatchingBitEquivalence()
     const auto sameFloat = [](float a, float b) {
         return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
     };
+    // Since the 2026-10-23 CPU pass each ring is stored twice (slot i and
+    // i + size agree; see VoiceVcaAntialias::writeRing), and the output ring
+    // holds float values widened to double. The frozen oracle below still
+    // writes the original single ring, so compare the logical ring -- the
+    // first copy -- bit for bit, and separately require the candidate's
+    // second copy to repeat its first exactly.
+    const auto sameDouble = [](double a, double b) {
+        return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+    };
+    const auto sameRing = [](const auto& a, const auto& b, const auto& same) {
+        const auto logical = a.size() / 2;
+        return std::equal(a.begin(), a.begin() + logical, b.begin(), same);
+    };
+    const auto mirrored = [](const auto& ring, const auto& same) {
+        const auto logical = ring.size() / 2;
+        return std::equal(ring.begin(), ring.begin() + logical,
+                          ring.begin() + logical, same);
+    };
     const auto sameHistory = [&](const VoiceVcaAntialias& a,
                                  const VoiceVcaAntialias& b) {
         return a.inputWrite == b.inputWrite && a.outputWrite == b.outputWrite
-            && std::equal(a.inputs.begin(), a.inputs.end(), b.inputs.begin(), sameFloat)
-            && std::equal(a.gains.begin(), a.gains.end(), b.gains.begin(), sameFloat)
-            && std::equal(a.temperatures.begin(), a.temperatures.end(), b.temperatures.begin(), sameFloat)
-            && std::equal(a.outputs.begin(), a.outputs.end(), b.outputs.begin(), sameFloat);
+            && sameRing(a.inputs, b.inputs, sameFloat)
+            && sameRing(a.gains, b.gains, sameFloat)
+            && sameRing(a.temperatures, b.temperatures, sameFloat)
+            && sameRing(a.outputs, b.outputs, sameDouble)
+            && mirrored(a.inputs, sameFloat) && mirrored(a.gains, sameFloat)
+            && mirrored(a.temperatures, sameFloat)
+            && mirrored(a.outputs, sameDouble);
     };
     struct Callbacks
     {
