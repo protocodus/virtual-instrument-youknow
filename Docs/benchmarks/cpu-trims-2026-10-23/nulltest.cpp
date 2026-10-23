@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,6 +30,9 @@ int main(int argc, char** argv) {
     using namespace youknow;
     if (argc < 5) { std::fprintf(stderr, "usage: nulltest OUTDIR original|direct RATE max|normal [FIRST LAST]\n"); return 2; }
     const std::string outDir = argv[1];
+    std::error_code directoryError;
+    std::filesystem::create_directories(outDir, directoryError);
+    if (directoryError) { std::fprintf(stderr, "%s: %s\n", outDir.c_str(), directoryError.message().c_str()); return 1; }
     const bool original = std::string(argv[2]) == "original";
     const int rate = std::atoi(argv[3]);
     const bool normal = std::string(argv[4]) == "normal";

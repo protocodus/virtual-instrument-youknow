@@ -4173,15 +4173,15 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // Character-on path, those reciprocals replace 90 RHS divisions per card
     // interval on the default rung. Exact keeps the established division
     // expressions and their frozen rounding behavior.
-    const auto headroomReciprocals = [&] {
-        std::array<double, pointCount> values;
+    // Filled in place: the nodes this tableau skips stay indeterminate and
+    // are never read, and returning the array would copy them.
+    const auto fillHeadroomReciprocals = [&](std::array<double, pointCount>& values) {
         if (settledControls)
             values.fill(1.0 / settledHeadroom);
         else
             for (std::size_t point = 0; point < pointCount; ++point)
                 if ((nodeMask >> point & 1u) != 0u)
                     values[point] = 1.0 / headroomAt[point];
-        return values;
     };
     const auto integrate = [&](auto reciprocalTag, auto tableauTag,
                                const auto& nonlinear) {
@@ -4189,7 +4189,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
         // Read only through normalise() when useReciprocal; otherwise unused.
         std::array<double, pointCount> inverseHeadroomAt;
         if constexpr (useReciprocal)
-            inverseHeadroomAt = headroomReciprocals();
+            fillHeadroomReciprocals(inverseHeadroomAt);
 
         // Four doubles are an arm64 HFA: by value keeps RK states in d0-d3;
         // a const reference forces every temporary through addressable memory.
@@ -4259,7 +4259,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // tables. The feedback return stays scalar: stage zero's argument needs
     // its result.
     const auto integratePoly = [&](auto tableauTag) {
-        const auto inverseHeadroomAt = headroomReciprocals();
+        std::array<double, pointCount> inverseHeadroomAt;
+        fillHeadroomReciprocals(inverseHeadroomAt);
 
         const auto derivative = [&](std::array<double, 4> value,
                                     double drive, std::size_t point) {
@@ -12556,9 +12557,10 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     voice.islandLastInput = frame.input;
     voice.islandBaseRate = oversampledRate_;
     // One frame object serves every local interval of this call: each
-    // interval rewrites every field it reads, and the shot-factor fields are
-    // only read when ShotFrame also writes them, so constructing (and
-    // zero-filling) a fresh frame per interval bought nothing.
+    // interval rewrites every field it reads, so constructing (and
+    // zero-filling) a fresh frame per interval bought nothing. The
+    // shot-factor fields are read by applyVoiceFilterShotNoise whether or not
+    // ShotFrame is set, so an interval without it restores their defaults.
     VoiceFilterFrame local;
     local.hasTrajectory = true;
     const auto circuit = [&](float input,
@@ -12600,6 +12602,11 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
             // the next one, so a frame's first local interval begins at zero.
             local.shotFactorFrame = interval.frame;
             local.shotFactorRefresh = interval.begin == 0.0;
+        }
+        else
+        {
+            local.shotFactorFrame = -1;
+            local.shotFactorRefresh = true;
         }
         std::array<double, 4> stageNoise {};
         for (std::size_t stage = 0; stage < (c.has(Context::Johnson) ? 4u : 1u); ++stage)

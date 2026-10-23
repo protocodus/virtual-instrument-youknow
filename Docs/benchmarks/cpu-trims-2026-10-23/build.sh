@@ -1,5 +1,5 @@
 #!/bin/bash
-plugin] [JOBS]|plugin] [JOBS]
+# build.sh TREE bench|nulltest OUT [rack|plugin] [JOBS] -- compile one harness tool against a checkout
 # rack:   C++17, -O3 -fno-builtin -DYOUKNOW_EMBEDDED_TARGET=1, engine TUs only (no Panel/Presets)
 # plugin: C++20, -O3, every DSP TU (Presets available)
 set -e
