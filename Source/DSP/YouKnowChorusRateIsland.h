@@ -59,10 +59,13 @@ struct ChorusRateIsland
         float transferFraction {}, transferCorrelation {1};
         bool narrow {}, muteDrive {}, clockMute {}, finiteMute {}, correlatedNoise {}, finiteTr5 {};
     };
-    std::array<float,inputSize> inputs {};
+    // Mirrored rings, as VoiceVcaAntialias keeps them: each write lands at
+    // [cursor] and [cursor + size], so the FIR taps read one contiguous
+    // window ending at [cursor + size] without a wrap mask per tap.
+    std::array<float,2*inputSize> inputs {};
     std::array<Controls,inputSize> controls {};
     std::array<Context,inputSize> contexts {};
-    std::array<std::array<float,outputSize>,2> outputs {};
+    std::array<std::array<float,2*outputSize>,2> outputs {};
     int inputWrite {}, outputWrite {}, priming {};
 
     void reset() noexcept { *this = {}; }
@@ -83,8 +86,11 @@ struct ChorusRateIsland
         if (kernel.factor == 1) return process(input, control);
         constexpr int im = inputSize-1, om = outputSize-1;
         inputs[static_cast<std::size_t>(inputWrite)] = input;
+        inputs[static_cast<std::size_t>(inputWrite+inputSize)] = input;
         controls[static_cast<std::size_t>(inputWrite)] = control;
         const int source = (inputWrite-halfDelay+inputSize)&im;
+        // recentInput[-t] is the input t parent samples ago.
+        const float* const recentInput = inputs.data()+inputWrite+inputSize;
         const auto& delayed = controls[static_cast<std::size_t>(source)];
         Context context {};
         // Zero history before the first input is not physical elapsed time.
@@ -99,11 +105,12 @@ struct ChorusRateIsland
             else for (int tap=0; tap<VoiceVcaAntialias::delaySamples; ++tap)
                 drive += kernel.interpolation[static_cast<std::size_t>(phase)]
                                              [static_cast<std::size_t>(tap)]
-                    * inputs[static_cast<std::size_t>((inputWrite-tap+inputSize)&im)];
+                    * recentInput[-tap];
             const auto result = ready
                 ? process(static_cast<float>(drive), delayed) : Result {};
-            outputs[0][static_cast<std::size_t>((outputWrite+phase)&om)] = result.left;
-            outputs[1][static_cast<std::size_t>((outputWrite+phase)&om)] = result.right;
+            const auto slot = static_cast<std::size_t>((outputWrite+phase)&om);
+            outputs[0][slot] = outputs[0][slot+outputSize] = result.left;
+            outputs[1][slot] = outputs[1][slot+outputSize] = result.right;
             // The decimator's centre is its phase-zero output sample.
             if (phase==0) context=result.context;
         }
@@ -111,19 +118,21 @@ struct ChorusRateIsland
         Result result {};
         result.context=contexts[static_cast<std::size_t>(source)];
         const int centre=(kernel.taps-1)/2;
-        const int centreIndex=(outputWrite-centre+outputSize)&om;
+        // recentOutput[c][-t] is channel c's output t local samples ago.
+        const float* const recentOutput[2] {
+            outputs[0].data()+outputWrite+outputSize,
+            outputs[1].data()+outputWrite+outputSize };
         std::array<double,2> sum {
-            kernel.decimation[static_cast<std::size_t>(centre)] * outputs[0][static_cast<std::size_t>(centreIndex)],
-            kernel.decimation[static_cast<std::size_t>(centre)] * outputs[1][static_cast<std::size_t>(centreIndex)] };
+            kernel.decimation[static_cast<std::size_t>(centre)] * recentOutput[0][-centre],
+            kernel.decimation[static_cast<std::size_t>(centre)] * recentOutput[1][-centre] };
         for (int i=0; i<kernel.pairCount; ++i)
         {
             const auto& pair=kernel.pairs[static_cast<std::size_t>(i)];
-            const int first=(outputWrite-pair.tap+outputSize)&om;
-            const int second=(outputWrite-(kernel.taps-1-pair.tap)+outputSize)&om;
+            const int opposite=kernel.taps-1-pair.tap;
             for (int channel=0; channel<2; ++channel)
                 sum[static_cast<std::size_t>(channel)] += pair.weight
-                    * (static_cast<double>(outputs[static_cast<std::size_t>(channel)][static_cast<std::size_t>(first)])
-                     + static_cast<double>(outputs[static_cast<std::size_t>(channel)][static_cast<std::size_t>(second)]));
+                    * (static_cast<double>(recentOutput[channel][-pair.tap])
+                     + static_cast<double>(recentOutput[channel][-opposite]));
         }
         result.left=static_cast<float>(sum[0]);
         result.right=static_cast<float>(sum[1]);

@@ -12555,6 +12555,12 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     voice.islandControlPrimed = true;
     voice.islandLastInput = frame.input;
     voice.islandBaseRate = oversampledRate_;
+    // One frame object serves every local interval of this call: each
+    // interval rewrites every field it reads, and the shot-factor fields are
+    // only read when ShotFrame also writes them, so constructing (and
+    // zero-filling) a fresh frame per interval bought nothing.
+    VoiceFilterFrame local;
+    local.hasTrajectory = true;
     const auto circuit = [&](float input,
         const VoiceRateIsland<Context>::Interval& interval) noexcept -> float {
         // FIR prehistory is numerical zero, not physical time before reset.
@@ -12567,9 +12573,7 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
         filter.inputCompensationCoefficient = c.compensation;
         filter.resonanceHeadroomFollowsStage = c.has(Context::FollowHeadroom);
         const auto& nodes = voiceIslandNodes_[static_cast<std::size_t>(interval.phase)];
-        VoiceFilterFrame local;
         local.input = input;
-        local.hasTrajectory = true;
         for (std::size_t point = 0; point < 7; ++point)
         {
             const auto& node = nodes[point];
