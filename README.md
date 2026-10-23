@@ -197,6 +197,19 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.4 — 2026-10-23 — Less CPU for the same samples
+
+- Trims the voice filter's per-interval setup, reads the voice-island,
+  chorus-island and output-summer FIR transports through contiguous windows,
+  and takes the audio path's square roots in line. Every rendered sample is
+  bit-identical to 1.3.3: all 144 presets at Normal Circuit Rate, a Max-rate
+  subset, and Original and Direct timing. Circuit equations, kernels,
+  processing rates, latency and noise chronology are unchanged.
+- [Measurement and validation](Docs/benchmarks/cpu-trims-2026-10-23.md):
+  about 5 % fewer instructions per block at the Rack's six-voice Normal
+  configuration and 6 % at Max, on a development container, not a
+  Reason-host measurement.
+
 ### 1.3.3 — 2026-10-22 — Release version for the Reason Shop
 
 - Version number only: the sound engine, presets and parameters are the same as

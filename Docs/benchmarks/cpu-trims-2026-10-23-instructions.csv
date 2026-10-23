@@ -1,0 +1,8 @@
+circuit,preset,blocks,baseline_ir_per_block,exact_ir_per_block,exact_reduction_percent,exact_hash_equal
+max,0,200,10462461,9796184,6.37,yes
+max,80,200,10311560,9645781,6.46,yes
+normal,-1,400,10423624,9926852,4.77,yes
+normal,0,300,6678402,6334752,5.15,yes
+normal,40,300,6389177,6048513,5.33,yes
+normal,80,300,6519450,6177467,5.25,yes
+normal,130,300,6809245,6457921,5.16,yes
