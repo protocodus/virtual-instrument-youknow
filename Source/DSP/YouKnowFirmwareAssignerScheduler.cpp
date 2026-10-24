@@ -370,6 +370,12 @@ struct Completion {
     }
 };
 
+// Field by field: GCC lowers the aggregate `pending = {}` to a byte-wise
+// `rep stos`, once per emulated instruction.
+void clearPending(Trace::Pending &p) noexcept {
+    p.kind = Trace::PendingKind::None; p.start = 0; p.remaining = 0; p.address = 0;
+    p.returnPc = 0; p.savedPsw = 0; p.skipped = false;
+}
 bool valid(const Trace::State &s) noexcept {
     const auto &r = s.registers;
     const unsigned bytes[] = {r.a,r.b,r.c,r.d,r.e,r.h,r.l,r.v,r.alternateA,
@@ -485,7 +491,7 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                     state.patchRam[event.address - 0x2000] = static_cast<std::uint8_t>(event.value);
                 events.entries[events.count++] = event;
             }
-            state.pending = {};
+            clearPending(state.pending);
             if (pending.kind == PendingKind::Instruction) {
                 ++result.completedInstructions;
                 if (state.eiDeferred != 0) --state.eiDeferred;
