@@ -376,6 +376,42 @@ void clearPending(Trace::Pending &p) noexcept {
     p.kind = Trace::PendingKind::None; p.start = 0; p.remaining = 0; p.address = 0;
     p.returnPc = 0; p.savedPsw = 0; p.skipped = false;
 }
+// An instruction whose execute() case touches registers, flags, interrupt
+// state and the input pins only: no bus read or write, no stack, no peripheral
+// write and no event except the single ForegroundPass marker of a jump. Its
+// completion cannot fail once one event slot is free, so it needs no snapshot
+// to roll back. Any operation not listed here, including one added later, is
+// treated as fallible and keeps the snapshot.
+constexpr bool cannotFail(Op op) noexcept {
+    switch (op) {
+    case Op::NOP: case Op::ADDNC_A_C: case Op::ADI_A_xx: case Op::ADI_E_xx:
+    case Op::SUI_A_xx: case Op::SUINB_A_xx: case Op::ANA_A_C: case Op::ANI_A_xx:
+    case Op::ORA_A_B: case Op::ORA_A_C: case Op::ORI_A_xx: case Op::XRA_A_C:
+    case Op::XRI_A_xx: case Op::OFFI_A_xx: case Op::OFFI_MKH_xx: case Op::ONI_A_xx:
+    case Op::ONI_B_xx: case Op::ONI_ANM_xx: case Op::ONI_PC_xx: case Op::EQI_A_xx:
+    case Op::EQI_B_xx: case Op::EQI_C_xx: case Op::NEA_A_C: case Op::NEI_A_xx:
+    case Op::NEI_C_xx: case Op::LTI_A_xx: case Op::LTI_B_xx: case Op::GTI_A_xx:
+    case Op::GTI_B_xx: case Op::INR_A: case Op::INR_B: case Op::INR_C:
+    case Op::DCR_A: case Op::DCR_B: case Op::DCR_C: case Op::INX_DE:
+    case Op::INX_HL: case Op::DCX_DE: case Op::DCX_HL: case Op::NEGA:
+    case Op::SLR_A: case Op::SLRC_A: case Op::SLR_B: case Op::SLRC_C:
+    case Op::SLL_A: case Op::SLLC_C: case Op::RLR_C: case Op::DSLL_EA:
+    case Op::DSLR_EA: case Op::CLC: case Op::STC: case Op::SK_HC: case Op::SK_Z:
+    case Op::SKIT_FSR: case Op::SKIT_FST: case Op::SKNIT_ER: case Op::JMP_w:
+    case Op::JR: case Op::JRE: case Op::EI: case Op::EXA: case Op::EXX:
+    case Op::LXI_D_w: case Op::LXI_EA_s: case Op::LXI_H_w: case Op::MVI_A_xx:
+    case Op::MVI_B_xx: case Op::MVI_C_xx: case Op::MVI_D_xx: case Op::MVI_E_xx:
+    case Op::MVI_H_xx: case Op::DMOV_HL_EA: case Op::MOV_A_B: case Op::MOV_A_C:
+    case Op::MOV_A_D: case Op::MOV_A_E: case Op::MOV_A_L: case Op::MOV_A_EAH:
+    case Op::MOV_A_EAL: case Op::MOV_B_A: case Op::MOV_C_A: case Op::MOV_E_A:
+    case Op::MOV_L_A: case Op::MOV_EAH_A: case Op::MOV_EAL_A: case Op::MOV_A_PA:
+    case Op::MOV_A_PC: case Op::MOV_A_CR0: case Op::MOV_A_CR1: case Op::MOV_A_CR2:
+    case Op::MOV_A_CR3:
+        return true;
+    default:
+        return false;
+    }
+}
 bool valid(const Trace::State &s) noexcept {
     const auto &r = s.registers;
     const unsigned bytes[] = {r.a,r.b,r.c,r.d,r.e,r.h,r.l,r.v,r.alternateA,
@@ -452,23 +488,37 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                 static_cast<std::uint16_t>(input.kind), input.value};
         }
         if (state.pending.kind != PendingKind::None && state.pending.remaining == 0) {
-            // One snapshot per completion instead of a staged copy and a
-            // copy back: the instruction runs in place and a failure below
-            // restores the snapshot before returning.
-            const ExecutionState committed = state;
+            const auto pending = state.pending;
+            const Instruction *instruction = nullptr;
+            if (pending.kind == PendingKind::Instruction) {
+                instruction = find(pending.address);
+                if (!instruction) return finish(Status::InvalidState);
+            }
+            // The instruction runs in place. A completion that can still fail
+            // below first takes a snapshot, which a failure restores before
+            // returning; a skipped instruction, or one that cannot fail with
+            // an event slot free, has nothing to roll back.
+            const bool infallible = instruction != nullptr
+                && (pending.skipped || cannotFail(instruction->op))
+                && events.count < events.entries.size();
+            // Storage only: no member is initialized unless the snapshot is
+            // taken (assigning the trivially copyable state starts its life).
+            union Snapshot {
+                bool none;
+                ExecutionState state;
+                Snapshot() noexcept : none(false) {}
+            } committed;
+            if (!infallible) committed.state = state;
             const auto rollback = [&](Status status) {
-                static_cast<ExecutionState &>(state) = committed;
+                if (!infallible) static_cast<ExecutionState &>(state) = committed.state;
                 return finish(status);
             };
             Completion commit(state, configuration, tables, inputs);
-            const auto pending = state.pending;
             if (pending.kind == PendingKind::InterruptEntry) {
                 commit.pushByte(pending.savedPsw); commit.push(pending.returnPc);
                 auto &r = commit.state.registers;
                 r.pc = pending.address; r.skip = false; r.l0 = false; r.l1 = false;
             } else {
-                const auto *instruction = find(pending.address);
-                if (!instruction) return rollback(Status::InvalidState);
                 commit.execute(*instruction, uart);
             }
             if (commit.error != Status::ReachedTarget) return rollback(commit.error);
@@ -482,7 +532,7 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                     static_cast<std::uint8_t>(commit.peripheralValue), uartEvents);
             if (writeStatus != Uart::Status::Ok) return rollback(uartStatus(writeStatus));
             if (pending.kind == PendingKind::Instruction && !pending.skipped &&
-                find(pending.address)->op == Op::SKIT_FST) (void)Uart::testAndClearFst(uart);
+                instruction->op == Op::SKIT_FST) (void)Uart::testAndClearFst(uart);
             for (unsigned i = 0; i < commit.count; ++i) {
                 const auto &event = commit.events[i];
                 if (event.kind == EventKind::RamWrite || event.kind == EventKind::StackWrite)
