@@ -1609,7 +1609,9 @@ float YouKnowEngine::outputSummerClip(float value) noexcept
     const double squared = normalised * normalised;
     const double fourth = squared * squared;
     const double eighth = fourth * fourth;
-    const double denominator = std::sqrt(std::sqrt(std::sqrt(1.0 + eighth)));
+    // inlineSqrt: the same correctly rounded root, in line under the Rack
+    // toolchain's -fno-builtin, where std::sqrt is a libm call per root.
+    const double denominator = inlineSqrt(inlineSqrt(inlineSqrt(1.0 + eighth)));
     return static_cast<float>(static_cast<double>(value) / denominator);
 }
 
@@ -3759,9 +3761,12 @@ double YouKnowEngine::OtaCascade::closedLoopSpectralFactor(
     // that is 2.494; with the loop open it is exactly one.
     const double bounded = std::clamp(
         std::isfinite(feedback) ? feedback : 0.0, 0.0, 8.0);
-    const double q = std::sqrt(std::sqrt(bounded)) * 0.70710678118654752440;
+    // inlineSqrt: the identical correctly rounded root, kept in line under
+    // the Rack toolchain's -fno-builtin; planTableau reaches this on every
+    // interval whose step misses the ceiling short circuit.
+    const double q = inlineSqrt(inlineSqrt(bounded)) * 0.70710678118654752440;
     const double real = 1.0 + q;
-    const double factor = std::sqrt(real * real + q * q);
+    const double factor = inlineSqrt(real * real + q * q);
     // `planTableau`'s short circuit trusts the declared ceiling, so hold the
     // formula to it here rather than restating the constant in a comment. The
     // clamp is the identity for every admissible feedback.
@@ -14269,7 +14274,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const float openScale = coefficients.outputSummerMutedNoiseScale;
         const float closedScale = coefficients.outputSummerNoiseScale;
         const float summerNoiseScale = (continuousWetNoise
-            ? static_cast<float>(std::sqrt(openScale*openScale
+            ? static_cast<float>(inlineSqrt(openScale*openScale
                 + summerHostContext.wetRatio*(closedScale*closedScale-openScale*openScale)))
             : (summerWetConnected ? closedScale : openScale)) * jackBoardJohnsonScale_;
         outputLeft += outputNoiseLeft * summerNoiseScale;
