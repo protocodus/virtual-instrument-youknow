@@ -41,7 +41,11 @@ void restorePsw(Trace::Registers &r, unsigned p) noexcept {
     r.halfCarry = (p & 16) != 0; r.skip = (p & 32) != 0; r.zero = (p & 64) != 0;
 }
 struct Completion {
-    Trace::ExecutionState state;
+    // The instruction executes on the caller's live execution state. RAM and
+    // patch RAM still change only through the write ledger below, and
+    // advanceTo restores the execution state from its committed copy on every
+    // failure, so a failed instruction leaves the frontier exactly as before.
+    Trace::ExecutionState &state;
     const Trace::State &source;
     const Trace::Configuration &configuration;
     const Trace::Tables &tables;
@@ -51,7 +55,7 @@ struct Completion {
     Trace::Status error = Trace::Status::ReachedTarget;
     bool txWrite = false, pcWrite = false;
     unsigned peripheralValue = 0;
-    Completion(const Trace::State &s, const Trace::Configuration &c,
+    Completion(Trace::State &s, const Trace::Configuration &c,
                const Trace::Tables &t, const Io::Inputs &in)
         : state(s), source(s), configuration(c), tables(t), inputs(in) {}
     void emit(Trace::EventKind kind, unsigned address, unsigned value) noexcept {
@@ -441,19 +445,28 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                 static_cast<std::uint16_t>(input.kind), input.value};
         }
         if (state.pending.kind != PendingKind::None && state.pending.remaining == 0) {
+            // One copy of the committed execution state per instruction,
+            // kept only to roll back a failure; the success path no longer
+            // stages a second copy and writes it back (the same transaction,
+            // half the per-instruction state traffic).
+            const ExecutionState committed = state;
+            const auto rollback = [&](Status status) {
+                static_cast<ExecutionState &>(state) = committed;
+                return finish(status);
+            };
             Completion commit(state, configuration, tables, inputs);
-            const auto pending = state.pending;
+            const auto pending = committed.pending;
             if (pending.kind == PendingKind::InterruptEntry) {
                 commit.pushByte(pending.savedPsw); commit.push(pending.returnPc);
                 auto &r = commit.state.registers;
                 r.pc = pending.address; r.skip = false; r.l0 = false; r.l1 = false;
             } else {
                 const auto *instruction = find(pending.address);
-                if (!instruction) return finish(Status::InvalidState);
+                if (!instruction) return rollback(Status::InvalidState);
                 commit.execute(*instruction, uart);
             }
-            if (commit.error != Status::ReachedTarget) return finish(commit.error);
-            if (events.entries.size() - events.count < commit.count) return finish(Status::OutputFull);
+            if (commit.error != Status::ReachedTarget) return rollback(commit.error);
+            if (events.entries.size() - events.count < commit.count) return rollback(Status::OutputFull);
             Uart::Status writeStatus = Uart::Status::Ok;
             if (commit.txWrite)
                 writeStatus = Uart::writeTxBuffer(uart, configuration.uart,
@@ -461,10 +474,9 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
             else if (commit.pcWrite)
                 writeStatus = Uart::writePortC(uart,
                     static_cast<std::uint8_t>(commit.peripheralValue), uartEvents);
-            if (writeStatus != Uart::Status::Ok) return finish(uartStatus(writeStatus));
+            if (writeStatus != Uart::Status::Ok) return rollback(uartStatus(writeStatus));
             if (pending.kind == PendingKind::Instruction && !pending.skipped &&
                 find(pending.address)->op == Op::SKIT_FST) (void)Uart::testAndClearFst(uart);
-            static_cast<ExecutionState &>(state) = commit.state;
             for (unsigned i = 0; i < commit.count; ++i) {
                 const auto &event = commit.events[i];
                 if (event.kind == EventKind::RamWrite || event.kind == EventKind::StackWrite)
