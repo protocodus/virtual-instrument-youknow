@@ -170,7 +170,8 @@ FirmwareAssignerAudioBridge::Result FirmwareAssignerAudioBridge::advanceTo(
         }
         const auto next = state.assigner.now
             + std::min(statesPerSlice, target - state.assigner.now);
-        Sender::Events discarded;
+        auto& discarded = state.discardedEvents;
+        discarded.count = 0;
         Uart::EventBuffer wire{state.pendingWire.data(), state.pendingWire.size(), 0};
         const auto sender = Sender::advanceTo(
             state.assigner, state.uart, configuration, tables, inputs,
