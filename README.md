@@ -215,7 +215,7 @@ Or hear one mechanism at a time:
   Circuit equations, processing defaults, presets, gain and latency stay the same.
   [Implementation and validation method](Docs/research/efficiency-1.3.5.md).
 
-### 1.3.4 (Rack line) — 2026-10-22 — Continuous circuit controls
+### 1.3.4 — 2026-10-22 — Continuous circuit controls (Rack line)
 
 - Reconstruct the filter cutoff's curved settling between converter writes
   inside the existing voice circuit calculation.
@@ -227,7 +227,7 @@ Or hear one mechanism at a time:
   preset controls, gain calibration and reported latency. Their fine-step
   references establish improved simulation accuracy, not a new hardware fit.
 
-### 1.3.4 (main line) — 2026-10-23 — Less CPU for the same samples
+### 1.3.4 — 2026-10-23 — Less CPU for the same samples (main line)
 
 - Trims the voice filter's per-interval setup, reads the voice-island,
   chorus-island and output-summer FIR transports through contiguous windows,
