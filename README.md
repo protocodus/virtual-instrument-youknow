@@ -197,6 +197,22 @@ Or hear one mechanism at a time:
 
 ## Version history
 
+### 1.3.7 — 2026-10-26 — Switches follow a recalled preset; panel moves get through dense bends
+
+- In Original timing, loading a preset or restoring a session now also sets
+  the emulated panel's switch row (PWM, ENV polarity, VCA mode, HPF). Before,
+  the firmware merged a later switch move over positions the panel no longer
+  showed: moving a switch back to where it stood before the recall went
+  unheard, and moving PWM on a Gate patch could switch its VCA to the
+  envelope, so notes rang on after key-up. Patches received over MIDI keep
+  the instrument's behaviour.
+- In Original timing, a pitch-bend or modulation stream dense enough to fill
+  the emulated MIDI cable no longer holds back panel moves until it stops.
+  The firmware sends a panel edit only after the cable has been quiet for
+  384 µs, so each merged controller message now leaves that gap: such a
+  stream reaches the instrument at most about 740 times a second instead of
+  about 1,040.
+
 ### 1.3.6 — 2026-10-26 — One line for main and the Rack
 
 - Joins the two lines that both left 1.3.3: the 1.3.4 CPU trims below,

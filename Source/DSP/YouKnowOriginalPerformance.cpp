@@ -107,7 +107,18 @@ bool OriginalPerformance::continuousMessage(const std::array<std::uint8_t,3>& by
             return true;
         }
     }
-    return message(bytes,now);
+    // A-5 07C5..07CE gives receive priority: before a route change its
+    // transmit service polls RXB for 48 passes of 32 states and yields to any
+    // byte that arrives. Back-to-back frames never leave that window, so a
+    // dense host stream would hold every queued panel edit until it stopped.
+    // Leave the window before each merged controller frame.
+    // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1105-L1110
+    constexpr std::uint64_t receivePollStates=48u*32u;
+    const auto line=nextRx_;
+    if(nextRx_+receivePollStates>now+1280u) nextRx_+=receivePollStates;
+    if(message(bytes,now)) return true;
+    nextRx_=line;
+    return false;
 }
 bool OriginalPerformance::keyboardNoteOn(int sourceNote, int midiPitch) noexcept {
     if(sourceNote<0 || sourceNote>=128 || midiPitch<0 || midiPitch>=128) return false;
@@ -155,6 +166,12 @@ bool OriginalPerformance::parameters(const EngineParameters& p,std::uint64_t now
         bytes[0]=0xf0; bytes[1]=0x41; bytes[2]=0x31;
         std::copy(next.begin(),next.end(),bytes.begin()+5); bytes.back()=0xf7;
         if(!message(bytes,now)) return false;
+        // The plug-in's panel is the only one a user sees, and a recall moves
+        // its switches. Seed column 5's detents and preceding scan together,
+        // as reset does, so a later single-switch edit (A-5 0C0C..0C28 merges
+        // edited contacts over FF8F) cannot reveal positions nobody can see.
+        // https://github.com/ErroneousBosh/j106roms/blob/26926a04ff1939106820313e71e34b4ca2f67070/ic1.txt#L1992-L2004
+        inputs_.panel[5]=state_.assigner.ram[0xa7]=next[17];
     } else if(source==ParameterInputSource::Panel) {
         std::uint32_t fields=0;
         for(unsigned i=0;i<16;++i)
