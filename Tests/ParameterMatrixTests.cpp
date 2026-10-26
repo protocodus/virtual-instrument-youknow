@@ -46,6 +46,11 @@ public:
         release = find ("Release");
         poly1 = find ("Poly 1");
         poly2 = find ("Poly 2");
+        saw = find ("Saw");
+        pulse = find ("Pulse");
+        sub = find ("Sub");
+        noise = find ("Noise");
+        resonance = find ("VCF Res");
     }
 
     matrix::Limits LimitsFor (const matrix::Case& c) const override
@@ -77,15 +82,27 @@ public:
                 std::max (c.values[release], c.base[release]));
             limits.releaseSeconds = std::max (limits.releaseSeconds, static_cast<double> (seconds) + 0.25);
         }
-        // Silent by design: Volume or VCA Level at zero. So are plucks and
-        // percussion: by the held window the envelope has decayed to a
-        // Sustain of zero or a little above, and has closed the filter it
-        // also drives (in Gate mode too), as YB2 Pulse Pluck at 12 % sits
-        // near -68 dBFS before its trim. A quarter of travel separates those
-        // presets from the sustained ones.
+        // Silent by design: Volume or VCA Level at zero, or Output Trim at
+        // its -48 dB end, which puts any held chord quieter than -12 dBFS
+        // under the floor (A54 Funky II's sits near -48 dBFS before its
+        // trim). So are plucks and percussion: by the held window the
+        // envelope has decayed to a Sustain of zero or a little above, and
+        // has closed the filter it also drives (in Gate mode too), as YB2
+        // Pulse Pluck at 12 % sits near -68 dBFS before its trim. A quarter
+        // of travel separates those presets from the sustained ones. And so
+        // is a voice with no source: Saw and Pulse off, Sub and Noise at
+        // zero, and no resonance for the filter to ring with, which is how
+        // B75 High Bells sounds at VCF Res 0.
+        const auto noSource = [this] (const std::vector<float>& row)
+        {
+            return row[saw] < 0.5f && row[pulse] < 0.5f && row[sub] <= 0.0f
+                && row[noise] <= 0.0f && row[resonance] <= 0.0f;
+        };
         if (std::min (c.values[volume], c.base[volume]) <= 0.0f
             || std::min (c.values[vcaLevel], c.base[vcaLevel]) <= 0.0f
-            || std::min (c.values[sustain], c.base[sustain]) < 0.25f)
+            || std::min (c.values[outputTrim], c.base[outputTrim]) <= 0.0f
+            || std::min (c.values[sustain], c.base[sustain]) < 0.25f
+            || noSource (c.values) || noSource (c.base))
             limits.soundsWhileHeld = false;
         return limits;
     }
@@ -103,6 +120,7 @@ public:
 
 private:
     std::size_t outputTrim = 0, volume = 0, vcaLevel = 0, vcaMode = 0, sustain = 0, release = 0, poly1 = 0, poly2 = 0;
+    std::size_t saw = 0, pulse = 0, sub = 0, noise = 0, resonance = 0;
 };
 } // namespace
 
