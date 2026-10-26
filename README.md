@@ -201,8 +201,12 @@ Or hear one mechanism at a time:
 
 - Joins the two lines that both left 1.3.3: the 1.3.4 CPU trims below,
   which were on main, and the 1.3.4 and 1.3.5 work the Rack Extension
-  ships, which was not. Nothing else changes; both lines named a 1.3.4,
-  so the two entries are marked by line.
+  ships, which was not. Both lines named a 1.3.4, so the two entries are
+  marked by line.
+- Every rendered sample is bit-identical to the 1.3.5 the Rack pins: all
+  144 presets at 48 kHz, Normal Circuit Rate and Original timing, built
+  with the Rack's compiler flags, through the
+  [1.3.4 null-test harness](Docs/benchmarks/cpu-trims-2026-10-23.md#audio-parity).
 
 ### 1.3.5 — 2026-10-22 — Less repeated simulation work
 
