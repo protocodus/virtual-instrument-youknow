@@ -85,13 +85,33 @@ void activeProductPromotion()
             && applied.enableEvidenceVcaCalibration && applied.useOriginalCardVcfCalibration
             && applied.enableVoiceVcaJunctionTemperature && applied.useBa662AResonanceOffsetEstimate
             && applied.enableCoupledMixerBandlimitedSwitch && applied.enableChorusRateIsland
-            && applied.enableVoiceFilterRateIsland,
+            && applied.enableVoiceFilterRateIsland
+            && applied.enableVcfSettlingReconstruction
+            && applied.enableVoiceVcaControlReconstruction
+            && applied.enableContinuousChorusMuteLoading,
             "active product setup lost an accepted-B circuit selection");
 }
 
 void selections(const YouKnowEngine& engine)
 {
     const auto parameters = Probe::parameters(engine);
+    require(parameters.enableVcfSettlingReconstruction
+            && parameters.enableVoiceVcaControlReconstruction
+            && parameters.enableContinuousChorusMuteLoading,
+            "combined profile did not select continuous filter/VCA/chorus reconstruction");
+    const EngineParameters diagnostic;
+    require(!diagnostic.enableVcfSettlingReconstruction
+            && !diagnostic.enableVoiceVcaControlReconstruction
+            && !diagnostic.enableContinuousChorusMuteLoading,
+            "raw diagnostic reference unexpectedly selected product reconstruction");
+    for(int mechanism=0;mechanism<3;++mechanism)
+    {
+        auto changed=parameters;
+        if(mechanism==0)changed.enableVcfSettlingReconstruction=false;
+        if(mechanism==1)changed.enableVoiceVcaControlReconstruction=false;
+        if(mechanism==2)changed.enableContinuousChorusMuteLoading=false;
+        require(changed!=parameters,"continuous reconstruction flag omitted from parameter equality");
+    }
     require(parameters.chorusTimingProfile == ChorusTimingProfile::HardwareEvidence,
             "combined profile did not retain recording-derived chorus timing");
     require(parameters.enableEvidenceVcaCalibration

@@ -197,7 +197,33 @@ Or hear one mechanism at a time:
 
 ## Version history
 
-### 1.3.4 — 2026-10-23 — Less CPU for the same samples
+### 1.3.6 — 2026-10-26 — One line for main and the Rack
+
+- Joins the two lines that both left 1.3.3: the 1.3.4 CPU trims below,
+  which were on main, and the 1.3.4 and 1.3.5 work the Rack Extension
+  ships, which was not. Nothing else changes; both lines named a 1.3.4,
+  so the two entries are marked by line.
+
+### 1.3.5 — 2026-10-22 — Less repeated simulation work
+
+- Inline finite-value classification on supported floating-point layouts to
+  avoid full runtime classification calls at repeated safety checks.
+  Circuit equations, processing defaults, presets, gain and latency stay the same.
+  [Implementation and validation method](Docs/research/efficiency-1.3.5.md).
+
+### 1.3.4 (Rack line) — 2026-10-22 — Continuous circuit controls
+
+- Reconstruct the filter cutoff's curved settling between converter writes
+  inside the existing voice circuit calculation.
+- Follow the C58/Tr20 amplifier current through fast attacks, releases and
+  fractional converter writes instead of joining gain endpoints with a line.
+- Follow the changing chorus wet-switch load during its physical transition,
+  retaining endpoint readout and settled gain.
+- These numerical corrections retain the circuit values, parameter ranges,
+  preset controls, gain calibration and reported latency. Their fine-step
+  references establish improved simulation accuracy, not a new hardware fit.
+
+### 1.3.4 (main line) — 2026-10-23 — Less CPU for the same samples
 
 - Trims the voice filter's per-interval setup, reads the voice-island,
   chorus-island and output-summer FIR transports through contiguous windows,

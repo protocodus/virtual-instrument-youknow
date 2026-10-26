@@ -60,6 +60,15 @@ struct ProductHardwareRealismProfile
         // 2026-10-16 CPU pass: the island's collector-noise covariance is
         // factored once per internal sample (see the parameter's note).
         parameters.enableVoiceIslandFrameShotCovariance = true;
+        // 2026-10-22: reconstruct the already selected circuits' continuous
+        // controls inside their existing numerical intervals. The C61 cutoff
+        // settling, C58/Tr20 current and Tr11/12 wet-switch loading retain
+        // their physical values, endpoints, gain laws and reported latency.
+        // Independent continuous/fine-step references qualify these numerical
+        // corrections; they are not additional hardware calibration values.
+        parameters.enableVcfSettlingReconstruction = true;
+        parameters.enableVoiceVcaControlReconstruction = true;
+        parameters.enableContinuousChorusMuteLoading = true;
     }
 };
 } // namespace youknow
