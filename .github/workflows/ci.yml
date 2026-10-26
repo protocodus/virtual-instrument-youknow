@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: ['**']
   workflow_dispatch:
   workflow_call:
 
@@ -13,8 +12,8 @@ permissions:
 # Superseded PR checks can stop, but every main push must finish its packages.
 # A run-specific group also prevents pending main runs from replacing each other.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.ref != 'refs/heads/main' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # A pinned pluginval release, each archive checked against its SHA-256.
