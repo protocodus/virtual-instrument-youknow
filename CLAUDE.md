@@ -137,6 +137,18 @@ defensible on their own physics. It does not license drawing a constant, fitting
 a curve, or keeping a formulation the measurements reject. If every candidate
 needs an invented number, the answer is still that none of them ships.
 
+## Demo songs
+
+The README demos play the committed MIDI in `Docs/audio/midi/` (More demos in
+`more/`), written only by `Tools/write_preset_midi.py`; `<Name>.DemoMidiSources`
+fails when the files and the script differ. Change a phrase in the script, on
+purpose, and commit it with its regenerated `.mid` files on their own. Never
+edit a `.mid` by hand or rewrite a phrase because the DSP changed. The demos
+play each preset as a freshly loaded plug-in does, with no per-demo trims.
+The WAVs and the README table come only from the main build. Use the
+`portfolio-demo-songs` skill when choosing presets, writing phrases or changing
+the renderer.
+
 ## Build and verify
 
 ```sh
@@ -166,14 +178,13 @@ assumption was stale.
   number (`Docs/audio/midi/<NNN>-<preset-slug>.mid`, a bank of 144 presets);
   the four More demo phrases are `Docs/audio/midi/more/<NN>-<slug>.mid`,
   played on the panels in `Tools/DemoPanels.h` by
-  `RenderYouKnowPresetDemos --more`. `Tools/write_preset_midi.py` writes both, and
-  `YouKnow.DemoMidiSources` checks the committed files match it.
+  `RenderYouKnowPresetDemos --more`.
 - The technique takes, showcases, composition and original preset sessions
   (`Tools/RenderDemos.cpp`, `RenderShowcase.cpp`, `RenderComposition.cpp`,
   `MakeOriginalPresetDemos.py`) render only to a directory given on the
   command line and are never committed (README G3d).
 - `PresetDemoRenderer.h`, `update_readme_blocks.py`, `Tests/ParameterMatrix.h`,
-  `Tests/FuzzHarness.h` and the two shared `CLAUDE.md` sections above are
+  `Tests/FuzzHarness.h` and the three shared `CLAUDE.md` sections above are
   copies of the portfolio masters in the Rack repository's `Tools/portfolio/`;
   change the master, then copy it.
 
