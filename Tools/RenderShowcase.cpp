@@ -1,6 +1,8 @@
 // Five original musical performances of one YouKnow instance each. Scores and
 // visible demo patch choices live in the two score headers; the factory bank
-// and DSP model are unchanged. Reproduce with YouKnowRenderShowcase [directory].
+// and DSP model are unchanged. They are local listening material, not
+// committed: the README's demos are the preset and More demos (G3, G3d).
+// Reproduce with YouKnowRenderShowcase <output-directory>.
 //
 // Max quality is requested explicitly. At a 96 kHz host the engine caps the
 // selected 4x ceiling to 2x, so its actual internal grid is 192 kHz. Exact tanh
@@ -307,10 +309,12 @@ int main (int argc, char** argv)
     try
     {
         bool check = false;
-        std::filesystem::path directory = "Docs/audio";
+        std::filesystem::path directory;
         for (int i = 1; i < argc; ++i)
             if (std::string (argv[i]) == "--check") check = true;
             else directory = argv[i];
+        // No default directory, so nothing is written into the checkout by accident.
+        require (check || ! directory.empty(), "usage: YouKnowRenderShowcase [--check] output-directory");
         const std::vector<Demo> demos { bassDemo(), leadDemo(), stringsDemo(), brassDemo(), padDemo() };
         for (const auto& d : demos)
             std::cout << d.category << ": " << validate (d) << " held keys, "

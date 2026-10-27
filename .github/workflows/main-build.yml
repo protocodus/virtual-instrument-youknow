@@ -26,42 +26,7 @@ env:
 
 jobs:
   render-preset-demos:
-    name: Render one MP3 demo per preset
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Install ffmpeg and Ninja
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg ninja-build
-
-      - name: Build the preset demo renderer
-        run: |
-          cmake -S . -B build-dsp -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
-          cmake --build build-dsp --parallel --target RenderYouKnowPresetDemos
-
-      # Fails unless every preset has its MIDI source and renders finite,
-      # audible, within the ceiling and 10-20 s long (G3, G6).
-      - name: Render and encode the demos
-        run: ./build-dsp/RenderYouKnowPresetDemos Docs/audio/midi generated-media/preset-demos
-
-      - name: Upload the preset demos
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-preset-demos
-          path: generated-media
-          if-no-files-found: error
-          retention-days: 30
-
-  # The mechanism demos, showcases and composition (README "More demos"),
-  # with the README peak and composition tables they regenerate.
-  render-more-demos:
-    name: Render the showcase and mechanism demos
+    name: Render the preset and More demos
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -74,22 +39,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ninja-build
 
-      - name: Render the demos into the checkout
+      - name: Build the preset demo renderer
         run: |
           cmake -S . -B build-dsp -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
-          cmake --build build-dsp --parallel --target YouKnowRebuildDemos
+          cmake --build build-dsp --parallel --target RenderYouKnowPresetDemos
 
-      - name: Archive the demos and README tables
+      # Fails unless every phrase renders finite, audible, within the ceiling
+      # and 8-12 s long, with at most 8 preset and 4 More demos (G3, G3d, G6).
+      - name: Render the demos
         run: |
-          mkdir -p generated-media
-          tar -czf generated-media/audio-previews.tar.gz README.md Docs/audio/*.wav \
-            Docs/audio/showcase-manifest.json
+          ./build-dsp/RenderYouKnowPresetDemos --jobs 4 Docs/audio/midi generated-media/preset-demos
+          ./build-dsp/RenderYouKnowPresetDemos --more --jobs 4 Docs/audio/midi/more generated-media/more-demos
 
       - name: Upload the demos
         uses: actions/upload-artifact@v4
         with:
-          name: generated-more-demos
+          name: generated-preset-demos
           path: generated-media
           if-no-files-found: error
           retention-days: 30
@@ -322,7 +288,7 @@ jobs:
 
   collect:
     name: Collect youknow-main-build-${{ github.run_number }}
-    needs: [render-preset-demos, render-more-demos, build-macos, build-linux, build-windows]
+    needs: [render-preset-demos, build-macos, build-linux, build-windows]
     runs-on: ubuntu-24.04
     outputs:
       artifact-url: ${{ steps.upload.outputs.artifact-url }}

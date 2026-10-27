@@ -12,19 +12,20 @@
 // and builds it as Render<Name>PresetDemos:
 //
 //   Render<Name>PresetDemos [--jobs N] <midi-dir> <out-dir>
-//       one <NN>-<preset-slug>.mp3 per factory preset, from
+//       one <NN>-<preset-slug>.wav (48 kHz stereo, 24-bit PCM) per
 //       <midi-dir>/<NN>-<preset-slug>.mid, plus demos.json, which
 //       update_readme_blocks.py turns into the README demo table
 //   Render<Name>PresetDemos [--jobs N] --check <midi-dir>
-//       the audio tier: renders every preset twice and fails unless the
+//       the audio tier: renders every demo twice and fails unless the
 //       second render is bit-identical
 //
-// Both forms fail unless <midi-dir> holds exactly one .mid per preset and
-// every demo is finite, audible, below the declared ceiling and 10-20 s long.
-// Every demo renders at the same rate, block size and seed, so an unchanged
-// engine produces identical bytes. MP3s are encoded by ffmpeg (the FFMPEG
-// environment variable overrides the executable) with fixed settings and no
-// metadata, so an unchanged render also encodes to identical bytes.
+// The .mid files are the curated demo list (G3): each names a factory preset
+// by program number and slug, there are at most kMaxDemos of them, and a bank
+// of kMaxDemos or fewer presets has one per preset. Both forms fail unless
+// the sources follow that and every demo is finite, audible, below the
+// declared ceiling and 8-12 s long. Every demo renders at the same rate,
+// block size and seed and is written without metadata, so an unchanged
+// engine produces identical bytes.
 #pragma once
 
 #include <algorithm>
@@ -33,7 +34,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -51,8 +51,9 @@ namespace protocodus::demos {
 constexpr double kSampleRate = 48000.0;
 constexpr int kBlockFrames = 256;
 constexpr std::uint32_t kSeed = 20261017u;
-constexpr double kMinSeconds = 10.0;
-constexpr double kMaxSeconds = 20.0;
+constexpr std::size_t kMaxDemos = 8;
+constexpr double kMinSeconds = 8.0;
+constexpr double kMaxSeconds = 12.0;
 constexpr double kTailSeconds = 2.5; // rendered after the last MIDI event, if it fits
 constexpr double kFadeSeconds = 0.75; // only where kMaxSeconds cuts a tail
 constexpr float kAudibleFloor = 1.0e-3f;
@@ -278,7 +279,7 @@ inline const char* Problem(const Instrument& instrument, const Demo& demo) {
     if (!std::isfinite(demo.peak)) return "non-finite samples";
     if (demo.peak < kAudibleFloor) return "silent";
     if (demo.peak >= instrument.ceiling) return "peak at or above the declared ceiling";
-    if (Seconds(demo) < kMinSeconds || Seconds(demo) > kMaxSeconds) return "not 10-20 s long";
+    if (Seconds(demo) < kMinSeconds || Seconds(demo) > kMaxSeconds) return "not 8-12 s long";
     return nullptr;
 }
 
@@ -305,18 +306,6 @@ inline void WriteWav(const fs::path& path, const Demo& demo) {
     if (!file) throw std::runtime_error(path.string() + ": cannot write");
 }
 
-inline void EncodeMp3(const fs::path& wav, const fs::path& mp3) {
-    const char* ffmpeg = std::getenv("FFMPEG");
-    std::string command = std::string("\"") + (ffmpeg && *ffmpeg ? ffmpeg : "ffmpeg")
-        + "\" -nostdin -v error -y -i \"" + wav.string()
-        + "\" -c:a libmp3lame -b:a 192k -bitexact -map_metadata -1 -id3v2_version 0 \"" + mp3.string() + "\"";
-#ifdef _WIN32
-    command = "\"" + command + "\""; // cmd.exe strips one outer pair of quotes
-#endif
-    if (std::system(command.c_str()) != 0 || !fs::exists(mp3))
-        throw std::runtime_error(mp3.string() + ": ffmpeg failed");
-}
-
 inline std::string JsonString(const std::string& s) {
     std::string out = "\"";
     for (const char c : s) {
@@ -335,6 +324,7 @@ inline std::string JsonString(const std::string& s) {
 }
 
 struct Summary {
+    std::size_t preset = 0;
     std::string stem;
     double seconds = 0.0;
     float peak = 0.0f;
@@ -342,21 +332,23 @@ struct Summary {
     std::string error;
 };
 
-// Renders every preset on `jobs` threads, keeping one demo's samples per
-// thread; `keep` sees each demo before its samples are dropped.
-inline std::vector<Summary> RenderAll(const Instrument& instrument, const fs::path& midiDir, int jobs,
+// Renders the listed presets on `jobs` threads, keeping one demo's samples
+// per thread; `keep` sees each demo before its samples are dropped.
+inline std::vector<Summary> RenderAll(const Instrument& instrument, const fs::path& midiDir,
+                                      const std::vector<std::size_t>& presets, int jobs,
                                       const std::function<void(const Demo&)>& keep) {
-    std::vector<Summary> summaries(instrument.presets.size());
+    std::vector<Summary> summaries(presets.size());
     std::atomic<std::size_t> next { 0 };
     std::vector<std::thread> workers;
     for (int j = 0; j < std::max(1, jobs); ++j)
         workers.emplace_back([&] {
             for (std::size_t i; (i = next++) < summaries.size();) {
                 auto& summary = summaries[i];
-                summary.stem = Stem(instrument, i);
+                summary.preset = presets[i];
+                summary.stem = Stem(instrument, presets[i]);
                 try {
-                    const Demo demo = Render(instrument, midiDir, i);
-                    summary = { demo.stem, Seconds(demo), demo.peak, demo.hash, {} };
+                    const Demo demo = Render(instrument, midiDir, presets[i]);
+                    summary = { presets[i], demo.stem, Seconds(demo), demo.peak, demo.hash, {} };
                     if (const char* problem = Problem(instrument, demo)) summary.error = problem;
                     else if (keep) keep(demo);
                 } catch (const std::exception& e) {
@@ -378,48 +370,55 @@ inline int Report(const std::vector<Summary>& summaries) {
     return failures;
 }
 
-// Exactly one <stem>.mid per preset and no strays, so a renamed or removed
-// preset cannot leave a source behind.
-inline bool CheckSources(const Instrument& instrument, const fs::path& midiDir) {
-    std::vector<std::string> expected, found;
-    for (std::size_t i = 0; i < instrument.presets.size(); ++i) expected.push_back(Stem(instrument, i) + ".mid");
+// The presets the sources name, in program order. Every .mid must be a
+// preset's <stem>.mid, so a renamed or removed preset cannot leave a source
+// behind; returns nothing after reporting what is wrong.
+inline std::vector<std::size_t> Sources(const Instrument& instrument, const fs::path& midiDir) {
+    std::vector<std::string> found;
     std::error_code error;
     for (const auto& entry : fs::directory_iterator(midiDir, error))
         if (entry.path().extension() == ".mid") found.push_back(entry.path().filename().string());
-    std::sort(expected.begin(), expected.end());
     std::sort(found.begin(), found.end());
-    if (!error && found == expected && !expected.empty()) return true;
-    std::fprintf(stderr, "FAIL: %s must hold exactly one <NN>-<preset-slug>.mid per factory preset\n",
-                 midiDir.string().c_str());
-    for (const auto& name : expected)
-        if (!std::binary_search(found.begin(), found.end(), name)) std::fprintf(stderr, "  missing %s\n", name.c_str());
-    for (const auto& name : found)
-        if (!std::binary_search(expected.begin(), expected.end(), name)) std::fprintf(stderr, "  no preset for %s\n", name.c_str());
-    return false;
+    std::vector<std::size_t> presets;
+    std::vector<std::string> strays, missing;
+    for (std::size_t i = 0; i < instrument.presets.size(); ++i) {
+        const auto name = Stem(instrument, i) + ".mid";
+        if (std::binary_search(found.begin(), found.end(), name)) presets.push_back(i);
+        else if (instrument.presets.size() <= kMaxDemos) missing.push_back(name);
+    }
+    for (const auto& name : found) {
+        bool named = false;
+        for (const std::size_t i : presets) named = named || Stem(instrument, i) + ".mid" == name;
+        if (!named) strays.push_back(name);
+    }
+    if (!error && !presets.empty() && presets.size() <= kMaxDemos && strays.empty() && missing.empty())
+        return presets;
+    std::fprintf(stderr, "FAIL: %s must hold one <NN>-<preset-slug>.mid for each of at most %zu factory presets, "
+                 "and one per preset in a bank of %zu or fewer\n", midiDir.string().c_str(), kMaxDemos, kMaxDemos);
+    if (presets.size() > kMaxDemos) std::fprintf(stderr, "  %zu demos\n", presets.size());
+    for (const auto& name : missing) std::fprintf(stderr, "  missing %s\n", name.c_str());
+    for (const auto& name : strays) std::fprintf(stderr, "  no preset for %s\n", name.c_str());
+    return {};
 }
 
 inline int Check(const Instrument& instrument, const fs::path& midiDir, int jobs) {
-    if (!CheckSources(instrument, midiDir)) return 1;
-    auto first = RenderAll(instrument, midiDir, jobs, nullptr);
-    const auto second = RenderAll(instrument, midiDir, jobs, nullptr);
+    const auto presets = Sources(instrument, midiDir);
+    if (presets.empty()) return 1;
+    auto first = RenderAll(instrument, midiDir, presets, jobs, nullptr);
+    const auto second = RenderAll(instrument, midiDir, presets, jobs, nullptr);
     for (std::size_t i = 0; i < first.size(); ++i)
         if (first[i].error.empty() && first[i].hash != second[i].hash) first[i].error = "a second render differs";
     return Report(first) == 0 ? 0 : 1;
 }
 
 inline int Write(const Instrument& instrument, const fs::path& midiDir, const fs::path& outDir, int jobs) {
-    if (!CheckSources(instrument, midiDir)) return 1;
+    const auto presets = Sources(instrument, midiDir);
+    if (presets.empty()) return 1;
     fs::create_directories(outDir);
-    const auto summaries = RenderAll(instrument, midiDir, jobs, [&](const Demo& demo) {
+    const auto summaries = RenderAll(instrument, midiDir, presets, jobs, [&](const Demo& demo) {
         WriteWav(outDir / (demo.stem + ".wav"), demo);
     });
     if (Report(summaries) != 0) return 1;
-
-    // std::system is not safe to call from several threads, so encode here.
-    for (const auto& s : summaries) {
-        EncodeMp3(outDir / (s.stem + ".wav"), outDir / (s.stem + ".mp3"));
-        fs::remove(outDir / (s.stem + ".wav"));
-    }
 
     std::string json = "{\n  \"instrument\": " + JsonString(instrument.name)
         + ",\n  \"sample_rate\": " + std::to_string(static_cast<int>(kSampleRate))
@@ -429,9 +428,9 @@ inline int Write(const Instrument& instrument, const fs::path& midiDir, const fs
         char numbers[96];
         std::snprintf(numbers, sizeof numbers, ", \"seconds\": %.9g, \"peak_dbfs\": %.9g}", summaries[i].seconds,
                       Dbfs(summaries[i].peak));
-        json += std::string(i ? "," : "") + "\n    {\"number\": " + std::to_string(i + 1)
-            + ", \"preset\": " + JsonString(instrument.presets[i])
-            + ", \"file\": " + JsonString(summaries[i].stem + ".mp3") + numbers;
+        json += std::string(i ? "," : "") + "\n    {\"number\": " + std::to_string(summaries[i].preset + 1)
+            + ", \"preset\": " + JsonString(instrument.presets[summaries[i].preset])
+            + ", \"file\": " + JsonString(summaries[i].stem + ".wav") + numbers;
     }
     json += "\n  ]\n}\n";
     std::ofstream manifest(outDir / "demos.json", std::ios::binary);

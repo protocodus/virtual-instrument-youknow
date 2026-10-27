@@ -166,7 +166,10 @@ struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
                 return static_cast<float>(shaped * gain + outputNoise);
             } else return shaped * gain;
         }
+        // The rings are kept twice over (see VoiceVcaAntialias::inputs); the
+        // oracle writes both halves and keeps its original masked reads.
         inputs[static_cast<std::size_t>(inputWrite)] = input;
+        inputs[static_cast<std::size_t>(inputWrite + inputRingSize)] = input;
         gains[static_cast<std::size_t>(inputWrite)] = gain;
         if constexpr (withTemperature)
             temperatures[static_cast<std::size_t>(inputWrite)] = kelvin;
@@ -224,6 +227,8 @@ struct FrozenVoiceVcaAntialias : VoiceVcaAntialias
             } else
                 outputs[static_cast<std::size_t>(outputWrite)] =
                     static_cast<float>(shaped * g);
+            outputs[static_cast<std::size_t>(outputWrite + outputRingSize)] =
+                outputs[static_cast<std::size_t>(outputWrite)];
             if (phase == 0)
             {
                 const int centre = (k.taps - 1) / 2;

@@ -14,9 +14,9 @@ if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
     echo "error: preview refresh is only allowed on main" >&2
     exit 1
 fi
-test -s "${PREVIEW_DIR}/audio-previews.tar.gz"
 test -s "${PREVIEW_DIR}/editor-preview.tar.gz"
 test -s "${PREVIEW_DIR}/preset-demos/demos.json"
+test -s "${PREVIEW_DIR}/more-demos/demos.json"
 UPDATE_README_BLOCKS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/Tools/update_readme_blocks.py"
 
 remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -34,22 +34,20 @@ for attempt in 1 2 3; do
         exit 0
     fi
     git checkout --detach FETCH_HEAD
-    # The archives and preset demos are the complete maintained set, so
-    # renamed/removed demos must disappear too. Never clear the frozen evidence
-    # in Docs/audio's subdirectories.
-    rm -f Docs/audio/*.wav Docs/audio/*.mp3
-    tar -xzf "${PREVIEW_DIR}/audio-previews.tar.gz"
+    # The preset and More demos are the complete maintained set, so renamed or
+    # removed demos must disappear too. Never clear the frozen evidence in
+    # Docs/audio's other subdirectories.
+    rm -f Docs/audio/*.wav Docs/audio/more/*.wav
+    mkdir -p Docs/audio/more
     tar -xzf "${PREVIEW_DIR}/editor-preview.tar.gz"
-    cp "${PREVIEW_DIR}"/preset-demos/*.mp3 Docs/audio/
+    cp "${PREVIEW_DIR}"/preset-demos/*.wav Docs/audio/
+    cp "${PREVIEW_DIR}"/more-demos/*.wav Docs/audio/more/
     python3 "${UPDATE_README_BLOCKS}" demos --readme README.md \
         --manifest "${PREVIEW_DIR}/preset-demos/demos.json"
     python3 "${UPDATE_README_BLOCKS}" download --readme README.md \
         --url "${DISTRIBUTION_URL}" --build "${BUILD_NUMBER}" --commit "${GITHUB_SHA}"
-    git add -A -- README.md ':(glob)Docs/audio/*.wav' ':(glob)Docs/audio/*.mp3' \
+    git add -A -- README.md ':(glob)Docs/audio/*.wav' Docs/audio/more \
         Docs/screenshots/youknow.png
-    if [[ -f Docs/audio/showcase-manifest.json ]] || git ls-files --error-unmatch Docs/audio/showcase-manifest.json >/dev/null 2>&1; then
-        git add -A -- Docs/audio/showcase-manifest.json
-    fi
     if git diff --cached --quiet; then
         echo "Screenshot, audio demos and README blocks are unchanged."
         exit 0

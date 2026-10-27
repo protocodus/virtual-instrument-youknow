@@ -12,6 +12,8 @@
 #include "YouKnowNoiseC41.h"
 #include "YouKnowVoiceVcaAntialias.h"
 #include "YouKnowVoiceRateIsland.h"
+#include "YouKnowVcaControlReconstruction.h"
+#include "YouKnowCutoffReconstruction.h"
 #include "YouKnowOutputSummerAntialias.h"
 #include "YouKnowChorusRateIsland.h"
 #include "YouKnowHighPassSwitch.h"
@@ -333,6 +335,10 @@ struct EngineParameters
     // envelope multiply. Raw reference retains the direct sampled law.
     // FIR group delay is included in the reported/padded engine latency.
     bool enableVoiceVcaAntialias { false };
+    // Reconstruct the selected thermal C58/Tr20 current at local FIR times
+    // from its physical derivatives, including fractional converter writes.
+    // Endpoints, service gain and the stored VCA LEVEL law remain unchanged.
+    bool enableVoiceVcaControlReconstruction { false };
     // Diagnostic numerical candidates; raw reference retains its existing path.
     bool enableCoupledMixerBandlimitedSwitch { false };
     // On by default: the p.19 VCA GAIN adjustment turns the same bank-3
@@ -487,6 +493,9 @@ struct EngineParameters
     // Extend the same48-sample output-summer island to the existing chorus.
     // Product numerical selector; raw stays bit-identical and high grids direct.
     bool enableChorusRateIsland { false };
+    // Reconstruct the changing Tr11/12 wet-switch load within each chorus
+    // interval; physical endpoint readout and settled gain are preserved.
+    bool enableContinuousChorusMuteLoading { false };
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
@@ -498,6 +507,10 @@ struct EngineParameters
     // instead of at every local interval. Numerical cost selector, no new
     // hardware value. Product on, raw off.
     bool enableVoiceIslandFrameShotCovariance { false };
+    // Product-selected bounded reconstruction of C61's settling cutoff
+    // between converter writes inside the existing voice island. Numerical
+    // interpolation only; raw references retain endpoint-linear controls.
+    bool enableVcfSettlingReconstruction { false };
     // Product-selected IC6 loading: the delayed Tr11/12 gate opens its
     // 39k wet input, removing that branch's noise gain and Johnson source.
     // Raw references retain their always-connected amplifier convention.
@@ -691,6 +704,7 @@ struct EngineParameters
             && enableSubHalfWaveNodeCoupling == other.enableSubHalfWaveNodeCoupling
             && enableVoiceVcaSignalSaturation == other.enableVoiceVcaSignalSaturation
             && enableVoiceVcaAntialias == other.enableVoiceVcaAntialias
+            && enableVoiceVcaControlReconstruction == other.enableVoiceVcaControlReconstruction
             && enableCoupledMixerBandlimitedSwitch == other.enableCoupledMixerBandlimitedSwitch
             && enableVoiceVcaServiceGain == other.enableVoiceVcaServiceGain
             && enableVoiceVcaTemperature == other.enableVoiceVcaTemperature
@@ -722,9 +736,11 @@ struct EngineParameters
             && enableOutputSummerMagnitudePole == other.enableOutputSummerMagnitudePole
             && enableOutputSummerAntialias == other.enableOutputSummerAntialias
             && enableChorusRateIsland == other.enableChorusRateIsland
+            && enableContinuousChorusMuteLoading == other.enableContinuousChorusMuteLoading
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
                 == other.enableVoiceIslandFrameShotCovariance
+            && enableVcfSettlingReconstruction == other.enableVcfSettlingReconstruction
             && enableOutputSummerMuteLoading == other.enableOutputSummerMuteLoading
             && enableCardJohnsonFloor == other.enableCardJohnsonFloor
             && enableOtaShotNoise == other.enableOtaShotNoise
@@ -3448,6 +3464,7 @@ private:
         float kelvin { 298.15f }, serviceLoopHeadroom { 1.0f };
         float peakTailAmps {}, johnsonScale { 1.0f };
         float resonanceOffset {}, compensation {};
+        VcaControlReconstruction vcaControl {};
         enum Flag : std::uint32_t {
             Early = 1u, FollowHeadroom = 2u, Johnson = 4u, Shot = 8u,
             Mirror = 16u, TailMirror = 32u, EvidenceVca = 64u,
@@ -3536,6 +3553,7 @@ private:
         // precision keeps very slow tails moving at high internal rates after
         // their float-sized increment falls below half an ULP of this state.
         double vcaControl { 0.0 };
+        VcaControlReconstruction vcaControlInterval {};
         // Thermal Tr20 path retains actual C58 charge independently of the
         // temperature-dependent equivalent settled CV above.
         double vcaJunctionCharge { 0.0 };
@@ -3619,6 +3637,8 @@ private:
         // Present-time control endpoints are distinct from the delayed
         // cascade's local-step history. No second physical cascade is kept.
         float islandPreviousOmega {}, islandPreviousFeedback {}, islandPreviousHeadroom { 1.0f };
+        CutoffReconstruction islandCutoffReconstruction {};
+        float islandCutoffDrift {};
         float islandCouplingBase { -1.0f }, islandCouplingLocal {};
         float islandLastInput {};
         double islandBaseRate {};

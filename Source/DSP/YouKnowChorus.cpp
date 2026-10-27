@@ -2729,6 +2729,7 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
         ++supportBuildCount_;
     }
     wetTransitionRatio_ = -1.0;
+    wetTransitionReadoutRatio_ = -1.0;
     if (preserveState)
     {
         lineA_.resetAudioRateSupport();
@@ -2769,6 +2770,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     muteGateVolts_ = -14.4;
     wetInputConductanceRatio_ = 0.0;
     wetTransitionRatio_ = -1.0;
+    wetTransitionReadoutRatio_ = -1.0;
     clockMuteVolts_ = -muteDriveRailVolts;
     clockMuteEnabled_ = false;
     clocksStopped_ = false;
@@ -2856,12 +2858,27 @@ template<class T> void blendWetArray(T& result, const T& a, const T& b, double t
     else for (std::size_t i=0; i<result.size(); ++i) blendWetArray(result[i], a[i], b[i], t);
 }
 }
-const Chorus::SupportChain::ExactTransition& Chorus::finiteWetTransition() noexcept
+const Chorus::SupportChain::ExactTransition& Chorus::finiteWetTransition(
+    double previousConductanceRatio) noexcept
 {
-    if (wetInputConductanceRatio_ == 0.0) return support_.wetConductance.front();
-    if (wetInputConductanceRatio_ == 1.0) return support_.wetConductance.back();
-    if (wetTransitionRatio_ == wetInputConductanceRatio_) return wetTransition_;
-    const double index = wetInputConductanceRatio_ * SupportChain::wetConductanceIntervals;
+    // C25/C28's 1 uF capacitor sees its drawn 22k bleed plus the 39k
+    // summer leg through the moving JFET (Roland jack board p.15). Its
+    // loading changes THROUGH an interval; using the final conductance
+    // throughout is a right-endpoint quadrature with first-order time error.
+    // Average the two physical endpoint conductances for second-order state
+    // transport, while retaining the final network for endpoint voltages and
+    // nonlinear junction currents. This is numerical reconstruction only:
+    // no gate timing, channel law, capacitance or wet attenuation is refitted.
+    // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
+    const double integrationRatio = previousConductanceRatio < 0.0
+        ? wetInputConductanceRatio_
+        : 0.5 * (previousConductanceRatio + wetInputConductanceRatio_);
+    const bool changing = integrationRatio != wetInputConductanceRatio_;
+    if (!changing && integrationRatio == 0.0) return support_.wetConductance.front();
+    if (!changing && integrationRatio == 1.0) return support_.wetConductance.back();
+    if (wetTransitionRatio_ == integrationRatio
+        && wetTransitionReadoutRatio_ == wetInputConductanceRatio_) return wetTransition_;
+    const double index = integrationRatio * SupportChain::wetConductanceIntervals;
     const auto lower = static_cast<std::size_t>(index);
     const double blend = index - lower;
     const auto& a = support_.wetConductance[lower];
@@ -2889,7 +2906,35 @@ const Chorus::SupportChain::ExactTransition& Chorus::finiteWetTransition() noexc
     // Positive channel conductance is always the same connected topology;
     // crossing an interpolation grid must not reset capacitor/current history.
     n.topology=3;
-    wetTransitionRatio_=wetInputConductanceRatio_;
+    if (changing)
+    {
+        const double outputIndex = wetInputConductanceRatio_
+                                 * SupportChain::wetConductanceIntervals;
+        const auto outputLower = std::min(static_cast<std::size_t>(outputIndex),
+            SupportChain::wetConductanceIntervals - 1);
+        const double outputBlend = outputIndex - outputLower;
+        const auto& endA = support_.wetConductance[outputLower];
+        const auto& endB = support_.wetConductance[outputLower + 1];
+        blendWetArray(r.outputByState, endA.outputByState, endB.outputByState, outputBlend);
+        r.outputDirect = endA.outputDirect + outputBlend * (endB.outputDirect - endA.outputDirect);
+        const auto& endNa = endA.nonlinear;
+        const auto& endNb = endB.nonlinear;
+        blendWetArray(n.junctionByState, endNa.junctionByState, endNb.junctionByState, outputBlend);
+        blendWetArray(n.junctionByInput, endNa.junctionByInput, endNb.junctionByInput, outputBlend);
+        blendWetArray(n.junctionByCurrent, endNa.junctionByCurrent, endNb.junctionByCurrent, outputBlend);
+        blendWetArray(n.outputByCurrent, endNa.outputByCurrent, endNb.outputByCurrent, outputBlend);
+        prepareEndpointCurrentMap(n);
+        n.cubicEndpointJunctionByCurrent = n.junctionByCurrent;
+        for (std::size_t junction = 0; junction < 2; ++junction)
+            for (std::size_t current = 0; current < 2; ++current)
+                for (std::size_t state = 0; state < 6; ++state)
+                    n.cubicEndpointJunctionByCurrent[junction][current] +=
+                        n.junctionByState[junction][state]
+                        * n.cubicStateByCurrentSample[0][current][state];
+        n.topology = wetInputConductanceRatio_ == 0.0 ? 2 : 3;
+    }
+    wetTransitionRatio_=integrationRatio;
+    wetTransitionReadoutRatio_=wetInputConductanceRatio_;
     return r;
 }
 
@@ -3023,7 +3068,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableCorrelatedNoise,
                      float noiseTransferFraction,
                      float noiseTransferCorrelation,
-                     bool enableFiniteTr5Drive) noexcept
+                     bool enableFiniteTr5Drive,
+                     bool enableContinuousMuteLoading) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3089,6 +3135,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     }
     float wetTarget = target.wetGain;
     muteDriveEnabled_ = enableMuteDrive;
+    // On a cold/loaded patch the control capacitors were just primed to the
+    // physical rest above. Establish that interval's START gate before
+    // advancing it; reset's zero ratio is not a fictitious half-open switch.
+    if (enableContinuousMuteLoading && finiteMuteDriveEnabled_)
+        updateWetGate();
+    const double previousWetConductanceRatio = wetInputConductanceRatio_;
     if (enableMuteDrive)
     {
         advanceMuteDrive(commandMute);
@@ -3195,7 +3247,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // channel conductance when selected. Physical capacitor charge is never
     // reset at a command, a conductance-grid boundary or an open channel.
     const auto& wetOutputTransition = finiteMuteDriveEnabled_
-        ? finiteWetTransition()
+        ? finiteWetTransition(enableContinuousMuteLoading
+            ? previousWetConductanceRatio : -1.0)
         : (muteDriveMuted_ ? support_.exactOutputMuted : support_.exactOutputConnected);
     // The relative real-instrument calibration acts on the lines' random
     // floor only. This is not a claim that a standalone mode-II MN3009

@@ -10,9 +10,23 @@
 #include <bit>
 #include <span>
 #endif
+#include <cmath>
 
 namespace youknow
 {
+// The correctly rounded IEEE square root, as one instruction. std::sqrt on a
+// double is the C library's sqrt, and a host that compiles with -fno-builtin
+// (the Rack toolchain does) turns every call into a real libm call; naming
+// the builtin keeps the identical result in line on GCC and Clang.
+[[nodiscard]] inline double inlineSqrt(double value) noexcept
+{
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_sqrt(value);
+#else
+    return std::sqrt(value);
+#endif
+}
+
 // Shared DSP is also consumed by C++17 hosts. Keep C++20 clients' span API,
 // and supply only the dynamic view operations used by the firmware paths on
 // older toolchains. The view never owns or allocates its backing storage.

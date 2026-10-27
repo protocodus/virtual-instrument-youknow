@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: ['**']
   workflow_dispatch:
   workflow_call:
 
@@ -13,8 +12,8 @@ permissions:
 # Superseded PR checks can stop, but every main push must finish its packages.
 # A run-specific group also prevents pending main runs from replacing each other.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.ref != 'refs/heads/main' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # A pinned pluginval release, each archive checked against its SHA-256.
@@ -66,30 +65,29 @@ jobs:
           cmake --build build-dsp --parallel
           ctest --test-dir build-dsp -L unit --output-on-failure --no-tests=error
 
-      # The count is the point of the check: it is what turns "the renderer ran"
-      # into "the renderer rendered the whole set", so a take that silently
-      # stopped being written fails CI instead of leaving a stale WAV committed
-      # forever. Adding or removing a take means updating the number here.
-      # The 16 are the README's "More demos": 10 mechanism demos, the
-      # composition and 5 showcases. The per-preset MP3s are the audio tier.
-      - name: Render and verify demo audio
+      # The local listening renders are not committed, so this is what keeps
+      # them working. The count turns "the renderers ran" into "they rendered
+      # the whole set": 6 technique takes, 5 showcases and the composition.
+      # Adding or removing a take means updating the number here. The README's
+      # preset and More demos are the audio tier.
+      - name: Render and verify the local listening set
         run: |
           set -euo pipefail
-          cmake --build build-dsp --target YouKnowRebuildDemos --parallel
-          rendered=$(find Docs/audio -maxdepth 1 -name '*.wav' | wc -l)
-          if (( rendered != 16 )); then
-            echo "error: rendered $rendered demo WAVs, expected 16" >&2
+          cmake --build build-dsp --target YouKnowRenderListening --parallel
+          rendered=$(find build-dsp/listening -maxdepth 1 -name '*.wav' | wc -l)
+          if (( rendered != 12 )); then
+            echo "error: rendered $rendered listening WAVs, expected 12" >&2
             exit 1
           fi
-          test -f Docs/audio/showcase-manifest.json
-          piece=Docs/audio/youknow-composition.wav
+          test -f build-dsp/listening/showcase-manifest.json
+          piece=build-dsp/listening/youknow-composition.wav
           test -f "$piece"
           bytes=$(stat -c%s "$piece")
           if (( bytes < 10000000 )); then
             echo "error: the composition is only $bytes bytes" >&2
             exit 1
           fi
-          echo "YouKnow: rendered all $rendered demo WAVs and verified composition ($bytes bytes)"
+          echo "YouKnow: rendered all $rendered listening WAVs and verified composition ($bytes bytes)"
 
       - name: Configure Linux plug-in build
         run: |
@@ -141,11 +139,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The audio tier renders all 144 preset demos twice and compares the bytes.
+  # The audio tier renders the preset and More demos twice and compares the bytes.
   audio-demos:
-    name: Audio tier (every preset demo, deterministic)
+    name: Audio tier (every README demo, deterministic)
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:

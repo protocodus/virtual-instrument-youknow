@@ -1,9 +1,12 @@
-// One demo per factory and product preset (README G3), played from the
-// committed sources in Docs/audio/midi through the shipping engine, on the
-// deepest 4x oversampling rung with Exact tanh and the half-step Merson solver.
-// The shared PresetDemoRenderer.h owns the command line, timing, checks and
-// MP3 encoding; this file only describes YouKnow.
+// Renders the README's preset demos (G3), one for each committed phrase in
+// Docs/audio/midi, through the shipping engine, on the deepest 4x
+// oversampling rung with Exact tanh and the half-step Merson solver. With
+// --more it renders the More demos (G3d) instead, from Docs/audio/midi/more,
+// each played on the panel Tools/DemoPanels.h sets up for it. The shared
+// PresetDemoRenderer.h owns the command line, timing, checks and WAV output;
+// this file only describes YouKnow.
 
+#include "DemoPanels.h"
 #include "PresetDemoRenderer.h"
 #include "PresetScores.h"
 #include "DSP/YouKnowEngine.h"
@@ -11,6 +14,7 @@
 #include "DSP/YouKnowActiveProductFidelity.h"
 
 #include <array>
+#include <cstring>
 #include <memory>
 #include <string>
 
@@ -23,6 +27,19 @@ constexpr int requestedQuality = 4;
 // first note, as a freshly loaded instance would by the time a player plays.
 constexpr double preRollSeconds = 0.37;
 
+struct Showcase
+{
+    const char* name; // its phrase is Docs/audio/midi/more/<NN>-<slug of name>.mid
+    EngineParameters (*panel)();
+};
+
+constexpr Showcase showcases[] {
+    { "Filter Brass", demo_panels::filterBrass },
+    { "Self-Oscillation", demo_panels::selfOscillation },
+    { "Unison Glide", demo_panels::unisonGlide },
+    { "Delayed Vibrato", demo_panels::delayedVibrato },
+};
+
 const presets::Preset& presetAt (std::size_t index)
 {
     const auto& factory = presets::factoryBank();
@@ -32,13 +49,13 @@ const presets::Preset& presetAt (std::size_t index)
 class YouKnowVoice final : public protocodus::demos::Voice
 {
 public:
-    YouKnowVoice (const presets::Preset& preset, double sampleRate, int maxBlockFrames)
+    YouKnowVoice (const EngineParameters& parameters, double sampleRate, int maxBlockFrames)
         : engine (std::make_unique<YouKnowEngine>())
     {
         ActiveProductFidelityProfile::configureBeforePrepare (*engine);
         engine->selectConverterTimingProfile (YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
         engine->prepare (sampleRate, maxBlockFrames, requestedQuality);
-        engine->setParameters (preset_demos::loadPresetParameters (preset.number));
+        engine->setParameters (parameters);
         engine->setPitchBend (0);
         engine->setModWheel (0);
 
@@ -56,6 +73,8 @@ public:
             engine->noteOn (bytes[1], static_cast<float> (bytes[2]) / 127.0f);
         else if (kind == 0x80 || kind == 0x90)
             engine->noteOff (bytes[1]);
+        else if (kind == 0xe0) // as the plug-in maps the wheel
+            engine->setPitchBend ((static_cast<float> (bytes[2] << 7 | bytes[1]) - 8192.0f) / 8192.0f);
     }
 
     void Render (float* left, float* right, int frames) override
@@ -70,16 +89,34 @@ private:
 
 int main (int argc, char** argv)
 {
+    const bool more = argc > 1 && std::strcmp (argv[1], "--more") == 0;
+    if (more)
+    {
+        argv[1] = argv[0];
+        ++argv;
+        --argc;
+    }
+
     protocodus::demos::Instrument instrument;
     instrument.name = "YouKnow";
-    const auto count = presets::factoryBank().size() + presets::productBank().size();
-    for (std::size_t i = 0; i < count; ++i)
-        instrument.presets.push_back (std::string (presetAt (i).number) + " " + presetAt (i).name);
+    if (more)
+        for (const auto& showcase : showcases)
+            instrument.presets.emplace_back (showcase.name);
+    else
+    {
+        const auto count = presets::factoryBank().size() + presets::productBank().size();
+        for (std::size_t i = 0; i < count; ++i)
+            instrument.presets.push_back (std::string (presetAt (i).number) + " " + presetAt (i).name);
+    }
     // The engine is deterministic without a seed: its component spreads are
     // fixed per Unit Character setting.
-    instrument.open = [] (std::size_t preset, double sampleRate, int maxBlockFrames, std::uint32_t)
+    instrument.open = [more] (std::size_t demo, double sampleRate, int maxBlockFrames, std::uint32_t)
     {
-        return std::make_unique<YouKnowVoice> (presetAt (preset), sampleRate, maxBlockFrames);
+        auto parameters = more ? showcases[demo].panel()
+                               : preset_demos::loadPresetParameters (presetAt (demo).number);
+        if (more)
+            ActiveProductFidelityProfile::applyTo (parameters);
+        return std::make_unique<YouKnowVoice> (parameters, sampleRate, maxBlockFrames);
     };
     return protocodus::demos::Main (argc, argv, instrument);
 }

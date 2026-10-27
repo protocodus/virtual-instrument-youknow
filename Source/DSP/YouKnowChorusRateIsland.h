@@ -58,6 +58,7 @@ struct ChorusRateIsland
         float noise {}, calibration {1};
         float transferFraction {}, transferCorrelation {1};
         bool narrow {}, muteDrive {}, clockMute {}, finiteMute {}, correlatedNoise {}, finiteTr5 {};
+        bool continuousMuteLoading {};
     };
     // The input ring is mirrored (slot i and i + inputSize always agree), so
     // the interpolator reads a sample `age` frames old at newest - age with no

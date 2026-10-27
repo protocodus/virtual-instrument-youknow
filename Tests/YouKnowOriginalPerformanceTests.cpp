@@ -925,6 +925,49 @@ void denseControllerSweep(unsigned block) {
     e->setPitchBend(0); e->setModWheel(0); render(*e,4096,block);
     check(e->originalPerformance().state().assigner.ram[0xa2]==0,"the final CC1 value reaches A-5 after merging");
 }
+// The plug-in's panel is the only one a user sees, so a recall also moves
+// its switches. Before it did, A-5 merged each later column-5 edit over the
+// detents the panel held before the recall: moving a switch back to where
+// the recall had left it went unseen, and moving another revealed a hidden
+// VCA position, ringing a Gate patch on with its envelope release.
+void recalledSwitchRow(unsigned block) {
+    auto e=create(48000,1);
+    render(*e,4096,block);
+    auto p=patch();
+    p.envPolarity=EnvPolarity::Inverted;
+    e->setParameters(p,ParameterSource::ToneRecall); render(*e,4096,block);
+    p.envPolarity=EnvPolarity::Normal;
+    e->setParameters(p); render(*e,4096,block);
+    const auto& ram=e->originalPerformance().state().assigner.ram;
+    check((ram[0x8f]&2u)==0,"a switch moved back to its pre-recall detent reaches A-5");
+
+    p.vcaMode=VcaMode::Gate;
+    e->setParameters(p); render(*e,4096,block);
+    p.vcaMode=VcaMode::Envelope;
+    e->setParameters(p,ParameterSource::ToneRecall); render(*e,4096,block);
+    p.pwmSource=PwmSource::Manual;
+    e->setParameters(p); render(*e,4096,block);
+    check((ram[0x8f]&5u)==1,"moving one switch after a recall changes only that switch");
+}
+// A host bend at one message per sample keeps DIN busy, and A-5 07C5..07CE
+// yields its route change to every received byte, so before merged frames
+// left that window each queued panel edit waited until the stream stopped.
+void densePanelEdits(unsigned block) {
+    auto e=create(48000,1);
+    e->noteOn(60,1);
+    render(*e,4800,block);
+    auto p=patch();
+    std::array<float,256> l{},r{};
+    for(unsigned i=0;i<14400;i+=block) {
+        e->setPitchBend(std::sin(6.2831853f*float(i)/4800.f));
+        if(i==2400) { p.cutoff=17.f/127; e->setParameters(p); }
+        if(i==4800) { p.cutoff=60.f/127; e->setParameters(p); }
+        e->process(l.data(),r.data(),int(block));
+    }
+    check(e->originalPerformanceHealthy(),"a dense bend with panel edits keeps the serial pipeline healthy");
+    check((e->originalPerformance().state().assigner.ram[0x95]&127u)==60,
+          "panel edits reach A-5 while a dense bend stream plays");
+}
 int main() {
     holdListeningFixture();
     check(coalescedHoldBursts(1)==coalescedHoldBursts(173),
@@ -945,6 +988,7 @@ int main() {
     burstAndRecovery();
     startupControlsAndLifecycle();
     denseControllerSweep(1); denseControllerSweep(8);
+    densePanelEdits(1); densePanelEdits(8);
     lowRateWireBursts();
     for(bool afterRead:{false,true})
         check(rapidContactAudio(1,afterRead)==rapidContactAudio(173,afterRead),
@@ -954,6 +998,7 @@ int main() {
         rawToneIncrementalFrontiers(block);
         physicalPanelAndIncomingTone(block);
         libraryToneRecall(block);
+        recalledSwitchRow(block);
         replacedPanelSwitchContacts(block);
         omniReceivedToneAndGeneratedNotes(block);
     }

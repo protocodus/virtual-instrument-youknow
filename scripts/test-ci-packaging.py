@@ -551,7 +551,13 @@ class LinuxPackagingTests(unittest.TestCase):
 
 BLOCKS = (b"<!-- audio-demos-begin -->\n<!-- audio-demos-end -->\n"
           b"<!-- build-download-begin -->\n<!-- build-download-end -->\n")
-DEMO_MP3 = "001-a11-brass-set-1.mp3"
+DEMO_WAV = "001-a11-brass-set-1.wav"
+MORE_WAV = "01-filter-brass.wav"
+
+
+def wav(fill):
+    """A WAV header followed by enough sample bytes to count as complete."""
+    return b"RIFF" + bytes(4) + b"WAVE" + bytes([fill]) * 5000
 
 
 class PreviewPublicationTests(unittest.TestCase):
@@ -571,10 +577,10 @@ class PreviewPublicationTests(unittest.TestCase):
         self.git(self.seed, "config", "user.name", "Fixture")
         self.git(self.seed, "config", "user.email", "fixture@example.invalid")
         self.original = {
-            "README.md": b"Original README and peak table\n" + BLOCKS,
+            "README.md": b"Original README\n" + BLOCKS,
             "Source/engine.cpp": b"original source\n",
-            "Docs/audio/demo.wav": b"original demo",
-            "Docs/audio/youknow-composition.wav": b"original composition",
+            f"Docs/audio/{DEMO_WAV}": wav(1),
+            f"Docs/audio/more/{MORE_WAV}": wav(2),
             "Docs/audio/frozen-review/take.wav": b"frozen evidence",
             "Docs/screenshots/youknow.png": b"original screenshot",
         }
@@ -597,13 +603,11 @@ class PreviewPublicationTests(unittest.TestCase):
             "BUILD_NUMBER": "7",
         })
         self.rendered = {
-            "README.md": b"Original README with refreshed peak table\n" + BLOCKS,
-            "Docs/audio/demo.wav": b"rendered demo",
-            "Docs/audio/youknow-composition.wav": b"rendered composition",
+            f"Docs/audio/{DEMO_WAV}": wav(3),
+            f"Docs/audio/more/{MORE_WAV}": wav(4),
             "Docs/screenshots/youknow.png": b"rendered screenshot",
         }
-        self.mp3 = b"ID3" + bytes(5000)
-        self.archives(self.rendered)
+        self.media(self.rendered)
 
     def git(self, cwd, *arguments):
         return subprocess.run(
@@ -611,21 +615,26 @@ class PreviewPublicationTests(unittest.TestCase):
             capture_output=True, text=True, check=True,
         )
 
-    def archives(self, files, mp3=None):
-        for archive, screenshot in (("audio-previews.tar.gz", False), ("editor-preview.tar.gz", True)):
-            with tarfile.open(self.previews / archive, "w:gz") as output:
-                for relative, contents in files.items():
-                    if relative.startswith("Docs/screenshots/") != screenshot:
-                        continue
+    def media(self, files):
+        """Lays the files out as main-build.yml hands them to the script."""
+        with tarfile.open(self.previews / "editor-preview.tar.gz", "w:gz") as output:
+            for relative, contents in files.items():
+                if relative.startswith("Docs/screenshots/"):
                     member = tarfile.TarInfo(relative)
                     member.size = len(contents)
                     output.addfile(member, io.BytesIO(contents))
-        demos = self.previews / "preset-demos"
-        demos.mkdir(exist_ok=True)
-        write(demos / DEMO_MP3, mp3 or self.mp3)
-        write(demos / "demos.json", json.dumps({"demos": [{
-            "number": 1, "preset": "A11 Brass Set 1", "file": DEMO_MP3,
-            "seconds": 12.5, "peak_dbfs": -3.25}]}).encode())
+        for folder, prefix in (("preset-demos", "Docs/audio/"), ("more-demos", "Docs/audio/more/")):
+            demos = self.previews / folder
+            shutil.rmtree(demos, ignore_errors=True)
+            demos.mkdir()
+            listed = []
+            for relative, contents in files.items():
+                name = relative[len(prefix):]
+                if relative.startswith(prefix) and "/" not in name:
+                    write(demos / name, contents)
+                    listed.append({"number": len(listed) + 1, "preset": "A11 Brass Set 1",
+                                   "file": name, "seconds": 10.5, "peak_dbfs": -3.25})
+            write(demos / "demos.json", json.dumps({"demos": listed}).encode())
 
     def refresh(self):
         result = subprocess.run(
@@ -643,8 +652,11 @@ class PreviewPublicationTests(unittest.TestCase):
     def remote_head(self):
         return self.git(self.remote, "rev-parse", "main").stdout.strip()
 
-    def remote_contents(self, relative):
-        return self.git(self.remote, "show", f"main:{relative}").stdout.encode()
+    def remote_bytes(self, relative):
+        return subprocess.run(
+            ["git", "show", f"main:{relative}"], cwd=self.remote, env=self.environment,
+            capture_output=True, check=True,
+        ).stdout
 
     def changed_in_head(self):
         changed = self.git(self.remote, "diff-tree", "--no-commit-id", "--name-only", "-r", "main").stdout
@@ -661,17 +673,15 @@ class PreviewPublicationTests(unittest.TestCase):
         self.refresh()
         self.assertNotEqual(self.remote_head(), self.source_commit)
         for relative, contents in self.rendered.items():
-            if relative != "README.md":
-                self.assertEqual(self.remote_contents(relative), contents)
-        self.assertEqual(self.remote_contents(f"Docs/audio/{DEMO_MP3}"), self.mp3)
-        readme = self.remote_contents("README.md").decode()
-        self.assertIn("Original README with refreshed peak table", readme)
-        self.assertIn(f"| 1 | A11 Brass Set 1 | [{DEMO_MP3}](Docs/audio/{DEMO_MP3}) | 12.5 s | -3.2 dBFS |", readme)
+            self.assertEqual(self.remote_bytes(relative), contents)
+        readme = self.remote_bytes("README.md").decode()
+        self.assertIn("Original README", readme)
+        self.assertIn(f"| 1 | A11 Brass Set 1 | [{DEMO_WAV}](Docs/audio/{DEMO_WAV}) | 10.5 s | -3.2 dBFS |", readme)
         self.assertIn("[Download main build 7](https://github.com/test/repo/actions/runs/11/artifacts/22)", readme)
         self.assertIn(f"[`{self.source_commit[:12]}`]", readme)
-        self.assertEqual(self.remote_contents("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
-        self.assertEqual(self.remote_contents("Source/engine.cpp"), b"original source\n")
-        self.assertEqual(self.changed_in_head(), set(self.rendered) | {f"Docs/audio/{DEMO_MP3}"})
+        self.assertEqual(self.remote_bytes("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
+        self.assertEqual(self.remote_bytes("Source/engine.cpp"), b"original source\n")
+        self.assertEqual(self.changed_in_head(), set(self.rendered) | {"README.md"})
         message = self.git(self.remote, "log", "-1", "--format=%s", "main").stdout.strip()
         self.assertEqual(message, f"chore: refresh generated media for {self.source_commit[:12]}")
 
@@ -684,37 +694,38 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertIn("Main changed since this render", self.refresh())
         self.assertEqual(self.remote_head(), published)
 
-    def test_composition_refreshes_while_its_frozen_neighbours_do_not(self):
-        # All maintained demo audio lives directly under Docs/audio, while frozen
-        # review evidence lives in subdirectories (like Docs/audio/frozen-review).
-        # Refreshing the composition must publish it and leave the frozen take alone.
+    def test_more_demo_refreshes_while_its_frozen_neighbours_do_not(self):
+        # The maintained demos live directly under Docs/audio and Docs/audio/more,
+        # while frozen review evidence lives in other subdirectories (like
+        # Docs/audio/frozen-review). Refreshing a More demo must publish it and
+        # leave the frozen take alone.
         self.publish_first_build()
-        composition = "Docs/audio/youknow-composition.wav"
-        self.archives({**self.rendered, composition: b"a newly rendered composition"})
+        more = f"Docs/audio/more/{MORE_WAV}"
+        self.media({**self.rendered, more: wav(5)})
         self.refresh()
-        self.assertEqual(self.remote_contents(composition), b"a newly rendered composition")
-        self.assertEqual(self.remote_contents("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
+        self.assertEqual(self.remote_bytes(more), wav(5))
+        self.assertEqual(self.remote_bytes("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
         # The README's download block names the newly built commit.
-        self.assertEqual(self.changed_in_head(), {composition, "README.md"})
+        self.assertEqual(self.changed_in_head(), {more, "README.md"})
 
     def test_renamed_demo_removes_the_previous_file(self):
         renamed = dict(self.rendered)
-        renamed["Docs/audio/renamed-demo.wav"] = renamed.pop("Docs/audio/demo.wav")
-        self.archives(renamed)
+        renamed["Docs/audio/more/01-renamed-demo.wav"] = renamed.pop(f"Docs/audio/more/{MORE_WAV}")
+        self.media(renamed)
         self.refresh()
         tracked = self.git(self.remote, "ls-tree", "-r", "--name-only", "main").stdout.splitlines()
-        self.assertNotIn("Docs/audio/demo.wav", tracked)
-        self.assertIn("Docs/audio/renamed-demo.wav", tracked)
-        self.assertEqual(self.remote_contents("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
+        self.assertNotIn(f"Docs/audio/more/{MORE_WAV}", tracked)
+        self.assertIn("Docs/audio/more/01-renamed-demo.wav", tracked)
+        self.assertEqual(self.remote_bytes("Docs/audio/frozen-review/take.wav"), b"frozen evidence")
 
-    def test_incomplete_mp3_fails_before_publishing(self):
-        self.archives(self.rendered, mp3=b"ID3 truncated")
+    def test_incomplete_wav_fails_before_publishing(self):
+        self.media({**self.rendered, f"Docs/audio/{DEMO_WAV}": b"RIFF truncated"})
         result = subprocess.run(
             ["bash", str(SCRIPTS / "refresh-previews.sh")], cwd=self.checkout,
             env=self.environment, capture_output=True, text=True, check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("not a complete MP3", result.stderr)
+        self.assertIn("not a complete WAV", result.stderr)
         self.assertEqual(self.remote_head(), self.source_commit)
 
     def test_newer_source_prevents_stale_preview_publication(self):
@@ -722,13 +733,13 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertIn("Main changed since this render", self.refresh())
         self.assertEqual(self.remote_head(), upstream)
         for relative in self.rendered:
-            self.assertEqual(self.remote_contents(relative), self.original[relative])
+            self.assertEqual(self.remote_bytes(relative), self.original[relative])
 
     def test_newer_readme_prose_is_preserved(self):
         upstream = self.push_change("README.md", b"Updated instructions\n")
         self.assertIn("Main changed since this render", self.refresh())
         self.assertEqual(self.remote_head(), upstream)
-        self.assertEqual(self.remote_contents("README.md"), b"Updated instructions\n")
+        self.assertEqual(self.remote_bytes("README.md"), b"Updated instructions\n")
 
     def test_preview_only_upstream_commit_allows_publication(self):
         upstream = self.push_change("Docs/screenshots/youknow.png", b"earlier run screenshot")
@@ -737,8 +748,7 @@ class PreviewPublicationTests(unittest.TestCase):
         parent = self.git(self.remote, "rev-parse", "main^").stdout.strip()
         self.assertEqual(parent, upstream)
         for relative, contents in self.rendered.items():
-            if relative != "README.md":
-                self.assertEqual(self.remote_contents(relative), contents)
+            self.assertEqual(self.remote_bytes(relative), contents)
 
 
 if __name__ == "__main__":
