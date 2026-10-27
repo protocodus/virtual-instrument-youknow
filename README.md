@@ -9,191 +9,47 @@ Audio Unit on macOS.
 
 ## Audio demos
 
-One demo for each of the 144 presets, played from its MIDI source in
-[Docs/audio/midi](Docs/audio/midi) through the shipping engine on its deepest
-oversampling rung, at 48 kHz, and encoded as 192 kbps MP3. Every main build
-renders them and rewrites this table.
+Eight of the 144 presets, each showing a different side of the instrument:
+brass stabs, strings under a slow top line, electric piano comping, a funk
+riff, the unison bass, a lead melody, a synth pad and an effect. Each plays
+its phrase from [Docs/audio/midi](Docs/audio/midi) through the shipping engine
+on its deepest oversampling rung, written as 48 kHz 24-bit WAV. Every main
+build renders them and rewrites this table.
 
 <!-- audio-demos-begin -->
 
 | # | Preset | Demo | Length | Peak |
 | --- | --- | --- | --- | --- |
-| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.mp3](Docs/audio/001-a11-brass-set-1.mp3) | 12.7 s | -14.3 dBFS |
-| 2 | A12 Brass Swell | [002-a12-brass-swell.mp3](Docs/audio/002-a12-brass-swell.mp3) | 18.2 s | -22.6 dBFS |
-| 3 | A13 Trumpet | [003-a13-trumpet.mp3](Docs/audio/003-a13-trumpet.mp3) | 11.6 s | -22.2 dBFS |
-| 4 | A14 Flutes | [004-a14-flutes.mp3](Docs/audio/004-a14-flutes.mp3) | 12.1 s | -24.6 dBFS |
-| 5 | A15 Moving Strings | [005-a15-moving-strings.mp3](Docs/audio/005-a15-moving-strings.mp3) | 18.2 s | -18.0 dBFS |
-| 6 | A16 Brass & Strings | [006-a16-brass-strings.mp3](Docs/audio/006-a16-brass-strings.mp3) | 17.5 s | -19.1 dBFS |
-| 7 | A17 Choir | [007-a17-choir.mp3](Docs/audio/007-a17-choir.mp3) | 19.0 s | -17.4 dBFS |
-| 8 | A18 Piano I | [008-a18-piano-i.mp3](Docs/audio/008-a18-piano-i.mp3) | 14.4 s | -15.7 dBFS |
-| 9 | A21 Organ I | [009-a21-organ-i.mp3](Docs/audio/009-a21-organ-i.mp3) | 13.5 s | -22.6 dBFS |
-| 10 | A22 Organ II | [010-a22-organ-ii.mp3](Docs/audio/010-a22-organ-ii.mp3) | 12.7 s | -20.5 dBFS |
-| 11 | A23 Combo Organ | [011-a23-combo-organ.mp3](Docs/audio/011-a23-combo-organ.mp3) | 10.7 s | -21.5 dBFS |
-| 12 | A24 Calliope | [012-a24-calliope.mp3](Docs/audio/012-a24-calliope.mp3) | 10.5 s | -19.0 dBFS |
-| 13 | A25 Donald Pluck | [013-a25-donald-pluck.mp3](Docs/audio/013-a25-donald-pluck.mp3) | 11.0 s | -28.7 dBFS |
-| 14 | A26 Celeste* (1 oct.up) | [014-a26-celeste-1-oct-up.mp3](Docs/audio/014-a26-celeste-1-oct-up.mp3) | 14.7 s | -19.1 dBFS |
-| 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.mp3](Docs/audio/015-a27-elect-piano-i.mp3) | 15.5 s | -11.2 dBFS |
-| 16 | A28 Elect. Piano II | [016-a28-elect-piano-ii.mp3](Docs/audio/016-a28-elect-piano-ii.mp3) | 14.4 s | -15.3 dBFS |
-| 17 | A31 Clock Chimes* (1 oct. up) | [017-a31-clock-chimes-1-oct-up.mp3](Docs/audio/017-a31-clock-chimes-1-oct-up.mp3) | 17.4 s | -22.7 dBFS |
-| 18 | A32 Steel Drums | [018-a32-steel-drums.mp3](Docs/audio/018-a32-steel-drums.mp3) | 10.4 s | -16.7 dBFS |
-| 19 | A33 Xylophone | [019-a33-xylophone.mp3](Docs/audio/019-a33-xylophone.mp3) | 10.2 s | -26.9 dBFS |
-| 20 | A34 Brass III | [020-a34-brass-iii.mp3](Docs/audio/020-a34-brass-iii.mp3) | 19.0 s | -20.4 dBFS |
-| 21 | A35 Fanfare | [021-a35-fanfare.mp3](Docs/audio/021-a35-fanfare.mp3) | 12.0 s | -21.4 dBFS |
-| 22 | A36 String III | [022-a36-string-iii.mp3](Docs/audio/022-a36-string-iii.mp3) | 20.0 s | -17.9 dBFS |
-| 23 | A37 Pizzicato | [023-a37-pizzicato.mp3](Docs/audio/023-a37-pizzicato.mp3) | 10.9 s | -5.0 dBFS |
-| 24 | A38 High Strings | [024-a38-high-strings.mp3](Docs/audio/024-a38-high-strings.mp3) | 15.1 s | -18.4 dBFS |
-| 25 | A41 Bass clarinet | [025-a41-bass-clarinet.mp3](Docs/audio/025-a41-bass-clarinet.mp3) | 15.9 s | -28.1 dBFS |
-| 26 | A42 English Horn | [026-a42-english-horn.mp3](Docs/audio/026-a42-english-horn.mp3) | 15.7 s | -21.6 dBFS |
-| 27 | A43 Brass Ensemble | [027-a43-brass-ensemble.mp3](Docs/audio/027-a43-brass-ensemble.mp3) | 12.0 s | -17.7 dBFS |
-| 28 | A44 Guitar | [028-a44-guitar.mp3](Docs/audio/028-a44-guitar.mp3) | 13.5 s | -13.7 dBFS |
-| 29 | A45 Koto | [029-a45-koto.mp3](Docs/audio/029-a45-koto.mp3) | 12.1 s | -15.4 dBFS |
-| 30 | A46 Dark Pluck | [030-a46-dark-pluck.mp3](Docs/audio/030-a46-dark-pluck.mp3) | 12.5 s | -17.6 dBFS |
-| 31 | A47 Funky I | [031-a47-funky-i.mp3](Docs/audio/031-a47-funky-i.mp3) | 12.4 s | -28.3 dBFS |
-| 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.mp3](Docs/audio/032-a48-synth-bass-i-unison.mp3) | 11.6 s | -20.0 dBFS |
-| 33 | A51 Lead I | [033-a51-lead-i.mp3](Docs/audio/033-a51-lead-i.mp3) | 11.3 s | -30.6 dBFS |
-| 34 | A52 Lead II | [034-a52-lead-ii.mp3](Docs/audio/034-a52-lead-ii.mp3) | 12.4 s | -32.2 dBFS |
-| 35 | A53 Lead III | [035-a53-lead-iii.mp3](Docs/audio/035-a53-lead-iii.mp3) | 10.5 s | -30.5 dBFS |
-| 36 | A54 Funky II | [036-a54-funky-ii.mp3](Docs/audio/036-a54-funky-ii.mp3) | 12.0 s | -12.8 dBFS |
-| 37 | A55 Synth Bass II | [037-a55-synth-bass-ii.mp3](Docs/audio/037-a55-synth-bass-ii.mp3) | 12.6 s | -25.5 dBFS |
-| 38 | A56 Funky III | [038-a56-funky-iii.mp3](Docs/audio/038-a56-funky-iii.mp3) | 12.8 s | -31.6 dBFS |
-| 39 | A57 Thud Wah | [039-a57-thud-wah.mp3](Docs/audio/039-a57-thud-wah.mp3) | 14.2 s | -19.9 dBFS |
-| 40 | A58 Going Up | [040-a58-going-up.mp3](Docs/audio/040-a58-going-up.mp3) | 13.2 s | -22.8 dBFS |
-| 41 | A61 Piano II | [041-a61-piano-ii.mp3](Docs/audio/041-a61-piano-ii.mp3) | 13.5 s | -16.7 dBFS |
-| 42 | A62 Clav | [042-a62-clav.mp3](Docs/audio/042-a62-clav.mp3) | 12.4 s | -11.0 dBFS |
-| 43 | A63 Frontier Organ | [043-a63-frontier-organ.mp3](Docs/audio/043-a63-frontier-organ.mp3) | 12.0 s | -22.5 dBFS |
-| 44 | A64 Snare Drum (unison) | [044-a64-snare-drum-unison.mp3](Docs/audio/044-a64-snare-drum-unison.mp3) | 11.3 s | -15.6 dBFS |
-| 45 | A65 Tom Toms (unison) | [045-a65-tom-toms-unison.mp3](Docs/audio/045-a65-tom-toms-unison.mp3) | 12.1 s | -12.3 dBFS |
-| 46 | A66 Timpani (unison) | [046-a66-timpani-unison.mp3](Docs/audio/046-a66-timpani-unison.mp3) | 14.6 s | -17.8 dBFS |
-| 47 | A67 Shaker | [047-a67-shaker.mp3](Docs/audio/047-a67-shaker.mp3) | 10.6 s | -21.4 dBFS |
-| 48 | A68 Synth Pad | [048-a68-synth-pad.mp3](Docs/audio/048-a68-synth-pad.mp3) | 17.5 s | -18.4 dBFS |
-| 49 | A71 Sweep I | [049-a71-sweep-i.mp3](Docs/audio/049-a71-sweep-i.mp3) | 19.0 s | -16.3 dBFS |
-| 50 | A72 Pluck Sweep | [050-a72-pluck-sweep.mp3](Docs/audio/050-a72-pluck-sweep.mp3) | 13.8 s | -14.1 dBFS |
-| 51 | A73 Repeater | [051-a73-repeater.mp3](Docs/audio/051-a73-repeater.mp3) | 14.5 s | -17.2 dBFS |
-| 52 | A74 Sweep II | [052-a74-sweep-ii.mp3](Docs/audio/052-a74-sweep-ii.mp3) | 19.9 s | -17.5 dBFS |
-| 53 | A75 Pluck Bell | [053-a75-pluck-bell.mp3](Docs/audio/053-a75-pluck-bell.mp3) | 11.9 s | -23.6 dBFS |
-| 54 | A76 Dark Synth Piano | [054-a76-dark-synth-piano.mp3](Docs/audio/054-a76-dark-synth-piano.mp3) | 15.5 s | -17.4 dBFS |
-| 55 | A77 Sustainer | [055-a77-sustainer.mp3](Docs/audio/055-a77-sustainer.mp3) | 18.2 s | -20.2 dBFS |
-| 56 | A78 Wah Release | [056-a78-wah-release.mp3](Docs/audio/056-a78-wah-release.mp3) | 13.3 s | -16.8 dBFS |
-| 57 | A81 Gong (play low chords) | [057-a81-gong-play-low-chords.mp3](Docs/audio/057-a81-gong-play-low-chords.mp3) | 18.0 s | -20.3 dBFS |
-| 58 | A82 Resonance Funk | [058-a82-resonance-funk.mp3](Docs/audio/058-a82-resonance-funk.mp3) | 12.2 s | -22.8 dBFS |
-| 59 | A83 Drum Booms* (1 oct. down) | [059-a83-drum-booms-1-oct-down.mp3](Docs/audio/059-a83-drum-booms-1-oct-down.mp3) | 13.1 s | -22.9 dBFS |
-| 60 | A84 Dust Storm | [060-a84-dust-storm.mp3](Docs/audio/060-a84-dust-storm.mp3) | 16.2 s | -18.6 dBFS |
-| 61 | A85 Rocket Men | [061-a85-rocket-men.mp3](Docs/audio/061-a85-rocket-men.mp3) | 16.8 s | -24.3 dBFS |
-| 62 | A86 Hand Claps | [062-a86-hand-claps.mp3](Docs/audio/062-a86-hand-claps.mp3) | 11.6 s | -12.8 dBFS |
-| 63 | A87 FX Sweep | [063-a87-fx-sweep.mp3](Docs/audio/063-a87-fx-sweep.mp3) | 16.0 s | -17.9 dBFS |
-| 64 | A88 Caverns | [064-a88-caverns.mp3](Docs/audio/064-a88-caverns.mp3) | 15.8 s | -20.4 dBFS |
-| 65 | B11 Strings | [065-b11-strings.mp3](Docs/audio/065-b11-strings.mp3) | 19.1 s | -19.0 dBFS |
-| 66 | B12 Violin | [066-b12-violin.mp3](Docs/audio/066-b12-violin.mp3) | 15.3 s | -28.4 dBFS |
-| 67 | B13 Chorus Vibes | [067-b13-chorus-vibes.mp3](Docs/audio/067-b13-chorus-vibes.mp3) | 12.0 s | -19.1 dBFS |
-| 68 | B14 Organ 1 | [068-b14-organ-1.mp3](Docs/audio/068-b14-organ-1.mp3) | 13.1 s | -21.1 dBFS |
-| 69 | B15 Harpsichord 1 | [069-b15-harpsichord-1.mp3](Docs/audio/069-b15-harpsichord-1.mp3) | 10.9 s | -16.4 dBFS |
-| 70 | B16 Recorder | [070-b16-recorder.mp3](Docs/audio/070-b16-recorder.mp3) | 13.4 s | -34.3 dBFS |
-| 71 | B17 Perc. Pluck | [071-b17-perc-pluck.mp3](Docs/audio/071-b17-perc-pluck.mp3) | 12.1 s | -17.6 dBFS |
-| 72 | B18 Noise Sweep | [072-b18-noise-sweep.mp3](Docs/audio/072-b18-noise-sweep.mp3) | 12.5 s | -27.1 dBFS |
-| 73 | B21 Space Chimes | [073-b21-space-chimes.mp3](Docs/audio/073-b21-space-chimes.mp3) | 13.2 s | -20.6 dBFS |
-| 74 | B22 Nylon Guitar | [074-b22-nylon-guitar.mp3](Docs/audio/074-b22-nylon-guitar.mp3) | 14.9 s | -14.9 dBFS |
-| 75 | B23 Orchestral Pad | [075-b23-orchestral-pad.mp3](Docs/audio/075-b23-orchestral-pad.mp3) | 20.0 s | -16.7 dBFS |
-| 76 | B24 Bright Pluck | [076-b24-bright-pluck.mp3](Docs/audio/076-b24-bright-pluck.mp3) | 11.5 s | -11.9 dBFS |
-| 77 | B25 Organ Bell | [077-b25-organ-bell.mp3](Docs/audio/077-b25-organ-bell.mp3) | 12.4 s | -22.1 dBFS |
-| 78 | B26 Accordion | [078-b26-accordion.mp3](Docs/audio/078-b26-accordion.mp3) | 10.3 s | -17.3 dBFS |
-| 79 | B27 FX Rise 1 | [079-b27-fx-rise-1.mp3](Docs/audio/079-b27-fx-rise-1.mp3) | 13.9 s | -19.1 dBFS |
-| 80 | B28 FX Rise 2 | [080-b28-fx-rise-2.mp3](Docs/audio/080-b28-fx-rise-2.mp3) | 13.9 s | -22.4 dBFS |
-| 81 | B31 Brass | [081-b31-brass.mp3](Docs/audio/081-b31-brass.mp3) | 12.3 s | -17.3 dBFS |
-| 82 | B32 Helicopter | [082-b32-helicopter.mp3](Docs/audio/082-b32-helicopter.mp3) | 12.5 s | -29.4 dBFS |
-| 83 | B33 Lute | [083-b33-lute.mp3](Docs/audio/083-b33-lute.mp3) | 12.7 s | -20.5 dBFS |
-| 84 | B34 Chorus Funk | [084-b34-chorus-funk.mp3](Docs/audio/084-b34-chorus-funk.mp3) | 12.4 s | -20.9 dBFS |
-| 85 | B35 Tomita | [085-b35-tomita.mp3](Docs/audio/085-b35-tomita.mp3) | 17.4 s | -34.0 dBFS |
-| 86 | B36 FX Sweep 1 | [086-b36-fx-sweep-1.mp3](Docs/audio/086-b36-fx-sweep-1.mp3) | 16.7 s | -21.2 dBFS |
-| 87 | B37 Sharp Reed | [087-b37-sharp-reed.mp3](Docs/audio/087-b37-sharp-reed.mp3) | 12.1 s | -33.0 dBFS |
-| 88 | B38 Bass Pluck | [088-b38-bass-pluck.mp3](Docs/audio/088-b38-bass-pluck.mp3) | 11.9 s | -21.7 dBFS |
-| 89 | B41 Resonant Rise | [089-b41-resonant-rise.mp3](Docs/audio/089-b41-resonant-rise.mp3) | 13.0 s | -21.4 dBFS |
-| 90 | B42 Harpsichord 2 | [090-b42-harpsichord-2.mp3](Docs/audio/090-b42-harpsichord-2.mp3) | 10.5 s | -15.6 dBFS |
-| 91 | B43 Dark Ensemble | [091-b43-dark-ensemble.mp3](Docs/audio/091-b43-dark-ensemble.mp3) | 20.0 s | -19.9 dBFS |
-| 92 | B44 Contact Wah | [092-b44-contact-wah.mp3](Docs/audio/092-b44-contact-wah.mp3) | 12.7 s | -22.2 dBFS |
-| 93 | B45 Noise Sweep 2 | [093-b45-noise-sweep-2.mp3](Docs/audio/093-b45-noise-sweep-2.mp3) | 18.5 s | -24.1 dBFS |
-| 94 | B46 Glassy Wah | [094-b46-glassy-wah.mp3](Docs/audio/094-b46-glassy-wah.mp3) | 12.9 s | -17.3 dBFS |
-| 95 | B47 Phase Ensemble | [095-b47-phase-ensemble.mp3](Docs/audio/095-b47-phase-ensemble.mp3) | 19.1 s | -17.1 dBFS |
-| 96 | B48 Chorused Bell | [096-b48-chorused-bell.mp3](Docs/audio/096-b48-chorused-bell.mp3) | 13.6 s | -24.0 dBFS |
-| 97 | B51 Clav | [097-b51-clav.mp3](Docs/audio/097-b51-clav.mp3) | 12.0 s | -12.7 dBFS |
-| 98 | B52 Organ 2 | [098-b52-organ-2.mp3](Docs/audio/098-b52-organ-2.mp3) | 13.9 s | -19.8 dBFS |
-| 99 | B53 Bassoon | [099-b53-bassoon.mp3](Docs/audio/099-b53-bassoon.mp3) | 12.4 s | -27.8 dBFS |
-| 100 | B54 Auto Release Noise Sweep | [100-b54-auto-release-noise-sweep.mp3](Docs/audio/100-b54-auto-release-noise-sweep.mp3) | 13.9 s | -20.1 dBFS |
-| 101 | B55 Brass Ensemble | [101-b55-brass-ensemble.mp3](Docs/audio/101-b55-brass-ensemble.mp3) | 13.1 s | -18.3 dBFS |
-| 102 | B56 Ethereal | [102-b56-ethereal.mp3](Docs/audio/102-b56-ethereal.mp3) | 18.0 s | -19.7 dBFS |
-| 103 | B57 Chorus Bell 2 | [103-b57-chorus-bell-2.mp3](Docs/audio/103-b57-chorus-bell-2.mp3) | 11.8 s | -24.2 dBFS |
-| 104 | B58 Blizzard | [104-b58-blizzard.mp3](Docs/audio/104-b58-blizzard.mp3) | 17.0 s | -26.7 dBFS |
-| 105 | B61 E. Piano with Tremolo | [105-b61-e-piano-with-tremolo.mp3](Docs/audio/105-b61-e-piano-with-tremolo.mp3) | 16.1 s | -16.7 dBFS |
-| 106 | B62 Clarinet | [106-b62-clarinet.mp3](Docs/audio/106-b62-clarinet.mp3) | 12.4 s | -28.2 dBFS |
-| 107 | B63 Thunder | [107-b63-thunder.mp3](Docs/audio/107-b63-thunder.mp3) | 15.5 s | -27.6 dBFS |
-| 108 | B64 Reedy Organ | [108-b64-reedy-organ.mp3](Docs/audio/108-b64-reedy-organ.mp3) | 14.4 s | -21.0 dBFS |
-| 109 | B65 Flute / Horn | [109-b65-flute-horn.mp3](Docs/audio/109-b65-flute-horn.mp3) | 14.4 s | -27.0 dBFS |
-| 110 | B66 Toy Rhodes | [110-b66-toy-rhodes.mp3](Docs/audio/110-b66-toy-rhodes.mp3) | 11.6 s | -18.2 dBFS |
-| 111 | B67 Surf's Up | [111-b67-surf-s-up.mp3](Docs/audio/111-b67-surf-s-up.mp3) | 15.8 s | -19.2 dBFS |
-| 112 | B68 OW Bass | [112-b68-ow-bass.mp3](Docs/audio/112-b68-ow-bass.mp3) | 14.0 s | -26.3 dBFS |
-| 113 | B71 Piccolo | [113-b71-piccolo.mp3](Docs/audio/113-b71-piccolo.mp3) | 10.6 s | -30.3 dBFS |
-| 114 | B72 Melodic Taps | [114-b72-melodic-taps.mp3](Docs/audio/114-b72-melodic-taps.mp3) | 12.3 s | -17.5 dBFS |
-| 115 | B73 Meow Brass | [115-b73-meow-brass.mp3](Docs/audio/115-b73-meow-brass.mp3) | 12.2 s | -30.0 dBFS |
-| 116 | B74 Violin (high) | [116-b74-violin-high.mp3](Docs/audio/116-b74-violin-high.mp3) | 13.3 s | -29.0 dBFS |
-| 117 | B75 High Bells | [117-b75-high-bells.mp3](Docs/audio/117-b75-high-bells.mp3) | 10.2 s | -21.5 dBFS |
-| 118 | B76 Rolling Wah | [118-b76-rolling-wah.mp3](Docs/audio/118-b76-rolling-wah.mp3) | 13.8 s | -19.7 dBFS |
-| 119 | B77 Ping Bell | [119-b77-ping-bell.mp3](Docs/audio/119-b77-ping-bell.mp3) | 12.2 s | -15.3 dBFS |
-| 120 | B78 Brassy Organ | [120-b78-brassy-organ.mp3](Docs/audio/120-b78-brassy-organ.mp3) | 12.3 s | -22.6 dBFS |
-| 121 | B81 Low Dark Strings | [121-b81-low-dark-strings.mp3](Docs/audio/121-b81-low-dark-strings.mp3) | 19.9 s | -20.6 dBFS |
-| 122 | B82 Piccolo Trumpet | [122-b82-piccolo-trumpet.mp3](Docs/audio/122-b82-piccolo-trumpet.mp3) | 11.7 s | -30.1 dBFS |
-| 123 | B83 Cello | [123-b83-cello.mp3](Docs/audio/123-b83-cello.mp3) | 17.4 s | -29.2 dBFS |
-| 124 | B84 High Strings | [124-b84-high-strings.mp3](Docs/audio/124-b84-high-strings.mp3) | 14.4 s | -16.0 dBFS |
-| 125 | B85 Rocket Men | [125-b85-rocket-men.mp3](Docs/audio/125-b85-rocket-men.mp3) | 16.1 s | -24.8 dBFS |
-| 126 | B86 Forbidden Planet | [126-b86-forbidden-planet.mp3](Docs/audio/126-b86-forbidden-planet.mp3) | 15.7 s | -22.4 dBFS |
-| 127 | B87 Froggy | [127-b87-froggy.mp3](Docs/audio/127-b87-froggy.mp3) | 11.3 s | -29.5 dBFS |
-| 128 | B88 Owgan | [128-b88-owgan.mp3](Docs/audio/128-b88-owgan.mp3) | 13.3 s | -18.5 dBFS |
-| 129 | YB1 Round Sub | [129-yb1-round-sub.mp3](Docs/audio/129-yb1-round-sub.mp3) | 15.8 s | -25.0 dBFS |
-| 130 | YB2 Pulse Pluck | [130-yb2-pulse-pluck.mp3](Docs/audio/130-yb2-pulse-pluck.mp3) | 17.4 s | -14.2 dBFS |
-| 131 | YB3 Solid Saw | [131-yb3-solid-saw.mp3](Docs/audio/131-yb3-solid-saw.mp3) | 18.9 s | -23.3 dBFS |
-| 132 | YB4 Rubber Bass | [132-yb4-rubber-bass.mp3](Docs/audio/132-yb4-rubber-bass.mp3) | 18.4 s | -21.1 dBFS |
-| 133 | YB5 Octave Weight | [133-yb5-octave-weight.mp3](Docs/audio/133-yb5-octave-weight.mp3) | 16.5 s | -23.7 dBFS |
-| 134 | YB6 Short PWM | [134-yb6-short-pwm.mp3](Docs/audio/134-yb6-short-pwm.mp3) | 16.8 s | -16.3 dBFS |
-| 135 | YB7 Glide Mono | [135-yb7-glide-mono.mp3](Docs/audio/135-yb7-glide-mono.mp3) | 19.9 s | -23.4 dBFS |
-| 136 | YB8 Hollow Square | [136-yb8-hollow-square.mp3](Docs/audio/136-yb8-hollow-square.mp3) | 16.0 s | -33.4 dBFS |
-| 137 | YP1 Warm Ensemble | [137-yp1-warm-ensemble.mp3](Docs/audio/137-yp1-warm-ensemble.mp3) | 15.8 s | -19.1 dBFS |
-| 138 | YP2 Slow Horizon | [138-yp2-slow-horizon.mp3](Docs/audio/138-yp2-slow-horizon.mp3) | 11.9 s | -19.3 dBFS |
-| 139 | YP3 Glass Halo | [139-yp3-glass-halo.mp3](Docs/audio/139-yp3-glass-halo.mp3) | 17.7 s | -14.5 dBFS |
-| 140 | YP4 Velvet PWM | [140-yp4-velvet-pwm.mp3](Docs/audio/140-yp4-velvet-pwm.mp3) | 18.4 s | -18.6 dBFS |
-| 141 | YP5 Hollow Choir | [141-yp5-hollow-choir.mp3](Docs/audio/141-yp5-hollow-choir.mp3) | 16.7 s | -17.9 dBFS |
-| 142 | YP6 Brass Cloud | [142-yp6-brass-cloud.mp3](Docs/audio/142-yp6-brass-cloud.mp3) | 17.1 s | -17.9 dBFS |
-| 143 | YP7 Resonant Mist | [143-yp7-resonant-mist.mp3](Docs/audio/143-yp7-resonant-mist.mp3) | 18.4 s | -16.0 dBFS |
-| 144 | YP8 Dark Motion | [144-yp8-dark-motion.mp3](Docs/audio/144-yp8-dark-motion.mp3) | 15.5 s | -19.3 dBFS |
+| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.wav](Docs/audio/001-a11-brass-set-1.wav) | 10.5 s | -14.3 dBFS |
+| 5 | A15 Moving Strings | [005-a15-moving-strings.wav](Docs/audio/005-a15-moving-strings.wav) | 11.5 s | -17.8 dBFS |
+| 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.wav](Docs/audio/015-a27-elect-piano-i.wav) | 10.0 s | -12.8 dBFS |
+| 31 | A47 Funky I | [031-a47-funky-i.wav](Docs/audio/031-a47-funky-i.wav) | 10.0 s | -28.1 dBFS |
+| 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.wav](Docs/audio/032-a48-synth-bass-i-unison.wav) | 11.6 s | -20.0 dBFS |
+| 33 | A51 Lead I | [033-a51-lead-i.wav](Docs/audio/033-a51-lead-i.wav) | 11.3 s | -30.6 dBFS |
+| 48 | A68 Synth Pad | [048-a68-synth-pad.wav](Docs/audio/048-a68-synth-pad.wav) | 11.1 s | -18.0 dBFS |
+| 61 | A85 Rocket Men | [061-a85-rocket-men.wav](Docs/audio/061-a85-rocket-men.wav) | 11.5 s | -23.8 dBFS |
 
 <!-- audio-demos-end -->
 
 ### More demos
 
-**Five musical showcases, at maximum quality, 24-bit/96 kHz stereo:**
-[bass](Docs/audio/showcase-01-bass-midnight-drive.wav) ·
-[lead](Docs/audio/showcase-02-lead-signal-fire.wav) ·
-[strings](Docs/audio/showcase-03-strings-silver-canopy.wav) ·
-[brass](Docs/audio/showcase-04-brass-city-lights.wav) ·
-[pad](Docs/audio/showcase-05-pad-slow-horizon.wav).
-Each is an original solo performance, with a chord progression and voice count
-suited to its sound; [the showcase notes](#musical-showcases) describe what to hear.
+Four techniques the preset demos do not feature, each played from its phrase
+in [Docs/audio/midi/more](Docs/audio/midi/more) on a front panel set up for it
+in [`Tools/DemoPanels.h`](Tools/DemoPanels.h):
 
-**[The composition](Docs/audio/youknow-composition.wav)** — ten
-factory presets, ten overdubs, one piece of music, rendered at 24-bit/44.1 kHz
-on the deepest oversampling rung. Hear the sounds together in one arrangement;
-[the part list](#the-composition) says which preset plays what.
+- [Filter brass](Docs/audio/more/01-filter-brass.wav): resonant
+  filter-envelope stabs, then a held chord pushed up on the bender.
+- [Self-oscillation](Docs/audio/more/02-self-oscillation.wav): the filter
+  played as a voice at full resonance and key follow, with no oscillator
+  running.
+- [Unison glide](Docs/audio/more/03-unison-glide.wav): six voices on one key
+  with constant-rate portamento.
+- [Delayed vibrato](Docs/audio/more/04-delayed-vibrato.wav): the modulator's
+  two-stage delay fading vibrato onto a held chord.
 
-**[Original YouKnow preset sessions](Docs/audio/youknow-originals/index.html)** —
-sixteen individual performances for the eight YB basses and eight YP polyphonic
-presets, rendered through the current product circuit profile at maximum quality.
-The collection includes 24-bit/96 kHz stereo WAVs, matching MIDI performances,
-a [playlist](Docs/audio/youknow-originals/YouKnow-Original-Presets.m3u) and
-[render details](Docs/audio/youknow-originals/manifest.json). Open the listening
-page beside its audio files, and select the named preset before playing its MIDI.
-
-Or hear one mechanism at a time:
-[chorus pad](Docs/audio/01-chorus-pad.wav) ·
-[16′ bass](Docs/audio/03-sixteen-foot-bass.wav) ·
-[chorus modes](Docs/audio/06-chorus-modes.wav) ·
-[all audio demos](Docs/audio).
+Longer listening material, the technique takes, five musical showcases, a
+ten-part composition and the original preset sessions, is rendered locally;
+see [local listening renders](#local-listening-renders).
 
 ## Version history
 
@@ -1838,108 +1694,6 @@ Not to be reopened without contradictory primary evidence:
   six-voice chord at maximum VCA LEVEL and VOLUME still peaks below full
   scale.
 
-### Demo render levels
-
-The ten maintained takes are rendered by [`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp)
-through the same DSP engine used by the plug-in, at 44.1 kHz/4× with the
-pixel-measured converter chart and a fresh service state (Aging 0), where a
-new plug-in instance starts at 1× with Aging 50 %.
-
-<!-- peaks-table-begin: regenerated by YouKnowRenderDemos; edits between the markers are overwritten -->
-| File | What it is | Length | Rendered peak | Normalisation |
-| --- | --- | ---: | ---: | ---: |
-| `01-chorus-pad.wav` | Saw and sub through the mode-I chorus: the classic pad, hiss and all | 21.9 s | −11.8 dBFS | +8.8 dB |
-| `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −14.0 dBFS | +11.0 dB |
-| `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −24.6 dBFS | +21.6 dB |
-| `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −22.7 dBFS | +19.7 dB |
-| `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −22.0 dBFS | +19.0 dB |
-| `06-chorus-modes.wav` | The same pad with the effect off, in mode I, mode II, then I+II | 20.5 s | −12.7 dBFS | +9.7 dB |
-| `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −12.0 dBFS | +9.0 dB |
-| `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −19.7 dBFS | +16.7 dB |
-| `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −11.5 dBFS | +8.5 dB |
-| `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −19.2 dBFS | +16.2 dB |
-<!-- peaks-table-end -->
-
-### Musical showcases
-
-Five original performances expose the instrument's range with one synth instance
-per recording. The bass and lead outline their progressions melodically; strings,
-brass and pad play their harmony directly. Every part stays in its declared scale,
-and sustained keys agree with each chord they cross. Short melodic passing notes are
-deliberate, in-scale connections. The strings and pad tie shared notes across
-chord changes, leaving the available voices for moving parts.
-
-| WAV | Key / tempo | Length | What to hear |
-| --- | --- | ---: | --- |
-| [Bass — Midnight Drive](Docs/audio/showcase-01-bass-midnight-drive.wav) | E minor / 100 BPM | 32.2 s | Six voices in unison: syncopated plucks, octave answers and an opening resonant filter. |
-| [Lead — Signal Fire](Docs/audio/showcase-02-lead-signal-fire.wav) | D minor / 72 BPM | 30.8 s | One voice: two answering melodic phrases, short glides and gentle vibrato on longer notes. |
-| [Strings — Silver Canopy](Docs/audio/showcase-03-strings-silver-canopy.wav) | D major / 76 BPM | 29.4 s | Five inner parts support a sixth melodic voice; PWM and Chorus II animate a suspended dominant resolving to D6/9. |
-| [Brass — City Lights](Docs/audio/showcase-04-brass-city-lights.wav) | B-flat major / 80 BPM | 28.2 s | Four-note syncopated hits and short melodic answers build to a six-voice B-flat sixth chord. |
-| [Pad — Slow Horizon](Docs/audio/showcase-05-pad-slow-horizon.wav) | C major / 68 BPM | 37.5 s | Six spread voices move through major and minor ninths, with slow PWM, Chorus I and a long natural release. |
-
-These use `YB4 Rubber Bass`, `A53 Lead III`, `B11 Strings`, `A11 Brass Set 1`
-and `YP2 Slow Horizon`. The strings retain their factory settings. The bass uses
-six-voice unison and a filter performance; the lead uses one voice, envelope VCA
-and brief portamento; brass uses the 8′ range and a shorter release; the pad
-reduces its sub oscillator and gently opens its filter. The visible parameter
-choices and complete scores live in
-[`ShowcaseBassLead.h`](Tools/ShowcaseBassLead.h) and
-[`ShowcasePolyphonic.h`](Tools/ShowcasePolyphonic.h); the factory bank is unchanged.
-
-[`Tools/RenderShowcase.cpp`](Tools/RenderShowcase.cpp) renders at 96 kHz with the
-maximum 4× quality ceiling selected. At this host rate the engine applies 2×,
-giving its intended 192 kHz internal grid, with Exact tanh and the two-half-step
-Merson filter solver. Aging is zero. Each take receives one fixed gain to reach
-−3 dBFS peak, 24-bit TPDF dither and short recording-boundary fades after the
-envelopes have finished. There is no added EQ, compression, delay or reverb;
-the stereo modulation comes from the synth's own chorus. The
-[render manifest](Docs/audio/showcase-manifest.json) records the chords,
-actual voice counts, durations, gain and tail measurements.
-
-`YouKnowRenderShowcase --check` checks harmony across held notes, voice limits,
-centered tuning and quality settings without rendering. A full render also
-checks actual active voices, finite audio, headroom, DC and completed releases.
-Regenerate these five takes on demand with
-`YouKnowRenderShowcase Docs/audio`.
-
-### The composition
-
-[`Tools/RenderComposition.cpp`](Tools/RenderComposition.cpp) renders a piece of
-music rather than a mechanism. Ten factory presets each get their own engine and
-their own part, and the ten are summed: a six-voice monotimbral instrument plays
-ten parts by overdubbing, which is how records were made with this machine.
-Each timbre comes from the synth and its own chorus. Each part's output-volume
-position sets its recorded level; fixed overdub gains then bring the snare
-forward by 6 dB and the shaker by 9 dB. One final peak normalization applies to
-the whole mix, preserving that balance. It renders at 24-bit/44.1 kHz with 4×
-oversampling.
-
-All pitched parts follow one 47-bar chord chart in D natural minor, including
-the snare's sub-oscillator body. Long choir notes are revoiced at chord changes,
-and the final choir and strings agree on D/F/A. The bridge and cadence stay
-inside the same scale. Pitch bend remains centered: a late bend breakpoint
-previously held most of the lead about two semitones flat. The renderer now
-checks note membership throughout each held event, neutral tuning controls,
-and the late-bend regression before rendering. Its smoke test also measures
-the drum gain through the actual stereo mix path.
-
-<!-- composition-table-begin: regenerated by YouKnowRenderComposition; edits between the markers are overwritten -->
-*Low Sun* — D aeolian, 114 bpm, 103.2 s, 24-bit/44.1 kHz, 4x oversampled. Rendered mix peak +0.0 dBFS, normalised −3.0 dB.
-
-| Part | Factory preset | Role | Max notes | Overdub gain | Rendered peak |
-| ---: | --- | --- | ---: | ---: | ---: |
-| 1 | `A48` Synth Bass I (unison) | bass | 1 | +0.0 dB | −4.6 dBFS |
-| 2 | `A67` Shaker | shaker | 1 | +9.0 dB | −10.1 dBFS |
-| 3 | `A64` Snare Drum (unison) | snare | 1 | +6.0 dB | −5.0 dBFS |
-| 4 | `A54` Funky II | stabs | 4 | +0.0 dB | −8.6 dBFS |
-| 5 | `A28` Elect. Piano II | electric piano | 1 | +0.0 dB | −18.8 dBFS |
-| 6 | `A11` Brass Set 1 | brass | 3 | +0.0 dB | −10.7 dBFS |
-| 7 | `B11` Strings | strings | 3 | +0.0 dB | −14.2 dBFS |
-| 8 | `A17` Choir | choir | 3 | +0.0 dB | −10.7 dBFS |
-| 9 | `B13` Chorus Vibes | chorus vibes | 4 | +0.0 dB | −26.4 dBFS |
-| 10 | `A53` Lead III | lead | 1 | +0.0 dB | −24.5 dBFS |
-<!-- composition-table-end -->
-
 ## Known gaps
 
 Deliberate, each with its reason recorded:
@@ -2199,14 +1953,13 @@ is a deliberate host-safety policy for the instrument's expanded MIDI range.
 
 ## Build
 
-Every push or merge to `main` runs the [CI workflow](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml).
-The same run renders the editor screenshot, all ten maintained audio demos and
-the composition, then commits changed previews and the README's peak and part
-tables back to `main` after all platform jobs pass. It skips that commit if
-newer source has landed while rendering. Frozen review audio in subdirectories
-is left untouched; the composition is the one maintained file below
-`Docs/audio`, and it is refreshed by name. The nightly
-schedule reuses this pipeline; PRs build and test without committing previews.
+Every push to any branch runs the [CI workflow](https://github.com/protocodus/virtual-instrument-youknow/actions/workflows/ci.yml).
+Every push to `main` also runs the main build, which renders the editor
+screenshot and the eight preset and four More demos, then commits changed
+WAVs and the README's demo and download blocks back to `main` after all
+platform jobs pass. It skips that commit if newer source has landed while
+rendering. Frozen review audio in other subdirectories of `Docs/audio` is left
+untouched. The nightly schedule reuses this pipeline.
 
 The JUCE-free DSP core, tests, demo renderer and audit tools:
 
@@ -2215,12 +1968,13 @@ cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
   -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
 cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
-# Regenerate maintained previews explicitly when needed:
-cmake --build build-dsp --target YouKnowRebuildDemos
+# The README's demos, as the main build renders them:
+./build-dsp/RenderYouKnowPresetDemos --jobs 4 Docs/audio/midi build-dsp/demos
+./build-dsp/RenderYouKnowPresetDemos --more --jobs 4 Docs/audio/midi/more build-dsp/demos/more
 ```
 
-Ordinary builds leave tracked demo audio untouched; CI invokes the explicit
-preview target before verifying and publishing maintained renders.
+`Tools/WriteDemoMidi.py` records how the demo phrases were written; rerun it
+only to change a phrase on purpose.
 
 For repeatable CPU and audio comparisons between two revisions, build both
 with the same Release settings and retain their executables separately:
@@ -2237,25 +1991,6 @@ CPU measurements must run without competing builds or tests.
 workloads on POSIX systems with a process CPU clock. The protocols and limits live at the head of these tools;
 `YouKnowAuditSchedulerLedger` emits complete scheduler traces for exact
 cross-revision comparisons. Comparison output directories must be new.
-
-The original YouKnow bank has a separate collection generator. With Python 3,
-NumPy and FFmpeg installed, build the renderer and generate all sixteen takes:
-
-```bash
-cmake --build build-dsp --target YouKnowRenderOriginalPresets
-python3 Tools/MakeOriginalPresetDemos.py \
-  --renderer build-dsp/YouKnowRenderOriginalPresets --jobs 2
-```
-
-For a Windows multi-configuration build, pass
-`build-win/Release/YouKnowRenderOriginalPresets.exe` to `--renderer`.
-`--only YB1 YP1` renders selected takes for
-audition; `--package-only` rebuilds the listening page, manifest and archive from
-previously rendered takes. The generator records source and score hashes,
-applies static gain and gentle file-edge fades, and writes matching MIDI
-without Program Change messages. The original collection is refreshed explicitly
-with this command. CTest exercises short smoke checks; full collection generation
-remains explicit.
 
 The same build produces the audit tools whose numbers this README quotes —
 oversampling-domain, BBD, VCF, noise-source, high-pass, passive-hold, DCO-scan
@@ -2369,6 +2104,118 @@ at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
 1.3.1 development packages remain distinct from a signed production release.
+
+### Local listening renders
+
+These renders are listening material for development and are not committed.
+`cmake --build build-dsp --target YouKnowRenderListening` writes the technique
+takes, showcases and composition into `build-dsp/listening`; CI renders the
+same set on every push to keep the tools working.
+
+#### Technique takes
+
+`YouKnowRenderDemos <directory>` ([`Tools/RenderDemos.cpp`](Tools/RenderDemos.cpp))
+renders six takes, one mechanism each: the chorus pad, PWM strings in chorus
+II, a 16′ bassline, one pad through the four chorus states, the high-pass
+switch ladder and Unit Character off and on. They run through the same DSP
+engine as the plug-in, at 44.1 kHz/4× with the pixel-measured converter chart
+and a fresh service state (Aging 0), where a new plug-in instance starts at 1×
+with Aging 50 %. Each take is normalised to −3 dBFS; the renderer prints its
+rendered peak and the gain applied.
+
+#### Musical showcases
+
+Five original performances expose the instrument's range with one synth instance
+per recording. The bass and lead outline their progressions melodically; strings,
+brass and pad play their harmony directly. Every part stays in its declared scale,
+and sustained keys agree with each chord they cross. Short melodic passing notes are
+deliberate, in-scale connections. The strings and pad tie shared notes across
+chord changes, leaving the available voices for moving parts.
+
+| Take | Key / tempo | Length | What to hear |
+| --- | --- | ---: | --- |
+| Bass — Midnight Drive | E minor / 100 BPM | 32.2 s | Six voices in unison: syncopated plucks, octave answers and an opening resonant filter. |
+| Lead — Signal Fire | D minor / 72 BPM | 30.8 s | One voice: two answering melodic phrases, short glides and gentle vibrato on longer notes. |
+| Strings — Silver Canopy | D major / 76 BPM | 29.4 s | Five inner parts support a sixth melodic voice; PWM and Chorus II animate a suspended dominant resolving to D6/9. |
+| Brass — City Lights | B-flat major / 80 BPM | 28.2 s | Four-note syncopated hits and short melodic answers build to a six-voice B-flat sixth chord. |
+| Pad — Slow Horizon | C major / 68 BPM | 37.5 s | Six spread voices move through major and minor ninths, with slow PWM, Chorus I and a long natural release. |
+
+These use `YB4 Rubber Bass`, `A53 Lead III`, `B11 Strings`, `A11 Brass Set 1`
+and `YP2 Slow Horizon`. The strings retain their factory settings. The bass uses
+six-voice unison and a filter performance; the lead uses one voice, envelope VCA
+and brief portamento; brass uses the 8′ range and a shorter release; the pad
+reduces its sub oscillator and gently opens its filter. The visible parameter
+choices and complete scores live in
+[`ShowcaseBassLead.h`](Tools/ShowcaseBassLead.h) and
+[`ShowcasePolyphonic.h`](Tools/ShowcasePolyphonic.h); the factory bank is unchanged.
+
+[`Tools/RenderShowcase.cpp`](Tools/RenderShowcase.cpp) renders at 96 kHz with the
+maximum 4× quality ceiling selected. At this host rate the engine applies 2×,
+giving its intended 192 kHz internal grid, with Exact tanh and the two-half-step
+Merson filter solver. Aging is zero. Each take receives one fixed gain to reach
+−3 dBFS peak, 24-bit TPDF dither and short recording-boundary fades after the
+envelopes have finished. There is no added EQ, compression, delay or reverb;
+the stereo modulation comes from the synth's own chorus. The render manifest,
+`showcase-manifest.json` beside the takes, records the chords, actual voice
+counts, durations, gain and tail measurements.
+
+`YouKnowRenderShowcase --check` checks harmony across held notes, voice limits,
+centered tuning and quality settings without rendering. A full render also
+checks actual active voices, finite audio, headroom, DC and completed releases.
+Render the five takes with `YouKnowRenderShowcase <directory>`.
+
+#### The composition
+
+[`Tools/RenderComposition.cpp`](Tools/RenderComposition.cpp) renders a piece of
+music rather than a mechanism. Ten factory presets each get their own engine and
+their own part, and the ten are summed: a six-voice monotimbral instrument plays
+ten parts by overdubbing, which is how records were made with this machine.
+Each timbre comes from the synth and its own chorus. Each part's output-volume
+position sets its recorded level; fixed overdub gains then bring the snare
+forward by 6 dB and the shaker by 9 dB. One final peak normalization applies to
+the whole mix, preserving that balance. It renders at 24-bit/44.1 kHz with 4×
+oversampling.
+
+All pitched parts follow one 47-bar chord chart in D natural minor, including
+the snare's sub-oscillator body. Long choir notes are revoiced at chord changes,
+and the final choir and strings agree on D/F/A. The bridge and cadence stay
+inside the same scale. Pitch bend remains centered: a late bend breakpoint
+previously held most of the lead about two semitones flat. The renderer now
+checks note membership throughout each held event, neutral tuning controls,
+and the late-bend regression before rendering. Its smoke test also measures
+the drum gain through the actual stereo mix path.
+
+*Low Sun* is in D aeolian at 114 bpm, about 103 s long. Its ten parts are
+`A48` Synth Bass I (bass), `A67` Shaker, `A64` Snare Drum, `A54` Funky II
+(stabs), `A28` Elect. Piano II, `A11` Brass Set 1, `B11` Strings, `A17` Choir,
+`B13` Chorus Vibes and `A53` Lead III. Render it with
+`YouKnowRenderComposition <directory>`, which prints each part's voice count,
+overdub gain and rendered peak.
+
+#### Original preset sessions
+
+The original YouKnow bank has a separate collection generator: sixteen
+individual performances for the eight YB basses and eight YP polyphonic
+presets, rendered through the current product circuit profile at maximum
+quality as 24-bit/96 kHz WAVs with matching MIDI, a playlist, render details
+and a listening page. With Python 3, NumPy and FFmpeg installed, build the
+renderer and generate all sixteen takes:
+
+```bash
+cmake --build build-dsp --target YouKnowRenderOriginalPresets
+python3 Tools/MakeOriginalPresetDemos.py --output build-dsp/listening/youknow-originals \
+  --renderer build-dsp/YouKnowRenderOriginalPresets --jobs 2
+```
+
+For a Windows multi-configuration build, pass
+`build-win/Release/YouKnowRenderOriginalPresets.exe` to `--renderer`.
+`--only YB1 YP1` renders selected takes for
+audition; `--package-only` rebuilds the listening page, manifest and archive from
+previously rendered takes. The generator records source and score hashes,
+applies static gain and gentle file-edge fades, and writes matching MIDI
+without Program Change messages. Open the listening page beside its audio
+files, and select the named preset before playing its MIDI. CTest exercises
+short smoke checks; full collection generation remains explicit.
 
 ## Licensing
 

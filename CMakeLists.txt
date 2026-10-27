@@ -337,10 +337,10 @@ if(YOUKNOW_BUILD_PLUGIN)
             JUCE_VST3_CAN_REPLACE_VST2=0)
 endif()
 
-# The committed demonstration WAVs under Docs/audio are rendered by this tool
-# from the same JUCE-free engine the plug-in uses, so they cannot drift away
-# from what YouKnow actually produces. It is built by default, including on
-# Linux CI, so it cannot rot unnoticed.
+# The README's demos and the local listening renders come from these tools,
+# through the same JUCE-free engine the plug-in uses, so they cannot drift
+# away from what YouKnow actually produces. They are built by default,
+# including on Linux CI, so they cannot rot unnoticed.
 option(YOUKNOW_BUILD_TOOLS "Build the JUCE-free audio render/audit tools" ON)
 
 if(YOUKNOW_BUILD_TOOLS)
@@ -387,8 +387,9 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowAuditSchedulerLedger PRIVATE YouKnowDSP)
     target_compile_features(YouKnowAuditSchedulerLedger PRIVATE cxx_std_20)
 
-    add_executable(YouKnowRenderDemos Tools/RenderDemos.cpp)
+    add_executable(YouKnowRenderDemos Tools/RenderDemos.cpp Tools/DemoPanels.h)
     target_link_libraries(YouKnowRenderDemos PRIVATE YouKnowDSP)
+    target_include_directories(YouKnowRenderDemos PRIVATE Tools)
     target_compile_features(YouKnowRenderDemos PRIVATE cxx_std_20)
 
     add_executable(YouKnowRenderComposition Tools/RenderComposition.cpp)
@@ -399,10 +400,12 @@ if(YOUKNOW_BUILD_TOOLS)
     target_link_libraries(YouKnowRenderShowcase PRIVATE YouKnowDSP Threads::Threads)
     target_compile_features(YouKnowRenderShowcase PRIVATE cxx_std_20)
 
-    # The shared preset demo renderer (README G3): one MP3 per preset from
-    # Docs/audio/midi. The main build runs it; YouKnow.AudioDemos checks it.
+    # The shared preset demo renderer (README G3, G3d): one WAV per phrase in
+    # Docs/audio/midi, and with --more per phrase in Docs/audio/midi/more. The
+    # main build runs it; YouKnow.AudioDemos checks it.
     add_executable(RenderYouKnowPresetDemos
         Tools/RenderPresetDemos.cpp
+        Tools/DemoPanels.h
         Tools/PresetDemoRenderer.h
         Tools/PresetScores.h)
     target_link_libraries(RenderYouKnowPresetDemos PRIVATE YouKnowDSP Threads::Threads)
@@ -417,12 +420,13 @@ if(YOUKNOW_BUILD_TOOLS)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         # Explicit generation keeps the high-quality original collection out
-        # of ordinary builds. The script additionally requires NumPy/FFmpeg.
+        # of ordinary builds and out of the checkout: it is local listening
+        # material. The script additionally requires NumPy/FFmpeg.
         add_custom_target(YouKnowRebuildOriginalPresetDemos
             COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/Tools/MakeOriginalPresetDemos.py"
                     --renderer "$<TARGET_FILE:YouKnowRenderOriginalPresets>"
-                    --output "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/youknow-originals"
+                    --output "${CMAKE_CURRENT_BINARY_DIR}/listening/youknow-originals"
                     --scratch "${CMAKE_CURRENT_BINARY_DIR}/original-preset-demos"
                     --jobs 2
             DEPENDS YouKnowRenderOriginalPresets
@@ -430,14 +434,15 @@ if(YOUKNOW_BUILD_TOOLS)
             USES_TERMINAL)
     endif()
 
-    # Refresh tracked previews only on request; CI invokes this target
-    # explicitly before publishing the current demo collection.
-    add_custom_target(YouKnowRebuildDemos
-        COMMAND YouKnowRenderDemos "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
-        COMMAND YouKnowRenderComposition "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
-        COMMAND YouKnowRenderShowcase "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio"
+    # The technique takes, showcases and composition are local listening
+    # material, rendered on request into the build tree and never committed
+    # (README G3d).
+    add_custom_target(YouKnowRenderListening
+        COMMAND YouKnowRenderDemos "${CMAKE_CURRENT_BINARY_DIR}/listening"
+        COMMAND YouKnowRenderComposition "${CMAKE_CURRENT_BINARY_DIR}/listening"
+        COMMAND YouKnowRenderShowcase "${CMAKE_CURRENT_BINARY_DIR}/listening"
         DEPENDS YouKnowRenderDemos YouKnowRenderComposition YouKnowRenderShowcase
-        COMMENT "Rebuilding all audio demos and updating README.md tables"
+        COMMENT "Rendering the technique takes, showcases and composition into listening/"
         USES_TERMINAL)
 
     add_executable(YouKnowMeasureChorusSupport Tools/MeasureChorusSupport.cpp)
@@ -1285,15 +1290,15 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.CalibrationTakes
                  COMMAND YouKnowMakeCalibrationTakes --self-test)
         set_tests_properties(YouKnow.CalibrationTakes PROPERTIES TIMEOUT 60)
-        # Guards the renderer that produces the committed demonstration WAVs:
-        # it renders a short take to a temporary directory and checks that the
-        # audio is finite, audible and written as a readable WAV.
+        # Guards the renderer of the local technique takes: it renders a short
+        # take to a temporary directory and checks that the audio is finite,
+        # audible and written as a readable WAV.
         add_test(NAME YouKnow.RenderDemos
                  COMMAND YouKnowRenderDemos --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(YouKnow.RenderDemos PROPERTIES TIMEOUT 60)
 
-        # Guards the renderer that produces the committed composition. It
+        # Guards the renderer of the local composition. It
         # checks the whole score against each preset's polyphony and key mode,
         # then renders one part at the shipping quality rung and checks that
         # the audio is finite, audible and written as a readable 24-bit WAV.
@@ -1305,11 +1310,15 @@ if(BUILD_TESTING)
         add_test(NAME YouKnow.ShowcaseScores COMMAND YouKnowRenderShowcase --check)
         set_tests_properties(YouKnow.ShowcaseScores PROPERTIES TIMEOUT 30)
 
-        # Renders all 144 presets twice: about two hours on four cores.
+        # Each renders its demos twice at the deepest quality rung.
         add_test(NAME YouKnow.AudioDemos
                  COMMAND RenderYouKnowPresetDemos --check
                          "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/midi")
-        set_tests_properties(YouKnow.AudioDemos PROPERTIES TIMEOUT 14400)
+        set_tests_properties(YouKnow.AudioDemos PROPERTIES TIMEOUT 3600)
+        add_test(NAME YouKnow.MoreDemos
+                 COMMAND RenderYouKnowPresetDemos --more --check
+                         "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/midi/more")
+        set_tests_properties(YouKnow.MoreDemos PROPERTIES TIMEOUT 3600)
 
         add_test(NAME YouKnow.RenderOriginalPresets
                  COMMAND YouKnowRenderOriginalPresets --smoke
@@ -1610,7 +1619,7 @@ get_property(youknow_tests DIRECTORY PROPERTY TESTS)
 foreach(test IN LISTS youknow_tests)
     if(test MATCHES "^YouKnow[.](ControlFuzz|DspFuzz|ParameterMatrix)$")
         set_tests_properties(${test} PROPERTIES LABELS fuzz)
-    elseif(test STREQUAL "YouKnow.AudioDemos")
+    elseif(test MATCHES "^YouKnow[.](AudioDemos|MoreDemos)$")
         set_tests_properties(${test} PROPERTIES LABELS audio)
     elseif(test STREQUAL "YouKnow.EditorRender")
         set_tests_properties(${test} PROPERTIES LABELS render)

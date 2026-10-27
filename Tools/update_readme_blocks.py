@@ -8,7 +8,7 @@ Tools/check_repo_standard.py fails on a drifted one.
   update_readme_blocks.py demos --readme README.md --manifest <out-dir>/demos.json
       rewrites the table between <!-- audio-demos-begin --> and
       <!-- audio-demos-end --> from the manifest Render<Name>PresetDemos wrote,
-      after checking that every MP3 it names is beside it
+      after checking that every WAV it names is beside it
 
   update_readme_blocks.py download --readme README.md --url <artifact-url>
           --build <run-number> --commit <sha> [--release-url URL --release-tag vX.Y.Z]
@@ -29,7 +29,7 @@ import re
 import sys
 
 AUDIO_LINK_PREFIX = "Docs/audio/"
-DEMO_FILE = re.compile(r"[0-9]{2,}-[a-z0-9]+(?:-[a-z0-9]+)*\.mp3")
+DEMO_FILE = re.compile(r"([0-9]{2,})-[a-z0-9]+(?:-[a-z0-9]+)*\.wav")
 
 
 class BlockError(Exception):
@@ -52,16 +52,21 @@ def demo_table(manifest_path):
     if not demos:
         raise BlockError(f"{manifest_path}: lists no demos")
     rows = ["", "", "| # | Preset | Demo | Length | Peak |", "| --- | --- | --- | --- | --- |"]
-    for expected, demo in enumerate(demos, start=1):
-        name = demo.get("file", "")
-        if demo.get("number") != expected or not DEMO_FILE.fullmatch(name):
-            raise BlockError(f"{manifest_path}: demo {expected} is not a numbered <NN>-<slug>.mp3 in program order")
-        mp3 = Path(manifest_path).parent / name
-        data = mp3.read_bytes() if mp3.is_file() else b""
-        if len(data) < 4096 or not (data[:3] == b"ID3" or data[0] == 0xFF):
-            raise BlockError(f"{name} is missing or not a complete MP3")
+    previous = 0
+    for demo in demos:
+        name, number = demo.get("file", ""), demo.get("number")
+        match = DEMO_FILE.fullmatch(name)
+        # A curated set skips presets, so the numbers rise but need not be consecutive.
+        if not isinstance(number, int) or number <= previous or not match or int(match.group(1)) != number:
+            raise BlockError(f"{manifest_path}: the demo after #{previous} is not a numbered "
+                             "<NN>-<slug>.wav in program order")
+        previous = number
+        wav = Path(manifest_path).parent / name
+        data = wav.read_bytes() if wav.is_file() else b""
+        if len(data) < 4096 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+            raise BlockError(f"{name} is missing or not a complete WAV")
         preset = str(demo["preset"]).replace("|", "\\|")
-        rows.append(f"| {expected} | {preset} | [{name}]({AUDIO_LINK_PREFIX}{name}) "
+        rows.append(f"| {number} | {preset} | [{name}]({AUDIO_LINK_PREFIX}{name}) "
                     f"| {demo['seconds']:.1f} s | {demo['peak_dbfs']:.1f} dBFS |")
     return "\n".join(rows) + "\n\n"
 
