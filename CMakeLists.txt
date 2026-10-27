@@ -1626,12 +1626,20 @@ foreach(test IN LISTS youknow_tests)
     else()
         set_tests_properties(${test} PROPERTIES LABELS unit)
     endif()
-    # Timeouts are hang guards sized for uninstrumented builds; ASan + UBSan
-    # run the same work about ten times slower.
+    # Timeouts are hang guards sized for uninstrumented builds. ASan + UBSan
+    # run the engine about ten times slower, but the JUCE processor and editor
+    # about twenty-five: on the Linux CI image YouKnow.PluginProcessor took
+    # 152 s plain and 3675 s instrumented, and ControlFuzz 850 s of its former
+    # 900 s bound (CI run 161, 2026-10-27). Runner speed varies by about 1.4x,
+    # so ten times the plain bound timed both out on healthy runs (162, 163).
     if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS)
         get_test_property(${test} TIMEOUT timeout)
         if(timeout)
-            math(EXPR timeout "${timeout} * 10")
+            if(test MATCHES "^YouKnow[.](PluginProcessor|ControlFuzz)$")
+                math(EXPR timeout "${timeout} * 25")
+            else()
+                math(EXPR timeout "${timeout} * 10")
+            endif()
             set_tests_properties(${test} PROPERTIES TIMEOUT ${timeout})
         endif()
     endif()
