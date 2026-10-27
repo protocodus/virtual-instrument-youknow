@@ -1610,7 +1610,9 @@ float YouKnowEngine::outputSummerClip(float value) noexcept
     const double squared = normalised * normalised;
     const double fourth = squared * squared;
     const double eighth = fourth * fourth;
-    const double denominator = std::sqrt(std::sqrt(std::sqrt(1.0 + eighth)));
+    // inlineSqrt: the same correctly rounded root, in line under the Rack
+    // toolchain's -fno-builtin, where std::sqrt is a libm call per root.
+    const double denominator = inlineSqrt(inlineSqrt(inlineSqrt(1.0 + eighth)));
     return static_cast<float>(static_cast<double>(value) / denominator);
 }
 
@@ -3673,6 +3675,37 @@ const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
         vst1q_f64(result.data() + 2, innerPair(second, secondSquared));
         return result;
     }
+#elif defined(YOUKNOW_HAS_VCF_PAIR_SIMD) && defined(__x86_64__) && defined(__SSE2__)
+    const __m128d first = _mm_loadu_pd(argument.data());
+    const __m128d second = _mm_loadu_pd(argument.data() + 2);
+    const __m128d firstSquared = _mm_mul_pd(first, first);
+    const __m128d secondSquared = _mm_mul_pd(second, second);
+    const __m128d one = _mm_set1_pd(1.0);
+    if ((_mm_movemask_pd(_mm_cmplt_pd(firstSquared, one))
+         & _mm_movemask_pd(_mm_cmplt_pd(secondSquared, one))) == 3)
+    {
+        // The scalar Estrin expression, two lanes at a time. SSE2 has no
+        // fused multiply-add, so every lane takes the same separately
+        // rounded multiplies and adds as vcfInnerTanhFactor: bit-identical.
+        const auto innerPair = [](__m128d value, __m128d u) noexcept {
+            const __m128d uSquared = _mm_mul_pd(u, u);
+            const __m128d top = _mm_add_pd(
+                _mm_mul_pd(_mm_set1_pd(-0.00305822903759879), u),
+                _mm_set1_pd(0.016720855179576926));
+            const __m128d high = _mm_add_pd(
+                _mm_mul_pd(_mm_set1_pd(-0.051585988404218436), u),
+                _mm_set1_pd(0.1328072064598552));
+            const __m128d low = _mm_add_pd(
+                _mm_mul_pd(_mm_set1_pd(-0.3332895137021704), u),
+                _mm_set1_pd(0.9999993948006496));
+            return _mm_mul_pd(value, _mm_add_pd(_mm_mul_pd(
+                _mm_add_pd(_mm_mul_pd(top, uSquared), high), uSquared), low));
+        };
+        std::array<double, 4> result {};
+        _mm_storeu_pd(result.data(), innerPair(first, firstSquared));
+        _mm_storeu_pd(result.data() + 2, innerPair(second, secondSquared));
+        return result;
+    }
 #endif
     return { polyZonedTanhImpl(argument[0]),
              polyZonedTanhImpl(argument[1]),
@@ -3760,9 +3793,12 @@ double YouKnowEngine::OtaCascade::closedLoopSpectralFactor(
     // that is 2.494; with the loop open it is exactly one.
     const double bounded = std::clamp(
         finiteValue(feedback) ? feedback : 0.0, 0.0, 8.0);
-    const double q = std::sqrt(std::sqrt(bounded)) * 0.70710678118654752440;
+    // inlineSqrt: the identical correctly rounded root, kept in line under
+    // the Rack toolchain's -fno-builtin; planTableau reaches this on every
+    // interval whose step misses the ceiling short circuit.
+    const double q = inlineSqrt(inlineSqrt(bounded)) * 0.70710678118654752440;
     const double real = 1.0 + q;
-    const double factor = std::sqrt(real * real + q * q);
+    const double factor = inlineSqrt(real * real + q * q);
     // `planTableau`'s short circuit trusts the declared ceiling, so hold the
     // formula to it here rather than restating the constant in a comment. The
     // clamp is the identity for every admissible feedback.
@@ -4297,6 +4333,48 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 polyZonedTanhBatch(stageArg);
 
             std::array<double, 4> early {};
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD) && defined(__x86_64__) && defined(__SSE2__)
+            if constexpr (useCubicEarly)
+            {
+                // cubicEarlyTanh and the stage products below, two stages
+                // per register. Each lane performs the scalar expressions'
+                // own multiplies and adds in their own order; SSE2 has no
+                // fused multiply-add, so the result is bit-identical.
+                // copysign(1, x) is x's sign bit on 1.0, and the >= 1.5 test
+                // is false for NaN exactly as the scalar comparison is.
+                const __m128d one = _mm_set1_pd(1.0);
+                const __m128d sign = _mm_set1_pd(-0.0);
+                const __m128d inverse = _mm_set1_pd(inverseHeadroom);
+                const __m128d running = _mm_set1_pd(runningHeadroom);
+                const __m128d amount = _mm_set1_pd(earlyAmount);
+                const auto stagePair = [&](std::size_t stage) noexcept {
+                    __m128d earlyPair = one;
+                    if (applyEarlyEffect)
+                    {
+                        const __m128d x = _mm_mul_pd(
+                            _mm_loadu_pd(value.data() + stage), inverse);
+                        const __m128d saturated = _mm_cmpge_pd(
+                            _mm_andnot_pd(sign, x), _mm_set1_pd(1.5));
+                        const __m128d cubic = _mm_mul_pd(x, _mm_sub_pd(one,
+                            _mm_mul_pd(_mm_mul_pd(_mm_set1_pd(4.0 / 27.0), x), x)));
+                        const __m128d limited = _mm_or_pd(
+                            _mm_and_pd(x, sign), one);
+                        const __m128d shaped = _mm_or_pd(
+                            _mm_and_pd(saturated, limited),
+                            _mm_andnot_pd(saturated, cubic));
+                        earlyPair = _mm_add_pd(one, _mm_mul_pd(amount, shaped));
+                    }
+                    return _mm_mul_pd(_mm_mul_pd(_mm_mul_pd(
+                        _mm_loadu_pd(stageOmegaAt[point].data() + stage),
+                        earlyPair), running),
+                        _mm_loadu_pd(stageTanh.data() + stage));
+                };
+                std::array<double, 4> result;
+                _mm_storeu_pd(result.data(), stagePair(0));
+                _mm_storeu_pd(result.data() + 2, stagePair(2));
+                return result;
+            }
+#endif
             if (!applyEarlyEffect)
                 early.fill(1.0);
             else if constexpr (useCubicEarly)
@@ -11794,11 +11872,15 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     Voice& voice, const EngineParameters& parameters,
     float noiseSample) noexcept
 {
+    // Every return names this one frame, so it is built in the caller's
+    // storage instead of being copied out; the early returns hand back the
+    // same default frame `return {}` did.
+    VoiceFilterFrame frame;
     // Extension slots have no continuously powered voice card behind them.
     // Their digital portamento state still advances on the converter pass,
     // but an unassigned slot has no DCO/filter/audio state that must run.
     if (!voice.active && voice.cardIndex >= hardwareVoices)
-        return {};
+        return frame;
 
     // A retired physical card's render is computed and then discarded: the
     // caller drops the sample, so the only thing this pass can change is the
@@ -11811,7 +11893,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         && !coupledMixerEnabled_ && !voiceFilterRateIslandEnabled())
     {
         freewheelVoiceCard(voice);
-        return {};
+        return frame;
     }
 
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -12014,7 +12096,10 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Character cannot push the numerical interval past the proven boundary.
     const float effectiveFilterOmegaStep = boundedOmegaStep(
         voice.filterOmegaStep);
-    OtaCascade::ControlTrajectory eventControlTrajectory;
+    // A hold trajectory is written straight into the frame, whose own
+    // trajectory starts zeroed as the separate one did; every entry is
+    // assigned below before the frame is marked as carrying it.
+    auto& eventControlTrajectory = frame.trajectory;
     const OtaCascade::ControlTrajectory* controlTrajectory = nullptr;
     if (exactVcfControlInterval_[
             static_cast<std::size_t>(voice.cardIndex)])
@@ -12113,7 +12198,6 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         eventControlTrajectory.headroom.back() = dynamicHeadroom;
         controlTrajectory = &eventControlTrajectory;
     }
-    VoiceFilterFrame frame;
     if (parameters.enableOtaShotNoise)
     {
         frame.shotNoiseOrigin = voice.filter.state;
@@ -12140,10 +12224,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     frame.omegaStep = effectiveFilterOmegaStep;
     frame.headroom = dynamicHeadroom;
     if (controlTrajectory != nullptr)
-    {
-        frame.trajectory = eventControlTrajectory;
         frame.hasTrajectory = true;
-    }
     frame.needsFilter = true;
     return frame;
 }
@@ -14346,7 +14427,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const float openScale = coefficients.outputSummerMutedNoiseScale;
         const float closedScale = coefficients.outputSummerNoiseScale;
         const float summerNoiseScale = (continuousWetNoise
-            ? static_cast<float>(std::sqrt(openScale*openScale
+            ? static_cast<float>(inlineSqrt(openScale*openScale
                 + summerHostContext.wetRatio*(closedScale*closedScale-openScale*openScale)))
             : (summerWetConnected ? closedScale : openScale)) * jackBoardJohnsonScale_;
         outputLeft += outputNoiseLeft * summerNoiseScale;

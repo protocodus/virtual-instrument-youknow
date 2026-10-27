@@ -36,6 +36,11 @@ class FirmwareAssignerAudioBridge {
         // Callers must not edit scratch fields or replace individual clocks.
         std::array<FirmwareUartTrace::Event, wireCapacity> pendingWire{};
         std::size_t wireCount = 0, wireCursor = 0;
+        // The scheduler's CPU event ledger, which the bridge discards. Only
+        // its count is reset per source slice: the scheduler writes an entry
+        // before anything reads it and nothing here reads one, so the 24 KiB
+        // of entries are zeroed once, not on every slice.
+        Sender::Events discardedEvents{};
         Sender::Status batchStatus = Sender::Status::ReachedTarget;
         bool batchPending = false;
         // CPU has already consumed the inclusive endpoint of this source slice.

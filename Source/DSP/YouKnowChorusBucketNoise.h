@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -43,7 +44,9 @@ struct ChorusBucketNoise
         // its packet variance changes. No microscopic kT/C value is inferred.
         const double m=std::isfinite(weightedCosineMoment)
             ? std::clamp(weightedCosineMoment,-1.0,1.0):0.0;
-        c.aWeightedScale=1.0/std::sqrt(std::max(1.0-c.eta*m,1.0e-12));
+        // inlineSqrt: std::sqrt's correctly rounded root, kept in line under
+        // the Rack's -fno-builtin; the chorus calls this on its audio path.
+        c.aWeightedScale=1.0/inlineSqrt(std::max(1.0-c.eta*m,1.0e-12));
     }
     [[nodiscard]] static float step(float storage,float transfer,
                                     float previousTransfer,const Coefficients& c) noexcept
