@@ -115,6 +115,14 @@ see [local listening renders](#local-listening-renders).
   rates and circuit rates), on a development container, not a Reason-host
   measurement.
 
+### 1.3.5 — 2026-10-25 — Less CPU for the same samples, again
+
+- About 3.5 % fewer instructions on the factory presets at the Rack's
+  six-voice Normal configuration (Rack-like GCC flags; 1.3 % under Clang),
+  sound unchanged: every rendered sample is bit-identical to 1.3.4 on all
+  144 presets. [Measurement and validation](Docs/benchmarks/cpu-state-traffic-2026-10-25.md),
+  on a development container, not a Reason-host measurement.
+
 ### 1.3.4 — 2026-10-23 — Less CPU for the same samples
 
 - Trims the voice filter's per-interval setup, reads the voice-island,

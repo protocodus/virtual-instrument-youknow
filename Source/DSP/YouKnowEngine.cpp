@@ -1610,7 +1610,9 @@ float YouKnowEngine::outputSummerClip(float value) noexcept
     const double squared = normalised * normalised;
     const double fourth = squared * squared;
     const double eighth = fourth * fourth;
-    const double denominator = std::sqrt(std::sqrt(std::sqrt(1.0 + eighth)));
+    // inlineSqrt: the same correctly rounded root, in line under the Rack
+    // toolchain's -fno-builtin, where std::sqrt is a libm call per root.
+    const double denominator = inlineSqrt(inlineSqrt(inlineSqrt(1.0 + eighth)));
     return static_cast<float>(static_cast<double>(value) / denominator);
 }
 
@@ -3791,9 +3793,12 @@ double YouKnowEngine::OtaCascade::closedLoopSpectralFactor(
     // that is 2.494; with the loop open it is exactly one.
     const double bounded = std::clamp(
         finiteValue(feedback) ? feedback : 0.0, 0.0, 8.0);
-    const double q = std::sqrt(std::sqrt(bounded)) * 0.70710678118654752440;
+    // inlineSqrt: the identical correctly rounded root, kept in line under
+    // the Rack toolchain's -fno-builtin; planTableau reaches this on every
+    // interval whose step misses the ceiling short circuit.
+    const double q = inlineSqrt(inlineSqrt(bounded)) * 0.70710678118654752440;
     const double real = 1.0 + q;
-    const double factor = std::sqrt(real * real + q * q);
+    const double factor = inlineSqrt(real * real + q * q);
     // `planTableau`'s short circuit trusts the declared ceiling, so hold the
     // formula to it here rather than restating the constant in a comment. The
     // clamp is the identity for every admissible feedback.
@@ -11867,11 +11872,15 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     Voice& voice, const EngineParameters& parameters,
     float noiseSample) noexcept
 {
+    // Every return names this one frame, so it is built in the caller's
+    // storage instead of being copied out; the early returns hand back the
+    // same default frame `return {}` did.
+    VoiceFilterFrame frame;
     // Extension slots have no continuously powered voice card behind them.
     // Their digital portamento state still advances on the converter pass,
     // but an unassigned slot has no DCO/filter/audio state that must run.
     if (!voice.active && voice.cardIndex >= hardwareVoices)
-        return {};
+        return frame;
 
     // A retired physical card's render is computed and then discarded: the
     // caller drops the sample, so the only thing this pass can change is the
@@ -11884,7 +11893,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         && !coupledMixerEnabled_ && !voiceFilterRateIslandEnabled())
     {
         freewheelVoiceCard(voice);
-        return {};
+        return frame;
     }
 
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -12087,7 +12096,10 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Character cannot push the numerical interval past the proven boundary.
     const float effectiveFilterOmegaStep = boundedOmegaStep(
         voice.filterOmegaStep);
-    OtaCascade::ControlTrajectory eventControlTrajectory;
+    // A hold trajectory is written straight into the frame, whose own
+    // trajectory starts zeroed as the separate one did; every entry is
+    // assigned below before the frame is marked as carrying it.
+    auto& eventControlTrajectory = frame.trajectory;
     const OtaCascade::ControlTrajectory* controlTrajectory = nullptr;
     if (exactVcfControlInterval_[
             static_cast<std::size_t>(voice.cardIndex)])
@@ -12186,7 +12198,6 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         eventControlTrajectory.headroom.back() = dynamicHeadroom;
         controlTrajectory = &eventControlTrajectory;
     }
-    VoiceFilterFrame frame;
     if (parameters.enableOtaShotNoise)
     {
         frame.shotNoiseOrigin = voice.filter.state;
@@ -12213,10 +12224,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     frame.omegaStep = effectiveFilterOmegaStep;
     frame.headroom = dynamicHeadroom;
     if (controlTrajectory != nullptr)
-    {
-        frame.trajectory = eventControlTrajectory;
         frame.hasTrajectory = true;
-    }
     frame.needsFilter = true;
     return frame;
 }
@@ -14419,7 +14427,7 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
         const float openScale = coefficients.outputSummerMutedNoiseScale;
         const float closedScale = coefficients.outputSummerNoiseScale;
         const float summerNoiseScale = (continuousWetNoise
-            ? static_cast<float>(std::sqrt(openScale*openScale
+            ? static_cast<float>(inlineSqrt(openScale*openScale
                 + summerHostContext.wetRatio*(closedScale*closedScale-openScale*openScale)))
             : (summerWetConnected ? closedScale : openScale)) * jackBoardJohnsonScale_;
         outputLeft += outputNoiseLeft * summerNoiseScale;
