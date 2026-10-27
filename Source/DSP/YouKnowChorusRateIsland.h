@@ -60,14 +60,26 @@ struct ChorusRateIsland
         bool narrow {}, muteDrive {}, clockMute {}, finiteMute {}, correlatedNoise {}, finiteTr5 {};
         bool continuousMuteLoading {};
     };
-    // Mirrored rings, as VoiceVcaAntialias keeps them: each write lands at
-    // [cursor] and [cursor + size], so the FIR taps read one contiguous
-    // window ending at [cursor + size] without a wrap mask per tap.
+    // The input ring is mirrored (slot i and i + inputSize always agree), so
+    // the interpolator reads a sample `age` frames old at newest - age with no
+    // index wrap. The output ring is mirrored too, and stores each frame's
+    // left/right pair side by side as doubles (each written from a float, so
+    // the value read back is unchanged): one pair load serves both channels.
+    // Layout only; the taps, values and accumulation order are unchanged.
     std::array<float,2*inputSize> inputs {};
     std::array<Controls,inputSize> controls {};
     std::array<Context,inputSize> contexts {};
-    std::array<std::array<float,2*outputSize>,2> outputs {};
+    std::array<double,2*2*outputSize> outputs {};
     int inputWrite {}, outputWrite {}, priming {};
+
+    void writeOutput(int slot, float left, float right) noexcept
+    {
+        for (const int copy : { slot, slot + outputSize })
+        {
+            outputs[2*static_cast<std::size_t>(copy)] = left;
+            outputs[2*static_cast<std::size_t>(copy)+1] = right;
+        }
+    }
 
     void reset() noexcept { *this = {}; }
     void resetWarm(const Controls& current) noexcept
@@ -86,12 +98,11 @@ struct ChorusRateIsland
     {
         if (kernel.factor == 1) return process(input, control);
         constexpr int im = inputSize-1, om = outputSize-1;
-        inputs[static_cast<std::size_t>(inputWrite)] = input;
-        inputs[static_cast<std::size_t>(inputWrite+inputSize)] = input;
+        VoiceVcaAntialias::writeRing(inputs, inputWrite, input);
+        const float* const newestInput = inputs.data()
+            + static_cast<std::size_t>(inputWrite + inputSize);
         controls[static_cast<std::size_t>(inputWrite)] = control;
         const int source = (inputWrite-halfDelay+inputSize)&im;
-        // recentInput[-t] is the input t parent samples ago.
-        const float* const recentInput = inputs.data()+inputWrite+inputSize;
         const auto& delayed = controls[static_cast<std::size_t>(source)];
         Context context {};
         // Zero history before the first input is not physical elapsed time.
@@ -99,19 +110,24 @@ struct ChorusRateIsland
         // keeps a cold A/B's LFO/clock chronology aligned after its FIR delay.
         const bool ready = priming >= halfDelay;
         if (!ready) ++priming;
+        // Every phase's drive is its own 48-term chain, summed tap by tap in
+        // the same order as before; interleaving the phases only lets the
+        // independent chains share each sample load.
+        std::array<double,VoiceVcaAntialias::maximumFactor> drives {};
+        drives[0]=newestInput[-halfDelay];
+        for (int tap=0; tap<VoiceVcaAntialias::delaySamples; ++tap)
+        {
+            const double sample=newestInput[-tap];
+            for (int phase=1; phase<kernel.factor; ++phase)
+                drives[static_cast<std::size_t>(phase)] += kernel.interpolation[static_cast<std::size_t>(phase)]
+                                             [static_cast<std::size_t>(tap)] * sample;
+        }
         for (int phase=0; phase<kernel.factor; ++phase)
         {
-            double drive=0;
-            if (phase==0) drive=inputs[static_cast<std::size_t>(source)];
-            else for (int tap=0; tap<VoiceVcaAntialias::delaySamples; ++tap)
-                drive += kernel.interpolation[static_cast<std::size_t>(phase)]
-                                             [static_cast<std::size_t>(tap)]
-                    * recentInput[-tap];
+            const double drive=drives[static_cast<std::size_t>(phase)];
             const auto result = ready
                 ? process(static_cast<float>(drive), delayed) : Result {};
-            const auto slot = static_cast<std::size_t>((outputWrite+phase)&om);
-            outputs[0][slot] = outputs[0][slot+outputSize] = result.left;
-            outputs[1][slot] = outputs[1][slot+outputSize] = result.right;
+            writeOutput((outputWrite+phase)&om, result.left, result.right);
             // The decimator's centre is its phase-zero output sample.
             if (phase==0) context=result.context;
         }
@@ -119,24 +135,43 @@ struct ChorusRateIsland
         Result result {};
         result.context=contexts[static_cast<std::size_t>(source)];
         const int centre=(kernel.taps-1)/2;
-        // recentOutput[c][-t] is channel c's output t local samples ago.
-        const float* const recentOutput[2] {
-            outputs[0].data()+outputWrite+outputSize,
-            outputs[1].data()+outputWrite+outputSize };
-        std::array<double,2> sum {
-            kernel.decimation[static_cast<std::size_t>(centre)] * recentOutput[0][-centre],
-            kernel.decimation[static_cast<std::size_t>(centre)] * recentOutput[1][-centre] };
+        // Frame `age` slots before outputWrite is newestOutput - 2*age.
+        const double* const newestOutput = outputs.data()
+            + 2*static_cast<std::size_t>(outputWrite + outputSize);
+        const double centreWeight=kernel.decimation[static_cast<std::size_t>(centre)];
+#if defined(YOUKNOW_VCA_ANTIALIAS_SSE2)
+        // Both channels in one register: the same per-channel multiplies and
+        // adds as the portable loop below (SSE2 has no fused multiply-add).
+        __m128d sum=_mm_mul_pd(_mm_set1_pd(centreWeight),
+                               _mm_loadu_pd(newestOutput-2*centre));
         for (int i=0; i<kernel.pairCount; ++i)
         {
-            const auto& pair=kernel.pairs[static_cast<std::size_t>(i)];
-            const int opposite=kernel.taps-1-pair.tap;
+            const auto slot=static_cast<std::size_t>(i);
+            const __m128d first=_mm_loadu_pd(newestOutput-2*kernel.pairTaps[slot]);
+            const __m128d second=_mm_loadu_pd(newestOutput-2*kernel.pairOpposites[slot]);
+            sum=_mm_add_pd(sum,_mm_mul_pd(_mm_set1_pd(kernel.pairWeights[slot]),
+                                          _mm_add_pd(first,second)));
+        }
+        std::array<double,2> sums {};
+        _mm_storeu_pd(sums.data(),sum);
+        result.left=static_cast<float>(sums[0]);
+        result.right=static_cast<float>(sums[1]);
+#else
+        std::array<double,2> sum {
+            centreWeight * newestOutput[-2*centre],
+            centreWeight * newestOutput[-2*centre+1] };
+        for (int i=0; i<kernel.pairCount; ++i)
+        {
+            const auto slot=static_cast<std::size_t>(i);
+            const double* const first=newestOutput-2*kernel.pairTaps[slot];
+            const double* const second=newestOutput-2*kernel.pairOpposites[slot];
             for (int channel=0; channel<2; ++channel)
-                sum[static_cast<std::size_t>(channel)] += pair.weight
-                    * (static_cast<double>(recentOutput[channel][-pair.tap])
-                     + static_cast<double>(recentOutput[channel][-opposite]));
+                sum[static_cast<std::size_t>(channel)] += kernel.pairWeights[slot]
+                    * (first[channel] + second[channel]);
         }
         result.left=static_cast<float>(sum[0]);
         result.right=static_cast<float>(sum[1]);
+#endif
         inputWrite=(inputWrite+1)&im;
         outputWrite=(outputWrite+kernel.factor)&om;
         return result;
