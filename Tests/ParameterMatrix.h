@@ -7,9 +7,10 @@
 // A repo wraps its processor (or, in the Rack, its device's properties) in a
 // protocodus::matrix::Device and runs
 //
-//   return protocodus::matrix::Run([] { return std::make_unique<MyDevice>(); }) == 0 ? 0 : 1;
+//   return protocodus::matrix::Main(argc, argv, [] { return std::make_unique<MyDevice>(); });
 //
-// as a CTest test labelled `fuzz`, under ASan + UBSan. Every automatable
+// as a CTest test labelled `fuzz`, under ASan + UBSan (see Main for the
+// command line). Every automatable
 // parameter takes normalised 0, 0.5 and 1 and every discrete parameter takes
 // every value, in these cases:
 //
@@ -37,6 +38,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -409,6 +411,59 @@ inline int Run(const std::function<std::unique_ptr<Device>()>& make, const Optio
     std::printf("%zu parameters, %zu cases, %zu runs, %d failed\n", parameters.size(), cases.size(), jobs.size(),
                 failures.load());
     return failures.load();
+}
+
+// The standard command line (U9), so every repo's matrix test and every
+// workflow that shards it read the same:
+//
+//   [--jobs N] [--rotation] [--shard K/N] [--case LABEL] [--count] [--list]
+//
+// --rotation runs each case at one rate and block size; --shard K/N runs the
+// cases whose index modulo N is K, numbered from 0; --case runs the one case
+// with that label; --count and --list print the number of cases and the
+// parameters instead of running. `options` carries the product's own settings
+// (a product strips its own flags before calling this). Returns the exit code.
+inline int Main(int argc, char** argv, const std::function<std::unique_ptr<Device>()>& make, Options options = {}) {
+    unsigned long shard = 0, shards = 1;
+    bool count = false, list = false;
+    std::string only;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--rotation") options.everyConfiguration = false;
+        else if (arg == "--count") count = true;
+        else if (arg == "--list") list = true;
+        else if (arg == "--jobs" && i + 1 < argc) options.jobs = std::max(1, std::atoi(argv[++i]));
+        else if (arg == "--case" && i + 1 < argc) only = argv[++i];
+        else if (arg == "--shard" && i + 1 < argc && std::sscanf(argv[++i], "%lu/%lu", &shard, &shards) == 2
+                 && shard < shards) {}
+        else {
+            std::fprintf(stderr, "usage: %s [--jobs N] [--rotation] [--shard K/N] [--case LABEL] [--count] [--list]\n",
+                         argc > 0 ? argv[0] : "ParameterMatrix");
+            return 2;
+        }
+    }
+    if (count || list || !only.empty()) {
+        const auto probe = make();
+        probe->Prepare(48000.0, 512);
+        const auto cases = Cases(*probe);
+        if (count) std::printf("%zu cases\n", cases.size());
+        if (list) {
+            const auto parameters = probe->Parameters();
+            for (std::size_t p = 0; p < parameters.size(); ++p)
+                std::printf("%zu %s (%d steps)\n", p, parameters[p].name.c_str(), parameters[p].steps);
+        }
+        if (count || list) return 0;
+        // A mistyped label would otherwise select nothing and pass.
+        if (std::none_of(cases.begin(), cases.end(), [&](const Case& c) { return c.label == only; })) {
+            std::fprintf(stderr, "no case is labelled %s\n", only.c_str());
+            return 2;
+        }
+    }
+    if (shards > 1 || !only.empty())
+        options.select = [shard, shards, only, product = options.select](std::size_t index, const Case& c) {
+            return index % shards == shard && (only.empty() || c.label == only) && (!product || product(index, c));
+        };
+    return Run(make, options) == 0 ? 0 : 1;
 }
 
 #if defined(JUCE_AUDIO_PROCESSORS_H_INCLUDED)

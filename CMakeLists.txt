@@ -10,12 +10,12 @@ if(YOUKNOW_ENABLE_SANITIZERS)
     # Set before project() so every target, and the instrumented-build
     # detection below, sees the same flags.
     string(APPEND CMAKE_CXX_FLAGS_INIT
-        " -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer")
+        " -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -fno-omit-frame-pointer")
     string(APPEND CMAKE_C_FLAGS_INIT
-        " -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer")
-    string(APPEND CMAKE_EXE_LINKER_FLAGS_INIT " -fsanitize=address,undefined")
-    string(APPEND CMAKE_SHARED_LINKER_FLAGS_INIT " -fsanitize=address,undefined")
-    string(APPEND CMAKE_MODULE_LINKER_FLAGS_INIT " -fsanitize=address,undefined")
+        " -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -fno-omit-frame-pointer")
+    string(APPEND CMAKE_EXE_LINKER_FLAGS_INIT " -fsanitize=address,undefined,float-cast-overflow")
+    string(APPEND CMAKE_SHARED_LINKER_FLAGS_INIT " -fsanitize=address,undefined,float-cast-overflow")
+    string(APPEND CMAKE_MODULE_LINKER_FLAGS_INIT " -fsanitize=address,undefined,float-cast-overflow")
 endif()
 
 # These must be established before project() so CMake's compiler checks use the
@@ -85,6 +85,7 @@ option(YOUKNOW_BUILD_PLUGIN "Build the JUCE plug-in and standalone app" ON)
 option(YOUKNOW_BUILD_CLAP "Build the CLAP plug-in alongside the JUCE formats" ON)
 set(YOUKNOW_JUCE_PATH "" CACHE PATH
     "Optional path to a local JUCE 8.0.14 checkout (avoids downloading JUCE)")
+option(YOUKNOW_REQUIRE_PYTHON_TESTS "Fail to configure without the interpreter the Python checks need" OFF)
 
 include(CTest)
 
@@ -756,7 +757,11 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.EmbeddedVoiceResidual COMMAND YouKnowEmbeddedVoiceResidualTests)
     set_tests_properties(YouKnow.VoiceResidual YouKnow.EmbeddedVoiceResidual PROPERTIES TIMEOUT 60)
 
-    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(YOUKNOW_REQUIRE_PYTHON_TESTS)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    else()
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+    endif()
     if(Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
         add_test(NAME YouKnow.DspPortability
             COMMAND "${Python3_EXECUTABLE}"
@@ -1220,14 +1225,25 @@ if(BUILD_TESTING)
     add_test(NAME YouKnow.VcaTemperature COMMAND YouKnowVcaTemperatureTests)
     set_tests_properties(YouKnow.VcaTemperature PROPERTIES TIMEOUT 90)
 
-    # The U4 input fuzzer's portable build: replays reproducer files given on
-    # the command line, then a fixed seed's random inputs, on any compiler.
+    # The U8 input fuzzer's portable build, a unit test on any compiler: it
+    # replays the fixed crashes committed in Tests/Fixtures/fuzz/, then a fixed
+    # seed's random inputs.
     add_executable(YouKnowDspFuzzReplay Tests/DspFuzz.cpp)
     target_link_libraries(YouKnowDspFuzzReplay PRIVATE YouKnowDSP)
     target_compile_definitions(YouKnowDspFuzzReplay PRIVATE PROTOCODUS_FUZZ_MAIN)
     target_compile_features(YouKnowDspFuzzReplay PRIVATE cxx_std_20)
-    add_test(NAME YouKnow.DspFuzz COMMAND YouKnowDspFuzzReplay -seed=1 -runs=200)
-    set_tests_properties(YouKnow.DspFuzz PROPERTIES TIMEOUT 300)
+    file(GLOB YOUKNOW_FUZZ_REPRODUCERS CONFIGURE_DEPENDS
+         "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/fuzz/*")
+    add_test(NAME YouKnow.DspFuzzReplay
+             COMMAND YouKnowDspFuzzReplay -seed=1 -runs=200 ${YOUKNOW_FUZZ_REPRODUCERS})
+    set_tests_properties(YouKnow.DspFuzzReplay PROPERTIES TIMEOUT 300)
+    if(YOUKNOW_BUILD_FUZZER)
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/fuzz-corpus")
+        add_test(NAME YouKnow.DspFuzz
+                 COMMAND YouKnowDspFuzz -seed=1 -max_total_time=120 -max_len=4096 -timeout=60
+                         -rss_limit_mb=2048 "${CMAKE_CURRENT_BINARY_DIR}/fuzz-corpus")
+        set_tests_properties(YouKnow.DspFuzz PROPERTIES TIMEOUT 600)
+    endif()
 
     add_executable(YouKnowEngineTests Tests/YouKnowEngineTests.cpp)
     target_link_libraries(YouKnowEngineTests PRIVATE YouKnowDSP)
@@ -1457,6 +1473,22 @@ if(BUILD_TESTING)
                 "${YOUKNOW_SANITIZER_DEFINITION}")
         endforeach()
     endif()
+    # U7: the timed runs, Release only and never instrumented. CpuBudget times
+    # the preset demos on one thread against the budget in
+    # Tools/RenderPresetDemos.cpp; EnginePerformance runs the engine suite's
+    # two wall-clock fences (YOUKNOW_PERFORMANCE_TESTS_ONLY).
+    if(CMAKE_BUILD_TYPE STREQUAL "Release"
+       AND NOT (YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS))
+        add_test(NAME YouKnow.EnginePerformance COMMAND YouKnowEngineTests)
+        set_tests_properties(YouKnow.EnginePerformance PROPERTIES
+            ENVIRONMENT YOUKNOW_PERFORMANCE_TESTS_ONLY=1 RUN_SERIAL TRUE TIMEOUT 300)
+        if(YOUKNOW_BUILD_TOOLS)
+            add_test(NAME YouKnow.CpuBudget
+                     COMMAND RenderYouKnowPresetDemos --cpu --json "${CMAKE_BINARY_DIR}/cpu.json"
+                             "${CMAKE_CURRENT_SOURCE_DIR}/Docs/audio/midi")
+            set_tests_properties(YouKnow.CpuBudget PROPERTIES RUN_SERIAL TRUE TIMEOUT 7200)
+        endif()
+    endif()
     # The warm-up fixture advances up to 900 s of internal samples for
     # four configurations. With the accepted circuit reconstruction the
     # complete suite takes 805 s on Linux CI (631 s Windows, 405 s macOS),
@@ -1614,13 +1646,16 @@ endif()
 # Test tiers: every registered test carries exactly one label so CI selects
 # tiers with `ctest -L <tier>`. Control and DSP input fuzzing and the
 # parameter matrix are the fuzz tier, the preset demos the audio tier, the
-# editor screenshot the render tier; everything else is a unit contract.
+# editor screenshot the render tier, the timed runs the perf tier; everything
+# else is a unit contract.
 get_property(youknow_tests DIRECTORY PROPERTY TESTS)
 foreach(test IN LISTS youknow_tests)
     if(test MATCHES "^YouKnow[.](ControlFuzz|DspFuzz|ParameterMatrix)$")
         set_tests_properties(${test} PROPERTIES LABELS fuzz)
     elseif(test MATCHES "^YouKnow[.](AudioDemos|MoreDemos)$")
         set_tests_properties(${test} PROPERTIES LABELS audio)
+    elseif(test MATCHES "^YouKnow[.](CpuBudget|EnginePerformance)$")
+        set_tests_properties(${test} PROPERTIES LABELS perf)
     elseif(test STREQUAL "YouKnow.EditorRender")
         set_tests_properties(${test} PROPERTIES LABELS render)
     else()

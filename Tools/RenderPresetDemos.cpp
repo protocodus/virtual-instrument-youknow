@@ -108,6 +108,9 @@ int main (int argc, char** argv)
         for (std::size_t i = 0; i < count; ++i)
             instrument.presets.push_back (std::string (presetAt (i).number) + " " + presetAt (i).name);
     }
+    // U7 perf budget: 0 reports without failing until the CI runner's median
+    // is measured.
+    instrument.cpuBudget = 0.0;
     // The engine is deterministic without a seed: its component spreads are
     // fixed per Unit Character setting.
     instrument.open = [more] (std::size_t demo, double sampleRate, int maxBlockFrames, std::uint32_t)

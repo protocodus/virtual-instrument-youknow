@@ -19,10 +19,6 @@ permissions:
 
 env:
   BUILD_NUMBER: ${{ github.run_number }}
-  PLUGINVAL_VERSION: v1.0.4
-  PLUGINVAL_LINUX_SHA256: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
-  PLUGINVAL_MACOS_SHA256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
-  PLUGINVAL_WINDOWS_SHA256: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
 
 jobs:
   render-preset-demos:
@@ -60,6 +56,40 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # U7: the perf tier's figures for the record, one file per main build. Its
+  # own job, because the timed renders run on one thread for most of an hour.
+  cpu-figures:
+    name: Time the demos (perf tier)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Build the preset demo renderer
+        run: |
+          cmake -S . -B build-dsp -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
+          cmake --build build-dsp --parallel --target RenderYouKnowPresetDemos
+
+      - name: Time the demos
+        run: |
+          ./build-dsp/RenderYouKnowPresetDemos --cpu --json build-dsp/cpu.json --note "${GITHUB_SHA}" Docs/audio/midi
+
+      - name: Upload the CPU figures
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-youknow-main-build-${{ github.run_number }}
+          path: build-dsp/cpu.json
+          if-no-files-found: error
+          retention-days: 30
+
   build-macos:
     name: macOS universal VST3, AU, CLAP and standalone
     runs-on: macos-15
@@ -91,26 +121,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Validate the AU with auval
-        run: |
-          set -euo pipefail
-          components="$HOME/Library/Audio/Plug-Ins/Components"
-          mkdir -p "$components"
-          ditto "build-macos/YouKnow_artefacts/Release/AU/YouKnow.component" "$components/YouKnow.component"
-          # The registrar caches the component list; restarting it rescans.
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-          auval -strict -v aumu Yk06 Ykno
-
-      - name: Validate the VST3 with pluginval
-        working-directory: build-macos
-        run: |
-          set -euo pipefail
-          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
-          echo "${PLUGINVAL_MACOS_SHA256}  pluginval.zip" | shasum -a 256 -c -
-          ditto -x -k pluginval.zip .
-          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 \
-            --random-seed 0x594b4e4f --timeout-ms 120000 \
-            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+      - name: Validate the plug-ins (pluginval, clap-validator, auval on macOS)
+        shell: bash
+        run: ./scripts/validate-plugins.sh build-macos YouKnow aumu Yk06 Ykno 0x594b4e4f
 
       - name: Package (ad-hoc-signed bundles)
         run: ./scripts/sign-and-package-macos.sh
@@ -153,15 +166,9 @@ jobs:
             -DYOUKNOW_BUILD_PLUGIN=ON -DYOUKNOW_BUILD_CLAP=ON -DBUILD_TESTING=OFF
           cmake --build build-plugin --parallel --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone
 
-      - name: Validate the VST3 with pluginval
-        working-directory: build-plugin
-        run: |
-          set -euo pipefail
-          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Linux.zip"
-          echo "${PLUGINVAL_LINUX_SHA256}  pluginval.zip" | sha256sum -c -
-          unzip -q -o pluginval.zip
-          xvfb-run -a ./pluginval --strictness-level 10 --random-seed 0x594b4e4f \
-            --timeout-ms 120000 --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+      - name: Validate the plug-ins (pluginval, clap-validator, auval on macOS)
+        shell: bash
+        run: ./scripts/validate-plugins.sh build-plugin YouKnow aumu Yk06 Ykno 0x594b4e4f
 
       - name: Package Linux VST3, CLAP and standalone
         run: python3 scripts/package-linux.py --build-dir build-plugin
@@ -194,15 +201,9 @@ jobs:
           cmake -S . -B build-win -A x64 -DYOUKNOW_BUILD_PLUGIN=ON -DYOUKNOW_BUILD_CLAP=ON -DBUILD_TESTING=OFF
           cmake --build build-win --config Release --parallel --target YouKnow_VST3 YouKnow_CLAP YouKnow_Standalone
 
-      - name: Validate the VST3 with pluginval
-        working-directory: build-win
-        run: |
-          set -euo pipefail
-          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
-          echo "${PLUGINVAL_WINDOWS_SHA256}  pluginval.zip" | sha256sum -c -
-          7z x -y pluginval.zip
-          ./pluginval.exe --strictness-level 10 --random-seed 0x594b4e4f \
-            --timeout-ms 120000 --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+      - name: Validate the plug-ins (pluginval, clap-validator, auval on macOS)
+        shell: bash
+        run: ./scripts/validate-plugins.sh build-win YouKnow aumu Yk06 Ykno 0x594b4e4f
 
       - name: Package Windows VST3, CLAP and standalone
         run: python scripts/package-windows.py --build-dir build-win
@@ -215,7 +216,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # The whole U4 parameter-extremes matrix, nightly and on demand: about
+  # The whole U9 parameter-extremes matrix, nightly and on demand: about
   # 12,900 cases in rotation, in 8 shards. ci.yml runs shard 0 of 256 under
   # ASan + UBSan on every push.
   parameter-matrix:
@@ -250,11 +251,14 @@ jobs:
           xvfb-run -a build-matrix/YouKnowParameterMatrixTests \
             --jobs "$(nproc)" --rotation --shard ${{ matrix.shard }}/8
 
-  # The long libFuzzer run (U4); ci.yml runs the same harness for 2 minutes.
+  # The long libFuzzer run (U8); ci.yml runs the same harness for 2 minutes.
   dsp-fuzz:
     name: Fuzz the DSP input boundary (30 minutes)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - uses: actions/checkout@v4
         with:

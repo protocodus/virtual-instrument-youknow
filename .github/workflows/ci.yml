@@ -15,14 +15,8 @@ concurrency:
   group: ci-${{ github.ref != 'refs/heads/main' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-env:
-  # A pinned pluginval release, each archive checked against its SHA-256.
-  # release.yml runs this workflow, so its plug-ins are validated here;
-  # main-build.yml validates its own (pluginval does not load CLAP).
-  PLUGINVAL_VERSION: v1.0.4
-  PLUGINVAL_LINUX_SHA256: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
-  PLUGINVAL_MACOS_SHA256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
-  PLUGINVAL_WINDOWS_SHA256: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
+# release.yml runs this workflow, so its plug-ins are validated here;
+# main-build.yml validates its own.
 
 jobs:
   dsp-tests:
@@ -58,6 +52,7 @@ jobs:
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DYOUKNOW_BUILD_PLUGIN=OFF \
+            -DYOUKNOW_REQUIRE_PYTHON_TESTS=ON \
             -DBUILD_TESTING=ON
 
       - name: Build and test DSP engine
@@ -116,15 +111,9 @@ jobs:
               --output-on-failure -R "^YouKnow\\.${suite}$" --no-tests=error
           done
 
-      - name: Validate the VST3 with pluginval
-        working-directory: build-dsp
-        run: |
-          set -euo pipefail
-          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Linux.zip"
-          echo "${PLUGINVAL_LINUX_SHA256}  pluginval.zip" | sha256sum -c -
-          unzip -q -o pluginval.zip
-          xvfb-run -a ./pluginval --strictness-level 10 --verbose \
-            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+      - name: Validate the plug-ins (pluginval, clap-validator, auval on macOS)
+        shell: bash
+        run: ./scripts/validate-plugins.sh build-dsp YouKnow aumu Yk06 Ykno 0x594b4e4f
 
       - name: Package Linux VST3, CLAP and standalone
         run: python3 scripts/package-linux.py --build-dir build-dsp
@@ -162,6 +151,34 @@ jobs:
 
       - name: Audio tier
         run: ctest --test-dir build-dsp -L '^audio$' --no-tests=error --output-on-failure
+
+  # U7: the preset demos timed on one thread and the engine's wall-clock
+  # fences. Fails above the budget in Tools/RenderPresetDemos.cpp; the figures
+  # are printed for the record.
+  perf:
+    name: Perf tier (demo CPU budget, engine fences)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Build the renderer and the engine suite
+        run: |
+          cmake -S . -B build-dsp -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DYOUKNOW_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
+          cmake --build build-dsp --parallel --target RenderYouKnowPresetDemos YouKnowEngineTests
+
+      - name: Perf tier
+        run: |
+          ctest --test-dir build-dsp -L '^perf$' --no-tests=error --output-on-failure
+          cat build-dsp/cpu.json
 
   plugin-macos:
     name: Plug-in build and package (macOS)
@@ -207,25 +224,9 @@ jobs:
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
 
-      - name: Validate the AU with auval
-        run: |
-          set -euo pipefail
-          components="$HOME/Library/Audio/Plug-Ins/Components"
-          mkdir -p "$components"
-          ditto "build-macos/YouKnow_artefacts/Release/AU/YouKnow.component" "$components/YouKnow.component"
-          # The registrar caches the component list; restarting it rescans.
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
-          auval -strict -v aumu Yk06 Ykno
-
-      - name: Validate the VST3 with pluginval
-        working-directory: build-macos
-        run: |
-          set -euo pipefail
-          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_macOS.zip"
-          echo "${PLUGINVAL_MACOS_SHA256}  pluginval.zip" | shasum -a 256 -c -
-          ditto -x -k pluginval.zip .
-          pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --verbose \
-            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+      - name: Validate the plug-ins (pluginval, clap-validator, auval on macOS)
+        shell: bash
+        run: ./scripts/validate-plugins.sh build-macos YouKnow aumu Yk06 Ykno 0x594b4e4f
 
       - name: Upload the rendered editor screenshot
         uses: actions/upload-artifact@v4
@@ -292,10 +293,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     env:
-      # Leaks are off: these binaries have never been leak-checked, and an
-      # unreviewed leak verdict should not become the gate.
-      ASAN_OPTIONS: detect_leaks=0
-      UBSAN_OPTIONS: print_stacktrace=1
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -411,15 +410,9 @@ jobs:
               -R "^YouKnow\\.${suite}$" --no-tests=error
           done
 
-      - name: Validate the VST3 with pluginval
-        working-directory: build-win
-        run: |
-          set -euo pipefail
-          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/pluginval_Windows.zip"
-          echo "${PLUGINVAL_WINDOWS_SHA256}  pluginval.zip" | sha256sum -c -
-          7z x -y pluginval.zip
-          ./pluginval.exe --strictness-level 10 --verbose \
-            --validate "YouKnow_artefacts/Release/VST3/YouKnow.vst3"
+      - name: Validate the plug-ins (pluginval, clap-validator, auval on macOS)
+        shell: bash
+        run: ./scripts/validate-plugins.sh build-win YouKnow aumu Yk06 Ykno 0x594b4e4f
 
       - name: Package Windows VST3, CLAP and standalone
         run: python scripts/package-windows.py --build-dir build-win

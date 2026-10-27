@@ -17322,6 +17322,21 @@ void testCpuBudget()
 
 int main()
 {
+    // The two wall-clock fences, run only as YouKnow.EnginePerformance in the
+    // perf tier: no other tier may pass or fail on time.
+    if (std::getenv("YOUKNOW_PERFORMANCE_TESTS_ONLY") != nullptr)
+    {
+        testResonanceDoesNotMultiplyTheSolveCost();
+        testCpuBudget();
+        if (failures != 0)
+        {
+            std::cerr << failures << " performance check(s) failed.\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "All performance checks passed.\n";
+        return EXIT_SUCCESS;
+    }
+
     if (std::getenv("YOUKNOW_VOICE_RESIDUAL_TESTS_ONLY") != nullptr)
     {
         testVcfTrimResidualHonoursPrintedWindows();
@@ -17695,8 +17710,6 @@ int main()
     testSettledRk4PairMatchesScalar();
     testInactiveLivePairsPreserveCardState();
     testQualityChangeRefreshesTheFilterCoefficient();
-    testResonanceDoesNotMultiplyTheSolveCost();
-    testCpuBudget();
 
     if (failures != 0)
     {

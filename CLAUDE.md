@@ -21,8 +21,6 @@ Protocodus portfolio standard kept in the project, not in this repository.
 - `Source/DSP/` is JUCE-free and C++17 (the Rack toolchain); the
   `YouKnowDSPCxx17` target proves it. No allocation, file I/O, locks or
   exceptions on the audio thread.
-- Every CTest test carries one tier label (`unit`, `audio`, `render` or
-  `fuzz`); CI selects tiers with `ctest -L`.
 
 ## Documentation layout
 
@@ -137,6 +135,26 @@ defensible on their own physics. It does not license drawing a constant, fitting
 a curve, or keeping a formulation the measurements reject. If every candidate
 needs an invented number, the answer is still that none of them ships.
 
+## Testing
+
+Tests follow the portfolio testing standard (U1–U10); the `portfolio-testing`
+skill has the procedures. These hold in every session:
+
+- Every CTest test is `<Name>.<Suite>` with exactly one tier label: `unit`,
+  `audio`, `render`, `fuzz` or `perf`.
+- A test is never skipped, disabled, loosened or given a longer timeout to
+  get green. Diagnose a failure against the baseline first; when a fixture or
+  limit was wrong, fix it and say why beside it, in the same commit.
+- Checks run in Release builds: use the file's always-on helper, never a bare
+  `assert()`. Seeds, rates and block sizes are fixed.
+- No test outside the `perf` tier passes or fails on time, and `perf` never
+  runs in a Debug or sanitized build. CPU figures are development-machine
+  figures, never Reason or DAW CPU.
+- A fixed fuzz crash's input goes in `Tests/Fixtures/fuzz/`, which
+  `<Name>.DspFuzzReplay` replays in the `unit` tier.
+- A DSP change is done when the suites it touches, the `unit`, `audio` and
+  `perf` tiers and `<Name>DSPCxx17` pass.
+
 ## Build and verify
 
 ```sh
@@ -147,16 +165,18 @@ ctest --test-dir build-dsp -L unit --output-on-failure
 
 Use a separate `build-plugin` directory (`-DYOUKNOW_BUILD_PLUGIN=ON`, the
 default) for the processor, editor and packaging; on macOS
-`scripts/build-macos.sh` builds universal. Every test is `YouKnow.<Suite>`
-with one tier label: `unit`, `audio` (`YouKnow.AudioDemos`, every preset demo
-rendered twice, about two hours on four cores), `render`
-(`YouKnow.EditorRender`, the editor screenshot) or `fuzz`. Select the suites
-that cover a change with `-R`, then run the full suite before a substantive
-DSP change is called done.
-
-A test is never skipped, disabled or loosened to get green. Diagnose a failed
-contract against the baseline before changing a fixture, and document why an
-assumption was stale.
+`scripts/build-macos.sh` builds universal. YouKnow's suites by tier: `unit`
+(including `YouKnow.DspFuzzReplay`), `audio` (`YouKnow.AudioDemos`, every
+preset demo rendered twice, and `YouKnow.MoreDemos`), `render`
+(`YouKnow.EditorRender`, the editor screenshot), `fuzz` (`YouKnow.ControlFuzz` and
+`YouKnow.ParameterMatrix`, one rotation shard of 256, in the plug-in build;
+`YouKnow.DspFuzz` with `-DYOUKNOW_BUILD_FUZZER=ON` and Clang) and `perf`
+(`YouKnow.CpuBudget`, the preset demos timed at their 4x render rung, and
+`YouKnow.EnginePerformance`, the engine suite's two wall-clock fences; Release
+builds without sanitizers). Select the suites that cover a change with `-R`,
+then run the full suite before a substantive DSP change is called done.
+`scripts/validate-plugins.sh build-plugin YouKnow aumu Yk06 Ykno 0x594b4e4f`
+runs the host validators on a plug-in build.
 
 ## YouKnow specifics
 
@@ -173,9 +193,9 @@ assumption was stale.
   `MakeOriginalPresetDemos.py`) render only to a directory given on the
   command line and are never committed (README G3d).
 - `PresetDemoRenderer.h`, `update_readme_blocks.py`, `Tests/ParameterMatrix.h`,
-  `Tests/FuzzHarness.h` and the two shared `CLAUDE.md` sections above are
-  copies of the portfolio masters in the Rack repository's `Tools/portfolio/`;
-  change the master, then copy it.
+  `Tests/FuzzHarness.h`, `scripts/validate-plugins.sh` and the three shared
+  `CLAUDE.md` sections above are copies of the portfolio masters in the Rack
+  repository's `Tools/portfolio/`; change the master, then copy it.
 
 **Accepted evidence (owner decision, 2026-09-15).** When original-instrument
 data is unavailable, documented sibling circuits and models are acceptable

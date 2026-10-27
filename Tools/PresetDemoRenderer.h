@@ -18,6 +18,15 @@
 //   Render<Name>PresetDemos [--jobs N] --check <midi-dir>
 //       the audio tier: renders every demo twice and fails unless the
 //       second render is bit-identical
+//   Render<Name>PresetDemos --cpu [--repeats N] [--json FILE] [--note TEXT] <midi-dir>
+//       the perf tier (U7): times every demo on one thread, after an untimed
+//       warm-up render, with denormals flushed as a plug-in's callback does;
+//       reports the realtime factor (DSP seconds per audio second, median of
+//       the repeats) and the worst block as a share of its period, and fails
+//       when a repeat differs or a median exceeds Instrument::cpuBudget.
+//       Only voice->Midi() and voice->Render() are timed. A Debug or
+//       sanitized build reports but never fails on time. FILE gets the
+//       figures as JSON; TEXT (a commit, a machine) is copied into it.
 //
 // The .mid files are the curated demo list (G3): each names a factory preset
 // by program number and slug, there are at most kMaxDemos of them, and a bank
@@ -31,6 +40,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -45,6 +55,13 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined(__SSE__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
 
 namespace protocodus::demos {
 
@@ -74,6 +91,10 @@ struct Instrument {
     // Called from worker threads, so it must not share mutable state between voices.
     std::function<std::unique_ptr<Voice>(std::size_t preset, double sampleRate, int maxBlockFrames,
                                          std::uint32_t seed)> open;
+    // The perf tier's budget (U7): the highest median realtime factor any demo
+    // may take on one thread. Set it from a measurement on the CI runner and
+    // say which beside it; 0 reports without a budget.
+    double cpuBudget = 0.0;
 };
 
 struct MidiEvent {
@@ -217,6 +238,12 @@ inline std::vector<MidiEvent> ReadMidi(const std::filesystem::path& path) {
 
 namespace detail {
 
+// Time spent in the voice's Midi() and Render() calls while rendering a demo.
+struct Timing {
+    double seconds = 0.0;
+    double worstBlock = 0.0; // the slowest kBlockFrames block, in seconds
+};
+
 struct Demo {
     std::string stem;
     std::vector<float> left, right;
@@ -224,7 +251,8 @@ struct Demo {
     std::uint64_t hash = 1469598103934665603ull; // FNV-1a over the float bits
 };
 
-inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::size_t preset) {
+inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::size_t preset,
+                   Timing* timing = nullptr) {
     Demo demo;
     demo.stem = Stem(instrument, preset);
     const auto events = ReadMidi(midiDir / (demo.stem + ".mid"));
@@ -239,6 +267,7 @@ inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::s
     std::size_t next = 0, done = 0;
     while (done < frames) {
         const std::size_t blockEnd = std::min(frames, done + static_cast<std::size_t>(kBlockFrames));
+        const auto blockStart = std::chrono::steady_clock::now();
         // Each event lands on its own sample, as a plug-in host delivers it.
         while (done < blockEnd) {
             while (next < events.size() && due(next) <= done) {
@@ -248,6 +277,11 @@ inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::s
             const std::size_t until = next < events.size() ? std::min(blockEnd, due(next)) : blockEnd;
             voice->Render(&demo.left[done], &demo.right[done], static_cast<int>(until - done));
             done = until;
+        }
+        if (timing) {
+            const std::chrono::duration<double> spent = std::chrono::steady_clock::now() - blockStart;
+            timing->seconds += spent.count();
+            timing->worstBlock = std::max(timing->worstBlock, spent.count());
         }
     }
 
@@ -439,24 +473,195 @@ inline int Write(const Instrument& instrument, const fs::path& midiDir, const fs
     return 0;
 }
 
+// Sets flush-to-zero and denormals-are-zero for its lifetime, as JUCE's
+// ScopedNoDenormals does around a plug-in's process callback, so the perf
+// tier times what a host runs. Elsewhere (MSVC on ARM) it changes nothing.
+class FlushDenormals {
+public:
+    FlushDenormals() {
+#if defined(__SSE__) || defined(_M_X64)
+        saved = _mm_getcsr();
+        _mm_setcsr(static_cast<unsigned>(saved) | 0x8040u);
+#elif defined(__aarch64__)
+        asm volatile("mrs %0, fpcr" : "=r"(saved));
+        asm volatile("msr fpcr, %0" : : "r"(saved | (1ull << 24)));
+#endif
+    }
+    ~FlushDenormals() {
+#if defined(__SSE__) || defined(_M_X64)
+        _mm_setcsr(static_cast<unsigned>(saved));
+#elif defined(__aarch64__)
+        asm volatile("msr fpcr, %0" : : "r"(saved));
+#endif
+    }
+    FlushDenormals(const FlushDenormals&) = delete;
+    FlushDenormals& operator=(const FlushDenormals&) = delete;
+
+private:
+    unsigned long long saved = 0;
+};
+
+inline std::string Compiler() {
+#if defined(__clang__)
+    return std::string("clang ") + __clang_version__;
+#elif defined(__GNUC__)
+    return std::string("gcc ") + __VERSION__;
+#elif defined(_MSC_VER)
+    return "msvc " + std::to_string(_MSC_FULL_VER);
+#else
+    return "unknown";
+#endif
+}
+
+// Timing means nothing in a build that is not optimised or is instrumented.
+// GCC marks only ASan, which the portfolio's sanitizer builds always include.
+inline bool TimingIsMeaningful() {
+#if !defined(NDEBUG) || defined(__SANITIZE_ADDRESS__)
+    return false;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+    return false;
+#else
+    return true;
+#endif
+#else
+    return true;
+#endif
+}
+
+inline const char* System() {
+#if defined(__APPLE__)
+    return "macos";
+#elif defined(_WIN32)
+    return "windows";
+#elif defined(__linux__)
+    return "linux";
+#else
+    return "unknown";
+#endif
+}
+
+inline std::string CpuModel() {
+#if defined(__linux__)
+    std::ifstream info("/proc/cpuinfo");
+    for (std::string line; std::getline(info, line);)
+        if (line.rfind("model name", 0) == 0 && line.find(':') != std::string::npos)
+            return line.substr(line.find(':') + 2);
+#elif defined(__APPLE__)
+    char name[256] = "";
+    std::size_t size = sizeof name;
+    if (sysctlbyname("machdep.cpu.brand_string", name, &size, nullptr, 0) == 0) return name;
+#endif
+    return "";
+}
+
+inline double Median(std::vector<double> values) {
+    if (values.empty()) return 0.0;
+    std::sort(values.begin(), values.end());
+    const std::size_t middle = values.size() / 2;
+    return values.size() % 2 ? values[middle] : 0.5 * (values[middle - 1] + values[middle]);
+}
+
+inline int Cpu(const Instrument& instrument, const fs::path& midiDir, int repeats, const fs::path& json,
+               const std::string& note) {
+    const auto presets = Sources(instrument, midiDir);
+    if (presets.empty()) return 1;
+    const bool gated = instrument.cpuBudget > 0.0 && TimingIsMeaningful();
+    const double period = kBlockFrames / kSampleRate;
+    const FlushDenormals flush;
+    int failures = 0;
+    std::string rows;
+    for (const std::size_t preset : presets) {
+        const std::string stem = Stem(instrument, preset);
+        std::string error;
+        double seconds = 0.0;
+        std::vector<double> factors, worst;
+        try {
+            // Untimed: warms the caches, the allocator and any lazily built tables.
+            const Demo warm = Render(instrument, midiDir, preset);
+            seconds = Seconds(warm);
+            if (const char* problem = Problem(instrument, warm)) error = problem;
+            for (int k = 0; k < repeats && error.empty(); ++k) {
+                Timing timing;
+                const Demo demo = Render(instrument, midiDir, preset, &timing);
+                if (demo.hash != warm.hash) error = "a repeat differs";
+                factors.push_back(timing.seconds / seconds);
+                worst.push_back(timing.worstBlock / period);
+            }
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        const double factor = Median(factors), block = Median(worst);
+        if (error.empty() && gated && factor > instrument.cpuBudget) {
+            char text[96];
+            std::snprintf(text, sizeof text, "above the %.4gx budget", instrument.cpuBudget);
+            error = text;
+        }
+        std::printf("%s %s: %.4fx realtime (median of %zu), worst block %.0f %% of %.2f ms%s%s\n",
+                    error.empty() ? "PASS" : "FAIL", stem.c_str(), factor, factors.size(), 100.0 * block,
+                    1000.0 * period, error.empty() ? "" : ": ", error.c_str());
+        failures += !error.empty();
+
+        char numbers[160];
+        std::snprintf(numbers, sizeof numbers, ", \"seconds\": %.9g, \"realtime_factor\": %.9g, "
+                      "\"worst_block_share\": %.9g, \"realtime_factors\": [", seconds, factor, block);
+        rows += std::string(rows.empty() ? "" : ",") + "\n    {\"number\": " + std::to_string(preset + 1)
+            + ", \"preset\": " + JsonString(instrument.presets[preset]) + ", \"file\": " + JsonString(stem + ".wav")
+            + numbers;
+        for (std::size_t k = 0; k < factors.size(); ++k) {
+            char value[32];
+            std::snprintf(value, sizeof value, "%s%.9g", k ? ", " : "", factors[k]);
+            rows += value;
+        }
+        rows += "], \"error\": " + JsonString(error) + "}";
+    }
+    if (instrument.cpuBudget > 0.0 && !gated)
+        std::printf("NOTE: a Debug or sanitized build; the %.4gx budget was not checked\n", instrument.cpuBudget);
+
+    if (!json.empty()) {
+        char budget[32];
+        std::snprintf(budget, sizeof budget, "%.9g", instrument.cpuBudget);
+        std::ofstream file(json, std::ios::binary);
+        file << "{\n  \"instrument\": " << JsonString(instrument.name) << ",\n  \"note\": " << JsonString(note)
+             << ",\n  \"compiler\": " << JsonString(Compiler())
+             << ",\n  \"timing_meaningful\": " << (TimingIsMeaningful() ? "true" : "false")
+             << ",\n  \"system\": " << JsonString(System()) << ",\n  \"cpu_model\": " << JsonString(CpuModel())
+             << ",\n  \"hardware_threads\": " << std::thread::hardware_concurrency()
+             << ",\n  \"sample_rate\": " << static_cast<int>(kSampleRate) << ",\n  \"block_frames\": " << kBlockFrames
+             << ",\n  \"repeats\": " << repeats << ",\n  \"cpu_budget\": " << budget << ",\n  \"demos\": [" << rows
+             << "\n  ]\n}\n";
+        if (!file) throw std::runtime_error(json.string() + ": cannot write");
+    }
+    return failures == 0 ? 0 : 1;
+}
+
 } // namespace detail
 
 inline int Main(int argc, char** argv, const Instrument& instrument) {
     const std::string usage = "usage: " + std::string(argc > 0 ? argv[0] : "RenderPresetDemos")
-        + " [--jobs N] <midi-dir> <out-dir> | [--jobs N] --check <midi-dir>";
+        + " [--jobs N] <midi-dir> <out-dir> | [--jobs N] --check <midi-dir>"
+          " | --cpu [--repeats N] [--json FILE] [--note TEXT] <midi-dir>";
     try {
         if (instrument.presets.empty() || !instrument.open) throw std::runtime_error("the instrument declares no presets");
         int jobs = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
-        bool check = false;
+        int repeats = 3;
+        bool check = false, cpu = false;
+        std::filesystem::path json;
+        std::string note;
         std::vector<std::filesystem::path> paths;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--check") check = true;
+            else if (arg == "--cpu") cpu = true;
             else if (arg == "--jobs" && i + 1 < argc) jobs = std::stoi(argv[++i]);
+            else if (arg == "--repeats" && i + 1 < argc) repeats = std::max(1, std::stoi(argv[++i]));
+            else if (arg == "--json" && i + 1 < argc) json = argv[++i];
+            else if (arg == "--note" && i + 1 < argc) note = argv[++i];
             else if (!arg.empty() && arg[0] != '-') paths.emplace_back(arg);
             else throw std::runtime_error(usage);
         }
-        if (paths.size() != (check ? 1u : 2u)) throw std::runtime_error(usage);
+        if ((check && cpu) || paths.size() != (check || cpu ? 1u : 2u)) throw std::runtime_error(usage);
+        if (cpu) return detail::Cpu(instrument, paths[0], repeats, json, note);
         return check ? detail::Check(instrument, paths[0], jobs) : detail::Write(instrument, paths[0], paths[1], jobs);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

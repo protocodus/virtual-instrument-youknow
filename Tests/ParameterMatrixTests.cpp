@@ -1,12 +1,14 @@
-// The U4 parameter-extremes matrix (Tests/ParameterMatrix.h) over the plug-in
+// The U9 parameter-extremes matrix (Tests/ParameterMatrix.h) over the plug-in
 // processor: every automatable parameter at its extremes, alone, in pairs and
 // on every factory preset, at three rates and block sizes.
 //
-//   YouKnowParameterMatrixTests [--jobs N] [--rotation] [--shard I/N] | --list
+//   YouKnowParameterMatrixTests [--jobs N] [--rotation] [--shard K/N]
+//                               [--case LABEL] [--count] [--list]
 //
-// The 145-program bank makes about 12,900 cases, hours of work even in
-// rotation, so CTest runs one rotated shard of 256 and the main build's nightly
-// run covers every shard.
+// The shared command line (U9): --shard K/N runs the cases whose index modulo
+// N is K (numbered from 0). The 145-program bank makes about 12,900 cases,
+// hours of work even in rotation, so CTest runs one rotated shard of 256 and
+// the main build's nightly run covers every shard.
 
 #include "PluginProcessor.h"
 
@@ -14,9 +16,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -127,31 +126,5 @@ private:
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI gui;
-    matrix::Options options;
-    unsigned shard = 0, shards = 1;
-    for (int i = 1; i < argc; ++i)
-    {
-        if (std::strcmp (argv[i], "--jobs") == 0 && i + 1 < argc)
-            options.jobs = std::atoi (argv[++i]);
-        else if (std::strcmp (argv[i], "--list") == 0)
-        {
-            const auto parameters = YouKnowDevice().Parameters();
-            for (std::size_t p = 0; p < parameters.size(); ++p)
-                std::printf ("%zu %s (%d steps)\n", p, parameters[p].name.c_str(), parameters[p].steps);
-            return 0;
-        }
-        else if (std::strcmp (argv[i], "--rotation") == 0)
-            options.everyConfiguration = false;
-        else if (std::strcmp (argv[i], "--shard") == 0 && i + 1 < argc
-                 && std::sscanf (argv[++i], "%u/%u", &shard, &shards) == 2 && shard < shards)
-            continue;
-        else
-        {
-            std::fprintf (stderr, "usage: %s [--jobs N] [--rotation] [--shard I/N] | --list\n", argv[0]);
-            return 2;
-        }
-    }
-    if (shards > 1)
-        options.select = [shard, shards] (std::size_t index, const matrix::Case&) { return index % shards == shard; };
-    return matrix::Run ([] { return std::make_unique<YouKnowDevice>(); }, options) == 0 ? 0 : 1;
+    return matrix::Main (argc, argv, [] { return std::make_unique<YouKnowDevice>(); });
 }

@@ -2046,6 +2046,12 @@ public plugin interfaces, including state streams and host notifications.
 macOS also tests the freshly built Audio Unit by registering its factory
 inside the test process, without installing or scanning other plugins.
 Tagged releases depend on that complete CI run before signing and publishing.
+Every test carries one tier label (`unit`, `audio`, `render`, `fuzz` or
+`perf`), so `ctest -L <tier>` selects one; the perf tier (`YouKnow.CpuBudget`,
+`YouKnow.EnginePerformance`) is registered only in Release builds without
+sanitizers. `scripts/validate-plugins.sh build-plugin YouKnow aumu Yk06 Ykno
+0x594b4e4f` runs pluginval, clap-validator and, on macOS, auval on a plug-in
+build, as CI does.
 Packaging checks reject empty Linux payloads and preserve an existing Windows
 package when archive creation or verification fails.
 
