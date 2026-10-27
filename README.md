@@ -1973,7 +1973,7 @@ ctest --test-dir build-dsp --output-on-failure
 ./build-dsp/RenderYouKnowPresetDemos --more --jobs 4 Docs/audio/midi/more build-dsp/demos/more
 ```
 
-`Tools/WriteDemoMidi.py` records how the demo phrases were written; rerun it
+`Tools/write_preset_midi.py` records how the demo phrases were written; rerun it
 only to change a phrase on purpose.
 
 For repeatable CPU and audio comparisons between two revisions, build both

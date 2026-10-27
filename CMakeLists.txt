@@ -773,7 +773,7 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/Tools/AnalyzeResonatorProxy.py" --self-test)
         add_test(NAME YouKnow.DemoMidiSources
             COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/WriteDemoMidi.py" --check)
+                "${CMAKE_CURRENT_SOURCE_DIR}/Tools/write_preset_midi.py" --check)
     endif()
 
     add_executable(YouKnowChorusInputLoadingTests Tests/YouKnowChorusInputLoadingTests.cpp)

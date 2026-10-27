@@ -166,7 +166,7 @@ assumption was stale.
   number (`Docs/audio/midi/<NNN>-<preset-slug>.mid`, a bank of 144 presets);
   the four More demo phrases are `Docs/audio/midi/more/<NN>-<slug>.mid`,
   played on the panels in `Tools/DemoPanels.h` by
-  `RenderYouKnowPresetDemos --more`. `Tools/WriteDemoMidi.py` writes both, and
+  `RenderYouKnowPresetDemos --more`. `Tools/write_preset_midi.py` writes both, and
   `YouKnow.DemoMidiSources` checks the committed files match it.
 - The technique takes, showcases, composition and original preset sessions
   (`Tools/RenderDemos.cpp`, `RenderShowcase.cpp`, `RenderComposition.cpp`,
