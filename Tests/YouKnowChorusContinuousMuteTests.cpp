@@ -6,6 +6,7 @@
 // against a converged finer grid. Neither refits hardware coordinates.
 // https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15
 #include "DSP/YouKnowChorus.h"
+#include "DSP/YouKnowChorusRateIsland.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -54,6 +55,46 @@ void prime(Chorus& c,bool continuous,ChorusMode mode=ChorusMode::One)
 {
     float l,r;c.process(0,mode,0,l,r,1,true,true,false,
         ChorusTimingProfile::HardwareEvidence,true,true,false,0,1,true,continuous);
+}
+// Compare the public island adapter with explicitly selected physical chorus
+// stepping on the same interpolated stream, including a complete mute cycle.
+void islandMuteLoading()
+{
+    for(double rate:{48000.,192000.}) for(bool continuous:{false,true})
+    {
+        auto actual=std::make_unique<Chorus>(),reference=std::make_unique<Chorus>();
+        const auto kernel=VoiceVcaAntialias::prepare(rate);
+        for(auto* c:{actual.get(),reference.get()})
+        {
+            require(c->configureSupportProfile(ChorusSupportProfile::Nominal2SA1015),"finite support rejected");
+            c->prepare(rate*kernel.factor);
+        }
+        auto adapter=std::make_unique<ChorusRateIsland>(),oracle=std::make_unique<ChorusRateIsland>();
+        ChorusRateIsland::Controls controls;
+        controls.timing=ChorusTimingProfile::HardwareEvidence;
+        controls.narrow=controls.muteDrive=controls.clockMute=controls.finiteMute=controls.finiteTr5=true;
+        controls.continuousMuteLoading=continuous;
+        for(int n=0;n<static_cast<int>(.3*rate);++n)
+        {
+            controls.mode=controls.hardwareMode=n<static_cast<int>(.1*rate)?ChorusMode::One:
+                n<static_cast<int>(.2*rate)?ChorusMode::Off:ChorusMode::Two;
+            const float input=.02f*static_cast<float>(std::sin(n*.07));
+            const auto expected=oracle->processWith(input,controls,kernel,[&](float drive,const auto& c){
+                ChorusRateIsland::Result result;
+                reference->setHardwareModeSelection(c.hardwareMode);
+                reference->process(drive,c.mode,c.noise,result.left,result.right,c.calibration,
+                    c.narrow,c.muteDrive,true,c.timing,c.clockMute,c.finiteMute,
+                    c.correlatedNoise,c.transferFraction,c.transferCorrelation,c.finiteTr5,continuous);
+                result.context={reference->wetInputConductanceRatio(),reference->isWetInputConnected()};
+                return result;
+            });
+            const auto result=adapter->process(input,controls,kernel,*actual,[](float x){return x;});
+            require(result.left==expected.left&&result.right==expected.right,
+                "island adapter lost continuous mute loading");
+            require(YouKnowTestAccess::charge(*actual)==YouKnowTestAccess::charge(*reference),
+                "island adapter changed mute capacitor charge");
+        }
+    }
 }
 void analyticRamp()
 {
@@ -204,7 +245,7 @@ void movingNonlinear()
 }
 int main()
 {
-    try{analyticRamp();endpointMaps();physicalSwitch();steadyAndReset();movingNonlinear();}
+    try{islandMuteLoading();analyticRamp();endpointMaps();physicalSwitch();steadyAndReset();movingNonlinear();}
     catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
     std::cout<<"Continuous chorus mute-load checks passed\n";
 }

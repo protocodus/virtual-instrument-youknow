@@ -186,7 +186,8 @@ struct ChorusRateIsland
             chorus.setHardwareModeSelection(c.hardwareMode);
             chorus.process(drive,c.mode,c.noise,result.left,result.right,c.calibration,
                 c.narrow,c.muteDrive,true,c.timing,c.clockMute,c.finiteMute,
-                c.correlatedNoise,c.transferFraction,c.transferCorrelation,c.finiteTr5);
+                c.correlatedNoise,c.transferFraction,c.transferCorrelation,c.finiteTr5,
+                c.continuousMuteLoading);
             result.left=clip(result.left);
             result.right=clip(result.right);
             result.context={chorus.wetInputConductanceRatio(),chorus.isWetInputConnected()};
