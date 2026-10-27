@@ -101,6 +101,22 @@ see [local listening renders](#local-listening-renders).
 
 ### 1.3.4 — 2026-10-23 — Less CPU for the same samples (main line)
 
+### 1.3.5 — 2026-10-24 — Lighter firmware emulation, same samples
+
+- The emulated original assigner CPU executes each instruction in place and
+  keeps a rollback copy only for instructions that can fail; both emulated
+  CPUs clear their pending-instruction record without a block fill. Every
+  rendered sample is bit-identical to 1.3.4: all 144 presets at Normal
+  Circuit Rate, a Max-rate subset, and Original and Direct timing. Firmware
+  programs, timing and every DSP path are unchanged.
+- [Measurement and validation](Docs/benchmarks/cpu-trims-2026-10-24.md):
+  the firmware path takes about half the CPU it did, about 2.5 % less for
+  the whole engine at the Rack's six-voice configuration (1.4–3.2 % across
+  rates and circuit rates), on a development container, not a Reason-host
+  measurement.
+
+### 1.3.4 — 2026-10-23 — Less CPU for the same samples
+
 - Trims the voice filter's per-interval setup, reads the voice-island,
   chorus-island and output-summer FIR transports through contiguous windows,
   and takes the audio path's square roots in line. Every rendered sample is

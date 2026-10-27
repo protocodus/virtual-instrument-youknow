@@ -10,6 +10,13 @@ namespace {
 using firmwareTraceDetail::Instruction;
 using firmwareTraceDetail::Op;
 using Stream = FirmwareSerialTrace;
+// Field by field: GCC lowers the aggregate `pending = {}` to a byte-wise
+// `rep stos`, once per emulated instruction.
+void clearPending(Stream::Pending &p) noexcept {
+    p.kind = Stream::PendingKind::None; p.start = 0; p.remaining = 0; p.address = 0;
+    p.skipped = false; p.accessDone = false; p.sampledValue = 0; p.sampledSkip = false;
+    p.interruptVector = 0; p.returnPc = 0; p.savedPsw = 0;
+}
 struct StreamCpu {
     // Only completed entries are read, and completeInstruction resets count
     // before each instruction. Do not clear the unused 512-event audit buffer
@@ -923,7 +930,7 @@ struct Runner {
         if (!ad && !serial)
             return;
         auto &pending = state.pending;
-        pending = {};
+        clearPending(pending);
         pending.kind = Stream::PendingKind::InterruptEntry;
         pending.start = state.now;
         pending.remaining = FirmwareAdcTrace::interruptEntryStates;
@@ -956,7 +963,7 @@ struct Runner {
         else
             return false;
         auto &pending = state.pending;
-        pending = {};
+        clearPending(pending);
         pending.kind = Stream::PendingKind::Instruction;
         pending.start = state.now;
         pending.address = cpu.pc;
