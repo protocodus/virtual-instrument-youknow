@@ -149,6 +149,18 @@ The WAVs and the README table come only from the main build. Use the
 `portfolio-demo-songs` skill when choosing presets, writing phrases or changing
 the renderer.
 
+## Promotion and Shop material
+
+Promo videos, Shorts, their music, stems and thumbnails are review
+deliverables: render them to a dated folder outside the checkout, hand them
+over, and never commit them. Their sound comes from the shipping engine
+playing original MIDI, and every claim on screen or in the copy is one How it
+works supports. Use the `portfolio-youtube-promo` skill for a 16:9 YouTube
+promo and `portfolio-shorts` for YouTube Shorts and TikTok. Reason Shop copy
+and images belong to the Rack repository's `rack-shop-content` skill, and
+panel artwork to its `rack-panel-design` skill. Uploading or publishing any of
+it is the owner's step.
+
 ## Build and verify
 
 ```sh
