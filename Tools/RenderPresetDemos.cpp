@@ -108,9 +108,11 @@ int main (int argc, char** argv)
         for (std::size_t i = 0; i < count; ++i)
             instrument.presets.push_back (std::string (presetAt (i).number) + " " + presetAt (i).name);
     }
-    // U7 perf budget: 0 reports without failing until the CI runner's median
-    // is measured.
-    instrument.cpuBudget = 0.0;
+    // U7 perf budget: about 3x the slowest demo's median realtime factor on
+    // the CI runner, 3.07 (061-a85-rocket-men) in ci.yml run 174
+    // (ubuntu-24.04, AMD EPYC 7763, three repeats), 2026-10-27. Above 1
+    // because the demos render at the 4x rung, not at the plug-in default.
+    instrument.cpuBudget = 9.2;
     // The engine is deterministic without a seed: its component spreads are
     // fixed per Unit Character setting.
     instrument.open = [more] (std::size_t demo, double sampleRate, int maxBlockFrames, std::uint32_t)
