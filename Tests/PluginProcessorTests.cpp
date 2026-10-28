@@ -5732,21 +5732,24 @@ void testSysExExportUsesCoherentCurrentTone()
                         && parameterValue (processor, parameters::cutoff) == oldCutoff,
                     "SysEx export consumed pending MIDI reflection");
 
+            // A new message per export: JUCE 8.0.14's MidiMessage move
+            // assignment overwrites a heap-held SysEx without freeing it, which
+            // LeakSanitizer reports.
             processor.setCurrentProgram (9);
-            exported = processor.currentPatchAsSysEx (0, &collapsed);
+            const auto afterRecall = processor.currentPatchAsSysEx (0, &collapsed);
             sysex::readPatchMessage (
-                exported.getRawData(),
-                static_cast<std::size_t> (exported.getRawDataSize()), decoded, channel);
+                afterRecall.getRawData(),
+                static_cast<std::size_t> (afterRecall.getRawDataSize()), decoded, channel);
             sysex::toneBytesFromPatch (decoded, actual.data());
             sysex::toneBytesFromPatch (processor.programPatch (9), expected.data());
             expect (actual == expected && ! collapsed,
                     "SysEx export resurrected MIDI superseded by a later recall");
             processor.flushPendingMidiEvents();
             setParameterValue (processor, parameters::release, 0.8123f);
-            exported = processor.currentPatchAsSysEx (0);
+            const auto afterEdit = processor.currentPatchAsSysEx (0);
             sysex::readPatchMessage (
-                exported.getRawData(),
-                static_cast<std::size_t> (exported.getRawDataSize()), decoded, channel);
+                afterEdit.getRawData(),
+                static_cast<std::size_t> (afterEdit.getRawDataSize()), decoded, channel);
             expect (std::abs (decoded.release - 0.8123f) < 0.5f / 127.0f,
                     "SysEx export overlaid retired MIDI onto a later panel edit");
             processor.releaseResources();
