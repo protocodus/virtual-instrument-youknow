@@ -597,9 +597,11 @@ struct EngineParameters
     // later than it enters it, so the half-cycle its collector spends high --
     // the one D6 conducts, the sub track's +1 state -- begins late by the
     // storage time (subSwitchStorageSeconds) and nothing delays its end. The
-    // skew puts H2 = pi * t_s * f_sub on an otherwise even-free square:
-    // -88 dBc at the 16' bottom key, -64 dBc at the 4' top key. False keeps
-    // the former instantaneous edge for controlled A/B renders.
+    // skew puts H2 = pi * t_s * f_sub on an otherwise even-free square. The
+    // part class gives -100 dBc at the 16' bottom key (sub 16 Hz) and
+    // -58 dBc at the 4' top key (2.1 kHz); the measured value gives -70 and
+    // -28 dBc. False keeps the former instantaneous edge for controlled A/B
+    // renders.
     bool enableSubStorageSkew { true };
     // Product selection: the skew runs at the identified unit's measured
     // subSwitchStorageMeasuredSeconds instead of the part-class

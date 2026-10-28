@@ -53,6 +53,13 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.1 — 2026-10-28 — The sub's measured edge skew
+
+- The sub-oscillator's switch (Tr19) now leaves saturation 5.82 µs late,
+  as measured on an original Juno-106 sub switch, instead of a borrowed
+  0.2 µs. The sub's even harmonics rise by 29 dB, to about −70 dBc at the
+  16′ bottom key and −28 dBc at the 4′ top. Level does not change.
+
 ### 1.4.0 — 2026-10-28 — Untrimmed jack-board parts and the full wet switch
 
 - Unit Character now also draws the jack board's untrimmed resistors (R20J,
@@ -433,16 +440,25 @@ forty-year-old unit will null against the plug-in.
   rides on the WAVE node and is what C56/C50 remove when the SUB level
   changes). Tr19, the sub's switch, leaves saturation later than it enters
   it, so the half-cycle D6 conducts begins late by its storage time and the
-  sub carries H2 = π·t_s·f_sub on an otherwise even-free square: −88 dBc at
-  the 16′ bottom key, −64 dBc at the 4′ top. The 0.2 µs is the era's
-  small-signal switching class (2N3904 200 ns maximum, 2N2222A 225 ns
-  typical); Toshiba's 2SC1815 sheet lists no switching times, so the value is
-  a borrowed class figure, not the installed part's (`enableSubStorageSkew`).
+  sub carries even harmonics at π·t_s·f_sub, flat across the even series, on
+  an otherwise even-free square. The product runs t_s = 5.82 µs, measured on
+  the original sub switch of Juno-106 #439522 (`useMeasuredSubStorageSkew`).
+  That puts the even harmonics at about −70 dBc at the 16′ bottom key
+  (sub 16 Hz), −58 dBc at C4 16′ (65 Hz), where it was measured, and
+  −28 dBc at the 4′ top key (2.1 kHz). Three hash-identified sub-only takes
+  give 5.55–5.87 µs. The 192 kHz take follows a pure delay to
+  0.036 dB over 290 harmonics, from 1 to 35 kHz. Its edges give 5.77 µs in
+  the time domain, and the skew holds from SUB byte 51 to 127. The base is
+  driven straight from MC5534A pin 13 with no speed-up network, which
+  explains a storage time far past the part class. It is one unit's Tr19,
+  not a population figure; every take is at one pitch, so the f_sub scaling
+  follows from the mechanism. The raw reference keeps the era's 0.2 µs
+  small-signal class (2N3904 200 ns maximum, 2N2222A 225 ns typical), since
+  Toshiba's 2SC1815 sheet lists no switching times (`enableSubStorageSkew`).
   The delayed collector edge retains its remaining physical time across audio
   sample boundaries and quality-grid changes; it is no longer truncated when
   the divider edge arrives near the end of a sample. Independent delayed-square
-  Fourier checks bound the tested H2 error to 0.00124 dB without changing that
-  part-class estimate.
+  Fourier checks bound the tested H2 error to 0.00124 dB.
   The held SUB rail now crosses a soft silicon-diode threshold:
   one aggregate resistor/current scale, 8.896 V, fitted on alternating levels
   of an identified original-DCO recording reduces the worst error on the

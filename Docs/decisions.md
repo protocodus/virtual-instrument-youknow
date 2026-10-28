@@ -1956,6 +1956,37 @@ offsets, clock temperature coefficients, R128/R129 threshold tolerance
 (under 0.1 %), per-line post-BBD filter tolerances (they would split the
 shared support chain) and VR3's load offset (cassette interface only).
 
+## 2026-10-28 — The sub switch's measured storage time
+
+The owner asked for five grounded circuit improvements that make YouKnow
+more analog and authentic. Measured against hash-identified recordings of
+Juno-106 #439522, only one held up, and the owner chose to ship it on its
+own as 1.4.1. **Selection:** a choice on the measurement, made on a decision
+card. A/B previews were supplied: A was main `c4fee77`, B the same build with
+the flag on, RMS-matched with trims under 0.01 dB. No listening verdict is
+recorded.
+
+- **Tr19 storage time 5.82 µs** (`useMeasuredSubStorageSkew`) replaces the
+  borrowed 0.2 µs 2N3904/2N2222A class figure in the product. The raw
+  reference keeps 0.2 µs.
+  - Three sub-only takes, on the unit's original DCOs and sub switch, give
+    5.55–5.87 µs.
+  - At 192 kHz, 290 harmonics from 1 to 35 kHz follow a pure delay to
+    0.036 dB, and the edges give 5.77 µs.
+  - The same analysis recovers the engine's own 0.2 µs from a render.
+  - The sub's even harmonics rise by 29 dB, to about −70 dBc at the 16′
+    bottom key and −28 dBc at the 4′ top. Level is unchanged.
+  - The value is one unit's Tr19, measured at one pitch.
+
+Withdrawn in the same search: **the firmware loop period.** One clean take
+implied 4.3102 ms per pass, against the chart's 4.2 ms. But the ROM's own
+path, with its converter interrupt, gives 4.22–4.24 ms. Factory-bank takes of
+the same unit imply 4.19–4.34 ms and disagree by more than their errors. A
+fixed figure would fit one take, and a mean would be a fitted constant, so the
+engine keeps the chart. Ten further candidates either matched the engine or
+could not be pinned on original circuitry. The record is in
+[the research note](research/realism-research-2026-10-28.md).
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
