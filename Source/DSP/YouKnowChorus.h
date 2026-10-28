@@ -211,6 +211,21 @@ public:
     static constexpr float dryMixGain = 100.0f / 47.0f;
     static constexpr float wetMixGain = 100.0f / 39.0f;
     static constexpr float wetToDryGain = wetMixGain / dryMixGain;
+    // Nothing trims IC6, so each output's dry and wet gains are its own
+    // three R20J legs as drawn (drawnResistance): the outputs' levels and
+    // their dry/wet balances differ by what those parts drew. Factors on the
+    // nominal gains, exactly one at Unit Character zero. Tr11/Tr12 and the
+    // C25/C28 loading keep the nominal 39k: a drawn leg moves that corner by
+    // under 0.2 Hz.
+    struct SummerLegScale
+    {
+        float dryLeft { 1.0f };
+        float wetLeft { 1.0f };
+        float dryRight { 1.0f };
+        float wetRight { 1.0f };
+    };
+    [[nodiscard]] static SummerLegScale summerLegScale(float calibration,
+                                                       bool spread) noexcept;
     // Explicit plug-in declick policy, not a measured mute-transistor value.
     static constexpr float wetMuteTimeConstantSeconds = 0.005f;
 
@@ -363,8 +378,10 @@ public:
     // false -- caller must run process() -- until the glide has settled.
     // The engine gates this behind the fast VCF tanh modes, so Exact keeps
     // the established always-running lines.
+    // Each output keeps its own drawn dry leg (summerLegScale) here too.
     bool processBypassedWhenSettled(float input, float& left,
-                                    float& right) noexcept;
+                                    float& right, float calibration = 0.0f,
+                                    bool enableSummerLegSpread = false) noexcept;
 
     // IC40's mode-select output is independent of its mute output (Roland
     // service notes p. 13). The serial-board replay drives I/II even while
@@ -392,7 +409,8 @@ public:
                  bool enableContinuousMuteLoading = false,
                  bool enableClockSourceSpread = false,
                  bool enableInverterSpread = false,
-                 bool enableLargeSignalWetSwitch = false) noexcept;
+                 bool enableLargeSignalWetSwitch = false,
+                 bool enableSummerLegSpread = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -1174,6 +1192,12 @@ private:
     float lineTimingCalibration_ { 0.0f };
     bool lineTimingClockSources_ { false };
     bool lineTimingInverter_ { false };
+    // IC6's per-output leg gains at the last calibration they were solved
+    // for.
+    SummerLegScale summerLegs_ {};
+    float summerLegCalibration_ { 0.0f };
+    bool summerLegSpread_ { false };
+    void updateSummerLegs(float calibration, bool spread) noexcept;
     float bucketNoiseTransferCorrelation_ {};
 };
 

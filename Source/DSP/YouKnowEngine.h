@@ -508,6 +508,10 @@ struct EngineParameters
     // on the two halves of the wave. Needs enableChorusFiniteMuteDrive.
     // Product on, raw off.
     bool enableChorusLargeSignalWetSwitch { false };
+    // IC6's R70/R71/R72 and R67/R73/R74, drawn under Unit Character: each
+    // output's dry and wet gain from its own untrimmed legs. Product on,
+    // raw off.
+    bool enableOutputSummerLegSpread { false };
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
@@ -752,6 +756,7 @@ struct EngineParameters
             && enableChorusClockSourceSpread == other.enableChorusClockSourceSpread
             && enableChorusInverterSpread == other.enableChorusInverterSpread
             && enableChorusLargeSignalWetSwitch == other.enableChorusLargeSignalWetSwitch
+            && enableOutputSummerLegSpread == other.enableOutputSummerLegSpread
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
                 == other.enableVoiceIslandFrameShotCovariance

@@ -91,7 +91,8 @@ void activeProductPromotion()
             && applied.enableContinuousChorusMuteLoading
             && applied.enableChorusClockSourceSpread
             && applied.enableChorusInverterSpread
-            && applied.enableChorusLargeSignalWetSwitch,
+            && applied.enableChorusLargeSignalWetSwitch
+            && applied.enableOutputSummerLegSpread,
             "active product setup lost an accepted-B circuit selection");
     require(!EngineParameters {}.enableChorusClockSourceSpread,
             "raw diagnostic reference unexpectedly drew chorus clock parts");
@@ -108,6 +109,11 @@ void activeProductPromotion()
     auto smallSignal = applied;
     smallSignal.enableChorusLargeSignalWetSwitch = false;
     require(smallSignal != applied, "wet-switch law flag omitted from parameter equality");
+    require(!EngineParameters {}.enableOutputSummerLegSpread,
+            "raw diagnostic reference unexpectedly drew the IC6 legs");
+    auto nominalLegs = applied;
+    nominalLegs.enableOutputSummerLegSpread = false;
+    require(nominalLegs != applied, "IC6 leg flag omitted from parameter equality");
 }
 
 void selections(const YouKnowEngine& engine)

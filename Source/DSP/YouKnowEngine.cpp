@@ -13028,6 +13028,7 @@ ChorusRateIsland::Controls YouKnowEngine::chorusRateControls(
     c.clockSourceSpread=p.enableChorusClockSourceSpread;
     c.inverterSpread=p.enableChorusInverterSpread;
     c.largeSignalWetSwitch=p.enableChorusLargeSignalWetSwitch;
+    c.summerLegSpread=p.enableOutputSummerLegSpread;
     return c;
 }
 
@@ -14223,7 +14224,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     || parameters.enableChorusFiniteMuteDrive
                     || parameters.enableChorusFiniteTr5Drive
                     || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
-                                                           wetRight))
+                                                           wetRight, parameters.calibration,
+                                                           parameters.enableOutputSummerLegSpread))
                     chorus_.process(levelled, parameters.chorus,
                                     chorusNoiseScale,
                                     wetLeft, wetRight,
@@ -14241,7 +14243,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                     parameters.enableContinuousChorusMuteLoading,
                                     parameters.enableChorusClockSourceSpread,
                                     parameters.enableChorusInverterSpread,
-                                    parameters.enableChorusLargeSignalWetSwitch);
+                                    parameters.enableChorusLargeSignalWetSwitch,
+                                    parameters.enableOutputSummerLegSpread);
 
                 processOutputSummer(wetLeft,wetRight,parameters);
 

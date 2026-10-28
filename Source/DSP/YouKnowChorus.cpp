@@ -2809,6 +2809,27 @@ double Chorus::clockSourceAmps(double topOhms, double emitterOhms,
             - clockSourceVbeVolts) / emitterOhms;
 }
 
+Chorus::SummerLegScale Chorus::summerLegScale(float calibration,
+                                              bool spread) noexcept
+{
+    SummerLegScale scale;
+    if (spread)
+    {
+        // Left: R70 feedback, R71 dry, R72 wet. Right: R67, R73, R74.
+        const double left = drawnResistance(100000.0, 70u, calibration);
+        const double right = drawnResistance(100000.0, 67u, calibration);
+        scale.dryLeft = static_cast<float>(left / drawnResistance(47000.0, 71u, calibration)
+                                           * (47000.0 / 100000.0));
+        scale.wetLeft = static_cast<float>(left / drawnResistance(39000.0, 72u, calibration)
+                                           * (39000.0 / 100000.0));
+        scale.dryRight = static_cast<float>(right / drawnResistance(47000.0, 73u, calibration)
+                                            * (47000.0 / 100000.0));
+        scale.wetRight = static_cast<float>(right / drawnResistance(39000.0, 74u, calibration)
+                                            * (39000.0 / 100000.0));
+    }
+    return scale;
+}
+
 Chorus::LineTimingScale Chorus::lineTimingScale(float calibration,
                                                 bool clockSources,
                                                 bool inverter) noexcept
@@ -2839,8 +2860,18 @@ Chorus::LineTimingScale Chorus::lineTimingScale(float calibration,
     return scale;
 }
 
+void Chorus::updateSummerLegs(float calibration, bool spread) noexcept
+{
+    if (calibration == summerLegCalibration_ && spread == summerLegSpread_)
+        return;
+    summerLegs_ = summerLegScale(calibration, spread);
+    summerLegCalibration_ = calibration;
+    summerLegSpread_ = spread;
+}
+
 bool Chorus::processBypassedWhenSettled(float input, float& left,
-                                        float& right) noexcept
+                                        float& right, float calibration,
+                                        bool enableSummerLegSpread) noexcept
 {
     // Until the wet-mute glide has decayed to exactly zero -- or before the
     // first process() call has primed the settings -- the full path still
@@ -2864,8 +2895,9 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
         lfoPhase_ -= std::floor(lfoPhase_);
 
     wetPathFlushPending_ = true;
-    left = dryMixGain * input;
-    right = dryMixGain * input;
+    updateSummerLegs(calibration, enableSummerLegSpread);
+    left = dryMixGain * (input * summerLegs_.dryLeft);
+    right = dryMixGain * (input * summerLegs_.dryRight);
     return true;
 }
 
@@ -3126,7 +3158,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableContinuousMuteLoading,
                      bool enableClockSourceSpread,
                      bool enableInverterSpread,
-                     bool enableLargeSignalWetSwitch) noexcept
+                     bool enableLargeSignalWetSwitch,
+                     bool enableSummerLegSpread) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3396,8 +3429,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetA = wetMid;
         wetB = wetMid;
     }
-    left = dryMixGain * (input + wetA * wetLevel);
-    right = dryMixGain * (input + wetB * wetLevel);
+    updateSummerLegs(calibration, enableSummerLegSpread);
+    left = dryMixGain * (input * summerLegs_.dryLeft + wetA * wetLevel * summerLegs_.wetLeft);
+    right = dryMixGain * (input * summerLegs_.dryRight + wetB * wetLevel * summerLegs_.wetRight);
 }
 
 } // namespace youknow

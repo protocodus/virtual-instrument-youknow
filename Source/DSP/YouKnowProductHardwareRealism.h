@@ -75,6 +75,7 @@ struct ProductHardwareRealismProfile
         parameters.enableChorusClockSourceSpread = true;
         parameters.enableChorusInverterSpread = true;
         parameters.enableChorusLargeSignalWetSwitch = true;
+        parameters.enableOutputSummerLegSpread = true;
     }
 };
 } // namespace youknow
