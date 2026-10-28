@@ -16,6 +16,7 @@
 #include <array>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace
@@ -64,17 +65,29 @@ public:
             engine->process (left.data(), right.data(), maxBlockFrames);
     }
 
+    // The notes, bender, modulation and hold, mapped as
+    // YouKnowAudioProcessor::processBlock maps them. Notes apply in file
+    // order, which matches the processor's same-sample release-first run
+    // because the writer puts a tick's note-offs before its note-ons. Reset,
+    // all-notes-off and program messages have no place in a phrase, so they
+    // and anything else are an error rather than a silently dropped event.
     void Midi (const std::uint8_t* bytes, int size) override
     {
-        if (size < 3)
-            return;
-        const auto kind = bytes[0] & 0xf0;
-        if (kind == 0x90 && bytes[2] > 0)
-            engine->noteOn (bytes[1], static_cast<float> (bytes[2]) / 127.0f);
-        else if (kind == 0x80 || kind == 0x90)
-            engine->noteOff (bytes[1]);
-        else if (kind == 0xe0) // as the plug-in maps the wheel
-            engine->setPitchBend ((static_cast<float> (bytes[2] << 7 | bytes[1]) - 8192.0f) / 8192.0f);
+        const int kind = bytes[0] & 0xf0;
+        const int data1 = size > 1 ? bytes[1] : 0, data2 = size > 2 ? bytes[2] : 0;
+        if (size >= 3 && kind == 0x90 && data2 > 0)
+            engine->noteOn (data1, static_cast<float> (data2) / 127.0f);
+        else if (size >= 3 && (kind == 0x80 || kind == 0x90))
+            engine->noteOff (data1);
+        else if (size >= 3 && kind == 0xe0)
+            engine->setPitchBend ((static_cast<float> (data2 << 7 | data1) - 8192.0f) / 8192.0f);
+        else if (size >= 3 && kind == 0xb0 && data1 == 1)
+            engine->setModWheel (static_cast<float> (data2) / 127.0f);
+        else if (size >= 3 && kind == 0xb0 && data1 == 64)
+            engine->setSustainPedal (data2 != 0); // the chart's hold splits at zero
+        else
+            throw std::runtime_error ("unsupported MIDI message " + std::to_string (bytes[0]) + " "
+                                      + std::to_string (data1));
     }
 
     void Render (float* left, float* right, int frames) override

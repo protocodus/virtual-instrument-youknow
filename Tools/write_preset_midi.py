@@ -7,8 +7,10 @@ comping, a funk riff, a unison bass line, a lead melody, a synth pad and an
 effect. Each file is named <NNN>-<slug of "<slot> <preset name>">.mid as the
 shared preset demo renderer expects (Tools/PresetDemoRenderer.h), where NNN is
 the program number in the host's list: A11..A88, B11..B88, then the original
-product presets YB1..YP8. The four More demos (README G3d) are written to
-Docs/audio/midi/more/ and played through the panels in Tools/DemoPanels.h.
+product presets YB1..YP8. Each slot and name must match the shipping bank in
+Source/DSP/YouKnowPresets.cpp, so a renamed preset fails here. The four More
+demos (README G3d) are written to Docs/audio/midi/more/ and played through the
+panels in Tools/DemoPanels.h.
 
 Scores are written as the keys a player presses, on the hardware's 61-key
 range; each preset's DCO range and saved transpose then place the sound where
@@ -309,9 +311,21 @@ def gated(title, score, limit, problems):
     return smf(title, score.bpm, notes, score.bends, score.end + tail_beats(score.bpm))
 
 
+def factory_names():
+    """The shipping factory bank's names, in program order."""
+    source = (ROOT / 'Source' / 'DSP' / 'YouKnowPresets.cpp').read_text()
+    return re.findall(r'"([^"]+)"', re.search(r'factoryNames \{\{(.*?)\}\};', source, re.S).group(1))
+
+
 def build():
     files, problems = {}, []
+    names = factory_names()
     for program, slot, name, limit, writer, octave, tonic, mode, bpm in DEMOS:
+        # Program n is slot <bank><group><patch>, 64 to a bank (Patch Selection).
+        index = program - 1
+        bank_slot = f"{'AB'[index // 64]}{index % 64 // 8 + 1}{index % 8 + 1}"
+        if (slot, name) != (bank_slot, names[index]):
+            problems.append(f'program {program} is {bank_slot} {names[index]!r} in the bank, not {slot} {name!r}')
         score = Score(bpm)
         writer(Key(tonic, mode, octave), score)
         title = f'{slot} {name}'
@@ -335,7 +349,7 @@ def main():
         stale = sorted(existing ^ set(files)) + sorted(
             n for n, d in files.items() if (OUT / n).exists() and (OUT / n).read_bytes() != d)
         if stale:
-            sys.exit('Docs/audio/midi differs from Tools/WriteDemoMidi.py: ' + ', '.join(stale))
+            sys.exit('Docs/audio/midi differs from Tools/write_preset_midi.py: ' + ', '.join(stale))
         print(f'{len(files)} MIDI sources match')
         return
     (OUT / 'more').mkdir(parents=True, exist_ok=True)
