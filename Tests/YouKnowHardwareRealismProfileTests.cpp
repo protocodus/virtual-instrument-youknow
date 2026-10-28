@@ -93,7 +93,8 @@ void activeProductPromotion()
             && applied.enableChorusInverterSpread
             && applied.enableChorusLargeSignalWetSwitch
             && applied.enableOutputSummerLegSpread
-            && applied.enableHighPassBoostSpread,
+            && applied.enableHighPassBoostSpread
+            && applied.useMeasuredSubStorageSkew,
             "active product setup lost an accepted-B circuit selection");
     require(!EngineParameters {}.enableChorusClockSourceSpread,
             "raw diagnostic reference unexpectedly drew chorus clock parts");
@@ -120,6 +121,8 @@ void activeProductPromotion()
     auto nominalBoost = applied;
     nominalBoost.enableHighPassBoostSpread = false;
     require(nominalBoost != applied, "HPF Boost flag omitted from parameter equality");
+    require(!EngineParameters {}.useMeasuredSubStorageSkew,
+            "raw reference unexpectedly selected the measured Tr19 storage time");
 }
 
 void selections(const YouKnowEngine& engine)

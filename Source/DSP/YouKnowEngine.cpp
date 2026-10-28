@@ -2905,7 +2905,9 @@ void YouKnowEngine::beginDcoDischarge(
     // The opposite edge cancels any unfinished release and has no delay.
     dco.subStorageSecondsRemaining =
         dco.subState > 0.0f && activeParameters_.enableSubStorageSkew
-            ? subSwitchStorageSeconds : 0.0;
+            ? (activeParameters_.useMeasuredSubStorageSkew
+                   ? subSwitchStorageMeasuredSeconds : subSwitchStorageSeconds)
+            : 0.0;
     if (addCorrections && dco.sub.primed)
         addStep(dco.sub, dco.subOutputState() - previousSubOutput,
                 static_cast<float>(samplesAgo));

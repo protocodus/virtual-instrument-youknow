@@ -1,7 +1,8 @@
 // A transistor storage delay belongs to continuous time, not to the remaining
 // fraction of an audio sample. Check its chronology and duty harmonics against
-// an independent delayed-square reference. The existing 0.2 us part-class
-// estimate is held fixed; this does not identify an original Tr19 specimen.
+// an independent delayed-square reference, for the 0.2 us part-class estimate
+// and for the 5.82 us measured on #439522, which outlasts several intervals at
+// high internal rates.
 #include "DSP/YouKnowEngine.h"
 
 #include <array>
@@ -16,13 +17,15 @@ namespace youknow
 struct YouKnowTestAccess
 {
     static void configure(YouKnowEngine& engine, double rate,
-                          double firstEdgeSeconds, bool skew)
+                          double firstEdgeSeconds, bool skew,
+                          bool measured = false)
     {
         engine.prepare(rate, 64, false);
         auto parameters = engine.activeParameters_;
         parameters.range = DcoRange::Four;
         parameters.calibration = 0;
         parameters.enableSubStorageSkew = skew;
+        parameters.useMeasuredSubStorageSkew = measured;
         engine.setParameters(parameters);
         auto& voice = engine.voices_[0];
         auto& dco = voice.dco;
@@ -70,6 +73,7 @@ using Engine = youknow::YouKnowEngine;
 using Probe = youknow::YouKnowTestAccess;
 constexpr double pi = 3.14159265358979323846;
 constexpr double storageSeconds = 0.2e-6;
+constexpr double measuredStorageSeconds = 5.82e-6;
 
 void require(bool condition, const char* message)
 {
@@ -105,10 +109,46 @@ void checkBoundaryChronology()
     std::cout << "sub storage boundary chronology: " << cases << " cases\n";
 }
 
-double secondHarmonicRatio(double rate, double firstEdgeSeconds, bool skew)
+void checkMeasuredChronology()
+{
+    // At 192 and 768 kHz the measured delay outlasts one and four intervals:
+    // the collector must stay low through each whole interval it spans and
+    // rise in the one where the delay ends, wherever the PIT edge fell.
+    require(Engine::subSwitchStorageMeasuredSeconds == measuredStorageSeconds,
+            "the measured Tr19 storage time changed without this reference");
+    int cases = 0;
+    for (double rate : { 48000., 192000., 768000. })
+        for (bool corrections : { false, true })
+            for (double timeBeforeEnd : { 0., 0.3e-6, 1.0e-6 })
+            {
+                auto engine = std::make_unique<Engine>();
+                Probe::configure(*engine, rate, 1.0 / rate - timeBeforeEnd, true, true);
+                Probe::advance(*engine, corrections);
+                require(Probe::dividerLevel(*engine) == 1,
+                        "divider did not change on the original PIT edge");
+                double remaining = measuredStorageSeconds - timeBeforeEnd;
+                while (remaining > 0)
+                {
+                    require(Probe::physicalLevel(*engine) == -1,
+                            "measured collector edge arrived early");
+                    require(std::abs(Probe::remaining(*engine) - remaining) < 1e-12,
+                            "measured storage delay drifted across intervals");
+                    Probe::advance(*engine, corrections);
+                    remaining -= 1.0 / rate;
+                }
+                require(Probe::physicalLevel(*engine) == 1
+                            && Probe::remaining(*engine) == 0,
+                        "measured collector release did not complete in its interval");
+                ++cases;
+            }
+    std::cout << "measured sub storage chronology: " << cases << " cases\n";
+}
+
+double secondHarmonicRatio(double rate, double firstEdgeSeconds, bool skew,
+                           bool measured = false)
 {
     auto engine = std::make_unique<Engine>();
-    Probe::configure(*engine, rate, firstEdgeSeconds, skew);
+    Probe::configure(*engine, rate, firstEdgeSeconds, skew, measured);
     constexpr double subFrequency = 2000;
     const int periodSamples = static_cast<int>(rate / subFrequency);
     // The chosen sample rates have an integral number of samples per period.
@@ -147,6 +187,13 @@ void checkDutyHarmonics()
             require(std::abs(dbError) < 0.12,
                     "sub H2 depends on where the storage edge crosses the sample boundary");
         }
+    const double measuredExpected = std::sin(pi * 2000 * measuredStorageSeconds);
+    for (double rate : { 48000., 192000. })
+    {
+        const double actual = secondHarmonicRatio(rate, 1.0 / rate - 0.3e-6, true, true);
+        require(std::abs(20 * std::log10(actual / measuredExpected)) < 0.05,
+                "measured sub skew H2 departs from the delayed-square reference");
+    }
     const double noSkew = secondHarmonicRatio(48000, 1.0 / 48000 - 0.1e-6, false);
     require(noSkew < 1e-6, "disabled storage skew generated even harmonics");
     std::cout << "delayed-square analytic H2: "
@@ -160,6 +207,7 @@ int main()
     try
     {
         checkBoundaryChronology();
+        checkMeasuredChronology();
         checkDutyHarmonics();
         return 0;
     }

@@ -11822,8 +11822,8 @@ std::vector<float> probeVcaInput(YouKnowEngine& engine, int hostSamples)
 void testSubStorageSkewAddsTheSecondHarmonic()
 {
     // Tr19 leaves saturation late by its storage time, so the D6-conducting
-    // half-cycle starts late and the sub carries H2 = pi * t_s * f_sub. The
-    // top 4' key puts the sub near 1 kHz, where that is about -64 dBc; the
+    // half-cycle starts late and the sub carries H2 = pi * t_s * f_sub. C6 at
+    // 4' puts the sub near 1 kHz, where the part class gives about -64 dBc; the
     // instantaneous edge has no even harmonics at all. Character 0 keeps the
     // cascade's own stage offsets out of the measurement.
     constexpr double sampleRate = 48000.0;
