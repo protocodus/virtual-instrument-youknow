@@ -313,6 +313,7 @@ void patchJson(std::ostream& out, const EngineParameters& p)
     PATCH_FIELD(vcfFastEarlyMode);
     PATCH_FIELD(enableSubDiodeControl);
     PATCH_FIELD(enableSubStorageSkew);
+    PATCH_FIELD(useMeasuredSubStorageSkew);
     PATCH_FIELD(enableResonanceHeadroomTemperature);
     PATCH_FIELD(enableResonanceServiceTrim);
     PATCH_FIELD(enableConverterHoldDroop);

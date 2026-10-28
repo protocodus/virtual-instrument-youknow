@@ -601,6 +601,10 @@ struct EngineParameters
     // -88 dBc at the 16' bottom key, -64 dBc at the 4' top key. False keeps
     // the former instantaneous edge for controlled A/B renders.
     bool enableSubStorageSkew { true };
+    // Product selection: the skew runs at the identified unit's measured
+    // subSwitchStorageMeasuredSeconds instead of the part-class
+    // subSwitchStorageSeconds, which stays the raw reference.
+    bool useMeasuredSubStorageSkew { false };
     // On by default: the resonance BA662's linear span at the node is the
     // same 2 Vt as the stages', through its own 100k/1.5k divider instead of
     // their 560/68560 one, and both OTAs are potted in the one 80017A at one
@@ -784,6 +788,7 @@ struct EngineParameters
             && vcfFastEarlyMode == other.vcfFastEarlyMode
             && enableSubDiodeControl == other.enableSubDiodeControl
             && enableSubStorageSkew == other.enableSubStorageSkew
+            && useMeasuredSubStorageSkew == other.useMeasuredSubStorageSkew
             && enableResonanceHeadroomTemperature == other.enableResonanceHeadroomTemperature
             && enableResonanceServiceTrim == other.enableResonanceServiceTrim
             && enableConverterHoldDroop == other.enableConverterHoldDroop
@@ -1025,6 +1030,30 @@ public:
     // https://www.onsemi.com/pdf/datasheet/2n3903-d.pdf
     // https://www.onsemi.com/pdf/datasheet/p2n2222a-d.pdf
     static constexpr double subSwitchStorageSeconds = 0.2e-6;
+    // Tr19's storage time as measured on Juno-106 #439522, whose DCOs and
+    // sub switch are original (its VCF/VCA cards are not). Sub-only C4 at
+    // 16' (65.04 Hz) in three hash-identified takes:
+    // - osc_calibrate_new_bip.aif, 192 kHz, 5.0-6.3 s (MIDI sha256
+    //   48311413...): the even/odd harmonic ratio of 290 harmonics, 1-35 kHz,
+    //   follows a pure 5.82 us delay to 0.036 dB RMS. Interpolated edges in
+    //   the time domain give 5.77 us. The same analysis of this engine's
+    //   render recovers its 0.2 us.
+    // - osc_test_bip.aif (sha256 b0309cd3...) and 106_calibration_bip.aif
+    //   (a9282c4a...), both 96 kHz: flat even series at -58.9 and -58.7 dBc,
+    //   i.e. 5.55 and 5.68 us. In the first take the series stays flat from
+    //   SUB byte 51 to 127, so the skew does not depend on level.
+    // The two recordings share this engine's polarity, and in both the
+    // shortened half is the D6-conducting one, the sign modelled above.
+    // Saw and pulse share the same downstream chain without such a skew, so
+    // it is not the replacement cards. A base driven straight from pin 13,
+    // with no speed-up network, explains a storage time this far past the
+    // 2N3904 test-condition class. It is one unit's Tr19, not a population
+    // figure, and the f_sub scaling follows from the mechanism: every take
+    // is at one pitch.
+    // https://lewisfrancis.com/nwio/osc_calibrate_new_bip.aif
+    // https://lewisfrancis.com/nwio/osc_test_bip.aif
+    // https://lewisfrancis.com/nwio/106_calibration_bip.aif
+    static constexpr double subSwitchStorageMeasuredSeconds = 5.82e-6;
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     // Original uses native local keyboard contacts independently of DIN.

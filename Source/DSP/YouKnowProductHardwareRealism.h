@@ -77,6 +77,9 @@ struct ProductHardwareRealismProfile
         parameters.enableChorusLargeSignalWetSwitch = true;
         parameters.enableOutputSummerLegSpread = true;
         parameters.enableHighPassBoostSpread = true;
+        // 2026-10-28: Tr19's storage time as measured on the identified
+        // unit's original sub switch, in place of the borrowed part class.
+        parameters.useMeasuredSubStorageSkew = true;
     }
 };
 } // namespace youknow
