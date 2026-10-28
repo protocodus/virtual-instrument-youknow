@@ -496,6 +496,10 @@ struct EngineParameters
     // Reconstruct the changing Tr11/12 wet-switch load within each chorus
     // interval; physical endpoint readout and settled gain are preserved.
     bool enableContinuousChorusMuteLoading { false };
+    // Each chorus line's own Tr19/Tr24 clock current source, its R20J parts
+    // drawn under Unit Character: the two lines' delays differ by what their
+    // parts drew, around the selected pair timing. Product on, raw off.
+    bool enableChorusClockSourceSpread { false };
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
@@ -737,6 +741,7 @@ struct EngineParameters
             && enableOutputSummerAntialias == other.enableOutputSummerAntialias
             && enableChorusRateIsland == other.enableChorusRateIsland
             && enableContinuousChorusMuteLoading == other.enableContinuousChorusMuteLoading
+            && enableChorusClockSourceSpread == other.enableChorusClockSourceSpread
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
                 == other.enableVoiceIslandFrameShotCovariance

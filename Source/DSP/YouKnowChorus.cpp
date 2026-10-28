@@ -2786,6 +2786,50 @@ float Chorus::lineInsertionGainDraw() noexcept
     return static_cast<float>(x & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
 }
 
+float Chorus::componentDraw(std::uint32_t designator) noexcept
+{
+    std::uint32_t x = designator * 0x9e3779b9u + 0x632be5abu;
+    x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+    return static_cast<float>(x & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
+}
+
+double Chorus::drawnResistance(double nominalOhms, std::uint32_t designator,
+                               float calibration) noexcept
+{
+    return nominalOhms * (1.0 + carbonResistorToleranceClass
+        * static_cast<double>(std::clamp(calibration, 0.0f, 2.0f))
+        * static_cast<double>(componentDraw(designator)));
+}
+
+double Chorus::clockSourceAmps(double topOhms, double emitterOhms,
+                               double groundOhms) noexcept
+{
+    return (clockSourceRailVolts * topOhms / (topOhms + groundOhms)
+            - clockSourceVbeVolts) / emitterOhms;
+}
+
+Chorus::LineTimingScale Chorus::lineTimingScale(float calibration,
+                                                bool clockSources) noexcept
+{
+    LineTimingScale scale;
+    if (clockSources)
+    {
+        const double nominal = clockSourceAmps(clockSourceTopOhms,
+            clockSourceEmitterOhms, clockSourceGroundOhms);
+        const double a = nominal / clockSourceAmps(
+            drawnResistance(clockSourceTopOhms, 123u, calibration),
+            drawnResistance(clockSourceEmitterOhms, 124u, calibration),
+            drawnResistance(clockSourceGroundOhms, 125u, calibration));
+        const double b = nominal / clockSourceAmps(
+            drawnResistance(clockSourceTopOhms, 136u, calibration),
+            drawnResistance(clockSourceEmitterOhms, 137u, calibration),
+            drawnResistance(clockSourceGroundOhms, 138u, calibration));
+        scale.delayA = std::sqrt(a / b);
+        scale.delayB = std::sqrt(b / a);
+    }
+    return scale;
+}
+
 bool Chorus::processBypassedWhenSettled(float input, float& left,
                                         float& right) noexcept
 {
@@ -3069,7 +3113,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float noiseTransferFraction,
                      float noiseTransferCorrelation,
                      bool enableFiniteTr5Drive,
-                     bool enableContinuousMuteLoading) noexcept
+                     bool enableContinuousMuteLoading,
+                     bool enableClockSourceSpread) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3201,10 +3246,21 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // numerical samples used by the low-grid BLEP predictor. It changes no
     // LFO rate/depth, BBD noise draw count convention or analogue filtering.
     // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=2
+    // Each line's own clock source scales its whole delay (see
+    // clockSourceAmps); solved only when Unit Character moves.
+    if (calibration != lineTimingCalibration_
+        || enableClockSourceSpread != lineTimingClockSources_)
+    {
+        lineTiming_ = lineTimingScale(calibration, enableClockSourceSpread);
+        lineTimingCalibration_ = calibration;
+        lineTimingClockSources_ = enableClockSourceSpread;
+    }
     const auto trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_, sweep_, sampleRate_, 1.0);
+        centreDelay_ * lineTiming_.delayA, sweep_ * lineTiming_.delayA,
+        sampleRate_, 1.0);
     const auto trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_, sweep_, sampleRate_, -1.0);
+        centreDelay_ * lineTiming_.delayB, sweep_ * lineTiming_.delayB,
+        sampleRate_, -1.0);
     const std::array<double, 2> clock {{
         trajectoryA.intervalCycles * sampleRate_,
         trajectoryB.intervalCycles * sampleRate_

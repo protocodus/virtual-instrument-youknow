@@ -389,7 +389,8 @@ public:
                  float noiseTransferFraction = 0.0f,
                  float noiseTransferCorrelation = 1.0f,
                  bool enableFiniteTr5Drive = false,
-                 bool enableContinuousMuteLoading = false) noexcept;
+                 bool enableContinuousMuteLoading = false,
+                 bool enableClockSourceSpread = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -538,6 +539,47 @@ public:
     static constexpr float lineInsertionGainBoundDb = 4.0f;
     static constexpr float lineInsertionGainSpreadDb = 1.6f;
     [[nodiscard]] static float lineInsertionGainDraw() noexcept;
+    // The same fixed-seed bipolar hash for any other jack-board part, keyed
+    // by its designator so every part keeps its own draw.
+    [[nodiscard]] static float componentDraw(std::uint32_t designator) noexcept;
+
+    // The jack board's plain resistors are R20J, +/-5 % (the notes' parts
+    // legend, p. 12). Draw each one inside the 3 % class the voice cards use
+    // for their untrimmed legs, scaled by Unit Character. A voiced class
+    // inside an anchored bound, not a measured population.
+    static constexpr double carbonResistorToleranceClass = 0.03;
+    [[nodiscard]] static double drawnResistance(double nominalOhms,
+        std::uint32_t designator, float calibration) noexcept;
+
+    // Each line has its own clock oscillator (p. 15): Tr19 with R123 1.8k /
+    // R124 8.2k / R125 10k charging C53 150 pF for IC9, Tr24 with R136 /
+    // R137 / R138 of the same values charging C57 for IC11. Ignoring base
+    // current, the PNP source gives I0 = (15 R_top/(R_top + R_ground) - Vbe)
+    // / R_emitter, and every clock period is C (V_upper - V_lower) / I0, so
+    // a line's whole delay -- centre and sweep alike -- scales as 1/I0. No
+    // trimmer reaches it. The divider subtracts Vbe from 2.29 V, which makes
+    // I0 1.18 times as sensitive to R123/R125 as to R124. C53/C57 print no
+    // class letter and the reset dead time (0.3-2.5 us) is under 0.1 % of
+    // the delay; neither is drawn. Vbe is DerivedNominal's 0.65 V prior.
+    static constexpr double clockSourceTopOhms = 1800.0;      // R123/R136
+    static constexpr double clockSourceEmitterOhms = 8200.0;  // R124/R137
+    static constexpr double clockSourceGroundOhms = 10000.0;  // R125/R138
+    static constexpr double clockSourceRailVolts = 15.0;
+    static constexpr double clockSourceVbeVolts = 0.65;
+    [[nodiscard]] static double clockSourceAmps(double topOhms,
+        double emitterOhms, double groundOhms) noexcept;
+
+    // Each line's delay multiplier from its drawn clock source, normalised to
+    // a geometric mean of one: the selected timing coordinates are the pair's
+    // effective fit, so only the lines' relative offset is new. Exactly one
+    // at Unit Character zero.
+    struct LineTimingScale
+    {
+        double delayA { 1.0 };
+        double delayB { 1.0 };
+    };
+    [[nodiscard]] static LineTimingScale lineTimingScale(
+        float calibration, bool clockSources) noexcept;
 
     // The one usable real-instrument observation of this circuit's noise:
     // mode II's output floor was reported about 3.95 dB above mode I's, on
@@ -1113,6 +1155,10 @@ private:
     float lineGainA_ { 1.0f };
     float lineGainB_ { 1.0f };
     float lineGainCalibration_ { 0.0f };
+    // Per-line clock timing at the last calibration it was solved for.
+    LineTimingScale lineTiming_ {};
+    float lineTimingCalibration_ { 0.0f };
+    bool lineTimingClockSources_ { false };
     float bucketNoiseTransferCorrelation_ {};
 };
 

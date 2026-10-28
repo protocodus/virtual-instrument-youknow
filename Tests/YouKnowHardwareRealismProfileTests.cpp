@@ -88,8 +88,14 @@ void activeProductPromotion()
             && applied.enableVoiceFilterRateIsland
             && applied.enableVcfSettlingReconstruction
             && applied.enableVoiceVcaControlReconstruction
-            && applied.enableContinuousChorusMuteLoading,
+            && applied.enableContinuousChorusMuteLoading
+            && applied.enableChorusClockSourceSpread,
             "active product setup lost an accepted-B circuit selection");
+    require(!EngineParameters {}.enableChorusClockSourceSpread,
+            "raw diagnostic reference unexpectedly drew chorus clock parts");
+    auto unspread = applied;
+    unspread.enableChorusClockSourceSpread = false;
+    require(unspread != applied, "chorus clock-source flag omitted from parameter equality");
 }
 
 void selections(const YouKnowEngine& engine)
