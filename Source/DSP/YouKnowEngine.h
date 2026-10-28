@@ -503,6 +503,11 @@ struct EngineParameters
     // IC2a's R9/R10 ratio, drawn the same way, sets line B's sweep against
     // line A's. Product on, raw off.
     bool enableChorusInverterSpread { false };
+    // Tr11/Tr12 pass the wet signal through their full Shichman-Hodges
+    // channel with the gate pinned by D4/D5, so mute and unmute act unevenly
+    // on the two halves of the wave. Needs enableChorusFiniteMuteDrive.
+    // Product on, raw off.
+    bool enableChorusLargeSignalWetSwitch { false };
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
@@ -746,6 +751,7 @@ struct EngineParameters
             && enableContinuousChorusMuteLoading == other.enableContinuousChorusMuteLoading
             && enableChorusClockSourceSpread == other.enableChorusClockSourceSpread
             && enableChorusInverterSpread == other.enableChorusInverterSpread
+            && enableChorusLargeSignalWetSwitch == other.enableChorusLargeSignalWetSwitch
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
                 == other.enableVoiceIslandFrameShotCovariance

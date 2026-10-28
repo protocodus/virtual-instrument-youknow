@@ -90,7 +90,8 @@ void activeProductPromotion()
             && applied.enableVoiceVcaControlReconstruction
             && applied.enableContinuousChorusMuteLoading
             && applied.enableChorusClockSourceSpread
-            && applied.enableChorusInverterSpread,
+            && applied.enableChorusInverterSpread
+            && applied.enableChorusLargeSignalWetSwitch,
             "active product setup lost an accepted-B circuit selection");
     require(!EngineParameters {}.enableChorusClockSourceSpread,
             "raw diagnostic reference unexpectedly drew chorus clock parts");
@@ -102,6 +103,11 @@ void activeProductPromotion()
     auto uninverted = applied;
     uninverted.enableChorusInverterSpread = false;
     require(uninverted != applied, "chorus inverter flag omitted from parameter equality");
+    require(!EngineParameters {}.enableChorusLargeSignalWetSwitch,
+            "raw diagnostic reference unexpectedly selected the large-signal wet switch");
+    auto smallSignal = applied;
+    smallSignal.enableChorusLargeSignalWetSwitch = false;
+    require(smallSignal != applied, "wet-switch law flag omitted from parameter equality");
 }
 
 void selections(const YouKnowEngine& engine)

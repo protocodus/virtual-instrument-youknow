@@ -391,7 +391,8 @@ public:
                  bool enableFiniteTr5Drive = false,
                  bool enableContinuousMuteLoading = false,
                  bool enableClockSourceSpread = false,
-                 bool enableInverterSpread = false) noexcept;
+                 bool enableInverterSpread = false,
+                 bool enableLargeSignalWetSwitch = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -1155,6 +1156,8 @@ private:
     bool finiteMuteDriveEnabled_ { false };
     bool finiteTr5DriveEnabled_ { false };
     double muteGateVolts_ { -14.4 };
+    // The same gate before its clamp at the channel: D4/D5's limit.
+    double muteGateDriveVolts_ { -14.4 };
     double wetInputConductanceRatio_ { 0.0 };
     double wetTransitionRatio_ { -1.0 };
     double wetTransitionReadoutRatio_ { -1.0 };

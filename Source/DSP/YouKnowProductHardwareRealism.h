@@ -74,6 +74,7 @@ struct ProductHardwareRealismProfile
         // zero removes every tolerance draw.
         parameters.enableChorusClockSourceSpread = true;
         parameters.enableChorusInverterSpread = true;
+        parameters.enableChorusLargeSignalWetSwitch = true;
     }
 };
 } // namespace youknow

@@ -2768,6 +2768,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     finiteMuteDriveEnabled_ = false;
     finiteTr5DriveEnabled_ = false;
     muteGateVolts_ = -14.4;
+    muteGateDriveVolts_ = -14.4;
     wetInputConductanceRatio_ = 0.0;
     wetTransitionRatio_ = -1.0;
     wetTransitionReadoutRatio_ = -1.0;
@@ -2894,7 +2895,8 @@ void Chorus::updateWetGate() noexcept
 {
     if (finiteMuteDriveEnabled_)
     {
-        muteGateVolts_ = ChorusMuteDrive::gateVolts(muteDriveHoldVolts_);
+        muteGateDriveVolts_ = ChorusMuteDrive::gateDriveVolts(muteDriveHoldVolts_);
+        muteGateVolts_ = std::min(0.0, muteGateDriveVolts_);
         wetInputConductanceRatio_ = ChorusMuteDrive::conductanceRatio(muteGateVolts_);
         muteDriveMuted_ = wetInputConductanceRatio_ == 0.0;
     }
@@ -3123,7 +3125,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableFiniteTr5Drive,
                      bool enableContinuousMuteLoading,
                      bool enableClockSourceSpread,
-                     bool enableInverterSpread) noexcept
+                     bool enableInverterSpread,
+                     bool enableLargeSignalWetSwitch) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3220,10 +3223,11 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetGain_ = 0.0f;
     // The finite drive uses the named same-part incremental JFET channel
     // law, rather than a binary threshold followed by the legacy 5 ms glide.
-    // All downstream signal, C25/C28 loading and IC6 Norton noise use that
-    // one continuous conductance. Signal-dependent channel distortion, gate
-    // capacitance and charge injection remain unmeasured; no transient is
-    // invented. Raw/reference processing retains its declared declick glide.
+    // C25/C28 loading and IC6 Norton noise use that one continuous
+    // conductance; with the large-signal switch selected, the signal itself
+    // crosses the full channel law below. Gate capacitance and charge
+    // injection remain unmeasured; no transient is invented. Raw/reference
+    // processing retains its declared declick glide.
 
     const double intervalStartPhase = lfoPhase_;
     const double phaseIncrement = static_cast<double>(rateHz_)
@@ -3373,14 +3377,27 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetA *= lineGainA_;
         wetB *= lineGainB_;
     }
+    // Tr11/Tr12 at full signal (ChorusMuteDrive::channelOutputVolts): the
+    // switch replaces the small-signal ratio in wetGain_ with each line's
+    // own node voltage, ahead of the I+II fold as on the board.
+    float wetLevel = wetGain_;
+    if (enableLargeSignalWetSwitch && finiteMuteDriveEnabled_)
+    {
+        constexpr double volts = static_cast<double>(nodeVoltsPerUnit);
+        wetA = static_cast<float>(ChorusMuteDrive::channelOutputVolts(
+            static_cast<double>(wetA) * volts, muteGateDriveVolts_) / volts);
+        wetB = static_cast<float>(ChorusMuteDrive::channelOutputVolts(
+            static_cast<double>(wetB) * volts, muteGateDriveVolts_) / volts);
+        wetLevel = settingsFor(runningMode_).wetGain;
+    }
     if (mode == ChorusMode::OneTwo && enableNarrowOneTwo)
     {
         const float wetMid = 0.5f * (wetA + wetB);
         wetA = wetMid;
         wetB = wetMid;
     }
-    left = dryMixGain * (input + wetA * wetGain_);
-    right = dryMixGain * (input + wetB * wetGain_);
+    left = dryMixGain * (input + wetA * wetLevel);
+    right = dryMixGain * (input + wetB * wetLevel);
 }
 
 } // namespace youknow
