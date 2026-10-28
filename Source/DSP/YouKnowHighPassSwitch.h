@@ -58,6 +58,18 @@ public:
         switchRemainingSeconds_ = 0;
     }
 
+    // Boost's IC4b feedback R18 over R19 and its R24 return into IC4a, as
+    // installed. The kernels hold the printed 100k / 10k / 220k; these only
+    // rescale C6's two currents and the return, so no matrix is rebuilt.
+    // The nominal parts restore the printed circuit bit for bit.
+    void setBoostResistors(double feedbackOhms, double groundOhms,
+                           double returnOhms) noexcept
+    {
+        leakScale_ = 100e3 / feedbackOhms;
+        driveScale_ = 10e3 / groundOhms;
+        returnGain_ = 47e3 / returnOhms;
+    }
+
     template <typename Clip>
     double process(double input, int mode, Clip clip) noexcept
     {
@@ -99,6 +111,7 @@ private:
     std::array<Kernel, 4> ordinary_ {}, switching_ {};
     State voltage_ {};
     double feedbackVoltage_ {};
+    double leakScale_ {1}, driveScale_ {1}, returnGain_ {47e3 / 220e3};
     double intervalSeconds_ {}, switchWindowSeconds_ {}, switchRemainingSeconds_ {};
     int previousMode_ {-1}, switchSteps_ {1};
 
@@ -188,7 +201,8 @@ private:
             next[i] = k.input[i] * input;
             for (int j = 0; j != stores; ++j) next[i] += k.transition[i][j] * voltage_[j];
         }
-        double c6 = (feedbackVoltage_ + k.feedbackDrive * n) / (1 + k.feedbackLeak);
+        const double leak = k.feedbackLeak * leakScale_, drive = k.feedbackDrive * driveScale_;
+        double c6 = (feedbackVoltage_ + drive * n) / (1 + leak);
         double out = clip(n + c6);
         if (std::abs(out - n - c6) > 1e-6 * std::max(1.0, std::abs(n + c6)))
         {
@@ -196,13 +210,13 @@ private:
             // approaches the existing amplifier swing policy. This fixed
             // point is contractive (ratio <.23 at the minimum 8kHz rate).
             for (int i = 0; i != 12; ++i)
-                c6 = (feedbackVoltage_ + k.feedbackDrive * clip(n + c6))
-                   / (1 + k.feedbackLeak + k.feedbackDrive);
+                c6 = (feedbackVoltage_ + drive * clip(n + c6))
+                   / (1 + leak + drive);
             out = clip(n + c6);
         }
         feedbackVoltage_ = 2 * c6 - feedbackVoltage_;
         voltage_ = next;
-        return direct + (47.0 / 220.0) * out;
+        return direct + returnGain_ * out;
     }
 };
 } // namespace youknow

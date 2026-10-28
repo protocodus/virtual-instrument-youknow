@@ -92,7 +92,8 @@ void activeProductPromotion()
             && applied.enableChorusClockSourceSpread
             && applied.enableChorusInverterSpread
             && applied.enableChorusLargeSignalWetSwitch
-            && applied.enableOutputSummerLegSpread,
+            && applied.enableOutputSummerLegSpread
+            && applied.enableHighPassBoostSpread,
             "active product setup lost an accepted-B circuit selection");
     require(!EngineParameters {}.enableChorusClockSourceSpread,
             "raw diagnostic reference unexpectedly drew chorus clock parts");
@@ -114,6 +115,11 @@ void activeProductPromotion()
     auto nominalLegs = applied;
     nominalLegs.enableOutputSummerLegSpread = false;
     require(nominalLegs != applied, "IC6 leg flag omitted from parameter equality");
+    require(!EngineParameters {}.enableHighPassBoostSpread,
+            "raw diagnostic reference unexpectedly drew the HPF Boost parts");
+    auto nominalBoost = applied;
+    nominalBoost.enableHighPassBoostSpread = false;
+    require(nominalBoost != applied, "HPF Boost flag omitted from parameter equality");
 }
 
 void selections(const YouKnowEngine& engine)
