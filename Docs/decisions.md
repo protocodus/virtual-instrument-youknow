@@ -1904,6 +1904,52 @@ spend, about a fifth of its one-note cost at Normal (the Rack's CPU
 evidence records the measurement); Chorus Off or hiss at zero restores the
 sleep. The plug-in renders every callback and is unchanged.
 
+## 2026-10-28 — Untrimmed jack-board parts and the full wet-switch law
+
+The owner asked for five grounded circuit improvements that make YouKnow
+more analog and authentic, then approved merging them to main as 1.4.0.
+**Selection:** delegated engineering choices from the Service Notes' p. 15
+jack-board drawing and p. 12 parts legend, not listening verdicts; no A–Z
+test was run, because each mechanism has one derivable form. All five are
+`ProductHardwareRealismProfile` flags, off in the raw reference.
+
+1. **Each chorus line's own clock current source**
+   (`enableChorusClockSourceSpread`). Tr19 (R123/R124/R125) clocks IC9 and
+   Tr24 (R136/R137/R138) IC11; delay is inverse to that current, so each
+   line's centre and sweep scale by its own drawn current, split about the
+   pair's mean so the selected timing (OQ-01) keeps its centre.
+2. **IC2a's inverter ratio** (`enableChorusInverterSpread`). Line B's
+   triangle is TP4 inverted at R9/R10, so its sweep differs from line A's
+   by the drawn ratio.
+3. **The full 2SK30A channel law** (`enableChorusLargeSignalWetSwitch`).
+   The existing Idss/Vp prior and D4/D5 gate rule now carry the whole wet
+   signal into R72/R74's virtual earth instead of only its incremental
+   conductance. Settled on, the output moves by −98 dB; the audible change
+   is only during mute and unmute, where the pinned gate passes the two
+   halves of the wave unequally. This is not the wet-mute distortion
+   removed on review earlier, which was a heuristic about 44 dB too strong;
+   this one is the existing channel prior's own large-signal solution.
+4. **IC6's per-output legs** (`enableOutputSummerLegSpread`). R70/R71/R72
+   and R67/R73/R74 give each output its own dry and wet gain; the settled
+   bypass applies the same dry legs.
+5. **The HPF Boost leg's R18/R19/R24** (`enableHighPassBoostSpread`), in
+   the literal network: the shelf height and C6's corner.
+
+Items 1, 2, 4 and 5 draw R20J (±5 %) parts inside the 3 % class the voice
+cards already use for untrimmed legs, scaled by Unit Character. That class
+is a voiced point inside an anchored bound, and the fixed per-designator
+draws are one representative unit, not a measured population. At Unit
+Character 100 % they give line delays 3.6 % apart, 1.3 % more sweep on
+line B, the right output 0.34 dB (dry) and 0.21 dB (wet) below the left,
+and a 0.05 dB lower Boost shelf. Capacitors print no tolerance class and
+stay nominal. Unit Character 0 restores every nominal part bit for bit.
+
+Rejected in the same search as negligible or ungrounded: voice-bus and
+IC6 amplifier noise (12–17 dB under IC5's −94 dBV floor), µPC1252H2
+offsets, clock temperature coefficients, R128/R129 threshold tolerance
+(under 0.1 %), per-line post-BBD filter tolerances (they would split the
+shared support chain) and VR3's load offset (cassette interface only).
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

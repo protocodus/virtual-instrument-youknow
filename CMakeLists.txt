@@ -35,7 +35,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(YouKnow VERSION 1.3.7 LANGUAGES C CXX)
+project(YouKnow VERSION 1.4.0 LANGUAGES C CXX)
 
 # Keep the three-part host version stable; the build identity X.Y.Z-build.<run>
 # (portfolio standard B4/B5) names downloads and appears in About YouKnow and
