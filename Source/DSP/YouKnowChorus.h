@@ -211,6 +211,24 @@ public:
     static constexpr float dryMixGain = 100.0f / 47.0f;
     static constexpr float wetMixGain = 100.0f / 39.0f;
     static constexpr float wetToDryGain = wetMixGain / dryMixGain;
+    // Nothing trims IC6, so each output's dry and wet gains are its own
+    // three R20J legs as drawn (drawnResistance): the outputs' levels and
+    // their dry/wet balances differ by what those parts drew. The dry level
+    // is set by the preset trims and the wet level is a normalised policy
+    // (OQ-04), so, as for the MN3009 insertion offset, only the relative
+    // part is modelled: each pair is split about its geometric mean.
+    // Factors on the nominal gains, exactly one at Unit Character zero.
+    // Tr11/Tr12 and the C25/C28 loading keep the nominal 39k: a drawn leg
+    // moves that corner by under 0.2 Hz.
+    struct SummerLegScale
+    {
+        float dryLeft { 1.0f };
+        float wetLeft { 1.0f };
+        float dryRight { 1.0f };
+        float wetRight { 1.0f };
+    };
+    [[nodiscard]] static SummerLegScale summerLegScale(float calibration,
+                                                       bool spread) noexcept;
     // Explicit plug-in declick policy, not a measured mute-transistor value.
     static constexpr float wetMuteTimeConstantSeconds = 0.005f;
 
@@ -363,8 +381,10 @@ public:
     // false -- caller must run process() -- until the glide has settled.
     // The engine gates this behind the fast VCF tanh modes, so Exact keeps
     // the established always-running lines.
+    // Each output keeps its own drawn dry leg (summerLegScale) here too.
     bool processBypassedWhenSettled(float input, float& left,
-                                    float& right) noexcept;
+                                    float& right, float calibration = 0.0f,
+                                    bool enableSummerLegSpread = false) noexcept;
 
     // IC40's mode-select output is independent of its mute output (Roland
     // service notes p. 13). The serial-board replay drives I/II even while
@@ -389,7 +409,11 @@ public:
                  float noiseTransferFraction = 0.0f,
                  float noiseTransferCorrelation = 1.0f,
                  bool enableFiniteTr5Drive = false,
-                 bool enableContinuousMuteLoading = false) noexcept;
+                 bool enableContinuousMuteLoading = false,
+                 bool enableClockSourceSpread = false,
+                 bool enableInverterSpread = false,
+                 bool enableLargeSignalWetSwitch = false,
+                 bool enableSummerLegSpread = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -538,6 +562,56 @@ public:
     static constexpr float lineInsertionGainBoundDb = 4.0f;
     static constexpr float lineInsertionGainSpreadDb = 1.6f;
     [[nodiscard]] static float lineInsertionGainDraw() noexcept;
+    // The same fixed-seed bipolar hash for any other jack-board part, keyed
+    // by its designator so every part keeps its own draw.
+    [[nodiscard]] static float componentDraw(std::uint32_t designator) noexcept;
+
+    // The jack board's plain resistors are R20J, +/-5 % (the notes' parts
+    // legend, p. 12). Draw each one inside the 3 % class the voice cards use
+    // for their untrimmed legs, scaled by Unit Character. A voiced class
+    // inside an anchored bound, not a measured population.
+    static constexpr double carbonResistorToleranceClass = 0.03;
+    [[nodiscard]] static double drawnResistance(double nominalOhms,
+        std::uint32_t designator, float calibration) noexcept;
+
+    // Each line has its own clock oscillator (p. 15): Tr19 with R123 1.8k /
+    // R124 8.2k / R125 10k charging C53 150 pF for IC9, Tr24 with R136 /
+    // R137 / R138 of the same values charging C57 for IC11. Ignoring base
+    // current, the PNP source gives I0 = (15 R_top/(R_top + R_ground) - Vbe)
+    // / R_emitter, and every clock period is C (V_upper - V_lower) / I0, so
+    // a line's whole delay -- centre and sweep alike -- scales as 1/I0. No
+    // trimmer reaches it. The divider subtracts Vbe from 2.29 V, which makes
+    // I0 1.18 times as sensitive to R123/R125 as to R124. C53/C57 print no
+    // class letter and the reset dead time (0.3-2.5 us) is under 0.1 % of
+    // the delay; neither is drawn. Vbe is DerivedNominal's 0.65 V prior.
+    static constexpr double clockSourceTopOhms = 1800.0;      // R123/R136
+    static constexpr double clockSourceEmitterOhms = 8200.0;  // R124/R137
+    static constexpr double clockSourceGroundOhms = 10000.0;  // R125/R138
+    static constexpr double clockSourceRailVolts = 15.0;
+    static constexpr double clockSourceVbeVolts = 0.65;
+    [[nodiscard]] static double clockSourceAmps(double topOhms,
+        double emitterOhms, double groundOhms) noexcept;
+
+    // IC2a hands line B its triangle through R10 33k in and R9 33k (with C4
+    // 220 pF, a 21.9 kHz pole) in feedback, so TP3 = -(R9/R10) TP4 and line
+    // B's sweep -- not its centre -- carries the pair's ratio. Line A takes
+    // TP4 directly. R128/R148 1k into the 33k threshold bleeds move either
+    // sweep by under 0.1 % across the class and are not drawn.
+    static constexpr double inverterOhms = 33000.0;  // R9 and R10
+
+    // Each line's delay and sweep multipliers from its drawn parts, each pair
+    // normalised to a geometric mean of one: the selected timing coordinates
+    // are the pair's effective fit, so only the lines' relative offsets are
+    // new. Exactly one at Unit Character zero.
+    struct LineTimingScale
+    {
+        double delayA { 1.0 };
+        double delayB { 1.0 };
+        double sweepA { 1.0 };
+        double sweepB { 1.0 };
+    };
+    [[nodiscard]] static LineTimingScale lineTimingScale(
+        float calibration, bool clockSources, bool inverter) noexcept;
 
     // The one usable real-instrument observation of this circuit's noise:
     // mode II's output floor was reported about 3.95 dB above mode I's, on
@@ -588,8 +662,9 @@ public:
     // an RC relaxation oscillator would give -- and `triangle()` below is that
     // shape.
     // IC2a then inverts it once through R10/R9 33 kOhm, so the second line's
-    // modulation is exactly the negative of the first's rather than an
-    // independent oscillator: TP4 carries the triangle and TP3 its inverse.
+    // modulation is the first's, inverted at the ratio R9/R10, rather than an
+    // independent oscillator: TP4 carries the triangle and TP3 its inverse
+    // (see inverterOhms for the drawn ratio).
     //
     // The CHORUS I/II line drives JFET Tr1 through D1/Tr2/R2. R4 680 kOhm
     // runs from the R5/R8 junction to Tr1's drain -- the mode shunt -- and R3
@@ -1102,6 +1177,8 @@ private:
     bool finiteMuteDriveEnabled_ { false };
     bool finiteTr5DriveEnabled_ { false };
     double muteGateVolts_ { -14.4 };
+    // The same gate before its clamp at the channel: D4/D5's limit.
+    double muteGateDriveVolts_ { -14.4 };
     double wetInputConductanceRatio_ { 0.0 };
     double wetTransitionRatio_ { -1.0 };
     double wetTransitionReadoutRatio_ { -1.0 };
@@ -1113,6 +1190,17 @@ private:
     float lineGainA_ { 1.0f };
     float lineGainB_ { 1.0f };
     float lineGainCalibration_ { 0.0f };
+    // Per-line clock timing at the last calibration it was solved for.
+    LineTimingScale lineTiming_ {};
+    float lineTimingCalibration_ { 0.0f };
+    bool lineTimingClockSources_ { false };
+    bool lineTimingInverter_ { false };
+    // IC6's per-output leg gains at the last calibration they were solved
+    // for.
+    SummerLegScale summerLegs_ {};
+    float summerLegCalibration_ { 0.0f };
+    bool summerLegSpread_ { false };
+    void updateSummerLegs(float calibration, bool spread) noexcept;
     float bucketNoiseTransferCorrelation_ {};
 };
 

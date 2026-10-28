@@ -496,6 +496,27 @@ struct EngineParameters
     // Reconstruct the changing Tr11/12 wet-switch load within each chorus
     // interval; physical endpoint readout and settled gain are preserved.
     bool enableContinuousChorusMuteLoading { false };
+    // Each chorus line's own Tr19/Tr24 clock current source, its R20J parts
+    // drawn under Unit Character: the two lines' delays differ by what their
+    // parts drew, around the selected pair timing. Product on, raw off.
+    bool enableChorusClockSourceSpread { false };
+    // IC2a's R9/R10 ratio, drawn the same way, sets line B's sweep against
+    // line A's. Product on, raw off.
+    bool enableChorusInverterSpread { false };
+    // Tr11/Tr12 pass the wet signal through their full Shichman-Hodges
+    // channel with the gate pinned by D4/D5, so mute and unmute act unevenly
+    // on the two halves of the wave. Needs enableChorusFiniteMuteDrive.
+    // Product on, raw off.
+    bool enableChorusLargeSignalWetSwitch { false };
+    // IC6's R70/R71/R72 and R67/R73/R74, drawn under Unit Character: each
+    // output's dry and wet gain from its own untrimmed legs. Product on,
+    // raw off.
+    bool enableOutputSummerLegSpread { false };
+    // The HPF Boost's R18/R19 (IC4b's gain and C6's corner) and R24 return,
+    // drawn under Unit Character. Acts on the literal C14/IC3/HPF network
+    // (configureHighPassSwitch), which is the product's path. Product on,
+    // raw off.
+    bool enableHighPassBoostSpread { false };
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
@@ -737,6 +758,11 @@ struct EngineParameters
             && enableOutputSummerAntialias == other.enableOutputSummerAntialias
             && enableChorusRateIsland == other.enableChorusRateIsland
             && enableContinuousChorusMuteLoading == other.enableContinuousChorusMuteLoading
+            && enableChorusClockSourceSpread == other.enableChorusClockSourceSpread
+            && enableChorusInverterSpread == other.enableChorusInverterSpread
+            && enableChorusLargeSignalWetSwitch == other.enableChorusLargeSignalWetSwitch
+            && enableOutputSummerLegSpread == other.enableOutputSummerLegSpread
+            && enableHighPassBoostSpread == other.enableHighPassBoostSpread
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
                 == other.enableVoiceIslandFrameShotCovariance
@@ -3954,6 +3980,7 @@ private:
     void primeStartupVoiceWaveNodes(
         const EngineParameters& parameters) noexcept;
     void updateSharedHighPass(const EngineParameters& parameters) noexcept;
+    void refreshHighPassBoostParts() noexcept;
     [[nodiscard]] float processMainNoiseSource(
         float rawNoise, float level, bool levelBeforeC41) noexcept;
     struct VoiceFilterFrame

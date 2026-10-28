@@ -7182,6 +7182,19 @@ void YouKnowEngine::updateSharedHighPass(const EngineParameters& parameters) noe
     highPassHigh_ = highPassHighGain(parameters.highPass);
 }
 
+// Nothing trims the Boost leg, so its shelf height and corner are what R18,
+// R19 and R24 drew. They are jack-board R20J parts like the chorus's, so they
+// take the same per-designator draw.
+void YouKnowEngine::refreshHighPassBoostParts() noexcept
+{
+    const float calibration = activeParameters_.enableHighPassBoostSpread
+        ? activeParameters_.calibration : 0.0f;
+    highPassSwitch_.setBoostResistors(
+        Chorus::drawnResistance(boostFeedbackOhms, 18u, calibration),
+        Chorus::drawnResistance(boostGroundOhms, 19u, calibration),
+        Chorus::drawnResistance(boostReturnOhms, 24u, calibration));
+}
+
 float YouKnowEngine::processMainNoiseSource(
     float rawNoise, float level, bool levelBeforeC41) noexcept
 {
@@ -7571,6 +7584,9 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
                != activeParameters_.enableSpatialThermalGradient;
     const bool rampCurrentScalesChanged = startupSnapshot
         || next.calibration != activeParameters_.calibration || rangeChanged;
+    const bool highPassBoostPartsChanged = startupSnapshot
+        || next.calibration != activeParameters_.calibration
+        || next.enableHighPassBoostSpread != activeParameters_.enableHighPassBoostSpread;
     const bool agingChanged = next.aging != activeParameters_.aging;
     if (next.lfoSyncDelaySeconds >= 0.0f
         && activeParameters_.lfoSyncDelaySeconds < 0.0f)
@@ -7748,6 +7764,8 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
         refreshAgedUnitState();
     if (highPassChanged)
         updateSharedHighPass(circuitParameters());
+    if (highPassBoostPartsChanged)
+        refreshHighPassBoostParts();
 
     // A host may deliver its saved snapshot before prepare(), after prepare(),
     // or more than once while restoring state. Until audio time begins, prime
@@ -13025,6 +13043,10 @@ ChorusRateIsland::Controls YouKnowEngine::chorusRateControls(
     c.correlatedNoise=p.enableChorusCorrelatedNoise;
     c.finiteTr5=p.enableChorusFiniteTr5Drive;
     c.continuousMuteLoading=p.enableContinuousChorusMuteLoading;
+    c.clockSourceSpread=p.enableChorusClockSourceSpread;
+    c.inverterSpread=p.enableChorusInverterSpread;
+    c.largeSignalWetSwitch=p.enableChorusLargeSignalWetSwitch;
+    c.summerLegSpread=p.enableOutputSummerLegSpread;
     return c;
 }
 
@@ -14220,7 +14242,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     || parameters.enableChorusFiniteMuteDrive
                     || parameters.enableChorusFiniteTr5Drive
                     || !chorus_.processBypassedWhenSettled(levelled, wetLeft,
-                                                           wetRight))
+                                                           wetRight, parameters.calibration,
+                                                           parameters.enableOutputSummerLegSpread))
                     chorus_.process(levelled, parameters.chorus,
                                     chorusNoiseScale,
                                     wetLeft, wetRight,
@@ -14235,7 +14258,11 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                     parameters.chorusNoiseTransferFraction,
                                     parameters.chorusNoiseTransferCorrelation,
                                     parameters.enableChorusFiniteTr5Drive,
-                                    parameters.enableContinuousChorusMuteLoading);
+                                    parameters.enableContinuousChorusMuteLoading,
+                                    parameters.enableChorusClockSourceSpread,
+                                    parameters.enableChorusInverterSpread,
+                                    parameters.enableChorusLargeSignalWetSwitch,
+                                    parameters.enableOutputSummerLegSpread);
 
                 processOutputSummer(wetLeft,wetRight,parameters);
 

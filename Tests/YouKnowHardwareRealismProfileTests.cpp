@@ -88,8 +88,38 @@ void activeProductPromotion()
             && applied.enableVoiceFilterRateIsland
             && applied.enableVcfSettlingReconstruction
             && applied.enableVoiceVcaControlReconstruction
-            && applied.enableContinuousChorusMuteLoading,
+            && applied.enableContinuousChorusMuteLoading
+            && applied.enableChorusClockSourceSpread
+            && applied.enableChorusInverterSpread
+            && applied.enableChorusLargeSignalWetSwitch
+            && applied.enableOutputSummerLegSpread
+            && applied.enableHighPassBoostSpread,
             "active product setup lost an accepted-B circuit selection");
+    require(!EngineParameters {}.enableChorusClockSourceSpread,
+            "raw diagnostic reference unexpectedly drew chorus clock parts");
+    auto unspread = applied;
+    unspread.enableChorusClockSourceSpread = false;
+    require(unspread != applied, "chorus clock-source flag omitted from parameter equality");
+    require(!EngineParameters {}.enableChorusInverterSpread,
+            "raw diagnostic reference unexpectedly drew the chorus inverter");
+    auto uninverted = applied;
+    uninverted.enableChorusInverterSpread = false;
+    require(uninverted != applied, "chorus inverter flag omitted from parameter equality");
+    require(!EngineParameters {}.enableChorusLargeSignalWetSwitch,
+            "raw diagnostic reference unexpectedly selected the large-signal wet switch");
+    auto smallSignal = applied;
+    smallSignal.enableChorusLargeSignalWetSwitch = false;
+    require(smallSignal != applied, "wet-switch law flag omitted from parameter equality");
+    require(!EngineParameters {}.enableOutputSummerLegSpread,
+            "raw diagnostic reference unexpectedly drew the IC6 legs");
+    auto nominalLegs = applied;
+    nominalLegs.enableOutputSummerLegSpread = false;
+    require(nominalLegs != applied, "IC6 leg flag omitted from parameter equality");
+    require(!EngineParameters {}.enableHighPassBoostSpread,
+            "raw diagnostic reference unexpectedly drew the HPF Boost parts");
+    auto nominalBoost = applied;
+    nominalBoost.enableHighPassBoostSpread = false;
+    require(nominalBoost != applied, "HPF Boost flag omitted from parameter equality");
 }
 
 void selections(const YouKnowEngine& engine)

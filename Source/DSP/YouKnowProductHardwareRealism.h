@@ -69,6 +69,14 @@ struct ProductHardwareRealismProfile
         parameters.enableVcfSettlingReconstruction = true;
         parameters.enableVoiceVcaControlReconstruction = true;
         parameters.enableContinuousChorusMuteLoading = true;
+        // 2026-10-28 component tolerances and laws from the p. 15 drawing
+        // and the p. 12 parts legend (Docs/decisions.md). Unit Character
+        // zero removes every tolerance draw.
+        parameters.enableChorusClockSourceSpread = true;
+        parameters.enableChorusInverterSpread = true;
+        parameters.enableChorusLargeSignalWetSwitch = true;
+        parameters.enableOutputSummerLegSpread = true;
+        parameters.enableHighPassBoostSpread = true;
     }
 };
 } // namespace youknow

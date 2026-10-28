@@ -2768,6 +2768,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     finiteMuteDriveEnabled_ = false;
     finiteTr5DriveEnabled_ = false;
     muteGateVolts_ = -14.4;
+    muteGateDriveVolts_ = -14.4;
     wetInputConductanceRatio_ = 0.0;
     wetTransitionRatio_ = -1.0;
     wetTransitionReadoutRatio_ = -1.0;
@@ -2786,8 +2787,93 @@ float Chorus::lineInsertionGainDraw() noexcept
     return static_cast<float>(x & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
 }
 
+float Chorus::componentDraw(std::uint32_t designator) noexcept
+{
+    std::uint32_t x = designator * 0x9e3779b9u + 0x632be5abu;
+    x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+    return static_cast<float>(x & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
+}
+
+double Chorus::drawnResistance(double nominalOhms, std::uint32_t designator,
+                               float calibration) noexcept
+{
+    return nominalOhms * (1.0 + carbonResistorToleranceClass
+        * static_cast<double>(std::clamp(calibration, 0.0f, 2.0f))
+        * static_cast<double>(componentDraw(designator)));
+}
+
+double Chorus::clockSourceAmps(double topOhms, double emitterOhms,
+                               double groundOhms) noexcept
+{
+    return (clockSourceRailVolts * topOhms / (topOhms + groundOhms)
+            - clockSourceVbeVolts) / emitterOhms;
+}
+
+Chorus::SummerLegScale Chorus::summerLegScale(float calibration,
+                                              bool spread) noexcept
+{
+    SummerLegScale scale;
+    if (spread)
+    {
+        // Left: R70 feedback, R71 dry, R72 wet. Right: R67, R73, R74.
+        const double left = drawnResistance(100000.0, 70u, calibration);
+        const double right = drawnResistance(100000.0, 67u, calibration);
+        const double dryLeft = left / drawnResistance(47000.0, 71u, calibration) * 0.47;
+        const double wetLeft = left / drawnResistance(39000.0, 72u, calibration) * 0.39;
+        const double dryRight = right / drawnResistance(47000.0, 73u, calibration) * 0.47;
+        const double wetRight = right / drawnResistance(39000.0, 74u, calibration) * 0.39;
+        const double dryMean = std::sqrt(dryLeft * dryRight);
+        const double wetMean = std::sqrt(wetLeft * wetRight);
+        scale.dryLeft = static_cast<float>(dryLeft / dryMean);
+        scale.wetLeft = static_cast<float>(wetLeft / wetMean);
+        scale.dryRight = static_cast<float>(dryRight / dryMean);
+        scale.wetRight = static_cast<float>(wetRight / wetMean);
+    }
+    return scale;
+}
+
+Chorus::LineTimingScale Chorus::lineTimingScale(float calibration,
+                                                bool clockSources,
+                                                bool inverter) noexcept
+{
+    LineTimingScale scale;
+    if (clockSources)
+    {
+        const double nominal = clockSourceAmps(clockSourceTopOhms,
+            clockSourceEmitterOhms, clockSourceGroundOhms);
+        const double a = nominal / clockSourceAmps(
+            drawnResistance(clockSourceTopOhms, 123u, calibration),
+            drawnResistance(clockSourceEmitterOhms, 124u, calibration),
+            drawnResistance(clockSourceGroundOhms, 125u, calibration));
+        const double b = nominal / clockSourceAmps(
+            drawnResistance(clockSourceTopOhms, 136u, calibration),
+            drawnResistance(clockSourceEmitterOhms, 137u, calibration),
+            drawnResistance(clockSourceGroundOhms, 138u, calibration));
+        scale.delayA = std::sqrt(a / b);
+        scale.delayB = std::sqrt(b / a);
+    }
+    if (inverter)
+    {
+        const double gain = drawnResistance(inverterOhms, 9u, calibration)
+                          / drawnResistance(inverterOhms, 10u, calibration);
+        scale.sweepA = 1.0 / std::sqrt(gain);
+        scale.sweepB = std::sqrt(gain);
+    }
+    return scale;
+}
+
+void Chorus::updateSummerLegs(float calibration, bool spread) noexcept
+{
+    if (calibration == summerLegCalibration_ && spread == summerLegSpread_)
+        return;
+    summerLegs_ = summerLegScale(calibration, spread);
+    summerLegCalibration_ = calibration;
+    summerLegSpread_ = spread;
+}
+
 bool Chorus::processBypassedWhenSettled(float input, float& left,
-                                        float& right) noexcept
+                                        float& right, float calibration,
+                                        bool enableSummerLegSpread) noexcept
 {
     // Until the wet-mute glide has decayed to exactly zero -- or before the
     // first process() call has primed the settings -- the full path still
@@ -2811,8 +2897,9 @@ bool Chorus::processBypassedWhenSettled(float input, float& left,
         lfoPhase_ -= std::floor(lfoPhase_);
 
     wetPathFlushPending_ = true;
-    left = dryMixGain * input;
-    right = dryMixGain * input;
+    updateSummerLegs(calibration, enableSummerLegSpread);
+    left = dryMixGain * (input * summerLegs_.dryLeft);
+    right = dryMixGain * (input * summerLegs_.dryRight);
     return true;
 }
 
@@ -2842,7 +2929,8 @@ void Chorus::updateWetGate() noexcept
 {
     if (finiteMuteDriveEnabled_)
     {
-        muteGateVolts_ = ChorusMuteDrive::gateVolts(muteDriveHoldVolts_);
+        muteGateDriveVolts_ = ChorusMuteDrive::gateDriveVolts(muteDriveHoldVolts_);
+        muteGateVolts_ = std::min(0.0, muteGateDriveVolts_);
         wetInputConductanceRatio_ = ChorusMuteDrive::conductanceRatio(muteGateVolts_);
         muteDriveMuted_ = wetInputConductanceRatio_ == 0.0;
     }
@@ -3069,7 +3157,11 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float noiseTransferFraction,
                      float noiseTransferCorrelation,
                      bool enableFiniteTr5Drive,
-                     bool enableContinuousMuteLoading) noexcept
+                     bool enableContinuousMuteLoading,
+                     bool enableClockSourceSpread,
+                     bool enableInverterSpread,
+                     bool enableLargeSignalWetSwitch,
+                     bool enableSummerLegSpread) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3166,10 +3258,11 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetGain_ = 0.0f;
     // The finite drive uses the named same-part incremental JFET channel
     // law, rather than a binary threshold followed by the legacy 5 ms glide.
-    // All downstream signal, C25/C28 loading and IC6 Norton noise use that
-    // one continuous conductance. Signal-dependent channel distortion, gate
-    // capacitance and charge injection remain unmeasured; no transient is
-    // invented. Raw/reference processing retains its declared declick glide.
+    // C25/C28 loading and IC6 Norton noise use that one continuous
+    // conductance; with the large-signal switch selected, the signal itself
+    // crosses the full channel law below. Gate capacitance and charge
+    // injection remain unmeasured; no transient is invented. Raw/reference
+    // processing retains its declared declick glide.
 
     const double intervalStartPhase = lfoPhase_;
     const double phaseIncrement = static_cast<double>(rateHz_)
@@ -3201,10 +3294,25 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // numerical samples used by the low-grid BLEP predictor. It changes no
     // LFO rate/depth, BBD noise draw count convention or analogue filtering.
     // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=2
+    // Each line's own clock source scales its whole delay and IC2a's ratio
+    // its sweep (see clockSourceAmps and inverterOhms); solved only when Unit
+    // Character moves.
+    if (calibration != lineTimingCalibration_
+        || enableClockSourceSpread != lineTimingClockSources_
+        || enableInverterSpread != lineTimingInverter_)
+    {
+        lineTiming_ = lineTimingScale(calibration, enableClockSourceSpread,
+                                      enableInverterSpread);
+        lineTimingCalibration_ = calibration;
+        lineTimingClockSources_ = enableClockSourceSpread;
+        lineTimingInverter_ = enableInverterSpread;
+    }
     const auto trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_, sweep_, sampleRate_, 1.0);
+        centreDelay_ * lineTiming_.delayA,
+        sweep_ * lineTiming_.delayA * lineTiming_.sweepA, sampleRate_, 1.0);
     const auto trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_, sweep_, sampleRate_, -1.0);
+        centreDelay_ * lineTiming_.delayB,
+        sweep_ * lineTiming_.delayB * lineTiming_.sweepB, sampleRate_, -1.0);
     const std::array<double, 2> clock {{
         trajectoryA.intervalCycles * sampleRate_,
         trajectoryB.intervalCycles * sampleRate_
@@ -3304,14 +3412,28 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetA *= lineGainA_;
         wetB *= lineGainB_;
     }
+    // Tr11/Tr12 at full signal (ChorusMuteDrive::channelOutputVolts): the
+    // switch replaces the small-signal ratio in wetGain_ with each line's
+    // own node voltage, ahead of the I+II fold as on the board.
+    float wetLevel = wetGain_;
+    if (enableLargeSignalWetSwitch && finiteMuteDriveEnabled_)
+    {
+        constexpr double volts = static_cast<double>(nodeVoltsPerUnit);
+        wetA = static_cast<float>(ChorusMuteDrive::channelOutputVolts(
+            static_cast<double>(wetA) * volts, muteGateDriveVolts_) / volts);
+        wetB = static_cast<float>(ChorusMuteDrive::channelOutputVolts(
+            static_cast<double>(wetB) * volts, muteGateDriveVolts_) / volts);
+        wetLevel = settingsFor(runningMode_).wetGain;
+    }
     if (mode == ChorusMode::OneTwo && enableNarrowOneTwo)
     {
         const float wetMid = 0.5f * (wetA + wetB);
         wetA = wetMid;
         wetB = wetMid;
     }
-    left = dryMixGain * (input + wetA * wetGain_);
-    right = dryMixGain * (input + wetB * wetGain_);
+    updateSummerLegs(calibration, enableSummerLegSpread);
+    left = dryMixGain * (input * summerLegs_.dryLeft + wetA * wetLevel * summerLegs_.wetLeft);
+    right = dryMixGain * (input * summerLegs_.dryRight + wetB * wetLevel * summerLegs_.wetRight);
 }
 
 } // namespace youknow

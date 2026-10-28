@@ -35,7 +35,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(YouKnow VERSION 1.3.7 LANGUAGES C CXX)
+project(YouKnow VERSION 1.4.0 LANGUAGES C CXX)
 
 # Keep the three-part host version stable; the build identity X.Y.Z-build.<run>
 # (portfolio standard B4/B5) names downloads and appears in About YouKnow and
@@ -877,6 +877,22 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnowChorusFiniteMuteTests PRIVATE YouKnowDSP)
     add_test(NAME YouKnow.ChorusFiniteMute COMMAND YouKnowChorusFiniteMuteTests)
     set_tests_properties(YouKnow.ChorusFiniteMute PROPERTIES TIMEOUT 120)
+    add_executable(YouKnowChorusLineTimingTests Tests/YouKnowChorusLineTimingTests.cpp)
+    target_link_libraries(YouKnowChorusLineTimingTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusLineTiming COMMAND YouKnowChorusLineTimingTests)
+    set_tests_properties(YouKnow.ChorusLineTiming PROPERTIES TIMEOUT 120)
+    add_executable(YouKnowChorusWetSwitchTests Tests/YouKnowChorusWetSwitchTests.cpp)
+    target_link_libraries(YouKnowChorusWetSwitchTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.ChorusWetSwitch COMMAND YouKnowChorusWetSwitchTests)
+    set_tests_properties(YouKnow.ChorusWetSwitch PROPERTIES TIMEOUT 120)
+    add_executable(YouKnowOutputSummerLegTests Tests/YouKnowOutputSummerLegTests.cpp)
+    target_link_libraries(YouKnowOutputSummerLegTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.OutputSummerLegs COMMAND YouKnowOutputSummerLegTests)
+    set_tests_properties(YouKnow.OutputSummerLegs PROPERTIES TIMEOUT 120)
+    add_executable(YouKnowHighPassBoostPartsTests Tests/YouKnowHighPassBoostPartsTests.cpp)
+    target_link_libraries(YouKnowHighPassBoostPartsTests PRIVATE YouKnowDSP)
+    add_test(NAME YouKnow.HighPassBoostParts COMMAND YouKnowHighPassBoostPartsTests)
+    set_tests_properties(YouKnow.HighPassBoostParts PROPERTIES TIMEOUT 120)
 
     add_executable(YouKnowChorusTr5DriveTests Tests/YouKnowChorusTr5DriveTests.cpp)
     target_link_libraries(YouKnowChorusTr5DriveTests PRIVATE YouKnowDSP)

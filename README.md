@@ -20,14 +20,14 @@ build renders them and rewrites this table.
 
 | # | Preset | Demo | Length | Peak |
 | --- | --- | --- | --- | --- |
-| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.wav](Docs/audio/001-a11-brass-set-1.wav) | 10.5 s | -14.3 dBFS |
-| 5 | A15 Moving Strings | [005-a15-moving-strings.wav](Docs/audio/005-a15-moving-strings.wav) | 11.5 s | -17.8 dBFS |
-| 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.wav](Docs/audio/015-a27-elect-piano-i.wav) | 10.0 s | -12.8 dBFS |
+| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.wav](Docs/audio/001-a11-brass-set-1.wav) | 10.5 s | -14.5 dBFS |
+| 5 | A15 Moving Strings | [005-a15-moving-strings.wav](Docs/audio/005-a15-moving-strings.wav) | 11.5 s | -17.9 dBFS |
+| 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.wav](Docs/audio/015-a27-elect-piano-i.wav) | 10.0 s | -12.6 dBFS |
 | 31 | A47 Funky I | [031-a47-funky-i.wav](Docs/audio/031-a47-funky-i.wav) | 10.0 s | -28.1 dBFS |
-| 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.wav](Docs/audio/032-a48-synth-bass-i-unison.wav) | 11.6 s | -20.0 dBFS |
-| 33 | A51 Lead I | [033-a51-lead-i.wav](Docs/audio/033-a51-lead-i.wav) | 11.3 s | -30.6 dBFS |
-| 48 | A68 Synth Pad | [048-a68-synth-pad.wav](Docs/audio/048-a68-synth-pad.wav) | 11.1 s | -18.0 dBFS |
-| 61 | A85 Rocket Men | [061-a85-rocket-men.wav](Docs/audio/061-a85-rocket-men.wav) | 11.5 s | -23.8 dBFS |
+| 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.wav](Docs/audio/032-a48-synth-bass-i-unison.wav) | 11.6 s | -19.8 dBFS |
+| 33 | A51 Lead I | [033-a51-lead-i.wav](Docs/audio/033-a51-lead-i.wav) | 11.3 s | -30.4 dBFS |
+| 48 | A68 Synth Pad | [048-a68-synth-pad.wav](Docs/audio/048-a68-synth-pad.wav) | 11.1 s | -17.8 dBFS |
+| 61 | A85 Rocket Men | [061-a85-rocket-men.wav](Docs/audio/061-a85-rocket-men.wav) | 11.5 s | -23.6 dBFS |
 
 <!-- audio-demos-end -->
 
@@ -52,6 +52,25 @@ ten-part composition and the original preset sessions, is rendered locally;
 see [local listening renders](#local-listening-renders).
 
 ## Version history
+
+### 1.4.0 — 2026-10-28 — Untrimmed jack-board parts and the full wet switch
+
+- Unit Character now also draws the jack board's untrimmed resistors (R20J,
+  ±5 %), so each unit's chorus and output differ the way real boards do. At
+  the default 100 %: the two chorus lines' clock current sources leave
+  their delays about 3.6 % apart (Tr19/Tr24 and their dividers); IC2a's
+  R9/R10 ratio gives the second line about 1.3 % more sweep depth than the
+  first; each output's dry and wet mixing resistors set the two outputs
+  apart, so this unit's right output sits 0.35 dB (dry) and 0.21 dB (wet)
+  below its left around their common level; and the HPF Boost's R18/R19/R24
+  lower its bass shelf by 0.05 dB.
+  These are fixed per-part draws inside the 3 % class the voice cards use,
+  not measurements of a unit. At 0 % every part is nominal, bit for bit.
+- The chorus wet switches (Tr11/Tr12, 2SK30A) now pass the whole signal
+  through their channel law instead of a small-signal gain. While the
+  chorus is fully on nothing audible changes (−98 dB); while it fades in or
+  out, the switch closes on one half of the wave before the other, so a
+  loud signal picks up second harmonic (about −38 dB at 1 V half-open).
 
 ### 1.3.7 — 2026-10-26 — Switches follow a recalled preset; panel moves get through dense bends
 
@@ -179,7 +198,7 @@ see [local listening renders](#local-listening-renders).
 ## Downloads
 
 <!-- build-download-begin -->
-**[Download main build 23](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/40598809359/artifacts/12779602439)**, built from [`e4ebb2a523e5`](https://github.com/protocodus/virtual-instrument-youknow/commit/e4ebb2a523e51b320008ee411c656375b6afc3b0). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
+**[Download main build 25](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/40736065791/artifacts/12839286934)**, built from [`c4fee778e69a`](https://github.com/protocodus/virtual-instrument-youknow/commit/c4fee778e69a6680c6baaf11a33f41a060979878). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
 <!-- build-download-end -->
 
 Each main build holds the macOS universal `.pkg` installer and manual-install
@@ -709,7 +728,10 @@ forty-year-old unit will null against the plug-in.
   mode, gone in 30 ms), re-entering Boost hands C9/(C8+C9) of the bus step
   to C8, and IC4b's ×11 low band stops at the shared ±13.5 V summer-stage
   swing policy, which a loud unison 16' bass in Boost does reach (anchored
-  parts and topology; swing provisional under OQ-05);
+  parts and topology; swing provisional under OQ-05). Nothing trims that
+  leg, so under Unit Character the product draws R18, R19 and R24 like the
+  chorus's jack-board parts: they set the shelf's height and C6's corner
+  (−0.05 dB and ×0.998 at 100 %; `YouKnow.HighPassBoostParts`);
   the stored VCA LEVEL byte drives the common µPC1252H2 through its derived
   gain law and 9.08 ms control settling (anchored/derived). NEC's recommended
   input range for the part is −40 to +10 dBV (4.5 V peak through the
@@ -1133,8 +1155,16 @@ forty-year-old unit will null against the plug-in.
   The [2SC1815 curves](https://media.digikey.com/pdf/Data%20Sheets/Toshiba%20PDFs/2SC1815.pdf#page=2)
   and [2SK30A curves](https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf#page=2)
   describe typical specimens, not identified installed parts; the 2SK30A
-  family cutoff spans −0.4…−5 V. Gain/Early effect, diode drops, signal-dependent
-  channel distortion, gate capacitance and charge injection remain OQ-20.
+  family cutoff spans −0.4…−5 V. The channel carries the full signal, not
+  only its small-signal conductance: the same Shichman–Hodges channel into
+  R72/R74's virtual earth, with the floating gate following the source while
+  D4/D5 are off and pinned a junction above Tr4's collector while they
+  conduct. Fully on, the floating gate keeps the channel odd-symmetric, so
+  only a −110 dB third harmonic at 1 V remains; mid-transition the pinned
+  gate pinches the positive half first (second harmonic near −38 dB at 1 V
+  half open). A bisected series-KCL oracle checks the closed form
+  (`YouKnow.ChorusWetSwitch`). Gain/Early effect, diode drops, gate
+  capacitance and charge injection remain OQ-20.
   Each MN3009 also
   carries its own insertion gain — Panasonic's row is Min −4 / Typ 0 /
   Max +4 dB and nothing on the board trims it — so under Unit Character the
@@ -1147,6 +1177,22 @@ forty-year-old unit will null against the plug-in.
   installed Juno-106 gain is unidentified. The factor enters before the
   post-BBD filters and nonlinear followers; it neither cancels their loading
   nor scales separately generated output-referred noise.
+- Nothing on the jack board trims the chorus clocks, the triangle inverter
+  or IC6, so under Unit Character those parts take fixed per-designator
+  draws inside the 3 % class the voice cards use (R20J is ±5 %, parts
+  legend p. 12). Each line's clock current source, (15·R_top/(R_top+R_gnd)
+  − 0.65 V)/R_emitter, nominally 199.77 µA, scales that line's delay
+  trajectory (Tr19 R123–R125 for IC9, Tr24 R136–R138 for IC11), around the
+  pair's mean so the selected timing keeps its centre. IC2a hands line B
+  its triangle at R9/R10, so line B's sweep differs from line A's by that
+  ratio. IC6 sums each output from its own R70/R71/R72 or R67/R73/R74, so
+  the outputs' levels and dry/wet balances differ by what those legs drew;
+  as for the MN3009 offset, each pair is split about its mean, so the
+  trimmed dry level and the normalised wet level stay put.
+  Capacitors print no class and stay nominal. Counted BBD captures
+  (`YouKnow.ChorusLineTiming`) and an inverting-summer oracle
+  (`YouKnow.OutputSummerLegs`) check the wiring; the draws are voiced
+  points inside an anchored bound, not a measured population.
 
 **Instrument-level extensions** (product policy): Unit Character scales
 the additional modelled tolerances from zero through the default
@@ -1741,8 +1787,8 @@ Deliberate, each with its reason recorded:
   level coordinates, sub half-wave DC magnitude, resonance
   onset/compensation, noise control onset, upper cutoff knee, noise
   distribution) or are left out entirely until measured: the chorus
-  wet-mute JFETs' own transition shape, click and leakage (their drive
-  delay is derived), the HPF multiplexer's charge injection (the finite
+  wet-mute JFETs' gate capacitance, click and leakage (their drive delay
+  and full-signal channel law are derived), the HPF multiplexer's charge injection (the finite
   on-resistance uses a labelled datasheet comparison value and the legs'
   stored-charge transients are derived), converter
   charge injection,
@@ -1790,7 +1836,7 @@ unit; the priority column is this project's own ranking of audible impact.
 | OQ-14 | Portamento pot/ADC transfer and store order. ROM-resolved for B-2 and designator-complete from p. 16 — a 50KB linear pot loaded by 47 kΩ, the off switch pinning the ADC at the ROM's raw-0 code. All six glide words are stored at `$03E0–$0406` before SUB at `$0410`, then consumed by the DCO train. The engine now advances them together once per pass; independent interrupted-pass and late-edit regressions close the former per-card stepping error. Exact store timestamps and absolute pass cadence remain OQ-08 | P2 |
 | OQ-16 | Installed main-noise level, spectrum and self-oscillation startup. Roland’s p. 13 designators settle the shape and ordering (C42 high-pass, scanned BA662 level OTA, C41/R79 low-pass), but the earlier claim that level was settled is withdrawn. A [verified hardware recording](Docs/validation/hardware-validation.md) from Juno-106 #439522 with Borish replacement voice cards puts noise relative to saw about 11.7 dB above this model; a separate same-gain noise take agrees within 0.3 dB. Noise relative to its noise-driven resonator output also differs by roughly 9 dB; a later same-file take with all sources disabled during true self-oscillation confirms an 8.33 dB deficit, contradicting the prior assertion that a stronger reading must be a crest-factor mistake. The shipped level remains provisional: this capture does not establish original 80017A gain, noise-trim condition or the physical TP8 crest factor, and a universal gain correction is not justified. The comparison-only `mainNoiseLevelScale` retains access to level candidates. `MainNoiseCalibrationProfile::Serviced439522` applies a fitted 2.88897× source-rail scale through that same pre-filter path. Disjoint held-out source ratios improve from 9.163 to 1.640 dB RMS error; the independent resonance sweep improves from 4.047 to 0.461 dB RMS error in growth relative to RESO 0. Noise/saw and noise/true-self-oscillation still disagree by about 3.27 dB, so the nominal default and existing NOISE control shape remain unchanged. The omitted internal resistor sources are now closed separately: four independent 68 kΩ/560 Ω stage networks inject Johnson noise at their respective OTA inputs and pass independent transfer/PSD checks. This does not calibrate the shared NOISE generator. The TP8 reading itself is now documented: p. 18's test program runs bank 6 (NOISE LEVEL) at FREQ 10, RES 0, KYBD 10 and the per-voice VCA state of bank 3's 6 Vp-p trim, so the two TP8 figures pair directly, and [p. 19's figure](https://www.synfo.nl/servicemanuals/Roland/ROLAND_JUNO-106_SERVICE_NOTES_1st.pdf#page=19) brackets the trace's dense core with excursions reaching 1.91× the bracket — about 2.9σ for the 4 Vp-p, where this model reads 6.6σ (σ 0.60 V against the 248 Hz self-oscillation) and #439522 measures 2.88σ. That take's noise band follows the C41/R79 pole within 1.5 dB to 20 kHz, and the separately printed [HS-60/JUNO-106S notes](https://seriescircuits.com/wp-content/uploads/2024/07/Roland-Juno-106S-HS-60-Service-Manual.pdf#page=15), whose module board is common to the 106, repeat every value of that network: the gap is level, not spectrum, and the 3.27 dB left between the two ratios is the saw's own excess drive (OQ-15). On 2026-09-22 the owner chose the 2.9σ reading by ear over 3.45σ, and the product applies it as `MainNoiseCalibrationProfile::CoreBandTp8`: ×2.281, +7.16 dB on the shared source (`noiseMixVolts` and the profile carry the derivation). With drive B in place too, the product reads the take's noise/saw −1.21 dB and noise/true-self-oscillation −0.25 dB (−1.19/−0.28 held out), against −10.92/−7.36 dB before the two choices: drive B's 2.64 dB takes the gap between the two ratios from 3.56 to 0.96 dB. Neither choice was fitted to the take. The product now uses the 2026-10-03 nominal exponential Tr22 junction instead of the raw hard corner, retaining the full-level calibration and existing trimmer coordinate. Its low-current knee extrapolates the named 25 °C 2SA1015 prior; installed junction parameters, VR32 position, Tr21 amplitude, original-card captures, startup and dry-floor measurements remain open | P0 |
 | OQ-18 | Upper cutoff-converter saturation law. The exponential audio-range law is confirmed by measurement (3.46–3.49 oct/1000 codes against the model's 3.500; the 248 Hz anchor within 3 cents); the 50 kHz cap is declared product policy. The integrator capacitor no longer splits the saturation bracket: a de-potted original measures ~250 pF across all four stages ([Sound Doctorin](https://sounddoctorin.com/synthtec/roland/juno106.htm)), which is the 240 pF the sibling schematic prints, and the competing 270 pF is the Analogue Renaissance clone's own value rather than Roland's. The shipped 240 pF stands and the 64.8 kHz branch of the bracket can be retired | P2 |
-| OQ-20 | Chorus wet-mute switching transient and leakage. The product now solves the complete nominal C16/C13/C15 network: R50 10 kΩ, R46 330 Ω, R48 150 kΩ, R49/R42 560/39 kΩ, D3/R41 10 kΩ, R47 330 kΩ and both 330/33 kΩ clock-base dividers. C16/C15 are 2.2 µF and C13 is 1 µF. Reciprocal loading and conducting base-junction loads are implemented using the existing 0.6 V junction and ideal-rail priors. The independent component-current RK4 reference agrees within 0.35 µV over 8–768 kHz; interrupted commands, simultaneous crossings and rate changes preserve charge. The raw complete-circuit binary wet mute/open times are 81.8/116.7 ms; product finite collector/channel priors give 88.1/107.8 ms with a continuous transition. Clock stop/restart remains 287.7/12.3 ms after settled commands. Stopped BBD buckets, clock phase and noise-generator state are retained ideally; analog support continues running. These are model predictions, not original-unit measurements. Finite collector drive now uses the named listed 2SC1815 typical specimen β≈150, retaining the existing 0.6 V junction and ideal saturation priors. The same 2SK30A characteristic prior Idss≈2.8mA/Vp≈−1.8V supplies incremental channel conductance, including its ≈−0.071 dB fully conducting drop. Tr5 saturation, installed current gain/Early effect, local MN3101 rail drops through R99/R108, capacitor leakage, installed junction values, signal-dependent JFET distortion, gate capacitance, charge injection and leakage remain open. The 5 ms glide survives only in the raw comparison. [Toshiba, printed p. 562](https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf#page=1), specifies family cutoff −0.4…−5.0 V at VDS=10 V, ID=0.1 µA, 25 °C; Roland's Y/GR alternatives grade IDSS, not individual cutoff. The sheet limits gate leakage to 1 nA at VGS=−30 V, VDS=0, 25 °C, not installed leakage including D4/D5. The broader family static wet-level bound remains −0.184 dB; the named nominal conducting-resistance drop is now modelled | P2 |
+| OQ-20 | Chorus wet-mute switching transient and leakage. The product now solves the complete nominal C16/C13/C15 network: R50 10 kΩ, R46 330 Ω, R48 150 kΩ, R49/R42 560/39 kΩ, D3/R41 10 kΩ, R47 330 kΩ and both 330/33 kΩ clock-base dividers. C16/C15 are 2.2 µF and C13 is 1 µF. Reciprocal loading and conducting base-junction loads are implemented using the existing 0.6 V junction and ideal-rail priors. The independent component-current RK4 reference agrees within 0.35 µV over 8–768 kHz; interrupted commands, simultaneous crossings and rate changes preserve charge. The raw complete-circuit binary wet mute/open times are 81.8/116.7 ms; product finite collector/channel priors give 88.1/107.8 ms with a continuous transition. Clock stop/restart remains 287.7/12.3 ms after settled commands. Stopped BBD buckets, clock phase and noise-generator state are retained ideally; analog support continues running. These are model predictions, not original-unit measurements. Finite collector drive now uses the named listed 2SC1815 typical specimen β≈150, retaining the existing 0.6 V junction and ideal saturation priors. The same 2SK30A characteristic prior Idss≈2.8mA/Vp≈−1.8V supplies incremental channel conductance, including its ≈−0.071 dB fully conducting drop. Since 1.4.0 the same channel prior carries the full wet signal, so its signal-dependent distortion follows from the derived gate drive rather than being open. Tr5 saturation, installed current gain/Early effect, local MN3101 rail drops through R99/R108, capacitor leakage, installed junction values, the installed channel's Idss/cutoff, gate capacitance, charge injection and leakage remain open. The 5 ms glide survives only in the raw comparison. [Toshiba, printed p. 562](https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf#page=1), specifies family cutoff −0.4…−5.0 V at VDS=10 V, ID=0.1 µA, 25 °C; Roland's Y/GR alternatives grade IDSS, not individual cutoff. The sheet limits gate leakage to 1 nA at VGS=−30 V, VDS=0, 25 °C, not installed leakage including D4/D5. The broader family static wet-level bound remains −0.184 dB; the named nominal conducting-resistance drop is now modelled | P2 |
 | OQ-21 | Coupled C14 and switched high-pass transfer. Parts, placement and control are settled and the nominal network is qualified against independent long-double MNA to 0.011 dB / 0.056°. The two cut legs' departing tails are now modelled: IC3 selects which leg IC4a's summing node is driven from but does not disconnect the leg it left, whose 47 kΩ is unswitched, so its capacitor keeps discharging through its own 1 MΩ bleed at −26.96 dB of the stored charge with 15.71 ms leaving Two and 4.92 ms leaving Three. The Boost leg now runs as its three real stores (C9, C8, C6) in both configurations, so its departing tail (C8 back through R22‖C9 and R25 while IC4b keeps amplifying node N — the exact undriven pair has a 2.77 ms slow mode, longer than the earlier 940 µs single-pole reading), its re-entry charge redistribution and IC4b's finite swing are derived rather than estimated. The product-selected `configureHighPassSwitch` path now solves C14, all selected and deselected passive legs, and IC4b feedback with finite TC4052 resistance and preserved capacitor charge. Independent component-node MNA and continuous-time switching checks qualify the implementation. The 110/240 Ω audition coordinates are Toshiba’s 10 V/5 V typical table points, not measured bounds for the installed +5 V/Tr3 supply. The product uses the approved 110 Ω candidate B; the raw-DSP reference remains unchanged. Toshiba’s [current table, p. 5](https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP#page=5) supplies conditional leakage and parasitic data: ±100 nA maximum off leakage at 25 °C in its 18 V test, 10 pF typical switch-input capacitance, and 30/0.2 pF typical output/feedthrough capacitance at 10 V. Feedthrough capacitance does not specify switching charge injection. Installed Ron, leakage, charge injection, rail clipping and switch captures remain open | P2 |
 | OQ-10 | Post-calibration voice dispersion and thermal wander. The calibrated-nominal model retains zero inter-voice spread and drift; seeded Unit Character remains voiced sound design. The former product enabled `useServiced439522VcfCalibration`, assigning fixed FREQ/WIDTH and effective upper-current coordinates fitted to six card slots from one identified sweep. Since 2026-10-05 the product selects nominal original-hybrid/service frequency coordinates instead; the fit remains in `ProductFidelityProfile` diagnostic fixtures. It is a serviced unit with Borish replacement VCF/VCA cards, and card identity is confounded with sweep direction. The original master-clock identity is now closed as a KMFC1034T1 8 MHz ceramic resonator; its installed warm-up/aging distribution is still unknown. The AS3109’s typical 0.33%/°C frequency-control coefficient is not a bound on original-module compensated cutoff drift. See [voice instability](Docs/research/juno-106-fidelity-research.md#voice-instability-and-pitch-drift). Complementary held-out cutoff codes test interpolation within that capture; they do not establish original 80017A population tolerances, independent-unit accuracy, repeatability or thermal drift | P3 |
 | OQ-17 | Main VOLUME tracking and output-selector transfer. The nominal law and ideal selector steps are settled. The [p. 15 circuit](https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf#page=15) also closes the nominal load dependence: at full volume, stereo H/M/L source resistances are 3.4488/8.8824/3.6472 kΩ, with open-jack poles at 46.15/17.92/43.64 kHz. Medium therefore changes treble as well as level. `YouKnowOutputNetwork.h` now implements the complete nominal two-capacitor source and internal-resistor noise transfer for H/M/L and explicit resistive loads, including mono normalling. The default High/open realization remains for compatibility. Independent unreduced nodal source/noise checks qualify the circuit reduction; the host-rate digital realization targets magnitude and retains approximate phase and switching transients. Receiver resistance and cable/input capacitance are user-selected external loads; unknown installed values, pot tracking, component spread and driven headphone behaviour remain open. The selectable PHONES route now implements the nominal linear IC7 input/gain, 47 µF coupling and 220 Ω series circuit into declared headphone loads, with LINE unplugged | P3 |
