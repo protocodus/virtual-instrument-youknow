@@ -1931,7 +1931,13 @@ test was run, because each mechanism has one derivable form. All five are
    this one is the existing channel prior's own large-signal solution.
 4. **IC6's per-output legs** (`enableOutputSummerLegSpread`). R70/R71/R72
    and R67/R73/R74 give each output its own dry and wet gain; the settled
-   bypass applies the same dry legs.
+   bypass applies the same dry legs. The dry level belongs to the preset
+   trims and the wet level is a normalised policy (OQ-04), so each pair is
+   split about its geometric mean, as the MN3009 insertion offset is. The
+   first cut drew the absolute legs, which lowered this unit's stereo
+   level by 0.16 dB and moved B51 Direct just outside `YouKnow.PresetLevels`'
+   ±1 dB band; split, a dry signal's stereo level moves by 0.004 dB, so
+   the stored trims stand.
 5. **The HPF Boost leg's R18/R19/R24** (`enableHighPassBoostSpread`), in
    the literal network: the shelf height and C6's corner.
 
@@ -1940,7 +1946,7 @@ cards already use for untrimmed legs, scaled by Unit Character. That class
 is a voiced point inside an anchored bound, and the fixed per-designator
 draws are one representative unit, not a measured population. At Unit
 Character 100 % they give line delays 3.6 % apart, 1.3 % more sweep on
-line B, the right output 0.34 dB (dry) and 0.21 dB (wet) below the left,
+line B, the right output 0.35 dB (dry) and 0.21 dB (wet) below the left,
 and a 0.05 dB lower Boost shelf. Capacitors print no tolerance class and
 stay nominal. Unit Character 0 restores every nominal part bit for bit.
 

@@ -51,15 +51,17 @@ void legLaw()
         };
         const double r70 = drawn(100e3, 70u), r71 = drawn(47e3, 71u), r72 = drawn(39e3, 72u);
         const double r67 = drawn(100e3, 67u), r73 = drawn(47e3, 73u), r74 = drawn(39e3, 74u);
-        // A unit dry or wet source alone, against the nominal summer's gain.
-        const auto expect = [](float factor, double drawnVolts, double nominalVolts) {
-            return std::abs(factor - drawnVolts / nominalVolts) < 2e-7;
+        // A unit dry or wet source alone: each pair keeps its drawn ratio,
+        // and the pair's geometric mean stays at the nominal summer's gain.
+        const auto expect = [](float left, float right, double leftVolts, double rightVolts) {
+            const double mean = std::sqrt(leftVolts * rightVolts);
+            return std::abs(left - leftVolts / mean) < 2e-7 && std::abs(right - rightVolts / mean) < 2e-7;
         };
-        require(expect(scale.dryLeft, summerVolts(r70, r71, r72, 1, 0), summerVolts(100e3, 47e3, 39e3, 1, 0))
-                && expect(scale.wetLeft, summerVolts(r70, r71, r72, 0, 1), summerVolts(100e3, 47e3, 39e3, 0, 1))
-                && expect(scale.dryRight, summerVolts(r67, r73, r74, 1, 0), summerVolts(100e3, 47e3, 39e3, 1, 0))
-                && expect(scale.wetRight, summerVolts(r67, r73, r74, 0, 1), summerVolts(100e3, 47e3, 39e3, 0, 1)),
-                "an output leg is not its drawn summer's gain");
+        require(expect(scale.dryLeft, scale.dryRight,
+                       summerVolts(r70, r71, r72, 1, 0), summerVolts(r67, r73, r74, 1, 0))
+                && expect(scale.wetLeft, scale.wetRight,
+                          summerVolts(r70, r71, r72, 0, 1), summerVolts(r67, r73, r74, 0, 1)),
+                "an output leg is not its drawn summer's share of the pair");
 
         // Each factor is a ratio of two parts of the class.
         const double t = Chorus::carbonResistorToleranceClass * calibration;

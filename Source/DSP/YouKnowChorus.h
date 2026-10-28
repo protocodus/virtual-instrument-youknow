@@ -213,10 +213,13 @@ public:
     static constexpr float wetToDryGain = wetMixGain / dryMixGain;
     // Nothing trims IC6, so each output's dry and wet gains are its own
     // three R20J legs as drawn (drawnResistance): the outputs' levels and
-    // their dry/wet balances differ by what those parts drew. Factors on the
-    // nominal gains, exactly one at Unit Character zero. Tr11/Tr12 and the
-    // C25/C28 loading keep the nominal 39k: a drawn leg moves that corner by
-    // under 0.2 Hz.
+    // their dry/wet balances differ by what those parts drew. The dry level
+    // is set by the preset trims and the wet level is a normalised policy
+    // (OQ-04), so, as for the MN3009 insertion offset, only the relative
+    // part is modelled: each pair is split about its geometric mean.
+    // Factors on the nominal gains, exactly one at Unit Character zero.
+    // Tr11/Tr12 and the C25/C28 loading keep the nominal 39k: a drawn leg
+    // moves that corner by under 0.2 Hz.
     struct SummerLegScale
     {
         float dryLeft { 1.0f };

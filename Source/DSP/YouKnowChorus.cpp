@@ -2818,14 +2818,16 @@ Chorus::SummerLegScale Chorus::summerLegScale(float calibration,
         // Left: R70 feedback, R71 dry, R72 wet. Right: R67, R73, R74.
         const double left = drawnResistance(100000.0, 70u, calibration);
         const double right = drawnResistance(100000.0, 67u, calibration);
-        scale.dryLeft = static_cast<float>(left / drawnResistance(47000.0, 71u, calibration)
-                                           * (47000.0 / 100000.0));
-        scale.wetLeft = static_cast<float>(left / drawnResistance(39000.0, 72u, calibration)
-                                           * (39000.0 / 100000.0));
-        scale.dryRight = static_cast<float>(right / drawnResistance(47000.0, 73u, calibration)
-                                            * (47000.0 / 100000.0));
-        scale.wetRight = static_cast<float>(right / drawnResistance(39000.0, 74u, calibration)
-                                            * (39000.0 / 100000.0));
+        const double dryLeft = left / drawnResistance(47000.0, 71u, calibration) * 0.47;
+        const double wetLeft = left / drawnResistance(39000.0, 72u, calibration) * 0.39;
+        const double dryRight = right / drawnResistance(47000.0, 73u, calibration) * 0.47;
+        const double wetRight = right / drawnResistance(39000.0, 74u, calibration) * 0.39;
+        const double dryMean = std::sqrt(dryLeft * dryRight);
+        const double wetMean = std::sqrt(wetLeft * wetRight);
+        scale.dryLeft = static_cast<float>(dryLeft / dryMean);
+        scale.wetLeft = static_cast<float>(wetLeft / wetMean);
+        scale.dryRight = static_cast<float>(dryRight / dryMean);
+        scale.wetRight = static_cast<float>(wetRight / wetMean);
     }
     return scale;
 }

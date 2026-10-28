@@ -60,9 +60,10 @@ see [local listening renders](#local-listening-renders).
   the default 100 %: the two chorus lines' clock current sources leave
   their delays about 3.6 % apart (Tr19/Tr24 and their dividers); IC2a's
   R9/R10 ratio gives the second line about 1.3 % more sweep depth than the
-  first; each output's dry and wet mixing resistors move its own level, so
-  this unit's right output sits 0.34 dB (dry) and 0.21 dB (wet) below its
-  left; and the HPF Boost's R18/R19/R24 lower its bass shelf by 0.05 dB.
+  first; each output's dry and wet mixing resistors set the two outputs
+  apart, so this unit's right output sits 0.35 dB (dry) and 0.21 dB (wet)
+  below its left around their common level; and the HPF Boost's R18/R19/R24
+  lower its bass shelf by 0.05 dB.
   These are fixed per-part draws inside the 3 % class the voice cards use,
   not measurements of a unit. At 0 % every part is nominal, bit for bit.
 - The chorus wet switches (Tr11/Tr12, 2SK30A) now pass the whole signal
@@ -1185,7 +1186,9 @@ forty-year-old unit will null against the plug-in.
   pair's mean so the selected timing keeps its centre. IC2a hands line B
   its triangle at R9/R10, so line B's sweep differs from line A's by that
   ratio. IC6 sums each output from its own R70/R71/R72 or R67/R73/R74, so
-  the outputs' levels and dry/wet balances differ by what those legs drew.
+  the outputs' levels and dry/wet balances differ by what those legs drew;
+  as for the MN3009 offset, each pair is split about its mean, so the
+  trimmed dry level and the normalised wet level stay put.
   Capacitors print no class and stay nominal. Counted BBD captures
   (`YouKnow.ChorusLineTiming`) and an inverting-summer oracle
   (`YouKnow.OutputSummerLegs`) check the wiring; the draws are voiced
