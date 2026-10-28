@@ -390,7 +390,8 @@ public:
                  float noiseTransferCorrelation = 1.0f,
                  bool enableFiniteTr5Drive = false,
                  bool enableContinuousMuteLoading = false,
-                 bool enableClockSourceSpread = false) noexcept;
+                 bool enableClockSourceSpread = false,
+                 bool enableInverterSpread = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -569,17 +570,26 @@ public:
     [[nodiscard]] static double clockSourceAmps(double topOhms,
         double emitterOhms, double groundOhms) noexcept;
 
-    // Each line's delay multiplier from its drawn clock source, normalised to
-    // a geometric mean of one: the selected timing coordinates are the pair's
-    // effective fit, so only the lines' relative offset is new. Exactly one
-    // at Unit Character zero.
+    // IC2a hands line B its triangle through R10 33k in and R9 33k (with C4
+    // 220 pF, a 21.9 kHz pole) in feedback, so TP3 = -(R9/R10) TP4 and line
+    // B's sweep -- not its centre -- carries the pair's ratio. Line A takes
+    // TP4 directly. R128/R148 1k into the 33k threshold bleeds move either
+    // sweep by under 0.1 % across the class and are not drawn.
+    static constexpr double inverterOhms = 33000.0;  // R9 and R10
+
+    // Each line's delay and sweep multipliers from its drawn parts, each pair
+    // normalised to a geometric mean of one: the selected timing coordinates
+    // are the pair's effective fit, so only the lines' relative offsets are
+    // new. Exactly one at Unit Character zero.
     struct LineTimingScale
     {
         double delayA { 1.0 };
         double delayB { 1.0 };
+        double sweepA { 1.0 };
+        double sweepB { 1.0 };
     };
     [[nodiscard]] static LineTimingScale lineTimingScale(
-        float calibration, bool clockSources) noexcept;
+        float calibration, bool clockSources, bool inverter) noexcept;
 
     // The one usable real-instrument observation of this circuit's noise:
     // mode II's output floor was reported about 3.95 dB above mode I's, on
@@ -630,8 +640,9 @@ public:
     // an RC relaxation oscillator would give -- and `triangle()` below is that
     // shape.
     // IC2a then inverts it once through R10/R9 33 kOhm, so the second line's
-    // modulation is exactly the negative of the first's rather than an
-    // independent oscillator: TP4 carries the triangle and TP3 its inverse.
+    // modulation is the first's, inverted at the ratio R9/R10, rather than an
+    // independent oscillator: TP4 carries the triangle and TP3 its inverse
+    // (see inverterOhms for the drawn ratio).
     //
     // The CHORUS I/II line drives JFET Tr1 through D1/Tr2/R2. R4 680 kOhm
     // runs from the R5/R8 junction to Tr1's drain -- the mode shunt -- and R3
@@ -1159,6 +1170,7 @@ private:
     LineTimingScale lineTiming_ {};
     float lineTimingCalibration_ { 0.0f };
     bool lineTimingClockSources_ { false };
+    bool lineTimingInverter_ { false };
     float bucketNoiseTransferCorrelation_ {};
 };
 

@@ -13026,6 +13026,7 @@ ChorusRateIsland::Controls YouKnowEngine::chorusRateControls(
     c.finiteTr5=p.enableChorusFiniteTr5Drive;
     c.continuousMuteLoading=p.enableContinuousChorusMuteLoading;
     c.clockSourceSpread=p.enableChorusClockSourceSpread;
+    c.inverterSpread=p.enableChorusInverterSpread;
     return c;
 }
 
@@ -14237,7 +14238,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                     parameters.chorusNoiseTransferCorrelation,
                                     parameters.enableChorusFiniteTr5Drive,
                                     parameters.enableContinuousChorusMuteLoading,
-                                    parameters.enableChorusClockSourceSpread);
+                                    parameters.enableChorusClockSourceSpread,
+                                    parameters.enableChorusInverterSpread);
 
                 processOutputSummer(wetLeft,wetRight,parameters);
 

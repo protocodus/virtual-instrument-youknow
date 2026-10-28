@@ -2809,7 +2809,8 @@ double Chorus::clockSourceAmps(double topOhms, double emitterOhms,
 }
 
 Chorus::LineTimingScale Chorus::lineTimingScale(float calibration,
-                                                bool clockSources) noexcept
+                                                bool clockSources,
+                                                bool inverter) noexcept
 {
     LineTimingScale scale;
     if (clockSources)
@@ -2826,6 +2827,13 @@ Chorus::LineTimingScale Chorus::lineTimingScale(float calibration,
             drawnResistance(clockSourceGroundOhms, 138u, calibration));
         scale.delayA = std::sqrt(a / b);
         scale.delayB = std::sqrt(b / a);
+    }
+    if (inverter)
+    {
+        const double gain = drawnResistance(inverterOhms, 9u, calibration)
+                          / drawnResistance(inverterOhms, 10u, calibration);
+        scale.sweepA = 1.0 / std::sqrt(gain);
+        scale.sweepB = std::sqrt(gain);
     }
     return scale;
 }
@@ -3114,7 +3122,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float noiseTransferCorrelation,
                      bool enableFiniteTr5Drive,
                      bool enableContinuousMuteLoading,
-                     bool enableClockSourceSpread) noexcept
+                     bool enableClockSourceSpread,
+                     bool enableInverterSpread) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3246,21 +3255,25 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // numerical samples used by the low-grid BLEP predictor. It changes no
     // LFO rate/depth, BBD noise draw count convention or analogue filtering.
     // https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=2
-    // Each line's own clock source scales its whole delay (see
-    // clockSourceAmps); solved only when Unit Character moves.
+    // Each line's own clock source scales its whole delay and IC2a's ratio
+    // its sweep (see clockSourceAmps and inverterOhms); solved only when Unit
+    // Character moves.
     if (calibration != lineTimingCalibration_
-        || enableClockSourceSpread != lineTimingClockSources_)
+        || enableClockSourceSpread != lineTimingClockSources_
+        || enableInverterSpread != lineTimingInverter_)
     {
-        lineTiming_ = lineTimingScale(calibration, enableClockSourceSpread);
+        lineTiming_ = lineTimingScale(calibration, enableClockSourceSpread,
+                                      enableInverterSpread);
         lineTimingCalibration_ = calibration;
         lineTimingClockSources_ = enableClockSourceSpread;
+        lineTimingInverter_ = enableInverterSpread;
     }
     const auto trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_ * lineTiming_.delayA, sweep_ * lineTiming_.delayA,
-        sampleRate_, 1.0);
+        centreDelay_ * lineTiming_.delayA,
+        sweep_ * lineTiming_.delayA * lineTiming_.sweepA, sampleRate_, 1.0);
     const auto trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_ * lineTiming_.delayB, sweep_ * lineTiming_.delayB,
-        sampleRate_, -1.0);
+        centreDelay_ * lineTiming_.delayB,
+        sweep_ * lineTiming_.delayB * lineTiming_.sweepB, sampleRate_, -1.0);
     const std::array<double, 2> clock {{
         trajectoryA.intervalCycles * sampleRate_,
         trajectoryB.intervalCycles * sampleRate_

@@ -73,6 +73,7 @@ struct ProductHardwareRealismProfile
         // and the p. 12 parts legend (Docs/decisions.md). Unit Character
         // zero removes every tolerance draw.
         parameters.enableChorusClockSourceSpread = true;
+        parameters.enableChorusInverterSpread = true;
     }
 };
 } // namespace youknow

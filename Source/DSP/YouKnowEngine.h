@@ -500,6 +500,9 @@ struct EngineParameters
     // drawn under Unit Character: the two lines' delays differ by what their
     // parts drew, around the selected pair timing. Product on, raw off.
     bool enableChorusClockSourceSpread { false };
+    // IC2a's R9/R10 ratio, drawn the same way, sets line B's sweep against
+    // line A's. Product on, raw off.
+    bool enableChorusInverterSpread { false };
     // Solve the existing VCF/C59/VCA circuit inside the already reported VCA
     // FIR boundary. Numerical accuracy selector; no new hardware parameter.
     bool enableVoiceFilterRateIsland { false };
@@ -742,6 +745,7 @@ struct EngineParameters
             && enableChorusRateIsland == other.enableChorusRateIsland
             && enableContinuousChorusMuteLoading == other.enableContinuousChorusMuteLoading
             && enableChorusClockSourceSpread == other.enableChorusClockSourceSpread
+            && enableChorusInverterSpread == other.enableChorusInverterSpread
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
                 == other.enableVoiceIslandFrameShotCovariance
