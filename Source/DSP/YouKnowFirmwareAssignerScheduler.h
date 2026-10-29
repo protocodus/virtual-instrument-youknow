@@ -23,7 +23,13 @@ class FirmwareAssignerScheduler {
         std::uint16_t pc, address, value;
     };
     struct Events {
-        std::array<Event, 1024> entries{};
+        // Only entries[0, count) are defined: advanceTo writes each entry
+        // before counting it, and readers stop at count. The array is left
+        // uninitialized so that a default-constructed buffer costs nothing;
+        // the audio bridge discards one per source slice, and value-filling
+        // its 24 KiB every time was a memset per slice on the audio thread.
+        // Value-initialize (Events{}) where a zeroed buffer is wanted.
+        std::array<Event, 1024> entries;
         std::size_t count = 0;
     };
     enum class InputKind : std::uint8_t { ByteReady, ReceiveError };
