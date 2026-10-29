@@ -41,7 +41,10 @@ void restorePsw(Trace::Registers &r, unsigned p) noexcept {
     r.halfCarry = (p & 16) != 0; r.skip = (p & 32) != 0; r.zero = (p & 64) != 0;
 }
 struct Completion {
-    Trace::ExecutionState state;
+    // The live execution state, edited in place. advanceTo keeps a copy from
+    // before the instruction and restores it on every path that does not
+    // commit, so a failed or output-limited instruction still changes nothing.
+    Trace::ExecutionState &state;
     const Trace::State &source;
     const Trace::Configuration &configuration;
     const Trace::Tables &tables;
@@ -51,7 +54,7 @@ struct Completion {
     Trace::Status error = Trace::Status::ReachedTarget;
     bool txWrite = false, pcWrite = false;
     unsigned peripheralValue = 0;
-    Completion(const Trace::State &s, const Trace::Configuration &c,
+    Completion(Trace::State &s, const Trace::Configuration &c,
                const Trace::Tables &t, const Io::Inputs &in)
         : state(s), source(s), configuration(c), tables(t), inputs(in) {}
     void emit(Trace::EventKind kind, unsigned address, unsigned value) noexcept {
@@ -441,6 +444,16 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                 static_cast<std::uint16_t>(input.kind), input.value};
         }
         if (state.pending.kind != PendingKind::None && state.pending.remaining == 0) {
+            // One copy of the small execution state per instruction, kept
+            // for the paths that must leave it untouched; the instruction
+            // itself runs on the live state, so a completed instruction needs
+            // no second copy back. Bus memory still commits only from the
+            // write ledger below.
+            const ExecutionState before = state;
+            const auto abandon = [&](Status status) {
+                static_cast<ExecutionState &>(state) = before;
+                return finish(status);
+            };
             Completion commit(state, configuration, tables, inputs);
             const auto pending = state.pending;
             if (pending.kind == PendingKind::InterruptEntry) {
@@ -449,11 +462,11 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                 r.pc = pending.address; r.skip = false; r.l0 = false; r.l1 = false;
             } else {
                 const auto *instruction = find(pending.address);
-                if (!instruction) return finish(Status::InvalidState);
+                if (!instruction) return abandon(Status::InvalidState);
                 commit.execute(*instruction, uart);
             }
-            if (commit.error != Status::ReachedTarget) return finish(commit.error);
-            if (events.entries.size() - events.count < commit.count) return finish(Status::OutputFull);
+            if (commit.error != Status::ReachedTarget) return abandon(commit.error);
+            if (events.entries.size() - events.count < commit.count) return abandon(Status::OutputFull);
             Uart::Status writeStatus = Uart::Status::Ok;
             if (commit.txWrite)
                 writeStatus = Uart::writeTxBuffer(uart, configuration.uart,
@@ -461,10 +474,9 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
             else if (commit.pcWrite)
                 writeStatus = Uart::writePortC(uart,
                     static_cast<std::uint8_t>(commit.peripheralValue), uartEvents);
-            if (writeStatus != Uart::Status::Ok) return finish(uartStatus(writeStatus));
+            if (writeStatus != Uart::Status::Ok) return abandon(uartStatus(writeStatus));
             if (pending.kind == PendingKind::Instruction && !pending.skipped &&
                 find(pending.address)->op == Op::SKIT_FST) (void)Uart::testAndClearFst(uart);
-            static_cast<ExecutionState &>(state) = commit.state;
             for (unsigned i = 0; i < commit.count; ++i) {
                 const auto &event = commit.events[i];
                 if (event.kind == EventKind::RamWrite || event.kind == EventKind::StackWrite)
