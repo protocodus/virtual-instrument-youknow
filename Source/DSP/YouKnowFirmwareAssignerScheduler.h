@@ -23,7 +23,9 @@ class FirmwareAssignerScheduler {
         std::uint16_t pc, address, value;
     };
     struct Events {
-        std::array<Event, 1024> entries{};
+        // Only [0, count) is meaningful. Left uninitialised: the audio bridge
+        // makes a fresh 24 KiB buffer per slice and zeroing it was pure cost.
+        std::array<Event, 1024> entries;
         std::size_t count = 0;
     };
     enum class InputKind : std::uint8_t { ByteReady, ReceiveError };
