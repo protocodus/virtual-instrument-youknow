@@ -4,6 +4,16 @@
 #include <array>
 #include <cmath>
 
+// advance() sits on every voice slot's interval path. Its settled check must
+// not cost it the inlining the bare integrator gets.
+#if defined(_MSC_VER)
+#define YOUKNOW_VCA_ALWAYS_INLINE __forceinline
+#elif defined(__clang__) || defined(__GNUC__)
+#define YOUKNOW_VCA_ALWAYS_INLINE __attribute__((always_inline))
+#else
+#define YOUKNOW_VCA_ALWAYS_INLINE
+#endif
+
 namespace youknow
 {
 // Conditional nominal Tr20/BA662 calibration, not an original-unit fit.
@@ -135,6 +145,12 @@ public:
         double celsius {}, span {}, first {}, difference {};
         std::size_t index {};
         bool valid {};
+        // advance() is a pure function of its inputs and the circuit. When an
+        // interval returns its own starting charge (a settled card at a held
+        // target), the next interval with the same inputs would too.
+        double settledCharge {}, settledTarget {}, settledSeconds {}, settledCelsius {},
+            settledSpan {};
+        bool settled {};
     };
 
 private:
@@ -244,8 +260,34 @@ public:
         }
         return charge;
     }
-    [[nodiscard]] double advance(double charge, double target, double seconds,
+    [[nodiscard]] YOUKNOW_VCA_ALWAYS_INLINE double advance(double charge, double target, double seconds,
                                  double celsius, CurrentCache* cache = nullptr) const noexcept
+    {
+        const auto same = [](double a, double b) noexcept {
+            return a == b && std::signbit(a) == std::signbit(b);
+        };
+        if (cache && cache->settled && same(charge, cache->settledCharge)
+            && same(target, cache->settledTarget) && same(seconds, cache->settledSeconds)
+            && same(celsius, cache->settledCelsius) && cache->settledSpan == span_)
+            return charge;
+        const double result = advanceUncached(charge, target, seconds, celsius, cache);
+        if (cache)
+        {
+            // Recorded only at a fixed point, so a card that is still moving
+            // pays one comparison here and nothing more.
+            cache->settled = same(result, charge);
+            if (cache->settled)
+            {
+                cache->settledCharge = charge; cache->settledTarget = target;
+                cache->settledSeconds = seconds; cache->settledCelsius = celsius;
+                cache->settledSpan = span_;
+            }
+        }
+        return result;
+    }
+private:
+    [[nodiscard]] double advanceUncached(double charge, double target, double seconds,
+                                         double celsius, CurrentCache* cache) const noexcept
     {
         const double thermal = EvidenceVcaCalibration::thermalVolts
             * ((std::clamp(celsius, 25.0, 64.0) + 273.15) / 298.15);
@@ -256,7 +298,6 @@ public:
         return advanceDriven(charge, seconds, celsius,
             [target](double) noexcept { return target; }, steps, cache);
     }
-private:
     static double solveEmitter(double supply, double series, double thermal, double logIs) noexcept
     {
         double logarithm = std::log(std::max(supply / series, 1e-30));
@@ -303,7 +344,8 @@ private:
                     + (2*fraction-1) * difference);
         };
         const double first = knot(index);
-        cache = {celsius, span_, first, knot(index+1)-first, index, true};
+        cache.celsius = celsius; cache.span = span_; cache.first = first;
+        cache.difference = knot(index+1)-first; cache.index = index; cache.valid = true;
     }
     [[nodiscard]] double sample(double coordinate, double celsius, bool capacitor) const noexcept
     {
@@ -336,3 +378,5 @@ private:
     std::array<Row, maximumCelsius - minimumCelsius + 1> rows_ {};
 };
 } // namespace youknow
+
+#undef YOUKNOW_VCA_ALWAYS_INLINE
