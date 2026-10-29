@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -107,7 +108,7 @@ struct ChorusMuteDrive
             // k u^2 - (2 k c + g) u + g v = 0 in u = Vds, smaller root.
             const double b = 2.0 * k * overdrive + g;
             const double u = 2.0 * g * v
-                / (b + std::sqrt(std::max(b * b - 4.0 * k * g * v, 0.0)));
+                / (b + inlineSqrt(std::max(b * b - 4.0 * k * g * v, 0.0)));
             return sourceVolts + u;
         }
         // Current enters the summer: the R72/R74 node is the source end.
@@ -119,7 +120,7 @@ struct ChorusMuteDrive
         {
             const double b = 2.0 * k * pinch + g;
             node = sourceVolts - 2.0 * g * sourceVolts
-                / (b + std::sqrt(std::max(b * b - 4.0 * k * g * sourceVolts, 0.0)));
+                / (b + inlineSqrt(std::max(b * b - 4.0 * k * g * sourceVolts, 0.0)));
         }
         if (gateDrive >= node)
             return node;
@@ -131,12 +132,12 @@ struct ChorusMuteDrive
         {
             // Pinched at the TP1/TP2 end: g x = k (c0 - x)^2, root below c0.
             const double b = 2.0 * k * c0 + g;
-            return 2.0 * k * c0 * c0 / (b + std::sqrt(g * g + 4.0 * k * g * c0));
+            return 2.0 * k * c0 * c0 / (b + inlineSqrt(g * g + 4.0 * k * g * c0));
         }
         // k u^2 + (2 k (c0 - v) + g) u - g v = 0 in u = Vds, positive root.
         const double b = 2.0 * k * (c0 - sourceVolts) + g;
         return sourceVolts - 2.0 * g * sourceVolts
-            / (b + std::sqrt(b * b + 4.0 * k * g * sourceVolts));
+            / (b + inlineSqrt(b * b + 4.0 * k * g * sourceVolts));
     }
 };
 }
