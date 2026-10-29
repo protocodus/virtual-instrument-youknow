@@ -1186,6 +1186,18 @@ private:
     double clockMuteVolts_ { -15.0 };
     bool clockMuteEnabled_ { false };
     bool clocksStopped_ { false };
+    // advanceClockMuteDrive is a pure function of the three capacitor
+    // voltages, the command, the two drive flags and the support chain. Once
+    // an interval leaves all three voltages bit for bit where they were, the
+    // same inputs recur every interval until something changes; this records
+    // that fixed point and the outputs it produced. Cleared with the chain.
+    struct ClockMuteFixedPoint
+    {
+        bool valid { false }, commandMute { false }, finiteTr5 { false }, finiteMute { false };
+        double node {}, hold {}, clock {};
+        double gateDrive {}, gate {}, conductanceRatio {};
+        bool muted { false }, stopped { false };
+    } clockMuteFixedPoint_ {};
     // Per-line insertion gains at the last calibration they were solved for.
     float lineGainA_ { 1.0f };
     float lineGainB_ { 1.0f };

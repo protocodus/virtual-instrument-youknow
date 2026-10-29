@@ -2720,11 +2720,13 @@ void Chorus::prepare(double sampleRate, bool preserveState) noexcept
         : preparedSupportRates_.end();
     if (cached != preparedSupportRates_.end())
     {
+        clockMuteFixedPoint_.valid = false;
         support_ = preparedSupport_[static_cast<std::size_t> (
             std::distance(preparedSupportRates_.begin(), cached))];
     }
     else
     {
+        clockMuteFixedPoint_.valid = false;
         support_ = supportChainFor(sampleRate_, supportProfile_);
         ++supportBuildCount_;
     }
@@ -2775,6 +2777,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     clockMuteVolts_ = -muteDriveRailVolts;
     clockMuteEnabled_ = false;
     clocksStopped_ = false;
+    clockMuteFixedPoint_.valid = false;
 }
 
 float Chorus::lineInsertionGainDraw() noexcept
@@ -3028,8 +3031,28 @@ const Chorus::SupportChain::ExactTransition& Chorus::finiteWetTransition(
 
 void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
 {
+    const auto same = [](double a, double b) noexcept {
+        return a == b && std::signbit(a) == std::signbit(b);
+    };
+    auto& fixed = clockMuteFixedPoint_;
+    if (fixed.valid && fixed.commandMute == commandMute && fixed.finiteTr5 == finiteTr5DriveEnabled_
+        && fixed.finiteMute == finiteMuteDriveEnabled_ && same(fixed.node, muteDriveNodeVolts_)
+        && same(fixed.hold, muteDriveHoldVolts_) && same(fixed.clock, clockMuteVolts_))
+    {
+        // Write exactly what updateWetGate writes in this configuration.
+        if (fixed.finiteMute)
+        {
+            muteGateDriveVolts_ = fixed.gateDrive;
+            muteGateVolts_ = fixed.gate;
+            wetInputConductanceRatio_ = fixed.conductanceRatio;
+        }
+        muteDriveMuted_ = fixed.muted;
+        clocksStopped_ = fixed.stopped;
+        return;
+    }
     using State = std::array<double, 4>;
     State state {{ muteDriveNodeVolts_, muteDriveHoldVolts_, clockMuteVolts_, 1.0 }};
+    const State input = state;
     const auto apply = [](const FixedMatrix<4>& matrix, const State& input) {
         State result {};
         for (std::size_t row = 0; row < 4; ++row)
@@ -3142,6 +3165,11 @@ void Chorus::advanceClockMuteDrive(bool commandMute) noexcept
     clockMuteVolts_ = state[2];
     updateWetGate();
     clocksStopped_ = clockMuteVolts_ >= clockMuteThresholdVolts;
+    fixed.valid = same(input[0], state[0]) && same(input[1], state[1]) && same(input[2], state[2]);
+    if (fixed.valid)
+        fixed = { true, commandMute, finiteTr5DriveEnabled_, finiteMuteDriveEnabled_,
+                  state[0], state[1], state[2], muteGateDriveVolts_, muteGateVolts_,
+                  wetInputConductanceRatio_, muteDriveMuted_, clocksStopped_ };
 }
 
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
