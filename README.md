@@ -53,6 +53,19 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.2 — 2026-10-29 — Less CPU for the same samples
+
+- Takes the remaining audio-path square roots in line, stops zero-filling a
+  discarded 24 KiB firmware event buffer on every source slice, and runs
+  each emulated A-5 instruction on the live CPU state instead of a copy.
+  Every rendered sample is bit-identical to 1.4.1: all 144 presets at
+  48 kHz, Normal Circuit Rate and Original timing, with the Rack's and the
+  plug-in's compiler flags, through the
+  [1.3.4 null-test harness](Docs/benchmarks/cpu-trims-2026-10-23.md#audio-parity).
+- About 2.8 % fewer instructions per block at the Rack's six-voice Normal
+  configuration; measured on a development container, not a Reason-host
+  figure.
+
 ### 1.4.1 — 2026-10-28 — The sub's measured edge skew
 
 - The sub-oscillator's switch (Tr19) now leaves saturation 5.82 µs late,
