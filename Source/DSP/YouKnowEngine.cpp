@@ -11814,11 +11814,14 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     Voice& voice, const EngineParameters& parameters,
     float noiseSample) noexcept
 {
+    // One named result on every path, so it is built in the caller's frame
+    // rather than zero-filled here and copied out (with its trajectory).
+    VoiceFilterFrame frame;
     // Extension slots have no continuously powered voice card behind them.
     // Their digital portamento state still advances on the converter pass,
     // but an unassigned slot has no DCO/filter/audio state that must run.
     if (!voice.active && voice.cardIndex >= hardwareVoices)
-        return {};
+        return frame;
 
     // A retired physical card's render is computed and then discarded: the
     // caller drops the sample, so the only thing this pass can change is the
@@ -11831,7 +11834,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         && !coupledMixerEnabled_ && !voiceFilterRateIslandEnabled())
     {
         freewheelVoiceCard(voice);
-        return {};
+        return frame;
     }
 
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -12034,7 +12037,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     // Character cannot push the numerical interval past the proven boundary.
     const float effectiveFilterOmegaStep = boundedOmegaStep(
         voice.filterOmegaStep);
-    OtaCascade::ControlTrajectory eventControlTrajectory;
+    auto& eventControlTrajectory = frame.trajectory;
     const OtaCascade::ControlTrajectory* controlTrajectory = nullptr;
     if (exactVcfControlInterval_[
             static_cast<std::size_t>(voice.cardIndex)])
@@ -12133,7 +12136,6 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         eventControlTrajectory.headroom.back() = dynamicHeadroom;
         controlTrajectory = &eventControlTrajectory;
     }
-    VoiceFilterFrame frame;
     if (parameters.enableOtaShotNoise)
     {
         frame.shotNoiseOrigin = voice.filter.state;
@@ -12159,11 +12161,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
     frame.input = filterInput;
     frame.omegaStep = effectiveFilterOmegaStep;
     frame.headroom = dynamicHeadroom;
-    if (controlTrajectory != nullptr)
-    {
-        frame.trajectory = eventControlTrajectory;
-        frame.hasTrajectory = true;
-    }
+    frame.hasTrajectory = controlTrajectory != nullptr;
     frame.needsFilter = true;
     return frame;
 }
