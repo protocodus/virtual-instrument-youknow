@@ -1993,7 +1993,8 @@ The owner asked for lower CPU for typical use without audible impact. Five
 bit-identical changes shipped first; this one is not bit-identical.
 **Selection:** the project's standing rule that a listening candidate wins
 over the baseline unless the owner objects, offered on a decision card with
-A/B pairs. No listening verdict is recorded.
+A/B pairs. The owner then chose to ship it as its own commit on that card
+(2026-10-30); no listening verdict is recorded.
 
 - A was main after the bit-identical CPU commits; B rebuilds the voice
   island's collector shot-noise covariance factor on the first local interval
