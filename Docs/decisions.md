@@ -2054,6 +2054,32 @@ does not identify absolute MN3009 delay, the noise PSD law (OQ-03) or any
 other unit. The engine's idle hiss against each patch's own C4 note still
 reads about 2 dB under the hardware in mode I; that is left open.
 
+## 2026-10-30 — Re-pin the chorus hiss level to the bank captures
+
+The owner asked to keep improving the instruments; this closes the idle-hiss
+gap the 1.4.3 entry left open. Selected on measurement, under the owner's
+2026-09-22 choice to match the captured hiss level and the 2026-09-28 choice
+of the A-weighted measure; no listening verdict is recorded.
+
+- **What drifted.** ×2.37 read +0.03 dB on 2026-09-28 (seven Mode I
+  patches); later circuit changes deliberately kept the scalar rather than
+  absorb their attenuation. By 1.4.3 the same measure, idle A-weighted
+  minus each patch's own C4 note, read −2.35 dB over all sixteen banks
+  (19 Mode I patches, s.d. 2.5 dB) and −2.40 dB in Mode II (5, s.d. 1.4 dB);
+  the absolute idle floors at the bank's 4.55 dB recording gain agreed
+  (−2.48 dB).
+- **Level, not shape.** After removing the dry floor, the deficit is
+  2.0–3.7 dB in every octave from 250 Hz to 16 kHz, so a level scalar is the
+  right correction. Below 250 Hz the hardware's chorus-on excess is not
+  hiss and is left alone.
+- **Selection.** ×3.11 (×2.37 · 10^(2.36/20)). Re-rendered over all sixteen
+  banks: −0.15 dB (Mode I) and −0.10 dB (Mode II); the antiphase hiss
+  swing reads 12.57/12.53 dB against the capture's 12.41/12.33.
+
+This re-pins one unit's captured level; it is not a typical MN3009 noise
+voltage. The policy of not silently refitting the scalar stands: this
+re-pin is recorded, and the next drift is again measured, not absorbed.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
