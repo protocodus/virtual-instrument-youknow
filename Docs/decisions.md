@@ -2016,6 +2016,44 @@ A/B pairs. The owner then chose to ship it as its own commit on that card
 This licenses the reuse cadence, a numerical choice. It does not change the
 collector-noise law or its density.
 
+## 2026-10-30 — The original chorus board's bank evidence: sweep and hiss
+
+The owner asked for more authenticity and realism at similar CPU. A paired
+comparison of the product against all sixteen April 2026 factory-bank
+captures of #439522 (original chorus board, one recording gain) found three
+chorus departures that the measurements settle, so they ship on measurement,
+not by ear. Each estimator runs on the capture and on the engine's own render
+of the same MIDI, so estimator bias cancels pair by pair.
+
+- **Sweep depth.** The A11 estimator, free in rate, converges on 16 patch
+  pairs (modes I and II): the hardware sweep reads 0.216 ms deeper than the
+  A11-only fit (s.e. 0.038); centre and both rates agree within 0.035 ms and
+  0.003 Hz, which also confirms the derived II/I rate ratio. Rerun on the
+  candidate: residual +0.018 ms (s.e. 0.045). `HardwareEvidence` now uses
+  ±1.978 ms; `A11Spectral` keeps the single-patch fit.
+- **Mode II hiss level.** The clone-reported +3.95 dB Mode II lift is absent
+  on this board: A-weighted idle floors read −82.50 dBFS (19 mode-I patches)
+  and −82.46 dBFS (5 mode-II). The engine had them 3.93 dB apart; the
+  candidate reads them 0.18 dB apart.
+- **Hiss follows each line's clock.** In the gaps between notes the 2–16 kHz
+  hiss swings with the sweep, the channels in antiphase: L−R half-swing
+  12.41 dB (mode I, 12 patches) and 12.33 dB (mode II, 2), against 4.3 dB
+  from the engine's per-event iid draw. Per-event variance now scales as
+  clock^−1.44, the exponent that reproduces the swing through this engine;
+  candidate 12.36/12.33 dB. The sweep-averaged power, and so the HISS
+  calibration, is unchanged (idle −89.62 → −89.65 dBFS A-weighted).
+  Exponent 1 (storage time alone) gives about 10 dB, so 1.44 is an
+  effective law for this board, not an identified split between storage
+  and transfer noise.
+
+A per-fix preview set (A = 1.4.2, B = candidate, C = the capture at the
+recording-gain offset) was rendered for three patches and not committed.
+Settled callgrind with Rack flags: idle +1.3 %, six voices +0.8 %
+instructions. This licenses the three selections for `HardwareEvidence`; it
+does not identify absolute MN3009 delay, the noise PSD law (OQ-03) or any
+other unit. The engine's idle hiss against each patch's own C4 note still
+reads about 2 dB under the hardware in mode I; that is left open.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
