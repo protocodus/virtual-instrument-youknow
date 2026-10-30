@@ -2046,6 +2046,9 @@ of the same MIDI, so estimator bias cancels pair by pair.
   effective law for this board, not an identified split between storage
   and transfer noise.
 
+The three estimators are committed as
+[`Tools/AnalyzeChorusBankEvidence.py`](../Tools/AnalyzeChorusBankEvidence.py) (`sweep`, `hiss`), with
+the protocol at its head; on 1.4.5 the sweep reads −0.025 ms (s.e. 0.060, 17 pairs).
 A per-fix preview set (A = 1.4.2, B = candidate, C = the capture at the
 recording-gain offset) was rendered for three patches and not committed.
 Settled callgrind with Rack flags: idle +1.3 %, six voices +0.8 %
@@ -2103,7 +2106,9 @@ Mode I's. Selected on measurement; no listening verdict is recorded.
   matched the capture's shape within 1–4 dB from 16 to 350 Hz; Mode II then
   reads 0.6 dB under the capture there without being fitted (scaled from the
   sixteen-bank trial; the eight A banks re-rendered at the final value read
-  Mode I +0.16 dB, Mode II 1.58 dB under). Below 20 Hz
+  Mode I +0.16 dB, Mode II 1.58 dB under). All sixteen banks through
+  [`Tools/AnalyzeChorusBankEvidence.py`](../Tools/AnalyzeChorusBankEvidence.py) `thump` on 1.4.5:
+  Mode I −0.03 dB, Mode II +0.54 dB, hardware minus engine. Below 20 Hz
   the capture falls under the engine by the recording chain's high-pass,
   which also makes the captured lobe sharper than the engine's.
 - `Chorus::clockFeedthroughPerHz` is an effective coefficient in wet-line

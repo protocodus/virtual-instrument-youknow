@@ -2,7 +2,7 @@
 // hardware comparison uses the source file's actual SysEx and tempo, avoiding
 // hand-transcribed patches and host-dependent MIDI-file playback speed.
 #include "DSP/YouKnowSysEx.h"
-#include "DSP/YouKnowProductFidelity.h"
+#include "DSP/YouKnowActiveProductFidelity.h"
 #include "RealismComparisonSupport.h"
 
 #include <iostream>
@@ -128,7 +128,7 @@ RenderOptions readOptions(const std::vector<std::string>& arguments)
             // the maintained plug-in circuit choices; later explicit options
             // remain comparison overrides, including nominal VCF or clock.
             EngineParameters product;
-            ProductFidelityProfile::applyTo(product);
+            ActiveProductFidelityProfile::applyTo(product);
             result.referenceVcf = product.useServiced439522VcfCalibration;
             result.chorusTimingProfile = product.chorusTimingProfile;
             result.csa8MtzTemperatureProxy = true;
@@ -184,7 +184,7 @@ RenderOptions readOptions(const std::vector<std::string>& arguments)
 void prepareRenderEngine(YouKnowEngine& engine, const RenderOptions& options)
 {
     if (options.product)
-        ProductFidelityProfile::configureBeforePrepare(engine);
+        ActiveProductFidelityProfile::configureBeforePrepare(engine);
     engine.selectConverterTimingProfile(
         YouKnowEngine::ConverterTimingProfile::MeasuredChartGeometry);
     if (!engine.configureDcoMasterClockHz(options.dcoMasterHz))
@@ -204,7 +204,7 @@ EngineParameters parametersFor(const sysex::Patch& patch, float character,
 {
     EngineParameters p;
     if (product)
-        ProductFidelityProfile::applyTo(p);
+        ActiveProductFidelityProfile::applyTo(p);
     p.lfoRate = patch.lfoRate; p.lfoDelay = patch.lfoDelay;
     p.dcoLfoDepth = patch.dcoLfo; p.pwmDepth = patch.pwm;
     p.pwmSource = patch.pwmSource; p.range = patch.range;
@@ -510,10 +510,15 @@ void selfTest()
         prepareRenderEngine(productEngine, options);
         const double expectedClock = 8000000.0 * (1.0 + 0.0629 / 100.0)
                                      / (1.0 + 0.004325 / 100.0);
+        // The shipping profile's coupled mixer replaces the C56 coupling
+        // resistance ProductFidelityProfile names; compare with that profile
+        // configured on its own.
+        YouKnowEngine reference;
+        ActiveProductFidelityProfile::configureBeforePrepare(reference);
         if (YouKnowTestAccess::highPassSwitchOhms(productEngine)
                 != ProductFidelityProfile::highPassSwitchOhms
             || productEngine.moduleInputCouplingResistanceOhms()
-                != ProductFidelityProfile::moduleInputCouplingResistanceOhms
+                != reference.moduleInputCouplingResistanceOhms()
             || productEngine.getDisplayTemperatureC() != 40.0f
             || std::abs(productEngine.dcoMasterClockHz() - expectedClock) > 1.0e-7)
             throw std::runtime_error("product HPF/C56/clock/settled configuration did not reach the engine");
@@ -591,7 +596,7 @@ int main(int argc, char** argv)
                      " [sample-rate Hz] [oversample 1|2|4] [normal|rotary6]"
                      " [dco-master-hz 7200000..8800000]"
                      " [fixed-clock|csa8mtz-25c] [cold|settled]\n"
-                     "product: current HPF/filter/clock choices with shipping kernels;"
+                     "product: the shipping plug-in profile (ActiveProductFidelityProfile);"
                      " later explicit options override comparison coordinates.\n"
                      "exact/shipping retain historical circuit defaults.\n";
         return 2;
