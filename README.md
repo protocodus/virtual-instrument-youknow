@@ -20,10 +20,10 @@ build renders them and rewrites this table.
 
 | # | Preset | Demo | Length | Peak |
 | --- | --- | --- | --- | --- |
-| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.wav](Docs/audio/001-a11-brass-set-1.wav) | 10.5 s | -14.5 dBFS |
-| 5 | A15 Moving Strings | [005-a15-moving-strings.wav](Docs/audio/005-a15-moving-strings.wav) | 11.5 s | -17.9 dBFS |
+| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.wav](Docs/audio/001-a11-brass-set-1.wav) | 10.5 s | -14.6 dBFS |
+| 5 | A15 Moving Strings | [005-a15-moving-strings.wav](Docs/audio/005-a15-moving-strings.wav) | 11.5 s | -18.1 dBFS |
 | 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.wav](Docs/audio/015-a27-elect-piano-i.wav) | 10.0 s | -12.6 dBFS |
-| 31 | A47 Funky I | [031-a47-funky-i.wav](Docs/audio/031-a47-funky-i.wav) | 10.0 s | -28.1 dBFS |
+| 31 | A47 Funky I | [031-a47-funky-i.wav](Docs/audio/031-a47-funky-i.wav) | 10.0 s | -27.8 dBFS |
 | 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.wav](Docs/audio/032-a48-synth-bass-i-unison.wav) | 11.6 s | -19.8 dBFS |
 | 33 | A51 Lead I | [033-a51-lead-i.wav](Docs/audio/033-a51-lead-i.wav) | 11.3 s | -30.4 dBFS |
 | 48 | A68 Synth Pad | [048-a68-synth-pad.wav](Docs/audio/048-a68-synth-pad.wav) | 11.1 s | -17.8 dBFS |
@@ -227,7 +227,7 @@ see [local listening renders](#local-listening-renders).
 ## Downloads
 
 <!-- build-download-begin -->
-**[Download main build 32](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/41013388970/artifacts/12959217916)**, built from [`f7a218c098e1`](https://github.com/protocodus/virtual-instrument-youknow/commit/f7a218c098e111791cae4d685139dd125e1b035a). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
+**[Download main build 34](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/41042364194/artifacts/12974580235)**, built from [`afbf232105f6`](https://github.com/protocodus/virtual-instrument-youknow/commit/afbf232105f6e50e7bd5d5f38d7275a42f27ebfa). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
 <!-- build-download-end -->
 
 Each main build holds the macOS universal `.pkg` installer and manual-install
