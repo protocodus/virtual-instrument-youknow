@@ -53,6 +53,18 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.2 — 2026-10-30 — Less CPU in a settled session
+
+- About 9 % fewer instructions at rest and 10 % fewer with six voices
+  playing, once a session is past its first minute (Rack build flags; not
+  a Reason-host measurement). Idle voice slots and the chorus mute network
+  stop re-solving a state that has settled, the emulated firmware stops
+  copying and zeroing work it discards, and the collector shot-noise
+  factor is rebuilt every fourth internal sample instead of every one.
+  The first five changes render bit for bit as 1.4.1; the last changes
+  the noise realisation at a median −123 dB re signal.
+  [Measurements](Docs/benchmarks/cpu-settled-2026-10-30.md).
+
 ### 1.4.1 — 2026-10-28 — The sub's measured edge skew
 
 - The sub-oscillator's switch (Tr19) now leaves saturation 5.82 µs late,
