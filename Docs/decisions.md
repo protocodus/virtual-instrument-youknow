@@ -1987,6 +1987,34 @@ engine keeps the chart. Ten further candidates either matched the engine or
 could not be pinned on original circuitry. The record is in
 [the research note](research/realism-research-2026-10-28.md).
 
+## 2026-10-30 — Collector shot-noise factor every fourth internal sample
+
+The owner asked for lower CPU for typical use without audible impact. Five
+bit-identical changes shipped first; this one is not bit-identical.
+**Selection:** the project's standing rule that a listening candidate wins
+over the baseline unless the owner objects, offered on a decision card with
+A/B pairs. No listening verdict is recorded.
+
+- A was main after the bit-identical CPU commits; B rebuilds the voice
+  island's collector shot-noise covariance factor on the first local interval
+  of every fourth internal sample instead of every one, and reuses it in
+  between. Every interval still draws its own innovation; no draw moves.
+- The pairs were B77 and B87, the two presets that diverge most, and A11, a
+  typical one, on the null-test phrase. Whole-file RMS differed by under
+  0.03 dB, so no trim was applied.
+- Over all 144 presets the paired residual is a median −123 dB re signal and
+  131 presets sit below −60 dB. The self-oscillating presets take a different
+  noise path at the same level: B77 −8 dB, B87 −24 dB re signal.
+- `YouKnow.OtaShotNoise` keeps its statistical bound on the shared factor:
+  collector-noise power within 0.0001 dB and a paired residual of −79 to
+  −87 dB against per-interval factoring, where every-sample sharing gave −80
+  to −86 dB.
+- Six held voices take about 6 % fewer instructions (Clang, Rack flags);
+  resting cards do not use the factor, so idle is unchanged.
+
+This licenses the reuse cadence, a numerical choice. It does not change the
+collector-noise law or its density.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

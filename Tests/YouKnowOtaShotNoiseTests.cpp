@@ -599,8 +599,8 @@ void lifecycle() {
     std::cout<<"actual engine lifecycle: all rates/qualities; Character0, RNG, reset, idle, block, noalloc passed\n";
 }
 // The product's rate island factors the collector-noise covariance at the
-// first local interval of each internal sample and reuses that factor for the
-// sample's remaining intervals. The draws are the same either way, and so is
+// first local interval of every fourth internal sample and reuses that factor
+// until the next rebuild. The draws are the same either way, and so is
 // everything else the card renders, so differences against a render without
 // collector noise isolate the collector noise, and a paired render isolates
 // the factor difference: its power and signed residual against per-interval

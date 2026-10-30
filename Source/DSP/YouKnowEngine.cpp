@@ -12649,8 +12649,16 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
         {
             // Phase zero ends the delayed frame; the following phases begin
             // the next one, so a frame's first local interval begins at zero.
-            local.shotFactorFrame = interval.frame;
-            local.shotFactorRefresh = interval.begin == 0.0;
+            // The collector shot-noise covariance factor is rebuilt on the
+            // first local interval of every fourth frame and reused until the
+            // next rebuild; every interval still draws its own innovation.
+            // Over all 144 presets the render nulls at a median -123 dB re
+            // signal; the self-oscillating ones take a different noise path
+            // at the same level (Docs/decisions.md, 2026-10-30).
+            constexpr std::int64_t framesPerShotFactor = 4;
+            local.shotFactorFrame = interval.frame >= 0 ? interval.frame / framesPerShotFactor : -1;
+            local.shotFactorRefresh = interval.begin == 0.0
+                && interval.frame % framesPerShotFactor == 0;
         }
         else
         {
