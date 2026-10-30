@@ -79,10 +79,11 @@ enum class ChorusTimingProfile
     A11ClickTiming,
     DerivedNominal,
     OwnerBlend,
-    // Existing verified A11 Mode-I effective fit, with Mode II estimated
-    // from the same excursion and this board's schematic II/I rate ratio.
-    // This is one original chorus board's recording fit, not an installed
-    // chip-delay measurement or an independently measured Mode-II profile.
+    // The verified A11 Mode-I rate and centre with the sweep measured over
+    // the same unit's factory bank (bankSweep in settingsFor), and Mode II
+    // on the same excursion at the schematic II/I rate ratio, which the
+    // bank's mode-II patches confirm. One original chorus board's effective
+    // recording fit, not an installed chip-delay measurement.
     HardwareEvidence
 };
 
@@ -413,7 +414,9 @@ public:
                  bool enableClockSourceSpread = false,
                  bool enableInverterSpread = false,
                  bool enableLargeSignalWetSwitch = false,
-                 bool enableSummerLegSpread = false) noexcept;
+                 bool enableSummerLegSpread = false,
+                 bool enableClockDependentHiss = false,
+                 bool useMeasuredModeHissLevels = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -628,6 +631,31 @@ public:
     // LFO rate, so the empirical mode factor remains the only implemented law.
     static constexpr float measuredModeTwoNoiseDeltaDb = 3.95f;
     static constexpr float measuredModeTwoNoiseGain = 1.57579602f;
+    // The identified unit contradicts that lift. #439522's original chorus
+    // board, in the April 2026 factory-bank captures, idles at the same
+    // level in both modes: A-weighted 20 Hz-20 kHz idle floors of the
+    // short-release, noise-free patches read -82.50 dBFS (19 mode-I patches,
+    // s.e. 0.09 dB) and -82.46 dBFS (5 mode-II patches, s.e. 0.08 dB) at one
+    // recording gain, where the engine reads them 3.93 dB apart. Selected by
+    // useMeasuredChorusModeHissLevels; the clone figure stays for the
+    // historical profiles.
+
+    // Each line's hiss follows its own clock. In the same captures the
+    // 2-16 kHz hiss in the gaps between notes swings with the sweep, the two
+    // channels in antiphase: fitting L-R in dB, 50 ms frames, to a triangle
+    // at the mode's rate gives a half-swing of 12.41 dB in mode I (12
+    // patches, 11.75-13.17) and 12.33 dB in mode II (2 patches), each fit
+    // within 0.3-0.5 dB RMS. An iid draw per output event (the
+    // held-staircase density variance/fcp) gives 4.3 dB through this engine.
+    // The per-event variance therefore grows as the clock falls, as
+    // fcp^-hissClockExponent, the exponent being the one that reproduces the
+    // 12.41 dB half-swing through this engine at the measured sweep. Storage
+    // time alone (dark-current shot noise, exponent 1) gives about 10 dB, so
+    // the exponent is an effective law for this board, not an identified
+    // microscopic split between storage and transfer noise (OQ-03). The
+    // reference keeps each line's sweep-averaged noise power, and so the
+    // existing HISS calibration, unchanged.
+    static constexpr double hissClockExponent = 1.44;
     [[nodiscard]] static constexpr float measuredModeNoiseGain(
         ChorusMode mode) noexcept
     {
@@ -1154,6 +1182,15 @@ private:
     float rateHz_ { 0.0f };
     float centreDelay_ { 0.0032f };
     float sweep_ { 0.0f };
+    // hissClockReference() for the centre/sweep it was last computed at.
+    float hissReferenceCentre_ { -1.0f };
+    float hissReferenceSweep_ { -1.0f };
+    double hissReference_ { 1.0 };
+    // K * (cellPairs / centre)^(m/2), K^2 = centre^(m+1) / E[d^(m+1)] over a
+    // delay d uniform across centre +/- sweep: the noise power (density
+    // proportional to d^(m+1)) then averages over the sweep to what the
+    // iid draw (proportional to d) gives.
+    double hissClockReference() noexcept;
     // Set while the settled-bypass path skips the muted lines; the next
     // engaged process() rebuilds the wet path from silence before use.
     bool wetPathFlushPending_ { false };

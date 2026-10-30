@@ -512,6 +512,13 @@ struct EngineParameters
     // output's dry and wet gain from its own untrimmed legs. Product on,
     // raw off.
     bool enableOutputSummerLegSpread { false };
+    // Each wet line's hiss follows its own clock as measured on #439522's
+    // original chorus board (Chorus::hissClockExponent). Product on, raw off.
+    bool enableChorusClockDependentHiss { false };
+    // Mode II's hiss at mode I's level, as measured on that board, in place
+    // of the clone-reported 3.95 dB lift (Chorus::measuredModeTwoNoiseDeltaDb).
+    // Product on, raw off.
+    bool useMeasuredChorusModeHissLevels { false };
     // The HPF Boost's R18/R19 (IC4b's gain and C6's corner) and R24 return,
     // drawn under Unit Character. Acts on the literal C14/IC3/HPF network
     // (configureHighPassSwitch), which is the product's path. Product on,
@@ -768,6 +775,8 @@ struct EngineParameters
             && enableChorusInverterSpread == other.enableChorusInverterSpread
             && enableChorusLargeSignalWetSwitch == other.enableChorusLargeSignalWetSwitch
             && enableOutputSummerLegSpread == other.enableOutputSummerLegSpread
+            && enableChorusClockDependentHiss == other.enableChorusClockDependentHiss
+            && useMeasuredChorusModeHissLevels == other.useMeasuredChorusModeHissLevels
             && enableHighPassBoostSpread == other.enableHighPassBoostSpread
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance

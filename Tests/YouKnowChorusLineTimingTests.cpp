@@ -159,10 +159,21 @@ void reachesTheLineClocks()
     require(zero == countedCycles(false, 0.0f),
             "Unit Character zero changed a line clock");
     // A sweep change moves each clock's excursion, not its time average to
-    // first order, so line B's count must differ from nominal, but only
-    // slightly.
+    // first order. Over whole triangle periods the mean clock is
+    // proportional to E[1/(c + s x)], x uniform on [-1, 1], which is
+    // ln((c + s)/(c - s))/(2s); the second-order term grows as (s/c)^2, so
+    // the expected count follows from the profile's own centre and sweep
+    // rather than a fixed bound (the 2026-10-30 bank sweep moved it from
+    // -1.5e-3 to -2.1e-3).
     const auto swept = countedCycles(false, 1.0f, true);
-    require(swept[1] != nominal[1] && std::abs(swept[1] / nominal[1] - 1.0) < 2e-3,
+    const auto mode = Chorus::settingsFor(ChorusMode::One, ChorusTimingProfile::HardwareEvidence);
+    const auto meanClock = [&](double sweep) {
+        const double c = mode.centreDelaySeconds;
+        return std::log((c + sweep) / (c - sweep)) / (2.0 * sweep);
+    };
+    const double sweepB = Chorus::lineTimingScale(1.0f, false, true).sweepB;
+    const double expected = meanClock(mode.sweepSeconds * sweepB) / meanClock(mode.sweepSeconds);
+    require(swept[1] != nominal[1] && std::abs(swept[1] / nominal[1] - expected) < 2e-4,
             "IC2a's ratio does not reach line B's clock");
 }
 }

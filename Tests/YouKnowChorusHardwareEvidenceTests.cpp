@@ -386,12 +386,15 @@ void evidenceTiming()
     const auto one = Probe::settings(ChorusMode::One, ChorusTimingProfile::HardwareEvidence);
     const auto fit = Probe::settings(ChorusMode::One, ChorusTimingProfile::A11Spectral);
     const auto two = Probe::settings(ChorusMode::Two, ChorusTimingProfile::HardwareEvidence);
+    // 2026-10-30: the A11 rate and centre, with the sweep the same unit's
+    // factory bank measures 0.216 ms deeper (Docs/decisions.md).
     require(one.rateHz == fit.rateHz && one.centreDelaySeconds == fit.centreDelaySeconds
-            && one.sweepSeconds == fit.sweepSeconds && one.wetGain == fit.wetGain,
-            "HardwareEvidence changed the verified effective Mode-I fit");
+            && one.wetGain == fit.wetGain,
+            "HardwareEvidence changed the verified effective Mode-I rate or centre");
     require(std::abs(one.rateHz - 0.5159334275) < 1e-7
             && std::abs(one.centreDelaySeconds - 0.00338027575) < 3e-10
-            && std::abs(one.sweepSeconds - 0.00176176683) < 2e-10,
+            && std::abs(fit.sweepSeconds - 0.00176176683) < 2e-10
+            && std::abs(one.sweepSeconds - 0.00197776683) < 2e-10,
             "recording-derived timing coordinates drifted");
     // Independent ratio of nominal effective timing resistances, derived
     // from the p.15 switched T-network (same thresholds and capacitor).

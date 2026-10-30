@@ -80,6 +80,10 @@ struct ProductHardwareRealismProfile
         // 2026-10-28: Tr19's storage time as measured on the identified
         // unit's original sub switch, in place of the borrowed part class.
         parameters.useMeasuredSubStorageSkew = true;
+        // 2026-10-30: the chorus hiss as #439522's original board produces
+        // it across the factory-bank captures (Docs/decisions.md).
+        parameters.enableChorusClockDependentHiss = true;
+        parameters.useMeasuredChorusModeHissLevels = true;
     }
 };
 } // namespace youknow

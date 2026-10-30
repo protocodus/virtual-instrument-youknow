@@ -1463,6 +1463,15 @@ Chorus::ModeSettings Chorus::settingsFor(
     constexpr float spectralRate = 0.5159334275f;
     constexpr float spectralCentre = 0.00338027575f;
     constexpr float spectralSweep = 0.00176176683f;
+    // The same unit's sweep over the whole factory bank: the A11 estimator,
+    // free in rate, run on 13 more patches whose fits converge (9 mode I, 4
+    // mode II), each against this engine's own render of the same take
+    // through the same estimator, so its bias cancels pair by pair. The
+    // hardware sweep reads 0.216 ms (s.e. 0.038) deeper than the A11 fit;
+    // centre (-0.011/-0.035 ms) and both rates (-0.001/-0.003 Hz) agree
+    // with it, which also confirms the derived II/I rate ratio on this board.
+    // A11 alone sits at the low end of the bank (+0.07 ms).
+    constexpr float bankSweep = spectralSweep + 0.000216f;
     constexpr float clickRate = 0.514f;
     constexpr float clickCentre = 0.00330f;
     constexpr float clickSweep = 0.00213f;
@@ -1486,8 +1495,9 @@ Chorus::ModeSettings Chorus::settingsFor(
             switch (timingProfile)
             {
                 case ChorusTimingProfile::A11Spectral:
-                case ChorusTimingProfile::HardwareEvidence:
                     return { spectralRate, spectralCentre, spectralSweep, lineGain };
+                case ChorusTimingProfile::HardwareEvidence:
+                    return { spectralRate, spectralCentre, bankSweep, lineGain };
                 case ChorusTimingProfile::A11ClickTiming:
                     return { clickRate, clickCentre, clickSweep, lineGain };
                 case ChorusTimingProfile::OwnerBlend:
@@ -1525,13 +1535,12 @@ Chorus::ModeSettings Chorus::settingsFor(
         case ChorusMode::Two:
             if (timingProfile == ChorusTimingProfile::HardwareEvidence)
             {
-                // Mode I is the verified recording's effective fit above.
                 // The board's binary rate switch changes timing resistance,
-                // leaving triangle thresholds/excursion unchanged. Applying
-                // that rate ratio is a named schematic estimate for Mode II,
-                // not an independent Mode-II capture or a chip-delay claim.
+                // leaving triangle thresholds/excursion unchanged. The bank's
+                // mode-II patches read that rate within 0.003 Hz and the
+                // same excursion as mode I (bankSweep above).
                 return { spectralRate * (rateTwo / rateOne),
-                         spectralCentre, spectralSweep, lineGain };
+                         spectralCentre, bankSweep, lineGain };
             }
             // Among historical profiles, only the blend reaches Mode II
             // (Docs/decisions.md, 2026-09-22): the other candidates were Mode I
@@ -2865,6 +2874,23 @@ Chorus::LineTimingScale Chorus::lineTimingScale(float calibration,
     return scale;
 }
 
+double Chorus::hissClockReference() noexcept
+{
+    if (centreDelay_ == hissReferenceCentre_ && sweep_ == hissReferenceSweep_)
+        return hissReference_;
+    const double m = hissClockExponent;
+    const double c = centreDelay_;
+    const double s = sweep_;
+    const double moment = s > 1.0e-9 * c
+        ? (std::pow(c + s, m + 2.0) - std::pow(c - s, m + 2.0)) / ((m + 2.0) * 2.0 * s)
+        : std::pow(c, m + 1.0);
+    hissReference_ = std::sqrt(std::pow(c, m + 1.0) / moment)
+                   * std::pow(static_cast<double>(cellPairs) / c, 0.5 * m);
+    hissReferenceCentre_ = centreDelay_;
+    hissReferenceSweep_ = sweep_;
+    return hissReference_;
+}
+
 void Chorus::updateSummerLegs(float calibration, bool spread) noexcept
 {
     if (calibration == summerLegCalibration_ && spread == summerLegSpread_)
@@ -3189,7 +3215,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableClockSourceSpread,
                      bool enableInverterSpread,
                      bool enableLargeSignalWetSwitch,
-                     bool enableSummerLegSpread) noexcept
+                     bool enableSummerLegSpread,
+                     bool enableClockDependentHiss,
+                     bool useMeasuredModeHissLevels) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3391,8 +3419,16 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // exceeds its datasheet row: the observation
     // was made at the completed instrument's output, and the exact physical
     // insertion point remains OQ-03.
-    const float modeNoiseGain = measuredModeNoiseGain(runningMode_);
+    const float modeNoiseGain = useMeasuredModeHissLevels
+        ? 1.0f : measuredModeNoiseGain(runningMode_);
     const float lineNoiseScale = noiseScale * modeNoiseGain;
+    float noiseA = lineNoiseScale, noiseB = lineNoiseScale;
+    if (enableClockDependentHiss && clockA > 0.0 && clockB > 0.0)
+    {
+        const double reference = hissClockReference();
+        noiseA *= static_cast<float>(reference * std::pow(clockA, -0.5 * hissClockExponent));
+        noiseB *= static_cast<float>(reference * std::pow(clockB, -0.5 * hissClockExponent));
+    }
     // One input support network for both wet branches; only the clock differs
     // between them. See `InputSupport` for why that is the model rather than
     // an optimisation of it.
@@ -3409,10 +3445,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const auto* capture = inputSupport_.captureInterval.enabled
         ? &inputSupport_.captureInterval : nullptr;
     float wetA = lineA_.process(limitedInput, clockA, sampleRate_,
-                                wetOutputTransition, lineNoiseScale, true, capture,
+                                wetOutputTransition, noiseA, true, capture,
                                 clocksStopped_ ? nullptr : &trajectoryA);
     float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
-                                wetOutputTransition, lineNoiseScale, true, capture,
+                                wetOutputTransition, noiseB, true, capture,
                                 clocksStopped_ ? nullptr : &trajectoryB);
 
     // Both ordinary modes carry dry plus one wet line per channel. The I+II

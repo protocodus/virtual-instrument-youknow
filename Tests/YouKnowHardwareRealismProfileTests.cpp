@@ -92,6 +92,8 @@ void activeProductPromotion()
             && applied.enableChorusClockSourceSpread
             && applied.enableChorusInverterSpread
             && applied.enableChorusLargeSignalWetSwitch
+            && applied.enableChorusClockDependentHiss
+            && applied.useMeasuredChorusModeHissLevels
             && applied.enableOutputSummerLegSpread
             && applied.enableHighPassBoostSpread
             && applied.useMeasuredSubStorageSkew,
@@ -111,6 +113,15 @@ void activeProductPromotion()
     auto smallSignal = applied;
     smallSignal.enableChorusLargeSignalWetSwitch = false;
     require(smallSignal != applied, "wet-switch law flag omitted from parameter equality");
+    require(!EngineParameters {}.enableChorusClockDependentHiss
+                && !EngineParameters {}.useMeasuredChorusModeHissLevels,
+            "raw diagnostic reference unexpectedly selected the measured chorus hiss");
+    auto clockFreeHiss = applied;
+    clockFreeHiss.enableChorusClockDependentHiss = false;
+    require(clockFreeHiss != applied, "clock-dependent hiss flag omitted from parameter equality");
+    auto modeTrimmedHiss = applied;
+    modeTrimmedHiss.useMeasuredChorusModeHissLevels = false;
+    require(modeTrimmedHiss != applied, "mode hiss-level flag omitted from parameter equality");
     require(!EngineParameters {}.enableOutputSummerLegSpread,
             "raw diagnostic reference unexpectedly drew the IC6 legs");
     auto nominalLegs = applied;
