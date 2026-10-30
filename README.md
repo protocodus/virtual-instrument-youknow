@@ -53,6 +53,15 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.5 — 2026-10-30 — The chorus clock's thump
+
+- With the chorus on, each line now thumps softly at the fast end of its
+  sweep, as #439522's original chorus board does in every idle gap of its
+  factory-bank captures. Each BBD's output follows its clock frequency, and
+  the coupling capacitor passes the turn. One coefficient, fitted on Mode I;
+  Mode II lands within 1.6 dB of the capture unfitted. It sits mostly below
+  100 Hz; on the capture its peak is about 25 dB under a C4 note's level. [Decision](Docs/decisions.md).
+
 ### 1.4.4 — 2026-10-30 — Chorus hiss at the captured level
 
 - The chorus hiss is 2.4 dB louder, back at the level of #439522's

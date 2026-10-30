@@ -2080,6 +2080,37 @@ This re-pins one unit's captured level; it is not a typical MN3009 noise
 voltage. The policy of not silently refitting the scalar stands: this
 re-pin is recorded, and the next drift is again measured, not absorbed.
 
+## 2026-10-30 — The chorus clock's feedthrough thump
+
+Same round, same captures. With the chorus on, #439522's idle output holds
+low-frequency energy the engine had none of: 55–60 dB above it below 10 Hz,
+8 dB more in Mode II. In the time domain it is a thump at every sweep
+turnaround (17 of 19 tail-free Mode I idle windows): a first lobe always
+negative, peaking 20 ms after onset, in the channel whose clock is at its
+fastest, with −0.07 of it in the other channel; Mode II's lobe is 1.63×
+Mode I's. Selected on measurement; no listening verdict is recorded.
+
+- **Mechanism.** Each MN3009's output level proportional to its clock
+  frequency (clock feedthrough), coupled to the mixer by C28/C25. Because
+  f = cellPairs / delay, the slope of f jumps ((c + s)/(c − s))² ≈ 14.6×
+  more at the fast turnaround than the slow one, which gives the −0.07
+  other-channel ratio and the sign, and it scales with the LFO rate, which
+  gives Mode II at the 1.62 rate ratio. A level following the delay (dark
+  current) would thump equally at both turnarounds and is rejected.
+- **Coefficient.** One number, fitted to Mode I's idle floor at 30–100 Hz
+  (55–65 Hz excluded), where neither the board's coupling nor the
+  recording chain's high-pass shapes it. Before the refit the trial already
+  matched the capture's shape within 1–4 dB from 16 to 350 Hz; Mode II then
+  reads 0.6 dB under the capture there without being fitted (scaled from the
+  sixteen-bank trial; the eight A banks re-rendered at the final value read
+  Mode I +0.16 dB, Mode II 1.58 dB under). Below 20 Hz
+  the capture falls under the engine by the recording chain's high-pass,
+  which also makes the captured lobe sharper than the engine's.
+- `Chorus::clockFeedthroughPerHz` is an effective coefficient in wet-line
+  units per hertz. The microscopic source (gate-to-output charge per
+  transfer, the follower's bias) is not identified. The 120 Hz component
+  the captures also carry with the chorus on is not modelled.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the
