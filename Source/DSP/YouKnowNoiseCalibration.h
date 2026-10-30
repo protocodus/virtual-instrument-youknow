@@ -91,6 +91,15 @@ enum class ChorusNoiseCalibrationProfile : std::uint8_t
     // reads +0.51 dB with the pulse correction lowering the note reference,
     // with the same idle floor. Later circuit changes retain this source
     // scalar rather than silently refitting it to absorb their attenuation.
+    //
+    // Re-pinned openly on 2026-10-30 (YouKnow 1.4.4), when those changes had
+    // left the hiss 2.36 dB under the capture by the same measure: idle
+    // A-weighted minus each patch's own C4, all sixteen banks, 19 Mode I and
+    // 5 Mode II tail-free patches (-2.35/-2.40 dB, s.d. 2.5/1.4 dB), with
+    // the absolute idle floors at the bank's 4.55 dB recording gain agreeing
+    // (-2.48 dB). The deficit is broadband: 2.0-3.7 dB in every octave from
+    // 250 Hz to 16 kHz after removing the dry floor, so it is a level, not
+    // a missing spectral term. x2.37 * 10^(2.36/20) = x3.11.
     // This rounded, single-unit level calibration
     // is not a typical MN3009 noise voltage or a population estimate.
     //
@@ -105,6 +114,6 @@ enum class ChorusNoiseCalibrationProfile : std::uint8_t
     // No spectral correction is hidden in this scalar. The two Mode II patches
     // are too few for a separate fit; its existing relative lift is kept.
     return profile == ChorusNoiseCalibrationProfile::IdleFloor439522
-        ? 2.37f : 1.0f;
+        ? 3.11f : 1.0f;
 }
 } // namespace youknow

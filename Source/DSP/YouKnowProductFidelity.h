@@ -61,7 +61,7 @@ struct ProductFidelityProfile
     // Product r=eta,c=1 is a REPRESENTATIVE algebraic convention: PSD only
     // identifies eta=2*r*c/(1+c*c), not separate microscopic strengths or
     // transfer efficiency. Recording response and geometry remain conditional.
-    // A-weighted normalization preserves the existing2.37 source scalar.
+    // A-weighted normalization preserves the existing 3.11 source scalar.
     // Capture/protocol hashes and the reproducible split are enforced by:
     // Tools/FitChorusBucketNoise.py, Tools/AnalyzeChorusIdleFloors.py.
     // https://www.lewisfrancis.com/nwio/Juno-10-test-audio-96K.zip

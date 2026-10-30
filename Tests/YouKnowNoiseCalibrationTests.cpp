@@ -82,14 +82,14 @@ int main()
                 "the core-band profile is not the chosen x2.281 source scale");
 
         // The corrected A-weighted level acts as a scalar on Chorus Noise:
-        // 0.25 under the profile is exactly the nominal 0.5925.
+        // 0.25 under the profile is exactly the nominal 0.7775.
         EngineParameters hissNominal;
-        hissNominal.chorusNoise = 0.5925f;
+        hissNominal.chorusNoise = 0.7775f;
         auto hissProfile = hissNominal;
         hissProfile.chorusNoise = 0.25f;
         hissProfile.chorusNoiseCalibrationProfile = ChorusNoiseCalibrationProfile::IdleFloor439522;
         const auto hiss = renderIdleChorus(hissProfile);
-        require(hiss == renderIdleChorus(hissNominal), "the hiss profile is not x2.37 on Chorus Noise");
+        require(hiss == renderIdleChorus(hissNominal), "the hiss profile is not x3.11 on Chorus Noise");
         require(hiss == renderIdleChorus(hissProfile, 1), "hiss calibration depends on host block size");
         hissNominal.chorusNoise = 0.25f;
         require(hiss != renderIdleChorus(hissNominal), "the hiss profile was not connected to the chorus");
