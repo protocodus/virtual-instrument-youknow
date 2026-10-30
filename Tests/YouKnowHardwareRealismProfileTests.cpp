@@ -94,6 +94,7 @@ void activeProductPromotion()
             && applied.enableChorusLargeSignalWetSwitch
             && applied.enableChorusClockDependentHiss
             && applied.useMeasuredChorusModeHissLevels
+            && applied.enableChorusClockFeedthrough
             && applied.enableOutputSummerLegSpread
             && applied.enableHighPassBoostSpread
             && applied.useMeasuredSubStorageSkew,
@@ -122,6 +123,11 @@ void activeProductPromotion()
     auto modeTrimmedHiss = applied;
     modeTrimmedHiss.useMeasuredChorusModeHissLevels = false;
     require(modeTrimmedHiss != applied, "mode hiss-level flag omitted from parameter equality");
+    require(!EngineParameters {}.enableChorusClockFeedthrough,
+            "raw diagnostic reference unexpectedly selected clock feedthrough");
+    auto noFeedthrough = applied;
+    noFeedthrough.enableChorusClockFeedthrough = false;
+    require(noFeedthrough != applied, "clock-feedthrough flag omitted from parameter equality");
     require(!EngineParameters {}.enableOutputSummerLegSpread,
             "raw diagnostic reference unexpectedly drew the IC6 legs");
     auto nominalLegs = applied;

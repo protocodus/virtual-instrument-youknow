@@ -416,7 +416,8 @@ public:
                  bool enableLargeSignalWetSwitch = false,
                  bool enableSummerLegSpread = false,
                  bool enableClockDependentHiss = false,
-                 bool useMeasuredModeHissLevels = false) noexcept;
+                 bool useMeasuredModeHissLevels = false,
+                 bool enableClockFeedthrough = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -656,6 +657,25 @@ public:
     // reference keeps each line's sweep-averaged noise power, and so the
     // existing HISS calibration, unchanged.
     static constexpr double hissClockExponent = 1.44;
+
+    // Clock feedthrough. Each MN3009's output carries a level proportional
+    // to its clock frequency, and C28/C25 pass its changes to the mixer. In
+    // the same captures every idle window of a chorus-on patch holds a thump
+    // at a sweep turnaround (17 of 19 mode-I windows): a first lobe peaking
+    // 20 ms after onset, always negative, in the channel whose clock is at
+    // its fastest. A level proportional to the clock, f = cellPairs / delay,
+    // explains what was measured: the slope of f jumps ((c + s)/(c - s))^2
+    // more at the fast turnaround than the slow one, so the other channel
+    // sees -0.07 of it (measured -0.07, mode I), and the jump scales with
+    // the LFO rate, so mode II's lobe is 1.62x mode I's (measured 1.63).
+    // The coefficient is fitted to mode I's idle floor at 30-100 Hz (55-65
+    // Hz excluded), where neither the hardware's coupling nor the recording
+    // chain's high-pass shapes it; the engine then reads mode II 0.6-1.6 dB
+    // under the capture there, unfitted. Below 20 Hz the capture falls
+    // under the engine by the recording chain's own high-pass. In wet-line
+    // units per hertz; the microscopic source (gate-to-output charge per
+    // transfer, the output follower's bias) is not identified.
+    static constexpr double clockFeedthroughPerHz = 9.7e-7;
     [[nodiscard]] static constexpr float measuredModeNoiseGain(
         ChorusMode mode) noexcept
     {
@@ -1191,6 +1211,28 @@ private:
     // proportional to d^(m+1)) then averages over the sweep to what the
     // iid draw (proportional to d) gives.
     double hissClockReference() noexcept;
+    // The C28/C25 coupling high-pass applied to each line's clock
+    // feedthrough level; the line output it rides on is already coupled.
+    struct ClockFeedthrough
+    {
+        double input { 0.0 };
+        double output { 0.0 };
+        bool primed { false };
+        float step(double level, double pole) noexcept
+        {
+            if (!primed)
+            {
+                input = level;
+                primed = true;
+            }
+            output = pole * (output + level - input);
+            input = level;
+            return static_cast<float>(output);
+        }
+    };
+    ClockFeedthrough feedthroughA_ {}, feedthroughB_ {};
+    float feedthroughRate_ { 0.0f };
+    double feedthroughPole_ { 0.0 };
     // Set while the settled-bypass path skips the muted lines; the next
     // engaged process() rebuilds the wet path from silence before use.
     bool wetPathFlushPending_ { false };

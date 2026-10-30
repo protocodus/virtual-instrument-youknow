@@ -178,6 +178,50 @@ void reachesTheLineClocks()
 }
 }
 
+// Silent input and no hiss: what is left is each line's clock feedthrough
+// through C28/C25. Returns the largest magnitude per channel over two periods.
+std::array<double, 2> feedthroughPeaks(ChorusMode mode, bool enabled)
+{
+    auto chorus = std::make_unique<Chorus>();
+    chorus->prepare(192000.0);
+    const auto settings = Chorus::settingsFor(mode, ChorusTimingProfile::HardwareEvidence);
+    std::array<double, 2> peak {};
+    float left = 0.0f, right = 0.0f;
+    // One period to settle the coupling state, then two measured.
+    const int period = static_cast<int>(192000.0 / settings.rateHz);
+    for (int n = 0; n < 3 * period; ++n)
+    {
+        chorus->process(0.0f, mode, 0.0f, left, right, 1.0f,
+                        true, false, false, ChorusTimingProfile::HardwareEvidence,
+                        false, false, false, 0.0f, 1.0f, false, false, false, false,
+                        false, false, false, false, enabled);
+        if (n >= period)
+        {
+            peak[0] = std::max(peak[0], static_cast<double>(std::abs(left)));
+            peak[1] = std::max(peak[1], static_cast<double>(std::abs(right)));
+        }
+    }
+    return peak;
+}
+
+void clockFeedthroughFollowsTheClock()
+{
+    const auto off = feedthroughPeaks(ChorusMode::One, false);
+    require(off[0] < 1e-9 && off[1] < 1e-9, "silent chorus without feedthrough is not silent");
+    const auto one = feedthroughPeaks(ChorusMode::One, true);
+    const auto two = feedthroughPeaks(ChorusMode::Two, true);
+    // Each line reaches its fast turnaround once a period: equal peaks.
+    require(one[0] > 0.0 && std::abs(one[0] / one[1] - 1.0) < 0.02,
+            "the two lines' feedthrough peaks differ");
+    // The level follows f = cellPairs / delay, so its slope, and the
+    // coupled peak, scale with the LFO rate at a shared excursion: mode II
+    // over mode I is the derived rate ratio (1.63 measured on #439522).
+    const double rateRatio = Chorus::settingsFor(ChorusMode::Two, ChorusTimingProfile::HardwareEvidence).rateHz
+                           / Chorus::settingsFor(ChorusMode::One, ChorusTimingProfile::HardwareEvidence).rateHz;
+    require(std::abs(two[0] / one[0] / rateRatio - 1.0) < 0.05,
+            "clock feedthrough does not scale with the sweep rate");
+}
+
 int main()
 {
     try
@@ -186,6 +230,7 @@ int main()
         scaleLaw();
         inverterLaw();
         reachesTheLineClocks();
+        clockFeedthroughFollowsTheClock();
         std::cout << "Chorus line timing passed\n";
         return 0;
     }

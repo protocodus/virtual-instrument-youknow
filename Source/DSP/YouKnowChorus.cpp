@@ -2756,6 +2756,8 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     const double continuingPhase = lfoPhase_;
     lineA_.reset(0x9e3779b9u);
     lineB_.reset(0x85ebca6bu);
+    feedthroughA_ = {};
+    feedthroughB_ = {};
     bucketNoiseCoefficientsValid_ = false;
     inputSupport_.reset();
     wetPathFlushPending_ = false;
@@ -3217,7 +3219,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableLargeSignalWetSwitch,
                      bool enableSummerLegSpread,
                      bool enableClockDependentHiss,
-                     bool useMeasuredModeHissLevels) noexcept
+                     bool useMeasuredModeHissLevels,
+                     bool enableClockFeedthrough) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3231,6 +3234,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetPathFlushPending_ = false;
         lineA_.reset(0x9e3779b9u);
         lineB_.reset(0x85ebca6bu);
+        feedthroughA_ = {};
+        feedthroughB_ = {};
         bucketNoiseCoefficientsValid_ = false;
         inputSupport_.reset();
     }
@@ -3450,6 +3455,18 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
                                 wetOutputTransition, noiseB, true, capture,
                                 clocksStopped_ ? nullptr : &trajectoryB);
+    if (enableClockFeedthrough && clockA > 0.0 && clockB > 0.0)
+    {
+        if (sampleRate_ != feedthroughRate_)
+        {
+            // Wet connected: the mute leaves this only when the wet is off.
+            feedthroughPole_ = std::exp(-2.0 * pi * wetOutputCouplingCornerHz(true)
+                                        / static_cast<double>(sampleRate_));
+            feedthroughRate_ = sampleRate_;
+        }
+        wetA += feedthroughA_.step(clockFeedthroughPerHz * clockA, feedthroughPole_);
+        wetB += feedthroughB_.step(clockFeedthroughPerHz * clockB, feedthroughPole_);
+    }
 
     // Both ordinary modes carry dry plus one wet line per channel. The I+II
     // product extension uses the owner's chosen narrow colour: equal mid

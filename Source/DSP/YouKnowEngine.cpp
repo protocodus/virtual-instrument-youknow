@@ -13057,6 +13057,7 @@ ChorusRateIsland::Controls YouKnowEngine::chorusRateControls(
     c.summerLegSpread=p.enableOutputSummerLegSpread;
     c.clockDependentHiss=p.enableChorusClockDependentHiss;
     c.measuredModeHiss=p.useMeasuredChorusModeHissLevels;
+    c.clockFeedthrough=p.enableChorusClockFeedthrough;
     return c;
 }
 
@@ -14274,7 +14275,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                     parameters.enableChorusLargeSignalWetSwitch,
                                     parameters.enableOutputSummerLegSpread,
                                     parameters.enableChorusClockDependentHiss,
-                                    parameters.useMeasuredChorusModeHissLevels);
+                                    parameters.useMeasuredChorusModeHissLevels,
+                                    parameters.enableChorusClockFeedthrough);
 
                 processOutputSummer(wetLeft,wetRight,parameters);
 

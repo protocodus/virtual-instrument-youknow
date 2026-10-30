@@ -84,6 +84,7 @@ struct ProductHardwareRealismProfile
         // it across the factory-bank captures (Docs/decisions.md).
         parameters.enableChorusClockDependentHiss = true;
         parameters.useMeasuredChorusModeHissLevels = true;
+        parameters.enableChorusClockFeedthrough = true;
     }
 };
 } // namespace youknow

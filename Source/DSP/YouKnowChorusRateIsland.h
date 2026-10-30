@@ -60,7 +60,8 @@ struct ChorusRateIsland
         bool narrow {}, muteDrive {}, clockMute {}, finiteMute {}, correlatedNoise {}, finiteTr5 {};
         bool continuousMuteLoading {};
         bool clockSourceSpread {}, inverterSpread {}, largeSignalWetSwitch {};
-        bool summerLegSpread {}, clockDependentHiss {}, measuredModeHiss {};
+        bool summerLegSpread {}, clockDependentHiss {}, measuredModeHiss {},
+             clockFeedthrough {};
     };
     // Mirrored rings, as VoiceVcaAntialias keeps them: each write lands at
     // [cursor] and [cursor + size], so the FIR taps read one contiguous
@@ -156,7 +157,7 @@ struct ChorusRateIsland
                 c.correlatedNoise,c.transferFraction,c.transferCorrelation,c.finiteTr5,
                 c.continuousMuteLoading,c.clockSourceSpread,c.inverterSpread,
                 c.largeSignalWetSwitch,c.summerLegSpread,c.clockDependentHiss,
-                c.measuredModeHiss);
+                c.measuredModeHiss,c.clockFeedthrough);
             result.left=clip(result.left);
             result.right=clip(result.right);
             result.context={chorus.wetInputConductanceRatio(),chorus.isWetInputConnected()};

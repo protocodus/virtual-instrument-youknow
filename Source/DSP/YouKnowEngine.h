@@ -519,6 +519,10 @@ struct EngineParameters
     // of the clone-reported 3.95 dB lift (Chorus::measuredModeTwoNoiseDeltaDb).
     // Product on, raw off.
     bool useMeasuredChorusModeHissLevels { false };
+    // Each MN3009's clock-proportional output level through C28/C25, the
+    // turnaround thump measured on that board (Chorus::clockFeedthroughPerHz).
+    // Product on, raw off.
+    bool enableChorusClockFeedthrough { false };
     // The HPF Boost's R18/R19 (IC4b's gain and C6's corner) and R24 return,
     // drawn under Unit Character. Acts on the literal C14/IC3/HPF network
     // (configureHighPassSwitch), which is the product's path. Product on,
@@ -777,6 +781,7 @@ struct EngineParameters
             && enableOutputSummerLegSpread == other.enableOutputSummerLegSpread
             && enableChorusClockDependentHiss == other.enableChorusClockDependentHiss
             && useMeasuredChorusModeHissLevels == other.useMeasuredChorusModeHissLevels
+            && enableChorusClockFeedthrough == other.enableChorusClockFeedthrough
             && enableHighPassBoostSpread == other.enableHighPassBoostSpread
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance
