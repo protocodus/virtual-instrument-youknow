@@ -6184,10 +6184,13 @@ void YouKnowEngine::refreshVoiceCardServiceTrims() noexcept
         card.vcfServiceCvScale = targetSpan / (high - low);
         card.vcfServiceCvOffset = vcfFreqTrimAnchorCounts
             - low * card.vcfServiceCvScale;
+        const float stageAmount = parameters.enableVcfStageOffsets
+                                ? parameters.calibration : 0.0f;
         std::array<double, 4> poles {};
         for (std::size_t stage = 0; stage < poles.size(); ++stage)
-            poles[stage] = voices_[static_cast<std::size_t>(index)]
-                               .filter.gScale[stage];
+            poles[stage] = static_cast<double>(
+                1.0f + card.vcfStageGErrors[stage] * vcfStageCapacitorTolerance
+                           * stageAmount);
         const auto serviceFraction = static_cast<float>(serviceWarmupFraction);
         const double gradient = parameters.enableSpatialThermalGradient
             ? chassisGradientCelsius(index) * parameters.calibration : 0.0;
@@ -7584,6 +7587,12 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
         || next.calibration != activeParameters_.calibration
         || next.enableSpatialThermalGradient
                != activeParameters_.enableSpatialThermalGradient;
+    const bool serviceTrimsChanged = startupSnapshot || stageTrimsChanged
+        || thermalScalesChanged
+        || next.enableResonanceHeadroomTemperature
+               != activeParameters_.enableResonanceHeadroomTemperature
+        || next.enableResonanceServiceTrim
+               != activeParameters_.enableResonanceServiceTrim;
     const bool rampCurrentScalesChanged = startupSnapshot
         || next.calibration != activeParameters_.calibration || rangeChanged;
     const bool highPassBoostPartsChanged = startupSnapshot
@@ -7758,7 +7767,7 @@ void YouKnowEngine::setParameters(const EngineParameters& parameters,
         refreshVoiceCardThermalScales();
         refreshVoiceVcaCoupling();
     }
-    if (startupSnapshot || stageTrimsChanged || thermalScalesChanged)
+    if (serviceTrimsChanged)
         refreshVoiceCardServiceTrims();
     if (rampCurrentScalesChanged)
         refreshVoiceRampCurrentScales();
@@ -12451,7 +12460,27 @@ void YouKnowEngine::restVoiceFilterIsland(Voice& voice,
     {
         // The local-grid input and control histories become internal-grid
         // ones, as at a quality change; the capacitor charges are untouched.
+        // Restore the card's current-time stage trims in case calibration
+        // changed inside the island's 24-frame FIR delay window.
         voice.filter.retime(1.0f, static_cast<float>(factor));
+        const float amount = parameters.enableVcfStageOffsets
+                           ? parameters.calibration : 0.0f;
+        const float resonanceAmount = parameters.enableResonanceOtaOffset
+                                    ? parameters.calibration : 0.0f;
+        const float resonanceOffsetScale =
+            parameters.useBa662AResonanceOffsetEstimate
+                ? 0.000250f / 0.0015f : 1.0f;
+        voice.filter.resonanceOffsetVolts = card.resonanceOtaOffset
+            * VoicedResonanceCompatibilityProfile::loopDividerRatio
+            * resonanceAmount * resonanceOffsetScale;
+        for (std::size_t stage = 0; stage < 4; ++stage)
+        {
+            voice.filter.offsetVoltage[stage] =
+                card.vcfStageOffsets[stage] / stageAttenuation * amount;
+            voice.filter.gScale[stage] =
+                1.0f + card.vcfStageGErrors[stage] * vcfStageCapacitorTolerance
+                           * amount;
+        }
         voice.islandResting = true;
     }
     // Every device-noise stream advances exactly as the island's local

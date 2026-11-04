@@ -125,6 +125,54 @@ struct YouKnowTestAccess
         if (f.trajectory.omegaStep[3] >= f.trajectory.omegaStep.back() - 1e-4)
             throw std::runtime_error("above-Nyquist interior control curvature clipped away");
     }
+    static void stageAndServiceTrimConsistency(YouKnowEngine& e) {
+        auto p = e.activeParameters_;
+        p.calibration = 1.0f;
+        p.enableVcfStageOffsets = true;
+        p.enableResonanceOtaOffset = true;
+        p.enableResonanceServiceTrim = true;
+        p.enableResonanceHeadroomTemperature = true;
+        e.setParameters(p);
+        auto& v = e.voices_[0];
+        v.active = true;
+        v.vca = 0.5f;
+        YouKnowEngine::VoiceFilterFrame f;
+        f.needsFilter = true;
+        f.headroom = 6.366f;
+        f.omegaStep = 0.25f;
+        for (int i = 0; i < 32; ++i)
+            (void) e.renderVoiceFilterIsland(v, f);
+
+        // Change calibration and advance one island frame so the 24-frame-delayed
+        // island callback writes the old (calibration = 1.0) gScale onto v.filter.
+        p.calibration = 0.5f;
+        e.setParameters(p);
+        (void) e.renderVoiceFilterIsland(v, f);
+        const float expectedTrim = e.cards_[0].vcfServiceTrimCounts;
+        const float expectedResScale = e.cards_[0].vcfServiceResonanceScale;
+
+        // Toggling a service/thermal flag inside the 24-frame delay window must
+        // solve service trims from the card's current poles, not the delayed island copy.
+        p.enableResonanceServiceTrim = false;
+        e.setParameters(p);
+        if (e.cards_[0].vcfServiceResonanceScale != 1.0f)
+            throw std::runtime_error("disabling resonance service trim did not refresh card scale");
+        p.enableResonanceServiceTrim = true;
+        e.setParameters(p);
+        if (std::abs(e.cards_[0].vcfServiceTrimCounts - expectedTrim) > 1e-6f
+            || std::abs(e.cards_[0].vcfServiceResonanceScale - expectedResScale) > 1e-6f)
+            throw std::runtime_error("service trim refresh read delayed island gScale instead of card poles");
+
+        // Transitioning to restVoiceFilterIsland inside the 24-frame window must
+        // restore the card's current-time stage trims on v.filter.
+        v.islandResting = false;
+        e.restVoiceFilterIsland(v, f);
+        const float expectedG0 = 1.0f + e.cards_[0].vcfStageGErrors[0]
+            * YouKnowEngine::vcfStageCapacitorTolerance * p.calibration;
+        if (std::abs(v.filter.gScale[0] - expectedG0) > 1e-7f)
+            throw std::runtime_error("resting island retained stale 24-frame-delayed stage trim");
+        v.islandResting = false;
+    }
 
 };
 }
@@ -375,6 +423,7 @@ void integratedControlsAndNoise()
     auto e = prepared(48000, 1, true);
     YouKnowTestAccess::coldNoiseAndControlChronology(*e);
     YouKnowTestAccess::unclippedInteriorControls(*e);
+    YouKnowTestAccess::stageAndServiceTrimConsistency(*e);
     for (double rate : {44100., 48000., 96000.})
         for (double frequency : {8000., 12000., 16000., 20000.}) {
             auto actual = prepared(rate, 1, true);

@@ -2169,11 +2169,11 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `1.3.1-build.1`. To identify a local build, pass
+Local builds default to `1.4.5-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses the workflow's `GITHUB_RUN_NUMBER`; the configured
-number is saved in the build directory. The current host version is `1.3.1`,
-and its signed-release tag would be `v1.3.1`. Archive names and the
+number is saved in the build directory. The current host version is `1.4.5`,
+and its signed-release tag would be `v1.4.5`. Archive names and the
 About box include the build number; macOS bundle and installer build metadata
 carry it too.
 
@@ -2209,7 +2209,7 @@ tree, a dated release-history entry and a matching `v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-1.3.1 development packages remain distinct from a signed production release.
+1.4.5 development packages remain distinct from a signed production release.
 
 ### Local listening renders
 

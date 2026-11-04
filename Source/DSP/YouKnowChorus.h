@@ -1229,6 +1229,12 @@ private:
             input = level;
             return static_cast<float>(output);
         }
+        float relax(double pole) noexcept
+        {
+            primed = false;
+            output *= pole;
+            return static_cast<float>(output);
+        }
     };
     ClockFeedthrough feedthroughA_ {}, feedthroughB_ {};
     float feedthroughRate_ { 0.0f };

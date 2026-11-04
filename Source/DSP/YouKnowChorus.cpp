@@ -3455,7 +3455,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     float wetB = lineB_.process(limitedInput, clockB, sampleRate_,
                                 wetOutputTransition, noiseB, true, capture,
                                 clocksStopped_ ? nullptr : &trajectoryB);
-    if (enableClockFeedthrough && clockA > 0.0 && clockB > 0.0)
+    if (enableClockFeedthrough)
     {
         if (sampleRate_ != feedthroughRate_)
         {
@@ -3464,8 +3464,16 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                                         / static_cast<double>(sampleRate_));
             feedthroughRate_ = sampleRate_;
         }
-        wetA += feedthroughA_.step(clockFeedthroughPerHz * clockA, feedthroughPole_);
-        wetB += feedthroughB_.step(clockFeedthroughPerHz * clockB, feedthroughPole_);
+        if (clockA > 0.0 && clockB > 0.0)
+        {
+            wetA += feedthroughA_.step(clockFeedthroughPerHz * clockA, feedthroughPole_);
+            wetB += feedthroughB_.step(clockFeedthroughPerHz * clockB, feedthroughPole_);
+        }
+        else
+        {
+            wetA += feedthroughA_.relax(feedthroughPole_);
+            wetB += feedthroughB_.relax(feedthroughPole_);
+        }
     }
 
     // Both ordinary modes carry dry plus one wet line per channel. The I+II

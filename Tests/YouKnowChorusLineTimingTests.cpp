@@ -19,6 +19,10 @@ struct YouKnowTestAccess
 {
     static std::array<int, 2> writeIndices(const Chorus& chorus)
     { return { chorus.lineA_.writeIndex, chorus.lineB_.writeIndex }; }
+    static std::array<double, 2> feedthroughOutputs(const Chorus& chorus)
+    { return { chorus.feedthroughA_.output, chorus.feedthroughB_.output }; }
+    static std::array<bool, 2> feedthroughPrimed(const Chorus& chorus)
+    { return { chorus.feedthroughA_.primed, chorus.feedthroughB_.primed }; }
 };
 }
 
@@ -220,6 +224,45 @@ void clockFeedthroughFollowsTheClock()
                            / Chorus::settingsFor(ChorusMode::One, ChorusTimingProfile::HardwareEvidence).rateHz;
     require(std::abs(two[0] / one[0] / rateRatio - 1.0) < 0.05,
             "clock feedthrough does not scale with the sweep rate");
+
+    // Stopping the MN3101 clocks via C15/Tr23/Tr28 must let C28/C25 relax
+    // rather than freezing stale charge and priming state across the mute.
+    auto gated = std::make_unique<Chorus>();
+    gated->prepare(48000.0);
+    float left = 0.0f, right = 0.0f;
+    for (int n = 0; n < 24000; ++n)
+        gated->process(0.0f, ChorusMode::One, 0.0f, left, right, 1.0f,
+                       true, true, false, ChorusTimingProfile::HardwareEvidence,
+                       true, true, false, 0.0f, 1.0f, true, true, false, false,
+                       false, false, false, false, true);
+    require(!gated->clocksStopped() && Probe::feedthroughPrimed(*gated)[0],
+            "engaged chorus did not prime clock feedthrough");
+    for (int n = 0; n < 48000; ++n)
+        gated->process(0.0f, ChorusMode::Off, 0.0f, left, right, 1.0f,
+                       true, true, false, ChorusTimingProfile::HardwareEvidence,
+                       true, true, false, 0.0f, 1.0f, true, true, false, false,
+                       false, false, false, false, true);
+    const auto relaxed = Probe::feedthroughOutputs(*gated);
+    const auto primed = Probe::feedthroughPrimed(*gated);
+    require(gated->clocksStopped() && !primed[0] && !primed[1]
+            && std::abs(relaxed[0]) < 1e-6 && std::abs(relaxed[1]) < 1e-6,
+            "stopped chorus clocks froze C28/C25 feedthrough state");
+    bool restarted = false;
+    for (int n = 0; n < 4800 && !restarted; ++n)
+    {
+        gated->process(0.0f, ChorusMode::One, 0.0f, left, right, 1.0f,
+                       true, true, false, ChorusTimingProfile::HardwareEvidence,
+                       true, true, false, 0.0f, 1.0f, true, true, false, false,
+                       false, false, false, false, true);
+        if (!gated->clocksStopped())
+        {
+            restarted = true;
+            const auto resumed = Probe::feedthroughOutputs(*gated);
+            require(std::abs(resumed[0]) < 1e-4 && std::abs(resumed[1]) < 1e-4,
+                    "restarting chorus clocks injected stale LFO-phase step into C28/C25");
+        }
+    }
+    require(restarted, "chorus clocks did not restart on re-engage");
 }
 
 int main()
