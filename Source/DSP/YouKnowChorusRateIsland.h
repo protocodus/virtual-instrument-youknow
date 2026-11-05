@@ -65,11 +65,13 @@ struct ChorusRateIsland
     };
     // Mirrored rings, as VoiceVcaAntialias keeps them: each write lands at
     // [cursor] and [cursor + size], so the FIR taps read one contiguous
-    // window ending at [cursor + size] without a wrap mask per tap.
-    std::array<float,2*inputSize> inputs {};
+    // window ending at [cursor + size] without a wrap mask per tap. Every
+    // entry is a float sample held exactly as a double, so the taps read it
+    // without a per-tap conversion.
+    std::array<double,2*inputSize> inputs {};
     std::array<Controls,inputSize> controls {};
     std::array<Context,inputSize> contexts {};
-    std::array<std::array<float,2*outputSize>,2> outputs {};
+    std::array<std::array<double,2*outputSize>,2> outputs {};
     int inputWrite {}, outputWrite {}, priming {};
 
     void reset() noexcept { *this = {}; }
@@ -94,7 +96,7 @@ struct ChorusRateIsland
         controls[static_cast<std::size_t>(inputWrite)] = control;
         const int source = (inputWrite-halfDelay+inputSize)&im;
         // recentInput[-t] is the input t parent samples ago.
-        const float* const recentInput = inputs.data()+inputWrite+inputSize;
+        const double* const recentInput = inputs.data()+inputWrite+inputSize;
         const auto& delayed = controls[static_cast<std::size_t>(source)];
         Context context {};
         // Zero history before the first input is not physical elapsed time.
@@ -123,7 +125,7 @@ struct ChorusRateIsland
         result.context=contexts[static_cast<std::size_t>(source)];
         const int centre=(kernel.taps-1)/2;
         // recentOutput[c][-t] is channel c's output t local samples ago.
-        const float* const recentOutput[2] {
+        const double* const recentOutput[2] {
             outputs[0].data()+outputWrite+outputSize,
             outputs[1].data()+outputWrite+outputSize };
         std::array<double,2> sum {

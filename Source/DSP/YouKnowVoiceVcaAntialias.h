@@ -179,7 +179,7 @@ struct VoiceVcaAntialias
         // The mirrored second half makes the last inputRingSize inputs one
         // contiguous descending window behind this pointer: recent[-t] is the
         // input t samples ago, with no wrap mask per tap.
-        const float* const recent = inputs.data() + inputWrite + inputRingSize;
+        const double* const recent = inputs.data() + inputWrite + inputRingSize;
         const double g0 = gains[static_cast<std::size_t>(
             (inputWrite - lookBack + inputRingSize) & (inputRingSize - 1))];
         const double g1 = gains[static_cast<std::size_t>(
@@ -250,7 +250,7 @@ struct VoiceVcaAntialias
                 const int centre = (k.taps - 1) / 2;
                 // As for the inputs: recentOutput[-t] is the output t local
                 // samples ago, read without a wrap mask per tap.
-                const float* const recentOutput =
+                const double* const recentOutput =
                     outputs.data() + outputWrite + outputRingSize;
                 // The same symmetric pair products, in four partial sums.
                 std::array<double, 4> partial {};
@@ -282,10 +282,12 @@ struct VoiceVcaAntialias
     // are always one contiguous block ending at [cursor + ringSize]. The FIR
     // loops read that block through a plain pointer instead of masking every
     // tap index; the first half remains a valid ring for any masked reader.
-    std::array<float, 2 * inputRingSize> inputs {};
+    // Every entry is a float sample held exactly as a double, so the taps
+    // read the product operand without a per-tap conversion.
+    std::array<double, 2 * inputRingSize> inputs {};
     std::array<float, inputRingSize> gains {};
     std::array<float, inputRingSize> temperatures {};
-    std::array<float, 2 * outputRingSize> outputs {};
+    std::array<double, 2 * outputRingSize> outputs {};
     int inputWrite {}, outputWrite {};
 };
 }
