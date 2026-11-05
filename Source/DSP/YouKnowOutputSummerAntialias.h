@@ -132,9 +132,8 @@ struct OutputSummerAntialias
         for (int index = 0; index < kernel.pairCount; ++index)
         {
             const auto& pair = kernel.pairs[static_cast<std::size_t>(index)];
-            const int opposite = kernel.taps - 1 - pair.tap;
             const int first = (outputCursor-pair.tap+VoiceVcaAntialias::outputRingSize) & outputMask;
-            const int second = (outputCursor-opposite+VoiceVcaAntialias::outputRingSize) & outputMask;
+            const int second = (outputCursor-pair.opposite+VoiceVcaAntialias::outputRingSize) & outputMask;
             const double leftFirst = left.outputs[static_cast<std::size_t>(first)];
             const double leftSecond = left.outputs[static_cast<std::size_t>(second)];
             const double rightFirst = right.outputs[static_cast<std::size_t>(first)];

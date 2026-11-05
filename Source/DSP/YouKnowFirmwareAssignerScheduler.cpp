@@ -529,7 +529,10 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
         if (result.consumedInputs < inputEvents.size())
             next = std::min(next, inputEvents[result.consumedInputs].states);
         const auto before = state.now;
-        const auto peripheralAdvance = Uart::advanceTo(uart, configuration.uart, next, uartEvents);
+        // The entry advance checked this UART, its buffer and configuration;
+        // since then only Uart calls have changed them, and state.now <= next
+        // <= target <= maximumTime.
+        const auto peripheralAdvance = Uart::advanceToPrechecked(uart, next, uartEvents);
         const auto elapsed = uart.now - before;
         state.now = uart.now;
         state.pending.remaining -= static_cast<unsigned>(elapsed);

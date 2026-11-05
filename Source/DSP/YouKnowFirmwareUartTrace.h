@@ -91,6 +91,11 @@ enum class Status : std::uint8_t { Ok, OutputFull, InvalidState, TimeReversal };
 // enabling an already empty transmitter leaves FST unchanged. The manual's
 // enable-then-poll example does not specify that request's assertion subcycle.
 Status advanceTo(State&, const Configuration&, std::uint64_t target, EventBuffer&) noexcept;
+// advanceTo without its entry checks, for a caller that has already passed this
+// state, buffer and configuration through a checked call and has since changed
+// them only through this interface, with now <= target <= maximumTime. Every
+// successful call leaves a valid state, so repeating the checks finds nothing.
+Status advanceToPrechecked(State&, std::uint64_t target, EventBuffer&) noexcept;
 Status writeTxBuffer(State&, const Configuration&, std::uint8_t, EventBuffer&) noexcept;
 Status writePortC(State&, std::uint8_t, EventBuffer&) noexcept;
 Status setTransmitEnabled(State&, const Configuration&, bool, EventBuffer&) noexcept;

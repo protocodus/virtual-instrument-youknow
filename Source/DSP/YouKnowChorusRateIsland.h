@@ -134,11 +134,10 @@ struct ChorusRateIsland
         for (int i=0; i<kernel.pairCount; ++i)
         {
             const auto& pair=kernel.pairs[static_cast<std::size_t>(i)];
-            const int opposite=kernel.taps-1-pair.tap;
             for (int channel=0; channel<2; ++channel)
                 sum[static_cast<std::size_t>(channel)] += pair.weight
                     * (static_cast<double>(recentOutput[channel][-pair.tap])
-                     + static_cast<double>(recentOutput[channel][-opposite]));
+                     + static_cast<double>(recentOutput[channel][-pair.opposite]));
         }
         result.left=static_cast<float>(sum[0]);
         result.right=static_cast<float>(sum[1]);

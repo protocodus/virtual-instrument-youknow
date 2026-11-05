@@ -33,7 +33,8 @@ struct VoiceVcaAntialias
     static constexpr int outputRingSize = 256;
     struct Kernel
     {
-        struct Pair {double weight {}; int tap {};};
+        // opposite = taps-1-tap, stored so the decimation loops need not form it.
+        struct Pair {double weight {}; int tap {}; int opposite {};};
         int factor {1};
         int taps {1};
         int pairCount {};
@@ -117,7 +118,7 @@ struct VoiceVcaAntialias
             k.decimation[static_cast<std::size_t>(tap)] = weight;
             k.decimation[static_cast<std::size_t>(opposite)] = weight;
             if (weight != 0)
-                k.pairs[static_cast<std::size_t>(k.pairCount++)] = {weight, tap};
+                k.pairs[static_cast<std::size_t>(k.pairCount++)] = {weight, tap, opposite};
         }
         return k;
     }
@@ -256,9 +257,8 @@ struct VoiceVcaAntialias
                 std::array<double, 4> partial {};
                 const auto pairTerm = [&](int index) noexcept {
                     const auto& pair = k.pairs[static_cast<std::size_t>(index)];
-                    const int opposite = k.taps - 1 - pair.tap;
                     const double a = recentOutput[-pair.tap];
-                    const double b = recentOutput[-opposite];
+                    const double b = recentOutput[-pair.opposite];
                     return pair.weight * (a + b);
                 };
                 int index = 0;

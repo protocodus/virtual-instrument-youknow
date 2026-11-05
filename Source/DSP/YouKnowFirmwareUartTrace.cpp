@@ -165,6 +165,10 @@ Status advanceTo(State& state, const Configuration& configuration, std::uint64_t
         return Status::InvalidState;
     if (target < state.now)
         return Status::TimeReversal;
+    return advanceToPrechecked(state, target, output);
+}
+
+Status advanceToPrechecked(State& state, std::uint64_t target, EventBuffer& output) noexcept {
     while (nextEventTime(state) <= target) {
         Transaction transaction{state};
         transaction.state.now = nextEventTime(state);
