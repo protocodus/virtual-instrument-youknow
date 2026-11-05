@@ -63,7 +63,13 @@ struct VcaControlReconstruction
         return std::clamp(curved, std::min(before, after), std::max(before, after));
     }
 
-    [[nodiscard]] double sample(double endpointGain, double position) const noexcept
+    // Read once per local VCA interval; without forced inlining the call
+    // outweighs the usual flat segment's early return.
+    [[nodiscard]]
+#if defined(__GNUC__)
+    __attribute__((always_inline))
+#endif
+    double sample(double endpointGain, double position) const noexcept
     {
         if (eventPosition >= 0.0f && eventPosition <= 1.0f)
         {

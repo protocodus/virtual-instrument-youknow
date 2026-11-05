@@ -752,7 +752,7 @@ struct Runner {
         cpu.carry = value & 1;
         cpu.skip = value & 0x20;
     }
-    Decoded decoded() const {
+    YOUKNOW_SERIAL_STEP Decoded decoded() const {
         if (auto *serial = serialInstruction(state.pending.address))
             return *serial;
         if (auto *normal = mainInstruction(state.pending.address))
@@ -764,7 +764,7 @@ struct Runner {
         return d.extra == Extra::MOV_A_RXB || op == Op::MOV_A_ANM || op == Op::MOV_A_CR ||
                op == Op::XRI_ANM_xx || op == Op::MVI_MKH_xx || op == Op::SKIT_FAD;
     }
-    void access(const Decoded &d) {
+    YOUKNOW_SERIAL_STEP void access(const Decoded &d) {
         auto &pending = state.pending;
         auto &adc = state.adc;
         const auto &i = d.instruction;
@@ -795,7 +795,7 @@ struct Runner {
             emit(Stream::EventKind::AnmWrite, 0, adc.anm);
         }
     }
-    void stackEvents() {
+    YOUKNOW_SERIAL_STEP void stackEvents() {
         for (unsigned i = 0; i < cpu.stackCount; ++i)
             emit(Stream::EventKind::StackWrite, cpu.stackWrites[i].address,
                  cpu.stackWrites[i].value);
