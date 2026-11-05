@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include "YouKnowCompatibility.h"
 
 #include "YouKnowSubLevel.h"
 
@@ -116,7 +117,7 @@ public:
         constexpr double b = pinSubPeakToPeak * (branch + load) - seriesSpan * load;
         constexpr double constant = branch * pinSubPeakToPeak * load;
         // Stable lower root of a*Rs^2+b*Rs+constant=0.
-        const double source = 2.0 * constant / (-b + std::sqrt(b * b - 4.0 * a * constant));
+        const double source = 2.0 * constant / (-b + inlineSqrt(b * b - 4.0 * a * constant));
         const double effective = source * load / (source + load);
         const double current = seriesSpan / (branch + 0.5 * (source + effective));
         const double sourceScale = 0.4 / (gain * load / (source + load));

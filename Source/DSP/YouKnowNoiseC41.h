@@ -51,7 +51,7 @@ struct NoiseC41LowPass
         const double phi = 2.0 * std::pow(std::sin(0.5 * wm), 2.0);
         const double magnitudeSquared = 1.0 / (1.0 + (wm / wc) * (wm / wc));
         const double b = (magnitudeSquared * (1.0 + a * phi) - 1.0) / phi;
-        const double root = std::sqrt(std::max(0.0, 1.0 + 2.0 * b));
+        const double root = inlineSqrt(std::max(0.0, 1.0 + 2.0 * b));
         const double current = 0.5 * sum * (1.0 + root);
         return {p, current, sum - current};
     }

@@ -16,11 +16,19 @@ namespace youknow
 {
 // The correctly rounded IEEE square root, as one instruction. std::sqrt on a
 // double is the C library's sqrt, and a host that compiles with -fno-builtin
-// (the Rack toolchain does) turns every call into a real libm call; naming
-// the builtin keeps the identical result in line on GCC and Clang.
+// (the Rack toolchain does) turns every call into a real libm call. GCC
+// inlines __builtin_sqrt; Clang still lowers it to that libm call while errno
+// is observable, so it needs the elementwise builtin, which has no errno.
+// Either way the result is the same correctly rounded root.
 [[nodiscard]] inline double inlineSqrt(double value) noexcept
 {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__clang__) && defined(__has_builtin)
+#if __has_builtin(__builtin_elementwise_sqrt)
+    return __builtin_elementwise_sqrt(value);
+#else
+    return __builtin_sqrt(value);
+#endif
+#elif defined(__GNUC__)
     return __builtin_sqrt(value);
 #else
     return std::sqrt(value);

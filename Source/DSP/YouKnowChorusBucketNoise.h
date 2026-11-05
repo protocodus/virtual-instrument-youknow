@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -30,7 +31,7 @@ struct ChorusBucketNoise
     {
         const double r=std::isfinite(fraction)?std::clamp(fraction,0.0,1.0):0.0;
         const double c=std::isfinite(correlation)?std::clamp(correlation,0.0,1.0):1.0;
-        return {std::sqrt(1.0-r),std::sqrt(r/(1.0+c*c)),c,
+        return {inlineSqrt(1.0-r),inlineSqrt(r/(1.0+c*c)),c,
                 2.0*r*c/(1.0+c*c),1.0};
     }
     static void normalize(Coefficients& c,double weightedCosineMoment) noexcept
@@ -43,7 +44,7 @@ struct ChorusBucketNoise
         // its packet variance changes. No microscopic kT/C value is inferred.
         const double m=std::isfinite(weightedCosineMoment)
             ? std::clamp(weightedCosineMoment,-1.0,1.0):0.0;
-        c.aWeightedScale=1.0/std::sqrt(std::max(1.0-c.eta*m,1.0e-12));
+        c.aWeightedScale=1.0/inlineSqrt(std::max(1.0-c.eta*m,1.0e-12));
     }
     [[nodiscard]] static float step(float storage,float transfer,
                                     float previousTransfer,const Coefficients& c) noexcept

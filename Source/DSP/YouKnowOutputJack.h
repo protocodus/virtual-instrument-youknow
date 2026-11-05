@@ -42,7 +42,7 @@ struct OutputJackLowPass
         const double wc = 2.0 * numbers::pi * cornerHz / sampleRate;
         const double alpha = beta + 2.0 / (wc * wc);
         const auto root = [](double value) {
-            return -value / (1.0 + value + std::sqrt(1.0 + 2.0 * value));
+            return -value / (1.0 + value + inlineSqrt(1.0 + 2.0 * value));
         };
         const double a1 = root(alpha);
         const double b = root(beta);
