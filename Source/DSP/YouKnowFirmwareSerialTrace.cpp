@@ -5,6 +5,14 @@
 #include <algorithm>
 #include <limits>
 
+// The run loop calls each per-instruction step once; inlining them removes a
+// call and register spill per emulated instruction and changes no result.
+#if defined(__GNUC__)
+#define YOUKNOW_SERIAL_STEP inline __attribute__((always_inline))
+#else
+#define YOUKNOW_SERIAL_STEP inline
+#endif
+
 namespace youknow {
 namespace {
 using firmwareTraceDetail::Instruction;
@@ -793,7 +801,7 @@ struct Runner {
                  cpu.stackWrites[i].value);
         cpu.stackCount = 0;
     }
-    void completeInstruction() {
+    YOUKNOW_SERIAL_STEP void completeInstruction() {
         const auto d = decoded();
         const auto &i = d.instruction;
         auto &pending = state.pending;
@@ -908,7 +916,7 @@ struct Runner {
         state.pending.kind = Stream::PendingKind::None;
         state.needsArbitration = false;
     }
-    void arbitrate() {
+    YOUKNOW_SERIAL_STEP void arbitrate() {
         if (!state.needsArbitration)
             return;
         state.needsArbitration = false;
@@ -942,7 +950,7 @@ struct Runner {
         emit(Stream::EventKind::InterruptAcceptance, pending.interruptVector, ad ? 0 : 1, 255, 0,
              cpu.pc);
     }
-    bool beginInstruction() {
+    YOUKNOW_SERIAL_STEP bool beginInstruction() {
         // Preserve the original overload's bounded parameter refusal. The
         // rich overload reaches024B only for armed A3; that diagnostic tail
         // has no descriptor and stops before FF01 or any diagnostic output.
@@ -992,7 +1000,7 @@ struct Runner {
         state.adc.statesUntilConversion -= duration;
         state.pending.remaining -= duration;
     }
-    void adcDue() {
+    YOUKNOW_SERIAL_STEP void adcDue() {
         auto &adc = state.adc;
         if (adc.statesUntilConversion)
             return;

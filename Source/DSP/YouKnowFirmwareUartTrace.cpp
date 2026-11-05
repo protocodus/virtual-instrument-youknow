@@ -151,13 +151,6 @@ void peripheralInstant(Transaction& transaction) noexcept {
 
 } // namespace
 
-std::uint64_t nextEventTime(const State& state) noexcept {
-    if (!state.frameActive)
-        return state.idleLaunch;
-    const auto stopCenter = state.frameStart + 9 * bitStates + bitStates / 2;
-    return !state.stopCenterObserved ? std::min(state.nextBit, stopCenter) : state.nextBit;
-}
-
 Status advanceTo(State& state, const Configuration& configuration, std::uint64_t target,
                  EventBuffer& output) noexcept {
     if (!valid(state) || !validBuffer(output) || configuration.idleBaudGridPhase >= bitStates ||
@@ -165,10 +158,10 @@ Status advanceTo(State& state, const Configuration& configuration, std::uint64_t
         return Status::InvalidState;
     if (target < state.now)
         return Status::TimeReversal;
-    return advanceToPrechecked(state, target, output);
+    return detail::advanceThroughEvents(state, target, output);
 }
 
-Status advanceToPrechecked(State& state, std::uint64_t target, EventBuffer& output) noexcept {
+Status detail::advanceThroughEvents(State& state, std::uint64_t target, EventBuffer& output) noexcept {
     while (nextEventTime(state) <= target) {
         Transaction transaction{state};
         transaction.state.now = nextEventTime(state);

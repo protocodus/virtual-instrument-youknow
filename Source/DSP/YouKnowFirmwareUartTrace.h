@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -91,15 +92,35 @@ enum class Status : std::uint8_t { Ok, OutputFull, InvalidState, TimeReversal };
 // enabling an already empty transmitter leaves FST unchanged. The manual's
 // enable-then-poll example does not specify that request's assertion subcycle.
 Status advanceTo(State&, const Configuration&, std::uint64_t target, EventBuffer&) noexcept;
-// advanceTo without its entry checks, for a caller that has already passed this
-// state, buffer and configuration through a checked call and has since changed
-// them only through this interface, with now <= target <= maximumTime. Every
-// successful call leaves a valid state, so repeating the checks finds nothing.
-Status advanceToPrechecked(State&, std::uint64_t target, EventBuffer&) noexcept;
 Status writeTxBuffer(State&, const Configuration&, std::uint8_t, EventBuffer&) noexcept;
 Status writePortC(State&, std::uint8_t, EventBuffer&) noexcept;
 Status setTransmitEnabled(State&, const Configuration&, bool, EventBuffer&) noexcept;
 bool testAndClearFst(State&) noexcept;
-std::uint64_t nextEventTime(const State&) noexcept;
+
+inline std::uint64_t nextEventTime(const State& state) noexcept {
+    if (!state.frameActive)
+        return state.idleLaunch;
+    const auto stopCenter = state.frameStart + 9 * bitStates + bitStates / 2;
+    return !state.stopCenterObserved ? std::min(state.nextBit, stopCenter) : state.nextBit;
+}
+
+namespace detail {
+Status advanceThroughEvents(State&, std::uint64_t target, EventBuffer&) noexcept;
+}
+
+// advanceTo without its entry checks, for a caller that has already passed this
+// state, buffer and configuration through a checked call and has since changed
+// them only through this interface, with now <= target <= maximumTime. Every
+// successful call leaves a valid state, so repeating the checks finds nothing.
+// The scheduler calls it once per emulated instruction, and most of those
+// steps reach no UART event: they settle here, inline, without a call.
+inline Status advanceToPrechecked(State& state, std::uint64_t target,
+                                  EventBuffer& output) noexcept {
+    if (nextEventTime(state) > target) {
+        state.now = target;
+        return Status::Ok;
+    }
+    return detail::advanceThroughEvents(state, target, output);
+}
 
 } // namespace youknow::FirmwareUartTrace

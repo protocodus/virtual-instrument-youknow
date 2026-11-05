@@ -13823,7 +13823,10 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                 // IC24's per-voice hold has no identified acquisition law.
                 // Ideal acquisition at the existing converter timestamp T
                 // changes current now, preserving the charge from before T.
-                updateDcoHeldCv(voice, voice.dcoCvTarget);
+                // The test repeats updateDcoHeldCv's own early return, which is
+                // taken on almost every interval, without the call.
+                if (voice.dcoCv != voice.dcoCvTarget)
+                    updateDcoHeldCv(voice, voice.dcoCvTarget);
                 const bool voiceVcaEvent = physicalHoldEvent.active
                     && physicalHoldEvent.write.destination
                            == ConverterDestination::VoiceVca
@@ -13861,7 +13864,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                     const double dt = coefficients.internalIntervalSeconds;
                     if (voiceVcaJunctionTemperatureEnabled(parameters))
                     {
-                        initialiseVoiceVcaJunctionCharge(voice);
+                        if (!voice.vcaJunctionChargeInitialised)
+                            initialiseVoiceVcaJunctionCharge(voice);
                         const auto& circuit = voiceVcaJunctionCircuit();
                         const double temperature = cards_[static_cast<std::size_t>(voice.cardIndex)].vcaJunctionCelsius;
                         if (voiceVcaEvent)
