@@ -6228,7 +6228,10 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
     // 8 MHz tick later IC35 reloads its preset; the corresponding TP5 rise is
     // observable only after propagation. RANGE therefore has its own reload
     // policy, separate from PIT /WR ordering at the earlier falling edge.
-    YouKnowEngine cold;
+    // The engines live on the heap: clang gives each of this function's
+    // fifteen its own stack slot, about 7.6 MB, past an 8 MB main stack.
+    auto coldStorage = std::make_unique<YouKnowEngine>();
+    auto& cold = *coldStorage;
     cold.prepare(48000.0, blockSize, false);
     auto parameters = plainPatch();
     parameters.range = DcoRange::Sixteen;
@@ -6316,7 +6319,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
 
     for (const auto& handoff : handoffs)
     {
-        YouKnowEngine engine;
+        auto engineStorage = std::make_unique<YouKnowEngine>();
+        auto& engine = *engineStorage;
         engine.prepare(192000.0, blockSize, false);
         parameters.range = handoff.previous;
         engine.setParameters(parameters);
@@ -6386,7 +6390,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
     // Exact TP5 falling is not exact IC35 reload. PIT count wins at the
     // former, then a PF update can still reach reload one raw tick later.
     // Coalesce a tiny card-local residue so RANGE cannot invent an input edge.
-    YouKnowEngine exactFalling;
+    auto exactFallingStorage = std::make_unique<YouKnowEngine>();
+    auto& exactFalling = *exactFallingStorage;
     exactFalling.prepare(192000.0, blockSize, false);
     parameters.range = DcoRange::Eight;
     exactFalling.setParameters(parameters);
@@ -6408,7 +6413,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
 
     // Every card sees the same TP5. Integer PIT edge ordinals can differ, but
     // all six retain the same physical falling fraction and reload deadline.
-    YouKnowEngine shared;
+    auto sharedStorage = std::make_unique<YouKnowEngine>();
+    auto& shared = *sharedStorage;
     shared.prepare(192000.0, blockSize, false);
     parameters.range = DcoRange::Eight;
     shared.setParameters(parameters);
@@ -6450,7 +6456,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
 
     // A retained old-modulus falling deadline may exceed one new clock. It
     // must not be reduced modulo one before that physical edge occurs.
-    YouKnowEngine repeated;
+    auto repeatedStorage = std::make_unique<YouKnowEngine>();
+    auto& repeated = *repeatedStorage;
     repeated.prepare(192000.0, blockSize, false);
     parameters.range = DcoRange::Sixteen;
     repeated.setParameters(parameters);
@@ -6501,7 +6508,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
     // Observe initial load after falling (1.5 clocks) but before reload (1.75
     // clocks). This fails if reload is accidentally treated as the PIT edge.
     constexpr std::uint32_t replacement = 11u;
-    YouKnowEngine loadBetweenEdges;
+    auto loadBetweenEdgesStorage = std::make_unique<YouKnowEngine>();
+    auto& loadBetweenEdges = *loadBetweenEdgesStorage;
     loadBetweenEdges.prepare(192000.0, blockSize, false);
     YouKnowTestAccess::setInternalRateForTimingTest(
         loadBetweenEdges, 1250000.0);
@@ -6537,7 +6545,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
 
     // Reload changes only future TP5 cadence. It cannot retune the active PIT
     // half-cycle; that period changes only when PIT OUT next transitions.
-    YouKnowEngine periodGuard;
+    auto periodGuardStorage = std::make_unique<YouKnowEngine>();
+    auto& periodGuard = *periodGuardStorage;
     periodGuard.prepare(192000.0, blockSize, false);
     YouKnowTestAccess::setInternalRateForTimingTest(
         periodGuard, 8000000.0);
@@ -6578,8 +6587,10 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
 
     // Reload classification and PIT counting are deliberately independent.
     // Coalescing a reload inside the numerical aperture must not toggle OUT.
-    YouKnowEngine reloadInside;
-    YouKnowEngine reloadOutside;
+    auto reloadInsideStorage = std::make_unique<YouKnowEngine>();
+    auto& reloadInside = *reloadInsideStorage;
+    auto reloadOutsideStorage = std::make_unique<YouKnowEngine>();
+    auto& reloadOutside = *reloadOutsideStorage;
     reloadInside.prepare(192000.0, blockSize, false);
     reloadOutside.prepare(192000.0, blockSize, false);
     const double frameClocks =
@@ -6614,7 +6625,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
     // the same stable TP5 falling edge on both sides of the aperture.
     for (const double apertureMultiple : { -0.5, 0.5, 2.0 })
     {
-        YouKnowEngine stable;
+        auto stableStorage = std::make_unique<YouKnowEngine>();
+        auto& stable = *stableStorage;
         stable.prepare(192000.0, blockSize, false);
         const double eventClocks = frameClocks
                                  + apertureMultiple * aperture;
@@ -6635,9 +6647,12 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
 
     // Equal wall time must leave the same physical countdowns on every
     // processing grid.
-    YouKnowEngine at48k;
-    YouKnowEngine at48kHq;
-    YouKnowEngine at192k;
+    auto at48kStorage = std::make_unique<YouKnowEngine>();
+    auto& at48k = *at48kStorage;
+    auto at48kHqStorage = std::make_unique<YouKnowEngine>();
+    auto& at48kHq = *at48kHqStorage;
+    auto at192kStorage = std::make_unique<YouKnowEngine>();
+    auto& at192k = *at192kStorage;
     at48k.prepare(48000.0, blockSize, false);
     at48kHq.prepare(48000.0, blockSize, true);
     at192k.prepare(192000.0, blockSize, false);
@@ -6675,7 +6690,8 @@ void testRangeDividerCompletesItsCurrentSynchronousCount()
 
     // A live quality rebuild changes sample coordinates, not physical PIT or
     // IC35 countdowns.
-    YouKnowEngine rebuilt;
+    auto rebuiltStorage = std::make_unique<YouKnowEngine>();
+    auto& rebuilt = *rebuiltStorage;
     rebuilt.prepare(48000.0, blockSize, true);
     parameters.range = DcoRange::Eight;
     rebuilt.setParameters(parameters);

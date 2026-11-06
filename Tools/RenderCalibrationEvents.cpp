@@ -82,6 +82,7 @@ const char* chorusProfileName(ChorusTimingProfile profile)
         case ChorusTimingProfile::DerivedNominal: return "derived";
         case ChorusTimingProfile::OwnerBlend: return "owner-blend";
         case ChorusTimingProfile::Shipping: return "nominal";
+        case ChorusTimingProfile::HardwareEvidence: return "hardware-evidence";
     }
     throw std::runtime_error("invalid chorus profile");
 }
