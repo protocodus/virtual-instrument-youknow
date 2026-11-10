@@ -50,6 +50,9 @@ public:
         sub = find ("Sub");
         noise = find ("Noise");
         resonance = find ("VCF Res");
+        chorusOne = find ("Chorus I");
+        chorusTwo = find ("Chorus II");
+        legacyChorus = find ("Chorus (legacy)");
     }
 
     matrix::Limits LimitsFor (const matrix::Case& c) const override
@@ -103,6 +106,15 @@ public:
             || std::min (c.values[sustain], c.base[sustain]) < 0.25f
             || noSource (c.values) || noSource (c.base))
             limits.soundsWhileHeld = false;
+        // With a chorus on the instrument is never silent: each MN3009 line
+        // adds its hiss and, since 1.4.5, the thump of its clock at the fast
+        // end of every sweep, with no key down (the processor reports an
+        // infinite tail for it). On the loudest programs that idles above
+        // the -60 dBFS floor (139: -52 dBFS), so silence there means the
+        // idle output of an instrument set the same way and never played;
+        // 6 dB allows for noise peaking higher in another window.
+        if (c.values[chorusOne] >= 0.5f || c.values[chorusTwo] >= 0.5f || c.values[legacyChorus] > 0.0f)
+            limits.silenceFloor = std::max (limits.silenceFloor, 2.0f * idlePeak (c));
         return limits;
     }
 
@@ -118,8 +130,35 @@ public:
     }
 
 private:
+    // The peak of an instrument set as `c` and never played: a quarter
+    // second for the lines to fill, then one whole sweep of mode I, the
+    // slower, so each line passes its thump.
+    float idlePeak (const matrix::Case& c) const
+    {
+        const double rate = processor->getSampleRate();
+        const int block = processor->getBlockSize();
+        YouKnowDevice idle;
+        idle.Prepare (rate, block);
+        if (c.preset >= 0)
+            idle.LoadPreset (c.preset);
+        for (std::size_t i = 0; i < c.values.size(); ++i)
+            idle.SetParameter (i, c.values[i]);
+        std::vector<float> left (static_cast<std::size_t> (block)), right (left.size());
+        const auto settle = std::llround (0.25 * rate);
+        const auto total = settle + std::llround (rate / youknow::Chorus::derivedRateHz (true));
+        float peak = 0.0f;
+        for (long long done = 0; done < total; done += block)
+        {
+            idle.Process (left.data(), right.data(), block, nullptr, 0);
+            if (done >= settle)
+                for (std::size_t i = 0; i < left.size(); ++i)
+                    peak = std::max ({ peak, std::fabs (left[i]), std::fabs (right[i]) });
+        }
+        return peak;
+    }
+
     std::size_t outputTrim = 0, volume = 0, vcaLevel = 0, vcaMode = 0, sustain = 0, release = 0, poly1 = 0, poly2 = 0;
-    std::size_t saw = 0, pulse = 0, sub = 0, noise = 0, resonance = 0;
+    std::size_t saw = 0, pulse = 0, sub = 0, noise = 0, resonance = 0, chorusOne = 0, chorusTwo = 0, legacyChorus = 0;
 };
 } // namespace
 
