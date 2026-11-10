@@ -263,8 +263,10 @@ jobs:
           xvfb-run -a build-matrix/YouKnowParameterMatrixTests \
             --jobs "$(nproc)" --rotation --shard ${{ matrix.shard }}/8
 
-  # The long libFuzzer run (U8); ci.yml runs the same harness for 2 minutes.
+  # The long libFuzzer run (U8), nightly and on demand: a push already ran
+  # ci.yml's 2-minute run, and 30 more minutes of runner delayed every build.
   dsp-fuzz:
+    if: github.event_name != 'push'
     name: Fuzz the DSP input boundary (30 minutes)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
