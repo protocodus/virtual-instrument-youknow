@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The chorus evidence behind YouKnow 1.4.3-1.4.5, from all sixteen factory-bank captures of #439522.
+"""The chorus evidence behind YouKnow 1.4.3-1.4.7, from all sixteen factory-bank captures of #439522.
 
 Protocol. Lewis Francis's Juno-106 #439522 (original DCO chips and chorus board, Borish replacement
 VCF/VCA cards) played each 106_calibration.zip bank sequence at one recording gain: per patch a chord,
@@ -28,6 +28,18 @@ all 487 single notes, 4.55 dB; only the absolute comparisons (`thump`) use it.
          sign, time to peak and the other channel's ratio. Also the idle floor's Welch PSD (1 s
          segments) integrated over 30-100 Hz without 55-65 Hz, where neither the board's coupling
          nor the recording chain's high-pass shapes it.
+  balance  Left-right balance through the chorus: each single note's RMS level 0.15-0.95 s after its
+         onset, L-R in dB, averaged per patch (notes under -70 dBFS on the capture dropped), then over
+         the patches of each chorus mode. Chorus on minus chorus off cancels the recording chain's own
+         imbalance and the dry path's; reported for hardware, engine and their difference.
+  comb   Wet/dry ratio per channel: each channel is dry plus delayed wet, so a steady harmonic's
+         envelope swings between |1 + r| and |1 - r| as the delay sweeps, and its depth
+         (max - min) / (max + min), 98th and 2nd percentiles after removing a log-linear trend, is
+         min(r, 1/r). Harmonics of mode I patches without LFO to pitch, cutoff or pulse width and
+         without noise, fundamental from 120 Hz (refined +/-40 cents), demodulated through a 6th-order
+         low-pass at min(0.4 f0, 150 Hz), kept where the comb's beat rate stays inside it and the
+         harmonic stands 35 dB over the envelope midway to the next one on both sides. Median depth
+         per channel in three bands from 0.8 to 3.15 kHz.
 
 Limits. One serviced unit with replacement voice cards; only the chorus board and DCOs are original,
 so only chorus quantities are read here. The capture's own recording chain high-passes below about
@@ -38,6 +50,9 @@ means over patches are reported.
 On 1.4.5: sweep hardware minus engine -0.025 ms depth (s.e. 0.060, 17 pairs), centre -0.023 ms,
 rate -0.002 Hz; hiss half-swing 12.41/12.33 dB (hardware, modes I/II) against 12.56/12.53, idle minus
 C4 -0.15/-0.08 dB; thump floor at 30-100 Hz -0.03/+0.54 dB hardware minus engine.
+On 1.4.7: balance, chorus on minus off, -0.21/-0.35 dB (hardware, modes I/II) against -0.13/-0.30,
+hardware minus engine -0.06 dB (s.e. 0.08; 1.4.6: -1.20); comb depth left over right +0.33/+0.21/+0.26
+dB (hardware, three bands) against +0.16/+0.33/+0.43 (1.4.6: -1.45/-1.29/-1.07).
 
 Sources: https://www.lewisfrancis.com/nwio/Juno-10-test-audio-96K.zip and
 https://kayrock.org/kr106/106_calibration.zip; every file is checked by hash.
@@ -45,7 +60,7 @@ https://kayrock.org/kr106/106_calibration.zip; every file is checked by hash.
   python3 Tools/AnalyzeChorusBankEvidence.py export --midi-zip 106_calibration.zip --out out/bank
   for b in A1x ... B8x; do build/YouKnowRenderCalibrationEvents out/bank/events-$b.txt out/bank/$b.wav 1 product; done
   ./build/YouKnowMeasureChorusSupport a11-spectral nominal-2sa1015-nonlinear > out/bank/support.json
-  python3 Tools/AnalyzeChorusBankEvidence.py sweep|hiss|thump --midi-zip 106_calibration.zip \\
+  python3 Tools/AnalyzeChorusBankEvidence.py sweep|hiss|thump|balance|comb --midi-zip 106_calibration.zip \\
       --captures CAPTURE_DIR --models out/bank [--support out/bank/support.json] [--jobs 4]
 """
 import argparse
@@ -365,9 +380,135 @@ def run_thump(args):
     return out
 
 
+# ---------------------------------------------------------------- balance
+def standard_error(values):
+    return float(np.std(values, ddof=1) / math.sqrt(len(values)))
+
+
+def run_balance(args):
+    per_mode = {}
+    for bank in BANKS:
+        _, patches, sources = load(args, bank)
+        for p in patches:
+            notes = []
+            for _, on, _ in p["notes"][-5:]:
+                level = []
+                for audio, rate, shift, env, hop in sources:
+                    start = onset(env, hop, on + shift) or (on + shift)
+                    seg = audio[int((start + 0.15) * rate):int((start + 0.95) * rate)]
+                    level.append(10 * np.log10(np.mean(seg ** 2, 0) + 1e-30))
+                if level[0].min() > -70:
+                    notes.append([level[0][0] - level[0][1], level[1][0] - level[1][1]])
+            if notes:
+                per_mode.setdefault(chorus_of(p["sysex"]), []).append(np.mean(notes, 0))
+    per_mode = {m: np.array(v) for m, v in per_mode.items()}
+    off = per_mode["off"]
+    out = {m: dict(patches=len(v), hardware_l_minus_r_db=float(v[:, 0].mean()), hardware_se=standard_error(v[:, 0]),
+                   model_l_minus_r_db=float(v[:, 1].mean()), model_se=standard_error(v[:, 1]))
+           for m, v in per_mode.items()}
+    for name, on in (("I", per_mode["I"]), ("II", per_mode["II"]), ("both", np.r_[per_mode["I"], per_mode["II"]])):
+        d_on, d_off = on[:, 0] - on[:, 1], off[:, 0] - off[:, 1]
+        out[f"{name}_minus_off"] = dict(
+            hardware_db=float(on[:, 0].mean() - off[:, 0].mean()), model_db=float(on[:, 1].mean() - off[:, 1].mean()),
+            hardware_minus_model_db=float(d_on.mean() - d_off.mean()),
+            standard_error=float(np.hypot(standard_error(d_on), standard_error(d_off))))
+    return out
+
+
+# ---------------------------------------------------------------- comb
+COMB_BANDS = ((800, 1250), (1250, 2000), (2000, 3150))
+
+
+def comb_pitch(segment, rate, nominal):
+    best, window, t = None, np.hanning(len(segment)), np.arange(len(segment)) / rate
+    for cents in np.arange(-40, 40.1, 1.0):
+        f = nominal * 2 ** (cents / 1200)
+        harmonics = f * np.arange(1, max(2, int(3000 / f)) + 1)
+        v = np.abs(np.exp(-2j * np.pi * harmonics[:, None] * t) @ (segment * window)).sum()
+        if best is None or v > best[0]:
+            best = (v, f)
+    return best[1]
+
+
+def comb_depths(audio, rate, start, nominal, top_hz, slope):
+    """[(frequency, channel, depth, snr_db)] for one note's steady part."""
+    seg = audio[int((start + 0.15) * rate):int((start + 0.97) * rate)]
+    if len(seg) < int(0.7 * rate):
+        return []
+    f0 = comb_pitch(audio[int((start + 0.3) * rate):int((start + 0.6) * rate)].mean(1), rate, nominal)
+    t = np.arange(len(seg)) / rate
+    width = min(0.4 * f0, 150.0)
+    low = butter(6, width, "lp", fs=rate, output="sos")
+    trim = int(0.1 * rate)
+
+    def envelope(channel, frequency):
+        z = seg[:, channel] * np.exp(-2j * np.pi * frequency * t)
+        return np.abs(sosfiltfilt(low, z.real) + 1j * sosfiltfilt(low, z.imag))[trim:-trim]
+
+    out = []
+    # the comb beats at f * d(delay)/dt; keep that inside the envelope filter
+    for k in range(int(np.ceil(COMB_BANDS[0][0] / f0)), int(min(top_hz, 0.8 * width / slope) / f0) + 1):
+        for channel in (0, 1):
+            env, floor = envelope(channel, k * f0), envelope(channel, (k + 0.5) * f0)
+            snr = 20 * np.log10(np.sqrt(np.mean(env ** 2)) / (np.sqrt(np.mean(floor ** 2)) + 1e-20))
+            x = np.arange(len(env))
+            flat = env / np.exp(np.polyval(np.polyfit(x, np.log(env + 1e-12), 1), x))
+            hi, lo = np.percentile(flat, 98), np.percentile(flat, 2)
+            out.append((k * f0, channel, (hi - lo) / (hi + lo), snr))
+    return out
+
+
+def comb_bank(job):
+    args, bank = job
+    _, patches, sources = load(args, bank)
+    rows = []
+    for index, p in enumerate(patches):
+        dump = p["sysex"]
+        tone, mode = dump[5:21], chorus_of(dump)
+        # steady harmonics only: no LFO to pitch or cutoff, no noise, no LFO-swept pulse width
+        swept_pulse = (dump[21] & 8) and tone[3] and not (dump[22] & 1)
+        if mode == "off" or tone[2] or tone[8] or tone[4] or swept_pulse:
+            continue
+        octave = {1: 0.5, 2: 1.0, 4: 2.0}.get(dump[21] & 7, 1.0) * (0.5 if tone[15] else 1.0)
+        for key, on, _ in p["notes"][-5:]:
+            fundamental = 440 * 2 ** ((key - 69) / 12) * octave
+            if fundamental < 120:
+                continue
+            pair = []
+            for audio, rate, shift, env, hop in sources:
+                start = onset(env, hop, on + shift) or (on + shift)
+                pair.append(comb_depths(audio, rate, start, fundamental, COMB_BANDS[-1][1],
+                                        4 * 1.978e-3 * RATES[mode]))
+            for (f, channel, hardware, snr), (f2, channel2, model, snr2) in zip(*pair):
+                if channel == channel2 and abs(f / f2 - 1) < 0.03 and min(snr, snr2) > 35:
+                    rows.append((bank, index, mode, f, channel, hardware, model))
+    return rows
+
+
+def run_comb(args):
+    with concurrent.futures.ProcessPoolExecutor(args.jobs) as pool:
+        rows = [r for bank_rows in pool.map(comb_bank, [(args, bank) for bank in BANKS]) for r in bank_rows]
+    out = {}
+    for lo, hi in COMB_BANDS:
+        entry = {}
+        for channel, name in ((0, "left"), (1, "right")):
+            pick = [r for r in rows if r[2] == "I" and r[4] == channel and lo <= r[3] < hi]
+            ratio = 20 * np.log10([r[5] / r[6] for r in pick])
+            entry[name] = dict(harmonics=len(pick), patches=len({r[:2] for r in pick}),
+                               hardware_depth_median=float(np.median([r[5] for r in pick])),
+                               model_depth_median=float(np.median([r[6] for r in pick])),
+                               hardware_over_model_db_median=float(np.median(ratio)),
+                               standard_error=standard_error(ratio))
+        for source in ("hardware", "model"):
+            entry[f"{source}_left_over_right_db"] = 20 * math.log10(
+                entry["left"][f"{source}_depth_median"] / entry["right"][f"{source}_depth_median"])
+        out[f"{lo}-{hi} Hz"] = entry
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("export", "sweep", "hiss", "thump"))
+    parser.add_argument("command", choices=("export", "sweep", "hiss", "thump", "balance", "comb"))
     parser.add_argument("--midi-zip", type=Path, required=True)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--captures", type=Path)
@@ -383,7 +524,7 @@ def main():
         return
     if args.command == "sweep" and not args.support:
         parser.error("sweep needs --support")
-    result = dict(sweep=run_sweep, hiss=run_hiss, thump=run_thump)[args.command](args)
+    result = dict(sweep=run_sweep, hiss=run_hiss, thump=run_thump, balance=run_balance, comb=run_comb)[args.command](args)
     print(json.dumps(result if args.command != "sweep" else result["hardware_minus_model"], indent=1))
     if args.out:
         args.out.write_text(json.dumps(result, indent=1))

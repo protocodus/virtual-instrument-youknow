@@ -3220,7 +3220,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      bool enableSummerLegSpread,
                      bool enableClockDependentHiss,
                      bool useMeasuredModeHissLevels,
-                     bool enableClockFeedthrough) noexcept
+                     bool enableClockFeedthrough,
+                     bool useMeasuredLineBalance) noexcept
 {
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(chorusFrames, 1);
@@ -3487,16 +3488,20 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // as the summed mono output would.
     if (enableLineGainSpread)
     {
-        if (calibration != lineGainCalibration_)
+        if (calibration != lineGainCalibration_
+            || useMeasuredLineBalance != lineGainMeasured_)
         {
-            // One draw sets the two parts' relative offset, split evenly so
-            // the normalised absolute wet level (OQ-04 policy) stays put.
-            const float halfOffsetDb = 0.5f * lineInsertionGainSpreadDb
-                                     * lineInsertionGainDraw()
+            // One figure sets the two parts' relative offset, split evenly
+            // so the normalised absolute wet level (OQ-04 policy) stays put.
+            const float offsetDb = useMeasuredLineBalance
+                ? measuredLineInsertionGainOffsetDb
+                : lineInsertionGainSpreadDb * lineInsertionGainDraw();
+            const float halfOffsetDb = 0.5f * offsetDb
                                      * std::clamp(calibration, 0.0f, 2.0f);
             lineGainA_ = std::pow(10.0f, halfOffsetDb / 20.0f);
             lineGainB_ = std::pow(10.0f, -halfOffsetDb / 20.0f);
             lineGainCalibration_ = calibration;
+            lineGainMeasured_ = useMeasuredLineBalance;
         }
         wetA *= lineGainA_;
         wetB *= lineGainB_;

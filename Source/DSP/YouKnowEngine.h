@@ -523,6 +523,10 @@ struct EngineParameters
     // turnaround thump measured on that board (Chorus::clockFeedthroughPerHz).
     // Product on, raw off.
     bool enableChorusClockFeedthrough { false };
+    // The two wet lines' relative level as measured on that board
+    // (Chorus::measuredLineInsertionGainOffsetDb), in place of the
+    // fixed-seed MN3009 insertion-gain draw. Product on, raw off.
+    bool useMeasuredChorusLineBalance { false };
     // The HPF Boost's R18/R19 (IC4b's gain and C6's corner) and R24 return,
     // drawn under Unit Character. Acts on the literal C14/IC3/HPF network
     // (configureHighPassSwitch), which is the product's path. Product on,
@@ -782,6 +786,7 @@ struct EngineParameters
             && enableChorusClockDependentHiss == other.enableChorusClockDependentHiss
             && useMeasuredChorusModeHissLevels == other.useMeasuredChorusModeHissLevels
             && enableChorusClockFeedthrough == other.enableChorusClockFeedthrough
+            && useMeasuredChorusLineBalance == other.useMeasuredChorusLineBalance
             && enableHighPassBoostSpread == other.enableHighPassBoostSpread
             && enableVoiceFilterRateIsland == other.enableVoiceFilterRateIsland
             && enableVoiceIslandFrameShotCovariance

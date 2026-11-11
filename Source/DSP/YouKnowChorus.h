@@ -417,7 +417,8 @@ public:
                  bool enableSummerLegSpread = false,
                  bool enableClockDependentHiss = false,
                  bool useMeasuredModeHissLevels = false,
-                 bool enableClockFeedthrough = false) noexcept;
+                 bool enableClockFeedthrough = false,
+                 bool useMeasuredLineBalance = false) noexcept;
 
     // ------------------------------------------------------------------
     // The wet-mute drive, jack board p. 15. The CHORUS on/off line reaches
@@ -566,6 +567,21 @@ public:
     static constexpr float lineInsertionGainBoundDb = 4.0f;
     static constexpr float lineInsertionGainSpreadDb = 1.6f;
     [[nodiscard]] static float lineInsertionGainDraw() noexcept;
+    // The identified unit's two lines sit closer than that draw (+1.56 dB,
+    // line A over B). Across #439522's sixteen factory-bank captures the
+    // single notes' L-R level moves -0.21 dB (mode I, 39 patches) and
+    // -0.35 dB (mode II, 23) from the 64 chorus-off patches, which cancels
+    // the recording chain's own imbalance; the engine with the draw moved
+    // +1.02 and +0.79 dB (hardware minus engine -1.20 dB, s.e. 0.09). The
+    // comb depth of steady harmonics at 0.8-3.15 kHz, which reads each
+    // channel's wet/dry ratio directly, agrees: left over right +0.2 to
+    // +0.3 dB on the capture against -1.1 to -1.5 dB. With this offset the
+    // shift reads -0.13 / -0.30 dB (hardware minus engine -0.06 dB, s.e.
+    // 0.08). The captures cannot split the two MN3009s from IC6's wet legs,
+    // whose draws stay, so this is the lines' offset given those legs.
+    // Selected by useMeasuredChorusLineBalance and scaled by Unit Character
+    // like the draw (Tools/AnalyzeChorusBankEvidence.py balance, comb).
+    static constexpr float measuredLineInsertionGainOffsetDb = -0.25f;
     // The same fixed-seed bipolar hash for any other jack-board part, keyed
     // by its designator so every part keeps its own draw.
     [[nodiscard]] static float componentDraw(std::uint32_t designator) noexcept;
@@ -1287,6 +1303,7 @@ private:
     float lineGainA_ { 1.0f };
     float lineGainB_ { 1.0f };
     float lineGainCalibration_ { 0.0f };
+    bool lineGainMeasured_ { false };
     // Per-line clock timing at the last calibration it was solved for.
     LineTimingScale lineTiming_ {};
     float lineTimingCalibration_ { 0.0f };

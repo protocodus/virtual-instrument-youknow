@@ -53,6 +53,20 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.7 — 2026-11-11 — The chorus sits in the middle
+
+- With the chorus on, the sound no longer leans left. The two delay lines
+  had been given a level offset drawn inside the MN3009's ±4 dB row, which
+  put line A 1.56 dB over line B and moved single notes about 1 dB to the
+  left. #439522's original chorus board, across its sixteen factory-bank
+  captures, moves them 0.2–0.35 dB the other way from where they sit with
+  the chorus off. The lines now carry the measured offset, −0.25 dB at Unit
+  Character 1. The chorus's overall level already matched the board within
+  0.1 dB and does not move; with the chorus off a freshly loaded patch
+  renders bit for bit as 1.4.6.
+  Selected on measurement, not by ear. [Decision](Docs/decisions.md),
+  [stage review](Docs/research/stage-review-2026-11-11.md).
+
 ### 1.4.6 — 2026-11-05 — Less CPU, the same sound
 
 - About 4 % fewer instructions, idle and with six voices, cold or settled
@@ -1231,8 +1245,14 @@ forty-year-old unit will null against the plug-in.
   Each MN3009 also
   carries its own insertion gain — Panasonic's row is Min −4 / Typ 0 /
   Max +4 dB and nothing on the board trims it — so under Unit Character the
-  two returns take a fixed-seed relative offset of up to 1.6 dB, split ±
-  so their common gain does not move (anchored bound, voiced point; OQ-04).
+  two returns take a relative offset, split ± so their common gain does not
+  move. The product uses the offset #439522's original board shows across
+  its factory-bank captures, line A 0.25 dB under line B, read from how far
+  single notes move between the channels when the chorus comes on and from
+  the comb depth of their steady harmonics (measured on one unit; the
+  captures cannot split the two lines from IC6's wet legs). The raw
+  reference keeps the earlier fixed-seed draw of up to 1.6 dB inside the
+  row (anchored bound, voiced point; OQ-04).
   The product additionally selects a common +2.3 dB signal insertion gain,
   measured in-circuit on the same MN3009 by
   [Holters and Parker, p. 6](https://www.dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf#page=6).
@@ -1316,8 +1336,8 @@ check points (the nominal reference endpoints remain within 6 cents at the
 declared ten-minute service state; the product adds these residuals to the
 selected nominal card base), per-stage input offsets, the resonance BA662's own input
 offset inside the BA6110 sibling sheet's 3 mV maximum, capacitor staggering, slow cutoff
-wander, the two chorus lines' relative insertion
-offset inside the MN3009's ±4 dB row, and the chassis warm-up law
+wander, the two chorus lines' measured relative insertion
+offset, and the chassis warm-up law
 `25 + 15(1 − e^{−t/3})` °C with its spatial gradient across the cards, which
 develops on the same clock: the gradient is the supply's heat reaching the
 cards unequally, absent at power-on, so a serviced card starts mis-trimmed by
@@ -2178,11 +2198,11 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `1.4.6-build.1`. To identify a local build, pass
+Local builds default to `1.4.7-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses the workflow's `GITHUB_RUN_NUMBER`; the configured
-number is saved in the build directory. The current host version is `1.4.6`,
-and its signed-release tag would be `v1.4.6`. Archive names and the
+number is saved in the build directory. The current host version is `1.4.7`,
+and its signed-release tag would be `v1.4.7`. Archive names and the
 About box include the build number; macOS bundle and installer build metadata
 carry it too.
 
@@ -2218,7 +2238,7 @@ tree, a dated release-history entry and a matching `v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-1.4.6 development packages remain distinct from a signed production release.
+1.4.7 development packages remain distinct from a signed production release.
 
 ### Local listening renders
 

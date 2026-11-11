@@ -2116,6 +2116,50 @@ Mode I's. Selected on measurement; no listening verdict is recorded.
   transfer, the follower's bias) is not identified. The 120 Hz component
   the captures also carry with the chorus on is not modelled.
 
+## 2026-11-11 — The chorus lines' measured balance
+
+The owner asked for another realism round. A review of every stage's derived
+constants found none to correct
+([stage review](research/stage-review-2026-11-11.md)); the same sixteen
+factory-bank captures of #439522 show one more chorus departure a
+measurement settles. Selected on measurement; no listening verdict is
+recorded.
+
+- **Finding.** Single notes' level, 0.15–0.95 s after each onset, left minus
+  right, per patch: with the chorus off the capture reads −0.709 dB (64
+  patches, s.e. 0.007; the recording chain and the dry path), mode I −0.916
+  (39 patches) and mode II −1.060 (23). The original board therefore moves
+  the image −0.21 and −0.35 dB when the chorus comes on. 1.4.6 moved it
+  +1.02 and +0.79 dB: hardware minus engine −1.20 dB (s.e. 0.09, both
+  modes). The on-minus-off difference cancels the recording chain's own
+  imbalance. The summed level with the chorus on already agreed within
+  0.1 dB of its chorus-off agreement.
+- **Cause.** The fixed-seed MN3009 insertion-gain draw (2026-10-28, a voiced
+  point inside Panasonic's ±4 dB row) lands near its extreme: line A
+  1.56 dB over line B.
+- **Second estimator.** Each channel carries dry plus delayed wet, so a
+  steady harmonic's envelope swings between |1 + r| and |1 − r| as the delay
+  sweeps and its depth gives the wet/dry ratio r directly. Over mode I
+  patches with steady harmonics, 0.8–3.15 kHz in three bands, the capture's
+  depth reads left over right +0.33, +0.21 and +0.26 dB; 1.4.6 read −1.45,
+  −1.29 and −1.07 dB.
+- **Selection.** `Chorus::measuredLineInsertionGainOffsetDb` = −0.25 dB
+  (line A under line B) at Unit Character 1, in place of the draw, by
+  `useMeasuredChorusLineBalance` (product on, raw off). All sixteen banks
+  re-rendered: the shift reads −0.13 (I) and −0.30 dB (II), hardware minus
+  engine −0.06 dB (s.e. 0.08); comb depth left over right +0.16, +0.33 and
+  +0.43 dB, and each channel's depth within 0.2 dB of the capture's, from
+  0.6–0.9 dB apart. The value that zeroes the level residual alone is
+  −0.35 dB (s.e. 0.14); −0.25 sits inside both estimators and was not
+  refined further.
+- **Limits.** One unit. The captures cannot split the two MN3009s from IC6's
+  wet summing legs, whose tolerance draws stay, so the figure is the lines'
+  offset given those legs; it does not identify either part. The Borish
+  replacement voice cards are ahead of the chorus and common to both
+  channels. Estimators: [`Tools/AnalyzeChorusBankEvidence.py`](../Tools/AnalyzeChorusBankEvidence.py)
+  `balance` and `comb`.
+- A/B set for the owner (A = 1.4.6, B = 1.4.7), not committed.
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

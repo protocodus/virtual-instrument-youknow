@@ -85,6 +85,9 @@ struct ProductHardwareRealismProfile
         parameters.enableChorusClockDependentHiss = true;
         parameters.useMeasuredChorusModeHissLevels = true;
         parameters.enableChorusClockFeedthrough = true;
+        // 2026-11-11: the two wet lines' relative level as that board sets
+        // it across the same captures, in place of the insertion-gain draw.
+        parameters.useMeasuredChorusLineBalance = true;
     }
 };
 } // namespace youknow

@@ -5254,6 +5254,8 @@ void testChorusLineGainSpreadIsRelativeOnly()
                <= 0.5f * Chorus::lineInsertionGainBoundDb,
            "the voiced line spread left the conservative half of its bound");
     constexpr float rate = 48000.0f;
+    // The measured balance replaces the draw and nothing else.
+    for (bool measured : { false, true })
     for (float calibration : { 0.0f, 1.0f, 2.0f })
     {
         Chorus spread;
@@ -5267,7 +5269,10 @@ void testChorusLineGainSpreadIsRelativeOnly()
                 0.2 * std::sin(2.0 * pi * 440.0 * index / rate));
             float l1 = 0.0f, r1 = 0.0f, l2 = 0.0f, r2 = 0.0f;
             spread.process(input, ChorusMode::One, 0.0f, l1, r1,
-                           calibration, true, false, true);
+                           calibration, true, false, true,
+                           ChorusTimingProfile::Shipping, false, false, false,
+                           0.0f, 1.0f, false, false, false, false, false,
+                           false, false, false, false, measured);
             flat.process(input, ChorusMode::One, 0.0f, l2, r2,
                          calibration, true, false, false);
             if (index >= 12000)
@@ -5282,8 +5287,9 @@ void testChorusLineGainSpreadIsRelativeOnly()
         const double offsetDb = 10.0 * std::log10(spreadLeft / spreadRight)
                               - 10.0 * std::log10(flatLeft / flatRight);
         expectNear(offsetDb,
-                   draw * Chorus::lineInsertionGainSpreadDb * calibration, 0.05,
-                   "the L/R wet offset is not the scaled draw");
+                   (measured ? Chorus::measuredLineInsertionGainOffsetDb
+                             : draw * Chorus::lineInsertionGainSpreadDb) * calibration,
+                   0.05, "the L/R wet offset is not the scaled figure");
         expectNear(10.0 * std::log10((spreadLeft * spreadRight)
                                      / (flatLeft * flatRight)),
                    0.0, 0.02, "the line spread moved the absolute wet level");
