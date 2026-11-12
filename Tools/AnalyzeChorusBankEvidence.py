@@ -40,9 +40,18 @@ all 487 single notes, 4.55 dB; only the absolute comparisons (`thump`) use it.
          low-pass at min(0.4 f0, 150 Hz), kept where the comb's beat rate stays inside it and the
          harmonic stands 35 dB over the envelope midway to the next one on both sides. Median depth
          per channel in three bands from 0.8 to 3.15 kHz.
+  timing The firmware's pass clock, which steps the envelopes and the LFO. Release: on ENV-mode
+         patches with SUSTAIN >= 30, the time after key-up (carried from each note's own onset) at
+         which the 8 ms RMS envelope, 1 ms hop, has fallen 20 and 30 dB below its last 50 ms, kept
+         where both sides take 100 ms or more; hardware over engine per note. LFO: on noise-free
+         patches with DCO LFO >= 8, the fundamental's instantaneous frequency (band-pass 0.75-1.33 f0,
+         analytic phase, 1 kHz trace) over the note's last 0.5 s, fitted to a sinusoid with a linear
+         amplitude and trend, rate free within 30 % of the periodogram's peak; kept where both sides
+         swing 3 cents or more over at least 1.5 cycles, median per patch, hardware over engine.
 
 Limits. One serviced unit with replacement voice cards; only the chorus board and DCOs are original,
-so only chorus quantities are read here. The capture's own recording chain high-passes below about
+so only chorus quantities are read here; `timing` reads the CPU board's clock through those cards,
+whose own settling is why release falls under 100 ms are left out. The capture's own recording chain high-passes below about
 20 Hz and adds its own floor and 120 Hz hum; the thump lobe's shape and the chorus-off floor are its,
 not the instrument's. Short idle windows hold under one sweep, so single-patch figures scatter and only
 means over patches are reported.
@@ -53,6 +62,9 @@ C4 -0.15/-0.08 dB; thump floor at 30-100 Hz -0.03/+0.54 dB hardware minus engine
 On 1.4.7: balance, chorus on minus off, -0.21/-0.35 dB (hardware, modes I/II) against -0.13/-0.30,
 hardware minus engine -0.06 dB (s.e. 0.08; 1.4.6: -1.20); comb depth left over right +0.33/+0.21/+0.26
 dB (hardware, three bands) against +0.16/+0.33/+0.43 (1.4.6: -1.45/-1.29/-1.07).
+On 1.4.7: timing, hardware over engine, release fall x1.011 (median of 290 falls; mean x1.009, s.e.
+1.7 %); LFO rate x0.998 and vibrato depth x1.038 (medians of 17 patches; means x1.038 and x1.028, s.e.
+3.8 %, the slow rates holding under two cycles).
 
 Sources: https://www.lewisfrancis.com/nwio/Juno-10-test-audio-96K.zip and
 https://kayrock.org/kr106/106_calibration.zip; every file is checked by hash.
@@ -60,7 +72,7 @@ https://kayrock.org/kr106/106_calibration.zip; every file is checked by hash.
   python3 Tools/AnalyzeChorusBankEvidence.py export --midi-zip 106_calibration.zip --out out/bank
   for b in A1x ... B8x; do build/YouKnowRenderCalibrationEvents out/bank/events-$b.txt out/bank/$b.wav 1 product; done
   ./build/YouKnowMeasureChorusSupport a11-spectral nominal-2sa1015-nonlinear > out/bank/support.json
-  python3 Tools/AnalyzeChorusBankEvidence.py sweep|hiss|thump|balance|comb --midi-zip 106_calibration.zip \\
+  python3 Tools/AnalyzeChorusBankEvidence.py sweep|hiss|thump|balance|comb|timing --midi-zip 106_calibration.zip \\
       --captures CAPTURE_DIR --models out/bank [--support out/bank/support.json] [--jobs 4]
 """
 import argparse
@@ -75,7 +87,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 from scipy.optimize import least_squares
-from scipy.signal import butter, sosfilt, sosfiltfilt, welch
+from scipy.signal import butter, hilbert, sosfilt, sosfiltfilt, welch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import AnalyzeChorusCapture as capture_estimator  # noqa: E402
@@ -506,9 +518,76 @@ def run_comb(args):
     return out
 
 
+# ---------------------------------------------------------------- timing
+def vibrato(segment, rate, f0):
+    """Rate (Hz), depth (cents) and cycles of the fundamental's vibrato over the segment's last 0.5 s."""
+    band = sosfiltfilt(butter(4, [f0 * 0.75, f0 * 1.33], "bp", fs=rate, output="sos"), segment)
+    step = int(rate / 1000)
+    hz = np.diff(np.unwrap(np.angle(hilbert(band)))[::step]) * 1000 / (2 * np.pi)
+    cents = 1200 * np.log2(np.maximum(hz[-520:-20], 1.0) / np.median(hz[-520:-20]))
+    t = np.arange(len(cents)) / 1000
+    spectrum = np.abs(np.fft.rfft((cents - cents.mean()) * np.hanning(len(cents)), 1 << 16))
+    freqs = np.fft.rfftfreq(1 << 16, 1e-3)
+    guess = freqs[np.argmax(spectrum * ((freqs > 1.5) & (freqs < 40)))]
+
+    def residual(q):
+        return (q[0] + q[1] * t) * np.sin(2 * np.pi * q[2] * t + q[3]) + q[4] + q[5] * t - cents
+
+    fits = [least_squares(residual, [np.std(cents) * 1.4, 0, guess, phase, 0, 0],
+                          bounds=([-np.inf, -np.inf, guess * 0.7, -np.inf, -np.inf, -np.inf],
+                                  [np.inf, np.inf, guess * 1.3, np.inf, np.inf, np.inf]))
+            for phase in (0, np.pi / 2, np.pi, 3 * np.pi / 2)]
+    q = min(fits, key=lambda f: f.cost).x
+    return float(q[2]), float(abs(q[0] + q[1] * t.mean())), float(q[2] * t[-1])
+
+
+def timing_bank(job):
+    args, bank = job
+    _, patches, sources = load(args, bank)
+    release, lfo = [], []
+    for index, p in enumerate(patches):
+        tone, switches = p["sysex"][5:21], p["sysex"][21:23]
+        octave = {1: 0.5, 2: 1.0, 4: 2.0}.get(switches[0] & 7, 1.0)
+        for key, on, off in p["notes"][-5:]:
+            falls, swings = [], []
+            for audio, rate, shift, _, _ in sources:
+                env, hop = envelope_db(audio[int((on + shift - 0.3) * rate):int((off + shift + 2.5) * rate)], rate,
+                                       hop=0.001, window=0.008)
+                start = onset(env, hop, 0.3) or 0.3
+                up = int((start + off - on) / hop)
+                tail = env[up:] - env[up - 60:up - 10].mean()
+                falls.append([np.argmax(tail <= -drop) * hop if (tail <= -drop).any() else 0.0 for drop in (20, 30)])
+                if tone[2] >= 8 and not tone[4]:
+                    begin = int((on + shift + start - 0.3) * rate)
+                    swings.append(vibrato(audio[begin:begin + int((off - on) * rate)].mean(1), rate,
+                                          440 * 2 ** ((key - 69) / 12) * octave))
+            if not switches[1] & 4 and tone[13] >= 30:
+                release += [math.log2(h / m) for h, m in zip(*falls) if min(h, m) >= 0.1]
+            if swings and min(s[1] for s in swings) >= 3 and min(s[2] for s in swings) >= 1.5:
+                lfo.append((bank, index, swings[0][0] / swings[1][0], swings[0][1] / swings[1][1]))
+    return release, lfo
+
+
+def run_timing(args):
+    with concurrent.futures.ProcessPoolExecutor(args.jobs) as pool:
+        results = list(pool.map(timing_bank, [(args, bank) for bank in BANKS]))
+    release = np.array([r for rel, _ in results for r in rel])
+    notes = [n for _, lfo in results for n in lfo]
+    patches = sorted({n[:2] for n in notes})
+    rate = np.log2([np.median([n[2] for n in notes if n[:2] == p]) for p in patches])
+    depth = np.log2([np.median([n[3] for n in notes if n[:2] == p]) for p in patches])
+
+    def ratio(logs):
+        return dict(n=len(logs), hardware_over_model_median=float(2 ** np.median(logs)),
+                    hardware_over_model_mean=float(2 ** logs.mean()),
+                    standard_error=float(2 ** standard_error(logs) - 1))
+
+    return dict(release_fall_20_30_db=ratio(release), lfo_rate_per_patch=ratio(rate), lfo_depth_per_patch=ratio(depth))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("export", "sweep", "hiss", "thump", "balance", "comb"))
+    parser.add_argument("command", choices=("export", "sweep", "hiss", "thump", "balance", "comb", "timing"))
     parser.add_argument("--midi-zip", type=Path, required=True)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--captures", type=Path)
@@ -524,7 +603,8 @@ def main():
         return
     if args.command == "sweep" and not args.support:
         parser.error("sweep needs --support")
-    result = dict(sweep=run_sweep, hiss=run_hiss, thump=run_thump, balance=run_balance, comb=run_comb)[args.command](args)
+    result = dict(sweep=run_sweep, hiss=run_hiss, thump=run_thump, balance=run_balance, comb=run_comb,
+                  timing=run_timing)[args.command](args)
     print(json.dumps(result if args.command != "sweep" else result["hardware_minus_model"], indent=1))
     if args.out:
         args.out.write_text(json.dumps(result, indent=1))

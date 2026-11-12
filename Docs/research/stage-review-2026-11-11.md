@@ -40,6 +40,16 @@ render of the same MIDI.
   depth agrees within 0.2 dB from 0.8 to 3.15 kHz. Above 5 kHz the few
   usable harmonics (four patches) read the capture's left channel about
   1 dB shallower than the engine's; too few to act on.
+- **Envelope and LFO clock** (added 2026-11-12). The firmware steps both
+  once per pass, and the pass's duration on a real unit was open (OQ-12).
+  Release falls of 100 ms and longer take 1.011 times the engine's (290
+  falls, s.e. 1.7 %); the LFO runs at 0.998 times the engine's rate with
+  1.038 times its vibrato depth (medians of 17 patches, s.e. 3.8 %). The
+  4.2 ms pass stands; nothing changes.
+- **Pitch.** The capture sits 7 cents flat overall (its tune setting). Over
+  C1 to C5 it rises 2.5 cents and the engine 2.8, and the notes of one
+  patch spread 3.9 cents on the capture and 3.6 on the engine (45 patches
+  without LFO or noise). Scratch measurement, not in a tool.
 
 ## Left open
 
