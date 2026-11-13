@@ -266,7 +266,7 @@ see [local listening renders](#local-listening-renders).
 ## Downloads
 
 <!-- build-download-begin -->
-**[Download main build 57](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/43201818575/artifacts/13944490752)**, built from [`5d985b7ddaf4`](https://github.com/protocodus/virtual-instrument-youknow/commit/5d985b7ddaf41837cafe3a729ee15451e9a6f252). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
+**[Download main build 58](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/43409273746/artifacts/14033339431)**, built from [`81a5f88fa58e`](https://github.com/protocodus/virtual-instrument-youknow/commit/81a5f88fa58e85b69abee63b742424c7b9cacee0). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
 <!-- build-download-end -->
 
 Each main build holds the macOS universal `.pkg` installer and manual-install
