@@ -20,14 +20,14 @@ build renders them and rewrites this table.
 
 | # | Preset | Demo | Length | Peak |
 | --- | --- | --- | --- | --- |
-| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.wav](Docs/audio/001-a11-brass-set-1.wav) | 10.5 s | -15.0 dBFS |
+| 1 | A11 Brass Set 1 | [001-a11-brass-set-1.wav](Docs/audio/001-a11-brass-set-1.wav) | 10.5 s | -15.1 dBFS |
 | 5 | A15 Moving Strings | [005-a15-moving-strings.wav](Docs/audio/005-a15-moving-strings.wav) | 11.5 s | -18.8 dBFS |
-| 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.wav](Docs/audio/015-a27-elect-piano-i.wav) | 10.0 s | -12.6 dBFS |
-| 31 | A47 Funky I | [031-a47-funky-i.wav](Docs/audio/031-a47-funky-i.wav) | 10.0 s | -28.4 dBFS |
-| 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.wav](Docs/audio/032-a48-synth-bass-i-unison.wav) | 11.6 s | -19.8 dBFS |
-| 33 | A51 Lead I | [033-a51-lead-i.wav](Docs/audio/033-a51-lead-i.wav) | 11.3 s | -30.4 dBFS |
-| 48 | A68 Synth Pad | [048-a68-synth-pad.wav](Docs/audio/048-a68-synth-pad.wav) | 11.1 s | -18.1 dBFS |
-| 61 | A85 Rocket Men | [061-a85-rocket-men.wav](Docs/audio/061-a85-rocket-men.wav) | 11.5 s | -23.6 dBFS |
+| 15 | A27 Elect. Piano I | [015-a27-elect-piano-i.wav](Docs/audio/015-a27-elect-piano-i.wav) | 10.0 s | -12.2 dBFS |
+| 31 | A47 Funky I | [031-a47-funky-i.wav](Docs/audio/031-a47-funky-i.wav) | 10.0 s | -27.8 dBFS |
+| 32 | A48 Synth Bass I (unison) | [032-a48-synth-bass-i-unison.wav](Docs/audio/032-a48-synth-bass-i-unison.wav) | 11.6 s | -20.7 dBFS |
+| 33 | A51 Lead I | [033-a51-lead-i.wav](Docs/audio/033-a51-lead-i.wav) | 11.3 s | -29.8 dBFS |
+| 48 | A68 Synth Pad | [048-a68-synth-pad.wav](Docs/audio/048-a68-synth-pad.wav) | 11.1 s | -18.9 dBFS |
+| 61 | A85 Rocket Men | [061-a85-rocket-men.wav](Docs/audio/061-a85-rocket-men.wav) | 11.5 s | -23.7 dBFS |
 
 <!-- audio-demos-end -->
 
@@ -297,7 +297,7 @@ see [local listening renders](#local-listening-renders).
 ## Downloads
 
 <!-- build-download-begin -->
-**[Download main build 62](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/43634012496/artifacts/14130012138)**, built from [`c4da60e30eb4`](https://github.com/protocodus/virtual-instrument-youknow/commit/c4da60e30eb48b349dd49648ec986b5ca22e948b). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
+**[Download main build 63](https://github.com/protocodus/virtual-instrument-youknow/actions/runs/43640153586/artifacts/14132551931)**, built from [`47f02397d13e`](https://github.com/protocodus/virtual-instrument-youknow/commit/47f02397d13e51e8daea03838688d04127b3b57d). It holds the macOS, Windows and Linux packages, `SHA256SUMS` and `BUILD.txt`.
 <!-- build-download-end -->
 
 Each main build holds the macOS universal `.pkg` installer and manual-install
