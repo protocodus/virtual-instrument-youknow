@@ -55,15 +55,16 @@ see [local listening renders](#local-listening-renders).
 
 ### 1.4.8 — 2026-11-14 — Less CPU, the same sound
 
-- About 7–9 % less CPU on dry patches, 14 % less on six voices with the full
-  mixer and Chorus II, and 16 % less on sixteen voices at 48 kHz/1× (native
+- About 7–10 % less CPU on dry patches, 13 % less on six voices with the full
+  mixer and Chorus II, and 15 % less on sixteen voices at 48 kHz/1× (native
   calling-thread timings; not a Reason-host measurement). Active voices pair
   across their local oversampling islands and slewing controls in portable
   8-byte-aligned `Double2` SIMD, polyphase upsamplers and symmetric FIR
   decimators batch and fold tap reads, the chorus's 192 kHz clock-hiss law
   replaces `libm` `pow` with a segmented IEEE-754 `Double2` kernel, and stereo
   chorus and output stages step both channels together. Every validation render
-  is bit-identical to 1.4.7.
+  is bit-identical to 1.4.7; the hiss kernel alone is within 9 double ULPs of
+  `pow` and matched it after float narrowing across an 18.5M-point sweep.
   [Measurements](Docs/benchmarks/cpu-optimizations-2026-11-14.md).
 
 ### 1.4.7 — 2026-11-11 — The chorus sits in the middle
