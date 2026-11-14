@@ -35,6 +35,100 @@ namespace youknow
 #endif
 }
 
+[[nodiscard]] inline float inlineSqrt(float value) noexcept
+{
+#if defined(__clang__) && defined(__has_builtin)
+#if __has_builtin(__builtin_elementwise_sqrt)
+    return __builtin_elementwise_sqrt(value);
+#else
+    return __builtin_sqrtf(value);
+#endif
+#elif defined(__GNUC__)
+    return __builtin_sqrtf(value);
+#else
+    return std::sqrt(value);
+#endif
+}
+
+[[nodiscard]] inline double inlineAbs(double value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_fabs(value);
+#else
+    return std::abs(value);
+#endif
+}
+
+[[nodiscard]] inline float inlineAbs(float value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_fabsf(value);
+#else
+    return std::abs(value);
+#endif
+}
+
+[[nodiscard]] inline double inlineFloor(double value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_floor(value);
+#else
+    return std::floor(value);
+#endif
+}
+
+[[nodiscard]] inline float inlineFloor(float value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_floorf(value);
+#else
+    return std::floor(value);
+#endif
+}
+
+[[nodiscard]] inline double inlineCopysign(double magnitude, double sign) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_copysign(magnitude, sign);
+#else
+    return std::copysign(magnitude, sign);
+#endif
+}
+
+[[nodiscard]] inline float inlineCopysign(float magnitude, float sign) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_copysignf(magnitude, sign);
+#else
+    return std::copysign(magnitude, sign);
+#endif
+}
+
+// Portable two-lane IEEE-754 double vector compatible with native ARM64,
+// x86_64 and Reason Rack Extension phdsp64 (whose __BIGGEST_ALIGNMENT__ is 8).
+#if defined(__clang__) || defined(__GNUC__)
+#define YOUKNOW_HAS_DOUBLE2_SIMD 1
+typedef double Double2 __attribute__((__vector_size__(16), __aligned__(8), __may_alias__));
+static_assert(sizeof(Double2) == 2 * sizeof(double));
+static_assert(alignof(Double2) <= alignof(double));
+[[nodiscard]] inline Double2 double2Pack(double low, double high) noexcept
+{
+    return Double2 { low, high };
+}
+[[nodiscard]] inline Double2 double2Splat(double value) noexcept
+{
+    return Double2 { value, value };
+}
+[[nodiscard]] inline double double2Low(Double2 value) noexcept
+{
+    return value[0];
+}
+[[nodiscard]] inline double double2High(Double2 value) noexcept
+{
+    return value[1];
+}
+#endif
+
 // Shared DSP is also consumed by C++17 hosts. Keep C++20 clients' span API,
 // and supply only the dynamic view operations used by the firmware paths on
 // older toolchains. The view never owns or allocates its backing storage.

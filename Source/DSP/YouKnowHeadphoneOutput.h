@@ -100,7 +100,7 @@ public:
             temperature_ = temperatureKelvin;
             noiseAmount_ = amount;
             noiseScale_ = coefficients_.noiseDensityPerRootKelvin
-                        * std::sqrt(0.5 * sampleRate_ * temperature_) * noiseAmount_;
+                        * inlineSqrt(0.5 * sampleRate_ * temperature_) * noiseAmount_;
             rebuildAmplifierNoise();
         }
         return true;
@@ -197,21 +197,21 @@ private:
         const double noiseHf = amplifierGain*amplifierGain*zhf+feedbackResistance+220.0;
         coefficients_ = {inputPole,headphonePole,
             lower/(upper+lower)*(100000.0/101000.0)*amplifierGain*outputDivider,
-            std::sqrt(noiseDc/noiseHf),
-            std::sqrt(4*1.380649e-23*noiseHf)*outputDivider};
+            inlineSqrt(noiseDc/noiseHf),
+            inlineSqrt(4*1.380649e-23*noiseHf)*outputDivider};
         inputG_ = std::tan(numbers::pi*inputPole/sampleRate_);
         headphoneG_ = std::tan(numbers::pi*headphonePole/sampleRate_);
-        amplifierNoiseLowGain_ = std::sqrt((noiseDc-220)/(noiseHf-220));
+        amplifierNoiseLowGain_ = inlineSqrt((noiseDc-220)/(noiseHf-220));
         noiseScale_ = coefficients_.noiseDensityPerRootKelvin
-                    * std::sqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
+                    * inlineSqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
         rebuildAmplifierNoise();
     }
     void rebuildAmplifierNoise() noexcept
     {
-        const double scale = std::sqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
-        outputNoiseScale_ = std::sqrt(4*1.380649e-23*220)*scale;
+        const double scale = inlineSqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
+        outputNoiseScale_ = inlineSqrt(4*1.380649e-23*220)*scale;
         const double total = coefficients_.noiseDensityPerRootKelvin/outputDivider_;
-        amplifierNoiseScale_ = std::sqrt(std::max(0.0,total*total-4*1.380649e-23*220))*scale;
+        amplifierNoiseScale_ = inlineSqrt(std::max(0.0,total*total-4*1.380649e-23*220))*scale;
         // Device density stays at its measured25C coordinate, unlike Johnson
         // noise. Zero-K suppression is only an exact-silence diagnostic policy.
         intrinsicNoiseScale_ = temperature_>0

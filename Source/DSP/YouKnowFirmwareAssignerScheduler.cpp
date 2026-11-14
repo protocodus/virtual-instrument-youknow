@@ -450,12 +450,13 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
             };
             Completion commit(state, configuration, tables, inputs);
             const auto pending = state.pending;
+            const Instruction *instruction = nullptr;
             if (pending.kind == PendingKind::InterruptEntry) {
                 commit.pushByte(pending.savedPsw); commit.push(pending.returnPc);
                 auto &r = commit.state.registers;
                 r.pc = pending.address; r.skip = false; r.l0 = false; r.l1 = false;
             } else {
-                const auto *instruction = find(pending.address);
+                instruction = find(pending.address);
                 if (!instruction) return finish(Status::InvalidState);
                 commit.execute(*instruction, uart);
             }
@@ -469,8 +470,8 @@ FirmwareAssignerScheduler::Result FirmwareAssignerScheduler::advanceTo(
                 writeStatus = Uart::writePortC(uart,
                     static_cast<std::uint8_t>(commit.peripheralValue), uartEvents);
             if (writeStatus != Uart::Status::Ok) return rollback(uartStatus(writeStatus));
-            if (pending.kind == PendingKind::Instruction && !pending.skipped &&
-                find(pending.address)->op == Op::SKIT_FST) (void)Uart::testAndClearFst(uart);
+            if (instruction != nullptr && !pending.skipped &&
+                instruction->op == Op::SKIT_FST) (void)Uart::testAndClearFst(uart);
             for (unsigned i = 0; i < commit.count; ++i) {
                 const auto &event = commit.events[i];
                 if (event.kind == EventKind::RamWrite || event.kind == EventKind::StackWrite)

@@ -395,7 +395,7 @@ private:
                 + (1.0 - gate) * on / (c.diodeSlopeVolts + seriesOhms * on);
             const double step = residual / derivative;
             wave -= step;
-            if (std::abs(step) <= 1.0e-13 * std::max(1.0, std::abs(wave)))
+            if (inlineAbs(step) <= 1.0e-13 * std::max(1.0, inlineAbs(wave)))
                 break;
         }
         const double current = (wave - historyVolts) * loadConductance;

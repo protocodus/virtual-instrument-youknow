@@ -8,7 +8,7 @@
 #include <limits>
 #include "YouKnowCompatibility.h"
 
-#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD) && !defined(YOUKNOW_EMBEDDED_TARGET)
 #if defined(__aarch64__) && defined(__ARM_NEON)
 #include <arm_neon.h>
 #elif defined(__x86_64__) && defined(__SSE2__)
@@ -600,7 +600,7 @@ namespace
 // exponential, saturates at 4095, and differs from the recovered image by at
 // most one code. These anchors are therefore derived, not ROM-resolved; the
 // surrounding unsigned clamp and truncating interpolation below are exact.
-std::uint32_t derivedDcoDividerAnchor(int index) noexcept
+[[maybe_unused]] std::uint32_t derivedDcoDividerAnchor(int index) noexcept
 {
     const double octave = std::exp2(-static_cast<double>(index) / 12.0);
     const double value = -0.25 + 61382.5 * octave
@@ -608,7 +608,7 @@ std::uint32_t derivedDcoDividerAnchor(int index) noexcept
     return static_cast<std::uint32_t>(std::floor(value + 0.5));
 }
 
-std::uint16_t derivedDcoCvAnchor(int index) noexcept
+[[maybe_unused]] std::uint16_t derivedDcoCvAnchor(int index) noexcept
 {
     const double value = 32.0 * std::exp2(
         static_cast<double>(index) / 12.0);
@@ -628,8 +628,10 @@ std::uint16_t aggregatePitchWord(double midiNote,
     const double units = b2MasterPitchWord + midiNote * 256.0
                        + static_cast<double>(controlOffset);
     const double bounded = std::clamp(units, 0.0, 65535.0);
-    return static_cast<std::uint16_t>(std::floor(bounded + 0.5));
+    return static_cast<std::uint16_t>(inlineFloor(bounded + 0.5));
 }
+
+const FirmwareControlTrace::Tables& firmwareControlTables() noexcept;
 } // namespace
 
 YouKnowEngine::DcoPitchPair YouKnowEngine::dcoPitchPair(
@@ -653,10 +655,12 @@ YouKnowEngine::DcoPitchPair YouKnowEngine::dcoPitchPair(
     else
         index = high - 0x30;
 
-    const std::uint32_t divider = derivedDcoDividerAnchor(index);
-    const std::uint32_t nextDivider = derivedDcoDividerAnchor(index + 1);
-    const std::uint32_t cvCode = derivedDcoCvAnchor(index);
-    const std::uint32_t nextCvCode = derivedDcoCvAnchor(index + 1);
+    const auto& tables = firmwareControlTables();
+    const auto i = static_cast<std::size_t>(index);
+    const std::uint32_t divider = tables.pitchDivider[i];
+    const std::uint32_t nextDivider = tables.pitchDivider[i + 1u];
+    const std::uint32_t cvCode = tables.pitchCv[i];
+    const std::uint32_t nextCvCode = tables.pitchCv[i + 1u];
     return {
         divider - fraction * (divider - nextDivider) / 256u,
         static_cast<std::uint16_t>(
@@ -1284,7 +1288,7 @@ namespace
 {
 // Compact laws independently derived from the hash-matched B-2 regions. They
 // reproduce all observable coefficients while avoiding a ROM/table dump.
-std::uint16_t attackIncrementForByte(std::uint8_t byte) noexcept
+[[maybe_unused]] std::uint16_t attackIncrementForByte(std::uint8_t byte) noexcept
 {
     const int index = byte;
     if (index == 0)
@@ -1372,7 +1376,7 @@ std::uint16_t lfoDelayFadeIncrementForByte(std::uint8_t byte) noexcept
     }
 }
 
-std::uint8_t portamentoIncrementForIndex(std::uint8_t index) noexcept
+[[maybe_unused]] std::uint8_t portamentoIncrementForIndex(std::uint8_t index) noexcept
 {
     if (index == 0u)
         return 0u;
@@ -1402,6 +1406,32 @@ std::uint16_t truncatedDecayProduct(std::uint16_t value,
         + ((coefficientLow * valueHigh) >> 8u)
         + ((coefficientHigh * valueLow) >> 8u));
 }
+
+const FirmwareControlTrace::Tables& firmwareControlTables() noexcept
+{
+#if defined(YOUKNOW_EMBEDDED_TARGET)
+    static constexpr FirmwareControlTrace::Tables tables =
+#include "FrozenTables/FirmwareControl.inc"
+;
+#else
+    static const auto tables = [] {
+        FirmwareControlTrace::Tables result;
+        for (unsigned i = 0; i < 128; ++i)
+        {
+            result.attack[i] = attackIncrementForByte(static_cast<std::uint8_t>(i));
+            result.portamento[i] = portamentoIncrementForIndex(static_cast<std::uint8_t>(i));
+        }
+        for (int i = 0; i < 104; ++i)
+        {
+            result.pitchCv[static_cast<std::size_t>(i)] = derivedDcoCvAnchor(i);
+            result.pitchDivider[static_cast<std::size_t>(i)] =
+                static_cast<std::uint16_t>(derivedDcoDividerAnchor(i));
+        }
+        return result;
+    }();
+#endif
+    return tables;
+}
 } // namespace
 
 std::uint16_t YouKnowEngine::storedControlAlignedWord(float panelPosition) noexcept
@@ -1417,7 +1447,7 @@ std::uint16_t YouKnowEngine::storedControlDacCode(float panelPosition) noexcept
 std::uint16_t YouKnowEngine::envelopeAttackIncrement(
     float panelPosition) noexcept
 {
-    return attackIncrementForByte(storedControlByte(panelPosition));
+    return firmwareControlTables().attack[storedControlByte(panelPosition)];
 }
 
 std::uint16_t YouKnowEngine::envelopeDecayReleaseMultiplier(
@@ -1440,7 +1470,7 @@ std::uint16_t YouKnowEngine::lfoDelayFadeIncrement(
 std::uint8_t YouKnowEngine::portamentoIncrement(float panelPosition) noexcept
 {
     const auto raw = controlAdcByte(panelPosition);
-    return raw == 0u ? 0u : portamentoIncrementForIndex(raw >> 1u);
+    return raw == 0u ? 0u : firmwareControlTables().portamento[raw >> 1u];
 }
 
 std::uint16_t YouKnowEngine::envelopeAttackLevel(
@@ -3580,7 +3610,7 @@ const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
 [[gnu::always_inline]] inline double zonedHermiteTanhImpl(
     double value) noexcept
 {
-    const double magnitude = std::abs(value);
+    const double magnitude = inlineAbs(value);
     if (magnitude < vcfTanhFineLimit)
     {
         const double position = magnitude * vcfTanhFineScale;
@@ -3591,10 +3621,10 @@ const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
                               + coefficient.quadratic) * fraction
                               + coefficient.linear) * fraction
                               + coefficient.constant;
-        return std::copysign(result, value);
+        return inlineCopysign(result, value);
     }
     if (magnitude >= vcfTanhLimit)
-        return std::copysign(1.0, value);
+        return inlineCopysign(1.0, value);
 
     const double position = (magnitude - vcfTanhFineLimit)
                           * vcfTanhTailScale;
@@ -3605,7 +3635,7 @@ const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
                           + coefficient.quadratic) * fraction
                           + coefficient.linear) * fraction
                           + coefficient.constant;
-    return std::copysign(result, value);
+    return inlineCopysign(result, value);
 }
 
 // The PolyZoned rung's inner zone: tanh(x)/x on |x| < 1 as a degree-five
@@ -3646,40 +3676,36 @@ const auto vcfTanhTailTable = makeVcfTanhHermiteTable<vcfTanhTailIntervals>(
 [[gnu::always_inline]] inline std::array<double, 4> polyZonedTanhBatch(
     const std::array<double, 4>& argument) noexcept
 {
-#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD) && defined(__aarch64__) && defined(__ARM_NEON)
-    const float64x2_t first = vld1q_f64(argument.data());
-    const float64x2_t second = vld1q_f64(argument.data() + 2);
-    const float64x2_t firstSquared = vmulq_f64(first, first);
-    const float64x2_t secondSquared = vmulq_f64(second, second);
-    const auto inZone = vandq_u64(
-        vcltq_f64(firstSquared, vdupq_n_f64(1.0)),
-        vcltq_f64(secondSquared, vdupq_n_f64(1.0)));
-    if (vgetq_lane_u64(inZone, 0) == UINT64_MAX
-        && vgetq_lane_u64(inZone, 1) == UINT64_MAX)
-    {
-        // Keep the scalar Estrin expression and coefficient ordering. Two
-        // independent pairs expose all four stage chains to the NEON unit.
-        const auto innerPair = [](float64x2_t value, float64x2_t u) {
-            const auto uSquared = vmulq_f64(u, u);
-            const auto top = vfmaq_f64(vdupq_n_f64(0.016720855179576926),
-                vdupq_n_f64(-0.00305822903759879), u);
-            const auto high = vfmaq_f64(vdupq_n_f64(0.1328072064598552),
-                vdupq_n_f64(-0.051585988404218436), u);
-            const auto low = vfmaq_f64(vdupq_n_f64(0.9999993948006496),
-                vdupq_n_f64(-0.3332895137021704), u);
-            return vmulq_f64(value,
-                vfmaq_f64(low, vfmaq_f64(high, top, uSquared), uSquared));
-        };
-        std::array<double, 4> result {};
-        vst1q_f64(result.data(), innerPair(first, firstSquared));
-        vst1q_f64(result.data() + 2, innerPair(second, secondSquared));
-        return result;
-    }
-#endif
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD)
+    const Double2 first = double2Pack(argument[0], argument[1]);
+    const Double2 second = double2Pack(argument[2], argument[3]);
+    const Double2 firstSquared = first * first;
+    const Double2 secondSquared = second * second;
+    const auto evalPair = [](Double2 value, Double2 u) {
+        if (double2Low(u) < 1.0 && double2High(u) < 1.0)
+        {
+            const Double2 uSquared = u * u;
+            const Double2 top = double2Splat(-0.00305822903759879) * u
+                + double2Splat(0.016720855179576926);
+            const Double2 high = double2Splat(-0.051585988404218436) * u
+                + double2Splat(0.1328072064598552);
+            const Double2 low = double2Splat(-0.3332895137021704) * u
+                + double2Splat(0.9999993948006496);
+            return value * ((top * uSquared + high) * uSquared + low);
+        }
+        return double2Pack(polyZonedTanhImpl(double2Low(value)),
+                           polyZonedTanhImpl(double2High(value)));
+    };
+    const Double2 outFirst = evalPair(first, firstSquared);
+    const Double2 outSecond = evalPair(second, secondSquared);
+    return { double2Low(outFirst), double2High(outFirst),
+             double2Low(outSecond), double2High(outSecond) };
+#else
     return { polyZonedTanhImpl(argument[0]),
              polyZonedTanhImpl(argument[1]),
              polyZonedTanhImpl(argument[2]),
              polyZonedTanhImpl(argument[3]) };
+#endif
 }
 } // namespace
 
@@ -3687,7 +3713,7 @@ double YouKnowEngine::OtaCascade::zonedHermiteTanh(double value) noexcept
 {
     if (std::isnan(value))
         return value;
-    const double magnitude = std::abs(value);
+    const double magnitude = inlineAbs(value);
     // Direct callers retain the denormal bypass. The integrated Fast path
     // starts from validated finite state; its table polynomial is bit-exact
     // for subnormals, so it need not repeat this cold guard 90 times per card.
@@ -3704,9 +3730,9 @@ double YouKnowEngine::OtaCascade::zonedHermiteTanhUnchecked(
 
 double YouKnowEngine::OtaCascade::cubicEarlyTanh(double value) noexcept
 {
-    const double magnitude = std::abs(value);
+    const double magnitude = inlineAbs(value);
     if (magnitude >= 1.5)
-        return std::copysign(1.0, value);
+        return inlineCopysign(1.0, value);
     return value * (1.0 - (4.0 / 27.0) * value * value);
 }
 
@@ -3832,7 +3858,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                           || tanhMode != VcfTanhMode::Exact;
     if (useFastTanh
         && !std::all_of(state.begin(), state.end(), [](double value) {
-               return std::abs(value) <= 64.0;
+               return inlineAbs(value) <= 64.0;
            }))
     {
 #if defined(YOUKNOW_WORK_AUDIT)
@@ -3877,53 +3903,66 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     constexpr std::size_t pointCount = nodes.size();
     constexpr double substep = 0.5;
 
-    // Which tableau this interval runs. `MersonHalfSteps` is unconditional and
-    // pays nothing for the bound; the two RK4 rungs each name the cheapest
-    // tableau they will accept and let `planTableau` decide from the largest
-    // stage pole and the largest loop gain the interval can present -- both
-    // can be escalated, and both fall back to Merson where classic RK4's
-    // stability region ends. The trajectory's interior nodes carry the hold's
-    // own curvature and can leave the endpoint interval, so they are scanned
-    // when one is supplied.
-    // Per-node controls and reconstructed input. Every entry a tableau reads
-    // is written below before it is read; the nodes a cheaper tableau skips
-    // are left indeterminate on purpose rather than zero-filled on every
-    // interval. A supplied trajectory is sanitized once, here, for both of
-    // its readers: the tableau plan scans every node, the integration reads
-    // the nodes its tableau visits.
     std::array<double, pointCount> inputAt;
     std::array<double, pointCount> omegaAt;
     std::array<double, pointCount> feedbackAt;
     std::array<double, pointCount> headroomAt;
+    const auto allSameBits = [](const std::array<double, pointCount>& values) noexcept {
+        const auto firstBits = bitCast<std::uint64_t>(values[0]);
+        for (std::size_t point = 1; point < pointCount; ++point)
+            if (bitCast<std::uint64_t>(values[point]) != firstBits)
+                return false;
+        return true;
+    };
+    const bool constantTrajectoryOmega =
+        trajectory != nullptr && allSameBits(trajectory->omegaStep);
+    const bool constantTrajectoryFeedback =
+        trajectory != nullptr && allSameBits(trajectory->feedback);
+    const bool constantTrajectoryHeadroom =
+        trajectory != nullptr && allSameBits(trajectory->headroom);
     if (trajectory != nullptr)
-        for (std::size_t point = 0; point < pointCount; ++point)
-        {
-            omegaAt[point] = clampOmegaStep(trajectory->omegaStep[point]);
-            feedbackAt[point] = std::clamp(
-                finiteValue(trajectory->feedback[point])
-                    ? trajectory->feedback[point] : 0.0,
-                0.0, 8.0);
-        }
+    {
+        if (constantTrajectoryOmega)
+            omegaAt.fill(clampOmegaStep(trajectory->omegaStep[0]));
+        else
+            for (std::size_t point = 0; point < pointCount; ++point)
+                omegaAt[point] = clampOmegaStep(trajectory->omegaStep[point]);
+        if (constantTrajectoryFeedback)
+            feedbackAt.fill(std::clamp(
+                finiteValue(trajectory->feedback[0])
+                    ? trajectory->feedback[0] : 0.0,
+                0.0, 8.0));
+        else
+            for (std::size_t point = 0; point < pointCount; ++point)
+                feedbackAt[point] = std::clamp(
+                    finiteValue(trajectory->feedback[point])
+                        ? trajectory->feedback[point] : 0.0,
+                    0.0, 8.0);
+    }
     const Tableau plannedTableau = [&] {
         if (solverMode == VcfSolverMode::MersonHalfSteps)
             return Tableau::MersonHalf;
         double planOmega = std::max(previousOmegaStep, currentOmega);
         double planFeedback = std::max(previousFeedback, currentFeedback);
         if (trajectory != nullptr)
-            for (std::size_t point = 0; point < pointCount; ++point)
-            {
-                planOmega = std::max(planOmega, omegaAt[point]);
-                // A non-finite node was sanitized to zero above, and zero
-                // cannot raise this non-negative maximum: the same plan the
-                // former isfinite guard produced.
-                planFeedback = std::max(planFeedback, feedbackAt[point]);
-            }
+        {
+            if (constantTrajectoryOmega)
+                planOmega = std::max(planOmega, omegaAt[0]);
+            else
+                for (std::size_t point = 0; point < pointCount; ++point)
+                    planOmega = std::max(planOmega, omegaAt[point]);
+            if (constantTrajectoryFeedback)
+                planFeedback = std::max(planFeedback, feedbackAt[0]);
+            else
+                for (std::size_t point = 0; point < pointCount; ++point)
+                    planFeedback = std::max(planFeedback, feedbackAt[point]);
+        }
         // The stage capacitor spread scales each pole independently, and the
         // Early effect scales every stage rate by at most 1 + earlyAmount.
         double largestScale = 0.0;
         for (const float scale : gScale)
             largestScale = std::max(largestScale,
-                                    static_cast<double>(std::abs(scale)));
+                                    static_cast<double>(inlineAbs(scale)));
         const double earlyCeiling = enableEarlyEffect
             ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
                         * currentCalibration
@@ -3939,17 +3978,23 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     const unsigned int nodeMask = tableauNodeMask(plannedTableau);
     prepareStageNoise(nodeMask);
 
-    // A settled interval -- both endpoints equal, no hold trajectory -- is
-    // most of what an instrument does, and there the node interpolation
-    // below is arithmetically the identity: a + p * (b - a) with b == a is
-    // exactly a for every finite a. Broadcasting the endpoint is therefore
-    // not an approximation, just the same values without the per-node
-    // arithmetic.
-    const bool settledControls = trajectory == nullptr
+    const bool settledEndpointControls = trajectory == nullptr
         && previousOmegaStep == currentOmega
         && previousFeedback == currentFeedback
         && previousHeadroom == currentHeadroom;
-    const double settledHeadroom = std::max(currentHeadroom, 1.0e-5);
+    const bool constantOmega = settledEndpointControls || constantTrajectoryOmega;
+    const bool constantHeadroom = settledEndpointControls || constantTrajectoryHeadroom;
+    const double uniformOmega = settledEndpointControls ? currentOmega
+        : (constantTrajectoryOmega ? omegaAt[0] : currentOmega);
+    const double uniformHeadroom = settledEndpointControls
+        ? std::max(currentHeadroom, 1.0e-5)
+        : (constantTrajectoryHeadroom
+            ? std::max(finiteValue(trajectory->headroom[0])
+                           ? trajectory->headroom[0] : 0.0,
+                       1.0e-5)
+            : std::max(currentHeadroom, 1.0e-5));
+    if (constantHeadroom)
+        headroomAt.fill(uniformHeadroom);
     for (std::size_t point = 0; point < pointCount; ++point)
     {
         if ((nodeMask >> point & 1u) == 0u)
@@ -3969,19 +4014,19 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 + nodes[point].cubic[1] * inputHistory[0]
                 + nodes[point].cubic[2] * inputHistory[1]
                 + nodes[point].cubic[3] * inputHistory[2];
-        if (settledControls)
+        if (settledEndpointControls)
         {
             omegaAt[point] = currentOmega;
             feedbackAt[point] = currentFeedback;
-            headroomAt[point] = settledHeadroom;
         }
         else if (trajectory != nullptr)
         {
             // omegaAt and feedbackAt were sanitized above for the plan.
-            headroomAt[point] = std::max(
-                finiteValue(trajectory->headroom[point])
-                    ? trajectory->headroom[point] : 0.0,
-                1.0e-5);
+            if (!constantTrajectoryHeadroom)
+                headroomAt[point] = std::max(
+                    finiteValue(trajectory->headroom[point])
+                        ? trajectory->headroom[point] : 0.0,
+                    1.0e-5);
         }
         else
         {
@@ -3996,11 +4041,6 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                 1.0e-5);
         }
     }
-    // The resonance return's own headroom at each node: the stage headroom
-    // through the return's divider when the card's temperature moves both,
-    // the 25 C constant otherwise (EngineParameters::
-    // enableResonanceHeadroomTemperature). Its reciprocal is taken here,
-    // once per node, so the fast-reciprocal kernels keep their multiply.
     std::array<double, pointCount> loopHeadroomAt;
     std::array<double, pointCount> inverseLoopHeadroomAt;
     const auto loopHeadroomForNode = [&](double headroom) {
@@ -4009,9 +4049,9 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
             : static_cast<double>(
                 VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
     };
-    if (settledControls)
+    if (constantHeadroom || !resonanceHeadroomFollowsStage)
     {
-        const double loopHeadroom = loopHeadroomForNode(settledHeadroom);
+        const double loopHeadroom = loopHeadroomForNode(uniformHeadroom);
         loopHeadroomAt.fill(loopHeadroom);
         inverseLoopHeadroomAt.fill(1.0 / loopHeadroom);
     }
@@ -4084,11 +4124,11 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
                     + stageNoiseAt[point][stage];
     }
     std::array<std::array<double, 4>, pointCount> stageOmegaAt;
-    if (settledControls)
+    if (constantOmega)
     {
         std::array<double, 4> rates {};
         for (std::size_t stage = 0; stage < rates.size(); ++stage)
-            rates[stage] = currentOmega * stageScale[stage];
+            rates[stage] = uniformOmega * stageScale[stage];
         stageOmegaAt.fill(rates);
     }
     else
@@ -4179,8 +4219,8 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // Filled in place: the nodes this tableau skips stay indeterminate and
     // are never read, and returning the array would copy them.
     const auto fillHeadroomReciprocals = [&](std::array<double, pointCount>& values) {
-        if (settledControls)
-            values.fill(1.0 / settledHeadroom);
+        if (constantHeadroom)
+            values.fill(1.0 / uniformHeadroom);
         else
             for (std::size_t point = 0; point < pointCount; ++point)
                 if ((nodeMask >> point & 1u) != 0u)
@@ -4396,7 +4436,7 @@ float YouKnowEngine::OtaCascade::process(float input, float omegaStep,
     // predicate was redundant and measurably enlarged this hot loop.
     const bool valid = std::all_of(
         state.begin(), state.end(), [](double value) {
-            return std::abs(value) <= 64.0;
+            return inlineAbs(value) <= 64.0;
         });
     if (!valid)
     {
@@ -4424,7 +4464,9 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     OtaCascade& second, float secondInput, float secondOmegaStep,
     float secondFeedback, float secondHeadroom,
     bool enableEarlyEffect, float calibration,
-    float& firstOutput, float& secondOutput) noexcept
+    float& firstOutput, float& secondOutput,
+    const ControlTrajectory* firstTrajectory,
+    const ControlTrajectory* secondTrajectory) noexcept
 {
     const double currentCalibration = std::clamp(
         finiteValue(calibration) ? static_cast<double>(calibration) : 0.0,
@@ -4433,27 +4475,55 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
                                && currentCalibration > 0.0;
     const double earlyAmount =
         static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
-    const double earlyCeiling = applyEarlyEffect ? 1.0 + earlyAmount : 1.0;
+    const double earlyCeiling = enableEarlyEffect
+        ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
+                    * currentCalibration
+        : 1.0;
 
     struct Lane
     {
         OtaCascade* cascade {};
+        const ControlTrajectory* trajectory {};
         double input {};
         double omega {};
         double feedback {};
         double headroom {};
-        double inverseHeadroom {};
-        double loopHeadroom {};
-        double inverseLoopHeadroom {};
+        bool constantTrajectoryOmega {};
+        bool constantTrajectoryFeedback {};
+        bool constantTrajectoryHeadroom {};
         Tableau tableau { Tableau::MersonHalf };
         std::array<double, 5> drive {};
-        std::array<double, 4> stageOmega {};
+        std::array<double, 7> omegaAt {};
+        std::array<double, 7> feedbackAt {};
+        std::array<double, 7> headroomAt {};
+        std::array<double, 7> inverseHeadroomAt {};
+        std::array<double, 7> loopHeadroomAt {};
+        std::array<double, 7> inverseLoopHeadroomAt {};
+        std::array<std::array<double, 4>, 7> stageOmegaAt {};
         std::array<std::array<double, 4>, 7> stageOffset {};
     };
 
-    const auto prepareLane = [&](OtaCascade& cascade, float input,
-                                 float omegaStep, float feedback,
-                                 float headroom, Lane& lane) {
+    const auto allSameBits = [](const std::array<double, 7>& values) noexcept {
+        const auto firstBits = bitCast<std::uint64_t>(values[0]);
+        for (std::size_t point = 1; point < 7; ++point)
+            if (bitCast<std::uint64_t>(values[point]) != firstBits)
+                return false;
+        return true;
+    };
+
+    const auto checkLane = [&](OtaCascade& cascade, float input,
+                               float omegaStep, float feedback,
+                               float headroom,
+                               const ControlTrajectory* trajectory,
+                               Lane& lane) {
+        if (!cascade.parameterHistoryPrimed
+            || cascade.inputHistoryCount != 2
+            || !std::all_of(
+                cascade.state.begin(), cascade.state.end(), [](double value) {
+                    return inlineAbs(value) <= 64.0;
+                }))
+            return false;
+
         const double currentOmega = clampOmegaStep(
             static_cast<double>(omegaStep));
         const double currentFeedback = std::clamp(
@@ -4462,39 +4532,167 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         const double currentHeadroom = std::max(
             finiteValue(headroom) ? static_cast<double>(headroom) : 0.0,
             1.0e-5);
-        if (!cascade.parameterHistoryPrimed
-            || cascade.inputHistoryCount != 2
-            || cascade.previousOmegaStep != currentOmega
-            || cascade.previousFeedback != currentFeedback
-            || cascade.previousHeadroom != currentHeadroom
-            || !std::all_of(
-                cascade.state.begin(), cascade.state.end(), [](double value) {
-                    return std::abs(value) <= 64.0;
-                }))
-            return false;
+
+        lane.constantTrajectoryOmega =
+            trajectory != nullptr && allSameBits(trajectory->omegaStep);
+        lane.constantTrajectoryFeedback =
+            trajectory != nullptr && allSameBits(trajectory->feedback);
+        lane.constantTrajectoryHeadroom =
+            trajectory != nullptr && allSameBits(trajectory->headroom);
+        if (trajectory != nullptr)
+        {
+            if (lane.constantTrajectoryOmega)
+                lane.omegaAt.fill(clampOmegaStep(trajectory->omegaStep[0]));
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    lane.omegaAt[point] =
+                        clampOmegaStep(trajectory->omegaStep[point]);
+            if (lane.constantTrajectoryFeedback)
+                lane.feedbackAt.fill(std::clamp(
+                    finiteValue(trajectory->feedback[0])
+                        ? trajectory->feedback[0] : 0.0,
+                    0.0, 8.0));
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    lane.feedbackAt[point] = std::clamp(
+                        finiteValue(trajectory->feedback[point])
+                            ? trajectory->feedback[point] : 0.0,
+                        0.0, 8.0);
+        }
+
+        double planOmega = std::max(cascade.previousOmegaStep, currentOmega);
+        double planFeedback = std::max(cascade.previousFeedback, currentFeedback);
+        if (trajectory != nullptr)
+        {
+            if (lane.constantTrajectoryOmega)
+                planOmega = std::max(planOmega, lane.omegaAt[0]);
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    planOmega = std::max(planOmega, lane.omegaAt[point]);
+            if (lane.constantTrajectoryFeedback)
+                planFeedback = std::max(planFeedback, lane.feedbackAt[0]);
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    planFeedback = std::max(planFeedback, lane.feedbackAt[point]);
+        }
 
         double largestScale = 0.0;
         for (const float scale : cascade.gScale)
             largestScale = std::max(
-                largestScale, static_cast<double>(std::abs(scale)));
+                largestScale, static_cast<double>(inlineAbs(scale)));
         const Tableau tableau = planTableau(
             VcfSolverMode::Rk4Single,
-            currentOmega * largestScale * earlyCeiling, currentFeedback);
+            planOmega * largestScale * earlyCeiling, planFeedback);
         if (tableau == Tableau::MersonHalf)
             return false;
 
         lane.cascade = &cascade;
+        lane.trajectory = trajectory;
         lane.input = finiteValue(input) ? static_cast<double>(input) : 0.0;
         lane.omega = currentOmega;
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
-        lane.inverseHeadroom = 1.0 / currentHeadroom;
-        lane.loopHeadroom = cascade.resonanceHeadroomFollowsStage
-            ? resonanceHeadroomFor(currentHeadroom)
-            : static_cast<double>(
-                  VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
-        lane.inverseLoopHeadroom = 1.0 / lane.loopHeadroom;
         lane.tableau = tableau;
+        return true;
+    };
+
+    Lane lanes[2];
+    if (!checkLane(first, firstInput, firstOmegaStep, firstFeedback,
+                   firstHeadroom, firstTrajectory, lanes[0])
+        || !checkLane(second, secondInput, secondOmegaStep, secondFeedback,
+                      secondHeadroom, secondTrajectory, lanes[1]))
+        return false;
+    if (lanes[0].tableau != lanes[1].tableau)
+        return false;
+
+    const unsigned int nodeMask = tableauNodeMask(lanes[0].tableau);
+    const auto buildLaneNodes = [&](Lane& lane) {
+        auto& cascade = *lane.cascade;
+        const auto* trajectory = lane.trajectory;
+        const double currentOmega = lane.omega;
+        const double currentFeedback = lane.feedback;
+        const double currentHeadroom = lane.headroom;
+
+        const bool settledEndpointControls = trajectory == nullptr
+            && cascade.previousOmegaStep == currentOmega
+            && cascade.previousFeedback == currentFeedback
+            && cascade.previousHeadroom == currentHeadroom;
+        const bool constantOmega =
+            settledEndpointControls || lane.constantTrajectoryOmega;
+        const bool constantHeadroom =
+            settledEndpointControls || lane.constantTrajectoryHeadroom;
+        const double uniformOmega = settledEndpointControls ? currentOmega
+            : (lane.constantTrajectoryOmega ? lane.omegaAt[0] : currentOmega);
+        const double uniformHeadroom = settledEndpointControls
+            ? std::max(currentHeadroom, 1.0e-5)
+            : (lane.constantTrajectoryHeadroom
+                ? std::max(finiteValue(trajectory->headroom[0])
+                               ? trajectory->headroom[0] : 0.0,
+                           1.0e-5)
+                : std::max(currentHeadroom, 1.0e-5));
+        if (constantHeadroom)
+        {
+            lane.headroomAt.fill(uniformHeadroom);
+            lane.inverseHeadroomAt.fill(1.0 / uniformHeadroom);
+        }
+        for (std::size_t point = 0; point < 7; ++point)
+        {
+            if ((nodeMask >> point & 1u) == 0u)
+                continue;
+            if (settledEndpointControls)
+            {
+                lane.omegaAt[point] = currentOmega;
+                lane.feedbackAt[point] = currentFeedback;
+            }
+            else if (trajectory != nullptr)
+            {
+                if (!lane.constantTrajectoryHeadroom)
+                {
+                    lane.headroomAt[point] = std::max(
+                        finiteValue(trajectory->headroom[point])
+                            ? trajectory->headroom[point] : 0.0,
+                        1.0e-5);
+                    lane.inverseHeadroomAt[point] = 1.0 / lane.headroomAt[point];
+                }
+            }
+            else
+            {
+                const double position = controlNodePositions[point];
+                lane.omegaAt[point] = cascade.previousOmegaStep
+                    + position * (currentOmega - cascade.previousOmegaStep);
+                lane.feedbackAt[point] = cascade.previousFeedback
+                    + position * (currentFeedback - cascade.previousFeedback);
+                lane.headroomAt[point] = std::max(
+                    cascade.previousHeadroom
+                        + position * (currentHeadroom - cascade.previousHeadroom),
+                    1.0e-5);
+                lane.inverseHeadroomAt[point] = 1.0 / lane.headroomAt[point];
+            }
+        }
+        const auto loopHeadroomForNode = [&](double h) {
+            return cascade.resonanceHeadroomFollowsStage
+                ? resonanceHeadroomFor(h)
+                : static_cast<double>(
+                      VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+        };
+        if (constantHeadroom || !cascade.resonanceHeadroomFollowsStage)
+        {
+            const double loopHeadroom = loopHeadroomForNode(uniformHeadroom);
+            lane.loopHeadroomAt.fill(loopHeadroom);
+            lane.inverseLoopHeadroomAt.fill(1.0 / loopHeadroom);
+        }
+        else
+        {
+            for (std::size_t point = 0; point < 7; ++point)
+            {
+                if ((nodeMask >> point & 1u) == 0u)
+                    continue;
+                lane.loopHeadroomAt[point] =
+                    loopHeadroomForNode(lane.headroomAt[point]);
+                lane.inverseLoopHeadroomAt[point] =
+                    1.0 / lane.loopHeadroomAt[point];
+            }
+        }
 
         const auto reconstruct = [&](double currentWeight,
                                      double firstWeight,
@@ -4511,38 +4709,62 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         lane.drive[0] = reconstruct(0.0,    1.0,    0.0,     0.0);
         lane.drive[2] = reconstruct(0.3125, 0.9375, -0.3125, 0.0625);
         lane.drive[4] = reconstruct(1.0,    0.0,    0.0,     0.0);
-        if (tableau == Tableau::Rk4Half)
+        if (lane.tableau == Tableau::Rk4Half)
         {
             lane.drive[1] = reconstruct(
                 0.1171875, 1.0546875, -0.2109375, 0.0390625);
             lane.drive[3] = reconstruct(
                 0.6015625, 0.6015625, -0.2578125, 0.0546875);
         }
-        const unsigned int noiseNodeMask = tableauNodeMask(tableau);
-        cascade.prepareStageNoise(noiseNodeMask);
-        for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
+        cascade.prepareStageNoise(nodeMask);
+        std::array<double, 4> stageScale;
+        for (std::size_t stage = 0; stage < 4; ++stage)
         {
-            lane.stageOmega[stage] = currentOmega
-                * static_cast<double>(cascade.gScale[stage]);
+            stageScale[stage] = static_cast<double>(cascade.gScale[stage]);
             for (std::size_t point = 0; point < 7; ++point)
-                if ((noiseNodeMask >> point & 1u) != 0u)
+                if ((nodeMask >> point & 1u) != 0u)
                     lane.stageOffset[point][stage] =
                         static_cast<double>(cascade.offsetVoltage[stage])
                         + cascade.stageNoiseAt[point][stage];
         }
-        return true;
+        if (constantOmega)
+        {
+            std::array<double, 4> rates {};
+            for (std::size_t stage = 0; stage < 4; ++stage)
+                rates[stage] = uniformOmega * stageScale[stage];
+            lane.stageOmegaAt.fill(rates);
+        }
+        else
+        {
+            for (std::size_t point = 0; point < 7; ++point)
+            {
+                if ((nodeMask >> point & 1u) == 0u)
+                    continue;
+                for (std::size_t stage = 0; stage < 4; ++stage)
+                    lane.stageOmegaAt[point][stage] =
+                        lane.omegaAt[point] * stageScale[stage];
+            }
+        }
     };
+    buildLaneNodes(lanes[0]);
+    buildLaneNodes(lanes[1]);
 
-    Lane lanes[2];
-    if (!prepareLane(first, firstInput, firstOmegaStep, firstFeedback,
-                     firstHeadroom, lanes[0])
-        || !prepareLane(second, secondInput, secondOmegaStep, secondFeedback,
-                        secondHeadroom, lanes[1]))
-        return false;
-    if (lanes[0].tableau != lanes[1].tableau)
-        return false;
-
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD)
+    using Pair = Double2;
+    const auto pack = [](double low, double high) {
+        return double2Pack(low, high);
+    };
+#define pairLow(value) double2Low(value)
+#define pairHigh(value) double2High(value)
+#define pairSplat(value) double2Splat(value)
+#define pairAdd(first, second) ((first) + (second))
+#define pairSubtract(first, second) ((first) - (second))
+#define pairMultiply(first, second) ((first) * (second))
+#define pairMultiplyScalar(value, scalar) ((value) * double2Splat(scalar))
+#define pairMultiplyAdd(addend, first, second) ((addend) + (first) * (second))
+#define pairMultiplySubtract(addend, first, second) ((addend) - (first) * (second))
+#define pairMultiplyAddScalar(addend, value, scalar) ((addend) + (value) * double2Splat(scalar))
+#elif !defined(YOUKNOW_EMBEDDED_TARGET) && defined(__aarch64__) && defined(__ARM_NEON)
     using Pair = float64x2_t;
     const auto pack = [](double low, double high) {
         return vsetq_lane_f64(high, vdupq_n_f64(low), 1);
@@ -4560,7 +4782,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     vfmsq_f64((addend), (first), (second))
 #define pairMultiplyAddScalar(addend, value, scalar) \
     vfmaq_n_f64((addend), (value), (scalar))
-#elif defined(__x86_64__) && defined(__SSE2__)
+#elif !defined(YOUKNOW_EMBEDDED_TARGET) && defined(__x86_64__) && defined(__SSE2__)
     using Pair = __m128d;
     const auto pack = [](double low, double high) {
         return _mm_set_pd(high, low);
@@ -4573,9 +4795,6 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
 #define pairMultiply(first, second) _mm_mul_pd((first), (second))
 #define pairMultiplyScalar(value, scalar) \
     _mm_mul_pd((value), _mm_set1_pd(scalar))
-    // Baseline x86_64 has SSE2 but not FMA. Keep the scalar path's separate
-    // multiply and add rounding rather than changing the solve along with its
-    // scheduling.
 #define pairMultiplyAdd(addend, first, second) \
     _mm_add_pd((addend), _mm_mul_pd((first), (second)))
 #define pairMultiplySubtract(addend, first, second) \
@@ -4605,8 +4824,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         return pairMultiply(value, factor);
     };
     const auto cubicEarlyPair = [&](Pair value) {
-        if (std::abs(pairLow(value)) >= 1.5
-            || std::abs(pairHigh(value)) >= 1.5)
+        if (inlineAbs(pairLow(value)) >= 1.5
+            || inlineAbs(pairHigh(value)) >= 1.5)
             return pack(cubicEarlyTanh(pairLow(value)),
                         cubicEarlyTanh(pairHigh(value)));
 
@@ -4616,21 +4835,31 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     };
 
     PairState state;
-    PairState stageOmega;
+    std::array<PairState, 7> stageOmega;
     std::array<PairState, 7> stageOffset;
+    std::array<Pair, 7> inverseHeadroom;
+    std::array<Pair, 7> runningHeadroom;
+    std::array<Pair, 7> inverseLoopHeadroom;
     for (std::size_t stage = 0; stage < state.size(); ++stage)
-    {
         state[stage] = pack(first.state[stage], second.state[stage]);
-        stageOmega[stage] = pack(lanes[0].stageOmega[stage],
-                                 lanes[1].stageOmega[stage]);
-        for (std::size_t point = 0; point < 7; ++point)
-            if ((tableauNodeMask(lanes[0].tableau) >> point & 1u) != 0u)
-                stageOffset[point][stage] = pack(lanes[0].stageOffset[point][stage],
-                                               lanes[1].stageOffset[point][stage]);
+    for (std::size_t point = 0; point < 7; ++point)
+    {
+        if ((nodeMask >> point & 1u) == 0u)
+            continue;
+        inverseHeadroom[point] = pack(lanes[0].inverseHeadroomAt[point],
+                                      lanes[1].inverseHeadroomAt[point]);
+        runningHeadroom[point] = pack(lanes[0].headroomAt[point],
+                                      lanes[1].headroomAt[point]);
+        inverseLoopHeadroom[point] = pack(lanes[0].inverseLoopHeadroomAt[point],
+                                          lanes[1].inverseLoopHeadroomAt[point]);
+        for (std::size_t stage = 0; stage < state.size(); ++stage)
+        {
+            stageOmega[point][stage] = pack(lanes[0].stageOmegaAt[point][stage],
+                                            lanes[1].stageOmegaAt[point][stage]);
+            stageOffset[point][stage] = pack(lanes[0].stageOffset[point][stage],
+                                             lanes[1].stageOffset[point][stage]);
+        }
     }
-    const Pair inverseHeadroom = pack(lanes[0].inverseHeadroom,
-                                      lanes[1].inverseHeadroom);
-    const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
 
     // Read per cascade rather than broadcast: the coefficient is uniform
     // across voices in practice, but two plug-in instances can differ.
@@ -4640,39 +4869,43 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
     const Pair resonanceOffset = pack(
         static_cast<double>(first.resonanceOffsetVolts),
         static_cast<double>(second.resonanceOffsetVolts));
-    const Pair inverseLoopHeadroom = pack(
-        lanes[0].inverseLoopHeadroom, lanes[1].inverseLoopHeadroom);
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
         // The scalar differential-input expression contracts its subtract
         // and multiply on ARM. Match that single rounding here; separate
         // SIMD operations diverge once compensation is nonzero. SSE2 keeps
         // the scalar target's separate operations.
-        const Pair feedbackArgument = pairMultiply(
-            pairAdd(pairMultiplySubtract(value[3], resonanceCompensation, drive),
-                    resonanceOffset),
-            inverseLoopHeadroom);
-        const Pair feedbackTanh = polyTanhPair(feedbackArgument);
-        const double firstLoopReturn = lanes[0].feedback == 0.0
-            ? pairLow(drive)
-            : pairLow(drive)
-                - lanes[0].feedback * lanes[0].loopHeadroom
-                    * pairLow(feedbackTanh);
-        const double secondLoopReturn = lanes[1].feedback == 0.0
-            ? pairHigh(drive)
-            : pairHigh(drive)
-                - lanes[1].feedback * lanes[1].loopHeadroom
-                    * pairHigh(feedbackTanh);
-        const Pair loopReturn = pack(firstLoopReturn, secondLoopReturn);
+        Pair loopReturn = drive;
+        if (lanes[0].feedbackAt[point] != 0.0 || lanes[1].feedbackAt[point] != 0.0)
+        {
+            const Pair feedbackArgument = pairMultiply(
+                pairAdd(pairMultiplySubtract(value[3], resonanceCompensation, drive),
+                        resonanceOffset),
+                inverseLoopHeadroom[point]);
+            const Pair feedbackTanh = polyTanhPair(feedbackArgument);
+            const double firstLoopReturn = lanes[0].feedbackAt[point] == 0.0
+                ? pairLow(drive)
+                : pairLow(drive)
+                    - lanes[0].feedbackAt[point] * lanes[0].loopHeadroomAt[point]
+                        * pairLow(feedbackTanh);
+            const double secondLoopReturn = lanes[1].feedbackAt[point] == 0.0
+                ? pairHigh(drive)
+                : pairHigh(drive)
+                    - lanes[1].feedbackAt[point] * lanes[1].loopHeadroomAt[point]
+                        * pairHigh(feedbackTanh);
+            loopReturn = pack(firstLoopReturn, secondLoopReturn);
+        }
 
+        const Pair invHeadroom = inverseHeadroom[point];
+        const Pair runHeadroom = runningHeadroom[point];
         PairState stageArgument {
             pairMultiply(pairAdd(pairSubtract(loopReturn, value[0]),
-                                 stageOffset[point][0]), inverseHeadroom),
+                                 stageOffset[point][0]), invHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[0], value[1]),
-                                 stageOffset[point][1]), inverseHeadroom),
+                                 stageOffset[point][1]), invHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[1], value[2]),
-                                 stageOffset[point][2]), inverseHeadroom),
+                                 stageOffset[point][2]), invHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[2], value[3]),
-                                 stageOffset[point][3]), inverseHeadroom)
+                                 stageOffset[point][3]), invHeadroom)
         };
         PairState stageTanh;
         for (std::size_t stage = 0; stage < stageTanh.size(); ++stage)
@@ -4689,7 +4922,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
             for (std::size_t stage = 0; stage < early.size(); ++stage)
             {
                 const Pair earlyTanh = cubicEarlyPair(
-                    pairMultiply(value[stage], inverseHeadroom));
+                    pairMultiply(value[stage], invHeadroom));
                 early[stage] = pairMultiplyAddScalar(
                     pairSplat(1.0), earlyTanh, earlyAmount);
             }
@@ -4698,8 +4931,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         PairState result;
         for (std::size_t stage = 0; stage < result.size(); ++stage)
         {
-            result[stage] = pairMultiply(stageOmega[stage], early[stage]);
-            result[stage] = pairMultiply(result[stage], runningHeadroom);
+            result[stage] = pairMultiply(stageOmega[point][stage], early[stage]);
+            result[stage] = pairMultiply(result[stage], runHeadroom);
             result[stage] = pairMultiply(result[stage], stageTanh[stage]);
         }
         return result;
@@ -4790,7 +5023,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
 
         const bool valid = std::all_of(
             cascade.state.begin(), cascade.state.end(), [](double value) {
-                return std::abs(value) <= 64.0;
+                return inlineAbs(value) <= 64.0;
             });
         if (!valid)
         {
@@ -4821,7 +5054,9 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     OtaCascade& second, float secondInput, float secondOmegaStep,
     float secondFeedback, float secondHeadroom,
     bool enableEarlyEffect, float calibration,
-    float& firstOutput, float& secondOutput) noexcept
+    float& firstOutput, float& secondOutput,
+    const ControlTrajectory* firstTrajectory,
+    const ControlTrajectory* secondTrajectory) noexcept
 {
     const double currentCalibration = std::clamp(
         finiteValue(calibration) ? static_cast<double>(calibration) : 0.0,
@@ -4830,26 +5065,54 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
                                && currentCalibration > 0.0;
     const double earlyAmount =
         static_cast<double>(otaEarlyEffectCoefficient) * currentCalibration;
-    const double earlyCeiling = applyEarlyEffect ? 1.0 + earlyAmount : 1.0;
+    const double earlyCeiling = enableEarlyEffect
+        ? 1.0 + static_cast<double>(otaEarlyEffectCoefficient)
+                    * currentCalibration
+        : 1.0;
 
     struct Lane
     {
         OtaCascade* cascade {};
+        const ControlTrajectory* trajectory {};
         double input {};
         double omega {};
         double feedback {};
         double headroom {};
-        double inverseHeadroom {};
-        double loopHeadroom {};
-        double inverseLoopHeadroom {};
+        bool constantTrajectoryOmega {};
+        bool constantTrajectoryFeedback {};
+        bool constantTrajectoryHeadroom {};
         std::array<double, 7> drive {};
-        std::array<double, 4> stageOmega {};
+        std::array<double, 7> omegaAt {};
+        std::array<double, 7> feedbackAt {};
+        std::array<double, 7> headroomAt {};
+        std::array<double, 7> inverseHeadroomAt {};
+        std::array<double, 7> loopHeadroomAt {};
+        std::array<double, 7> inverseLoopHeadroomAt {};
+        std::array<std::array<double, 4>, 7> stageOmegaAt {};
         std::array<std::array<double, 4>, 7> stageOffset {};
     };
 
-    const auto prepareLane = [&](OtaCascade& cascade, float input,
-                                 float omegaStep, float feedback,
-                                 float headroom, Lane& lane) {
+    const auto allSameBits = [](const std::array<double, 7>& values) noexcept {
+        const auto firstBits = bitCast<std::uint64_t>(values[0]);
+        for (std::size_t point = 1; point < 7; ++point)
+            if (bitCast<std::uint64_t>(values[point]) != firstBits)
+                return false;
+        return true;
+    };
+
+    const auto checkLane = [&](OtaCascade& cascade, float input,
+                               float omegaStep, float feedback,
+                               float headroom,
+                               const ControlTrajectory* trajectory,
+                               Lane& lane) {
+        if (!cascade.parameterHistoryPrimed
+            || cascade.inputHistoryCount != 2
+            || !std::all_of(
+                cascade.state.begin(), cascade.state.end(), [](double value) {
+                    return inlineAbs(value) <= 64.0;
+                }))
+            return false;
+
         const double currentOmega = clampOmegaStep(
             static_cast<double>(omegaStep));
         const double currentFeedback = std::clamp(
@@ -4858,38 +5121,159 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         const double currentHeadroom = std::max(
             finiteValue(headroom) ? static_cast<double>(headroom) : 0.0,
             1.0e-5);
-        if (!cascade.parameterHistoryPrimed
-            || cascade.inputHistoryCount != 2
-            || cascade.previousOmegaStep != currentOmega
-            || cascade.previousFeedback != currentFeedback
-            || cascade.previousHeadroom != currentHeadroom
-            || !std::all_of(
-                cascade.state.begin(), cascade.state.end(), [](double value) {
-                    return std::abs(value) <= 64.0;
-                }))
-            return false;
+
+        lane.constantTrajectoryOmega =
+            trajectory != nullptr && allSameBits(trajectory->omegaStep);
+        lane.constantTrajectoryFeedback =
+            trajectory != nullptr && allSameBits(trajectory->feedback);
+        lane.constantTrajectoryHeadroom =
+            trajectory != nullptr && allSameBits(trajectory->headroom);
+        if (trajectory != nullptr)
+        {
+            if (lane.constantTrajectoryOmega)
+                lane.omegaAt.fill(clampOmegaStep(trajectory->omegaStep[0]));
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    lane.omegaAt[point] =
+                        clampOmegaStep(trajectory->omegaStep[point]);
+            if (lane.constantTrajectoryFeedback)
+                lane.feedbackAt.fill(std::clamp(
+                    finiteValue(trajectory->feedback[0])
+                        ? trajectory->feedback[0] : 0.0,
+                    0.0, 8.0));
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    lane.feedbackAt[point] = std::clamp(
+                        finiteValue(trajectory->feedback[point])
+                            ? trajectory->feedback[point] : 0.0,
+                        0.0, 8.0);
+        }
+
+        double planOmega = std::max(cascade.previousOmegaStep, currentOmega);
+        double planFeedback = std::max(cascade.previousFeedback, currentFeedback);
+        if (trajectory != nullptr)
+        {
+            if (lane.constantTrajectoryOmega)
+                planOmega = std::max(planOmega, lane.omegaAt[0]);
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    planOmega = std::max(planOmega, lane.omegaAt[point]);
+            if (lane.constantTrajectoryFeedback)
+                planFeedback = std::max(planFeedback, lane.feedbackAt[0]);
+            else
+                for (std::size_t point = 0; point < 7; ++point)
+                    planFeedback = std::max(planFeedback, lane.feedbackAt[point]);
+        }
 
         double largestScale = 0.0;
         for (const float scale : cascade.gScale)
             largestScale = std::max(
-                largestScale, static_cast<double>(std::abs(scale)));
+                largestScale, static_cast<double>(inlineAbs(scale)));
         if (planTableau(
                 VcfSolverMode::Rk4Single,
-                currentOmega * largestScale * earlyCeiling,
-                currentFeedback) != Tableau::MersonHalf)
+                planOmega * largestScale * earlyCeiling,
+                planFeedback) != Tableau::MersonHalf)
             return false;
 
         lane.cascade = &cascade;
+        lane.trajectory = trajectory;
         lane.input = finiteValue(input) ? static_cast<double>(input) : 0.0;
         lane.omega = currentOmega;
         lane.feedback = currentFeedback;
         lane.headroom = currentHeadroom;
-        lane.inverseHeadroom = 1.0 / currentHeadroom;
-        lane.loopHeadroom = cascade.resonanceHeadroomFollowsStage
-            ? resonanceHeadroomFor(currentHeadroom)
-            : static_cast<double>(
-                  VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
-        lane.inverseLoopHeadroom = 1.0 / lane.loopHeadroom;
+        return true;
+    };
+
+    Lane lanes[2];
+    if (!checkLane(first, firstInput, firstOmegaStep, firstFeedback,
+                   firstHeadroom, firstTrajectory, lanes[0])
+        || !checkLane(second, secondInput, secondOmegaStep, secondFeedback,
+                      secondHeadroom, secondTrajectory, lanes[1]))
+        return false;
+
+    const auto buildLaneNodes = [&](Lane& lane) {
+        auto& cascade = *lane.cascade;
+        const auto* trajectory = lane.trajectory;
+        const double currentOmega = lane.omega;
+        const double currentFeedback = lane.feedback;
+        const double currentHeadroom = lane.headroom;
+
+        const bool settledEndpointControls = trajectory == nullptr
+            && cascade.previousOmegaStep == currentOmega
+            && cascade.previousFeedback == currentFeedback
+            && cascade.previousHeadroom == currentHeadroom;
+        const bool constantOmega =
+            settledEndpointControls || lane.constantTrajectoryOmega;
+        const bool constantHeadroom =
+            settledEndpointControls || lane.constantTrajectoryHeadroom;
+        const double uniformOmega = settledEndpointControls ? currentOmega
+            : (lane.constantTrajectoryOmega ? lane.omegaAt[0] : currentOmega);
+        const double uniformHeadroom = settledEndpointControls
+            ? std::max(currentHeadroom, 1.0e-5)
+            : (lane.constantTrajectoryHeadroom
+                ? std::max(finiteValue(trajectory->headroom[0])
+                               ? trajectory->headroom[0] : 0.0,
+                           1.0e-5)
+                : std::max(currentHeadroom, 1.0e-5));
+        if (constantHeadroom)
+        {
+            lane.headroomAt.fill(uniformHeadroom);
+            lane.inverseHeadroomAt.fill(1.0 / uniformHeadroom);
+        }
+        for (std::size_t point = 0; point < 7; ++point)
+        {
+            if (settledEndpointControls)
+            {
+                lane.omegaAt[point] = currentOmega;
+                lane.feedbackAt[point] = currentFeedback;
+            }
+            else if (trajectory != nullptr)
+            {
+                if (!lane.constantTrajectoryHeadroom)
+                {
+                    lane.headroomAt[point] = std::max(
+                        finiteValue(trajectory->headroom[point])
+                            ? trajectory->headroom[point] : 0.0,
+                        1.0e-5);
+                    lane.inverseHeadroomAt[point] = 1.0 / lane.headroomAt[point];
+                }
+            }
+            else
+            {
+                const double position = controlNodePositions[point];
+                lane.omegaAt[point] = cascade.previousOmegaStep
+                    + position * (currentOmega - cascade.previousOmegaStep);
+                lane.feedbackAt[point] = cascade.previousFeedback
+                    + position * (currentFeedback - cascade.previousFeedback);
+                lane.headroomAt[point] = std::max(
+                    cascade.previousHeadroom
+                        + position * (currentHeadroom - cascade.previousHeadroom),
+                    1.0e-5);
+                lane.inverseHeadroomAt[point] = 1.0 / lane.headroomAt[point];
+            }
+        }
+        const auto loopHeadroomForNode = [&](double h) {
+            return cascade.resonanceHeadroomFollowsStage
+                ? resonanceHeadroomFor(h)
+                : static_cast<double>(
+                      VoicedResonanceCompatibilityProfile::loopHeadroomVolts);
+        };
+        if (constantHeadroom || !cascade.resonanceHeadroomFollowsStage)
+        {
+            const double loopHeadroom = loopHeadroomForNode(uniformHeadroom);
+            lane.loopHeadroomAt.fill(loopHeadroom);
+            lane.inverseLoopHeadroomAt.fill(1.0 / loopHeadroom);
+        }
+        else
+        {
+            for (std::size_t point = 0; point < 7; ++point)
+            {
+                lane.loopHeadroomAt[point] =
+                    loopHeadroomForNode(lane.headroomAt[point]);
+                lane.inverseLoopHeadroomAt[point] =
+                    1.0 / lane.loopHeadroomAt[point];
+            }
+        }
 
         const auto reconstruct = [&](double currentWeight,
                                      double firstWeight,
@@ -4917,26 +5301,49 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
             0.6015625, 0.6015625, -0.2578125, 0.0546875);
         lane.drive[6] = reconstruct(1.0,    0.0,    0.0,     0.0);
         cascade.prepareStageNoise(tableauNodeMask(Tableau::MersonHalf));
-        for (std::size_t stage = 0; stage < lane.stageOmega.size(); ++stage)
+        std::array<double, 4> stageScale;
+        for (std::size_t stage = 0; stage < 4; ++stage)
         {
-            lane.stageOmega[stage] = currentOmega
-                * static_cast<double>(cascade.gScale[stage]);
+            stageScale[stage] = static_cast<double>(cascade.gScale[stage]);
             for (std::size_t point = 0; point < 7; ++point)
                 lane.stageOffset[point][stage] =
                     static_cast<double>(cascade.offsetVoltage[stage])
                     + cascade.stageNoiseAt[point][stage];
         }
-        return true;
+        if (constantOmega)
+        {
+            std::array<double, 4> rates {};
+            for (std::size_t stage = 0; stage < 4; ++stage)
+                rates[stage] = uniformOmega * stageScale[stage];
+            lane.stageOmegaAt.fill(rates);
+        }
+        else
+        {
+            for (std::size_t point = 0; point < 7; ++point)
+                for (std::size_t stage = 0; stage < 4; ++stage)
+                    lane.stageOmegaAt[point][stage] =
+                        lane.omegaAt[point] * stageScale[stage];
+        }
     };
+    buildLaneNodes(lanes[0]);
+    buildLaneNodes(lanes[1]);
 
-    Lane lanes[2];
-    if (!prepareLane(first, firstInput, firstOmegaStep, firstFeedback,
-                     firstHeadroom, lanes[0])
-        || !prepareLane(second, secondInput, secondOmegaStep, secondFeedback,
-                        secondHeadroom, lanes[1]))
-        return false;
-
-#if defined(__aarch64__) && defined(__ARM_NEON)
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD)
+    using Pair = Double2;
+    const auto pack = [](double low, double high) {
+        return double2Pack(low, high);
+    };
+#define pairLow(value) double2Low(value)
+#define pairHigh(value) double2High(value)
+#define pairSplat(value) double2Splat(value)
+#define pairAdd(first, second) ((first) + (second))
+#define pairSubtract(first, second) ((first) - (second))
+#define pairMultiply(first, second) ((first) * (second))
+#define pairMultiplyScalar(value, scalar) ((value) * double2Splat(scalar))
+#define pairMultiplyAdd(addend, first, second) ((addend) + (first) * (second))
+#define pairMultiplySubtract(addend, first, second) ((addend) - (first) * (second))
+#define pairMultiplyAddScalar(addend, value, scalar) ((addend) + (value) * double2Splat(scalar))
+#elif !defined(YOUKNOW_EMBEDDED_TARGET) && defined(__aarch64__) && defined(__ARM_NEON)
     using Pair = float64x2_t;
     const auto pack = [](double low, double high) {
         return vsetq_lane_f64(high, vdupq_n_f64(low), 1);
@@ -4954,7 +5361,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     vfmsq_f64((addend), (first), (second))
 #define pairMultiplyAddScalar(addend, value, scalar) \
     vfmaq_n_f64((addend), (value), (scalar))
-#elif defined(__x86_64__) && defined(__SSE2__)
+#elif !defined(YOUKNOW_EMBEDDED_TARGET) && defined(__x86_64__) && defined(__SSE2__)
     using Pair = __m128d;
     const auto pack = [](double low, double high) {
         return _mm_set_pd(high, low);
@@ -4967,9 +5374,6 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
 #define pairMultiply(first, second) _mm_mul_pd((first), (second))
 #define pairMultiplyScalar(value, scalar) \
     _mm_mul_pd((value), _mm_set1_pd(scalar))
-    // Baseline x86_64 has SSE2 but not FMA. Keep the scalar path's separate
-    // multiply and add rounding rather than changing the solve along with its
-    // scheduling.
 #define pairMultiplyAdd(addend, first, second) \
     _mm_add_pd((addend), _mm_mul_pd((first), (second)))
 #define pairMultiplySubtract(addend, first, second) \
@@ -4999,8 +5403,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         return pairMultiply(value, factor);
     };
     const auto cubicEarlyPair = [&](Pair value) {
-        if (std::abs(pairLow(value)) >= 1.5
-            || std::abs(pairHigh(value)) >= 1.5)
+        if (inlineAbs(pairLow(value)) >= 1.5
+            || inlineAbs(pairHigh(value)) >= 1.5)
             return pack(cubicEarlyTanh(pairLow(value)),
                         cubicEarlyTanh(pairHigh(value)));
 
@@ -5010,20 +5414,29 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     };
 
     PairState state;
-    PairState stageOmega;
+    std::array<PairState, 7> stageOmega;
     std::array<PairState, 7> stageOffset;
+    std::array<Pair, 7> inverseHeadroom;
+    std::array<Pair, 7> runningHeadroom;
+    std::array<Pair, 7> inverseLoopHeadroom;
     for (std::size_t stage = 0; stage < state.size(); ++stage)
-    {
         state[stage] = pack(first.state[stage], second.state[stage]);
-        stageOmega[stage] = pack(lanes[0].stageOmega[stage],
-                                 lanes[1].stageOmega[stage]);
-        for (std::size_t point = 0; point < 7; ++point)
+    for (std::size_t point = 0; point < 7; ++point)
+    {
+        inverseHeadroom[point] = pack(lanes[0].inverseHeadroomAt[point],
+                                      lanes[1].inverseHeadroomAt[point]);
+        runningHeadroom[point] = pack(lanes[0].headroomAt[point],
+                                      lanes[1].headroomAt[point]);
+        inverseLoopHeadroom[point] = pack(lanes[0].inverseLoopHeadroomAt[point],
+                                          lanes[1].inverseLoopHeadroomAt[point]);
+        for (std::size_t stage = 0; stage < state.size(); ++stage)
+        {
+            stageOmega[point][stage] = pack(lanes[0].stageOmegaAt[point][stage],
+                                            lanes[1].stageOmegaAt[point][stage]);
             stageOffset[point][stage] = pack(lanes[0].stageOffset[point][stage],
-                                           lanes[1].stageOffset[point][stage]);
+                                             lanes[1].stageOffset[point][stage]);
+        }
     }
-    const Pair inverseHeadroom = pack(lanes[0].inverseHeadroom,
-                                      lanes[1].inverseHeadroom);
-    const Pair runningHeadroom = pack(lanes[0].headroom, lanes[1].headroom);
 
     // Read per cascade rather than broadcast: the coefficient is uniform
     // across voices in practice, but two plug-in instances can differ.
@@ -5033,37 +5446,41 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
     const Pair resonanceOffset = pack(
         static_cast<double>(first.resonanceOffsetVolts),
         static_cast<double>(second.resonanceOffsetVolts));
-    const Pair inverseLoopHeadroom = pack(
-        lanes[0].inverseLoopHeadroom, lanes[1].inverseLoopHeadroom);
     const auto derivative = [&](const PairState& value, Pair drive, std::size_t point) {
         // As in the RK4 pair, match the scalar target's contraction of the
         // differential-input subtraction when compensation is nonzero.
-        const Pair feedbackArgument = pairMultiply(
-            pairAdd(pairMultiplySubtract(value[3], resonanceCompensation, drive),
-                    resonanceOffset),
-            inverseLoopHeadroom);
-        const Pair feedbackTanh = polyTanhPair(feedbackArgument);
-        const double firstLoopReturn = lanes[0].feedback == 0.0
-            ? pairLow(drive)
-            : pairLow(drive)
-                - lanes[0].feedback * lanes[0].loopHeadroom
-                    * pairLow(feedbackTanh);
-        const double secondLoopReturn = lanes[1].feedback == 0.0
-            ? pairHigh(drive)
-            : pairHigh(drive)
-                - lanes[1].feedback * lanes[1].loopHeadroom
-                    * pairHigh(feedbackTanh);
-        const Pair loopReturn = pack(firstLoopReturn, secondLoopReturn);
+        Pair loopReturn = drive;
+        if (lanes[0].feedbackAt[point] != 0.0 || lanes[1].feedbackAt[point] != 0.0)
+        {
+            const Pair feedbackArgument = pairMultiply(
+                pairAdd(pairMultiplySubtract(value[3], resonanceCompensation, drive),
+                        resonanceOffset),
+                inverseLoopHeadroom[point]);
+            const Pair feedbackTanh = polyTanhPair(feedbackArgument);
+            const double firstLoopReturn = lanes[0].feedbackAt[point] == 0.0
+                ? pairLow(drive)
+                : pairLow(drive)
+                    - lanes[0].feedbackAt[point] * lanes[0].loopHeadroomAt[point]
+                        * pairLow(feedbackTanh);
+            const double secondLoopReturn = lanes[1].feedbackAt[point] == 0.0
+                ? pairHigh(drive)
+                : pairHigh(drive)
+                    - lanes[1].feedbackAt[point] * lanes[1].loopHeadroomAt[point]
+                        * pairHigh(feedbackTanh);
+            loopReturn = pack(firstLoopReturn, secondLoopReturn);
+        }
 
+        const Pair invHeadroom = inverseHeadroom[point];
+        const Pair runHeadroom = runningHeadroom[point];
         PairState stageArgument {
             pairMultiply(pairAdd(pairSubtract(loopReturn, value[0]),
-                                 stageOffset[point][0]), inverseHeadroom),
+                                 stageOffset[point][0]), invHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[0], value[1]),
-                                 stageOffset[point][1]), inverseHeadroom),
+                                 stageOffset[point][1]), invHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[1], value[2]),
-                                 stageOffset[point][2]), inverseHeadroom),
+                                 stageOffset[point][2]), invHeadroom),
             pairMultiply(pairAdd(pairSubtract(value[2], value[3]),
-                                 stageOffset[point][3]), inverseHeadroom)
+                                 stageOffset[point][3]), invHeadroom)
         };
         PairState stageTanh;
         for (std::size_t stage = 0; stage < stageTanh.size(); ++stage)
@@ -5080,7 +5497,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
             for (std::size_t stage = 0; stage < early.size(); ++stage)
             {
                 const Pair earlyTanh = cubicEarlyPair(
-                    pairMultiply(value[stage], inverseHeadroom));
+                    pairMultiply(value[stage], invHeadroom));
                 early[stage] = pairMultiplyAddScalar(
                     pairSplat(1.0), earlyTanh, earlyAmount);
             }
@@ -5089,8 +5506,8 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
         PairState result;
         for (std::size_t stage = 0; stage < result.size(); ++stage)
         {
-            result[stage] = pairMultiply(stageOmega[stage], early[stage]);
-            result[stage] = pairMultiply(result[stage], runningHeadroom);
+            result[stage] = pairMultiply(stageOmega[point][stage], early[stage]);
+            result[stage] = pairMultiply(result[stage], runHeadroom);
             result[stage] = pairMultiply(result[stage], stageTanh[stage]);
         }
         return result;
@@ -5199,7 +5616,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonPair(
 
         const bool valid = std::all_of(
             cascade.state.begin(), cascade.state.end(), [](double value) {
-                return std::abs(value) <= 64.0;
+                return inlineAbs(value) <= 64.0;
             });
         if (!valid)
         {
@@ -5226,6 +5643,18 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
     bool enableEarlyEffect, float calibration,
     std::array<float, 4>& outputs) noexcept
 {
+#if defined(YOUKNOW_EMBEDDED_TARGET) \
+    || (!defined(__ARM_NEON) && !defined(__SSE2__))
+    (void) cascades;
+    (void) inputs;
+    (void) omegaSteps;
+    (void) feedbacks;
+    (void) headrooms;
+    (void) enableEarlyEffect;
+    (void) calibration;
+    (void) outputs;
+    return false;
+#else
     const double currentCalibration = std::clamp(
         finiteValue(calibration) ? static_cast<double>(calibration) : 0.0,
         0.0, static_cast<double>(EngineParameters::calibrationCeiling));
@@ -5638,6 +6067,7 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledMersonQuad(
         }
     }
     return true;
+#endif
 }
 #undef YOUKNOW_MERSON_NOINLINE
 #if defined(__GNUC__)
@@ -6265,6 +6695,7 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     (void) CircuitDerivedNoiseLevelProfile::junctionDriveTable();
     (void) CircuitDerivedResonanceProfile::junctionLoopGainTable();
     (void) VoiceVcaSignalLaw::serviceGain();
+    (void) firmwareControlTables();
 
     // A host that has not negotiated a rate yet, or one reporting a nonsense
     // one, must not be able to put a zero, a negative or a NaN on the internal
@@ -8595,27 +9026,7 @@ void YouKnowEngine::refreshFirmwareControlTrace(bool initialise) noexcept
 {
     if (activeConverterTimingProfile_ != ConverterTimingProfile::FirmwareControlNoInterrupt)
         return;
-#if defined(YOUKNOW_EMBEDDED_TARGET)
-    static constexpr FirmwareControlTrace::Tables tables =
-#include "FrozenTables/FirmwareControl.inc"
-;
-#else
-    static const auto tables = [] {
-        FirmwareControlTrace::Tables result;
-        for (unsigned i = 0; i < 128; ++i)
-        {
-            result.attack[i] = attackIncrementForByte(static_cast<std::uint8_t>(i));
-            result.portamento[i] = portamentoIncrementForIndex(static_cast<std::uint8_t>(i));
-        }
-        for (int i = 0; i < 104; ++i)
-        {
-            result.pitchCv[static_cast<std::size_t>(i)] = derivedDcoCvAnchor(i);
-            result.pitchDivider[static_cast<std::size_t>(i)] =
-                static_cast<std::uint16_t>(derivedDcoDividerAnchor(i));
-        }
-        return result;
-    }();
-#endif
+    const auto& tables = firmwareControlTables();
     auto& ram = firmwareControlState_.ram;
     if (initialise)
     {
@@ -12145,7 +12556,7 @@ YouKnowEngine::VoiceFilterFrame YouKnowEngine::prepareVoiceFilter(
         eventControlTrajectory.headroom.back() = dynamicHeadroom;
         controlTrajectory = &eventControlTrajectory;
     }
-    if (parameters.enableOtaShotNoise)
+    if (parameters.enableOtaShotNoise && !voiceFilterRateIslandEnabled())
     {
         frame.shotNoiseOrigin = voice.filter.state;
         frame.shotNoiseInput = .5 * (filterInput + voice.filter.inputHistory[0]);
@@ -12261,10 +12672,9 @@ float YouKnowEngine::applyVoiceFilterShotNoise(
     // is therefore attenuated by the first pair's incremental sensitivity.
     // Recover its current at the fixed service temperature, rather than
     // allowing live warm-up to re-trim the grounded-base control stage.
-    const double serviceKelvin=voiceCardCelsius(
-        activeParameters_,voice.cardIndex,1.0f)+273.15;
     const double serviceLoopH=local ? context->serviceLoopHeadroom : filter.resonanceHeadroomFollowsStage
-        ? resonanceHeadroomFor(otaHeadroomVolts*serviceKelvin/298.15) : loopH;
+        ? resonanceHeadroomFor(otaHeadroomVolts*(voiceCardCelsius(
+            activeParameters_,voice.cardIndex,1.0f)+273.15)/298.15) : loopH;
     const double resTail=frame.shotNoiseFeedback*serviceLoopH/68000.0;
     const double noiseGainPerAmp=firstSlope*rate*68000.0;
     // The physical BA662 has IN+ from VCF IN and IN- from VCF OUT.
@@ -12527,15 +12937,34 @@ void YouKnowEngine::restVoiceFilterIsland(Voice& voice,
     voice.islandBaseRate = oversampledRate_;
 }
 
-float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
-                                             const VoiceFilterFrame& frame) noexcept
+void YouKnowEngine::resumeVoiceFilterIslandIfResting(Voice& voice,
+                                                     float input) noexcept
+{
+    if (!voice.islandResting)
+        return;
+    // Resume the island: the running filter and C59 charges continue,
+    // and its numerical histories restart warm from the latest input,
+    // closed, before the new gain arrives.
+    voice.islandResting = false;
+    voice.filter.retime(static_cast<float>(voiceVcaAntialiasKernel_.factor), 1.0f);
+    resetVoiceFilterIsland(voice, true);
+    voice.islandLastInput = input;
+    voice.vcaAntialias.inputs.fill(input);
+    for (auto& context : voice.filterIsland.contexts)
+    {
+        context.gain = 0.0f;
+        context.vcaControl = {};
+    }
+}
+
+YouKnowEngine::VoiceFilterIslandContext
+YouKnowEngine::prepareVoiceFilterIslandContext(
+    Voice& voice, const VoiceFilterFrame& frame) noexcept
 {
     using Context = VoiceFilterIslandContext;
     const auto& parameters = activeParameters_;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const int factor = voiceVcaAntialiasKernel_.factor;
-    const double inverseFactor = 1.0 / factor;
-    const double localRate = oversampledRate_ * factor;
     Context context;
     context.headroom = frame.headroom;
     context.gain = voice.active ? voice.vca : 0.0f;
@@ -12634,6 +13063,17 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
     voice.islandControlPrimed = true;
     voice.islandLastInput = frame.input;
     voice.islandBaseRate = oversampledRate_;
+    return context;
+}
+
+float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
+                                             const VoiceFilterFrame& frame) noexcept
+{
+    using Context = VoiceFilterIslandContext;
+    const int factor = voiceVcaAntialiasKernel_.factor;
+    const double inverseFactor = 1.0 / factor;
+    const double localRate = oversampledRate_ * factor;
+    const Context context = prepareVoiceFilterIslandContext(voice, frame);
     // One frame object serves every local interval of this call: each
     // interval rewrites every field it reads, so constructing (and
     // zero-filling) a fresh frame per interval bought nothing. The
@@ -12669,30 +13109,25 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
         }
         local.omegaStep = static_cast<float>(local.trajectory.omegaStep.back());
         local.headroom = static_cast<float>(local.trajectory.headroom.back());
-        local.shotNoiseOrigin = filter.state;
-        local.shotNoiseInput = .5 * (input + filter.inputHistory[0]);
-        local.shotNoiseOmega = local.trajectory.omegaStep[3];
-        local.shotNoiseFeedback = local.trajectory.feedback[3];
-        local.shotNoiseHeadroom = local.trajectory.headroom[3];
-        if (c.has(Context::ShotFrame))
+        if (c.has(Context::Shot) && c.character != 0)
         {
-            // Phase zero ends the delayed frame; the following phases begin
-            // the next one, so a frame's first local interval begins at zero.
-            // The collector shot-noise covariance factor is rebuilt on the
-            // first local interval of every fourth frame and reused until the
-            // next rebuild; every interval still draws its own innovation.
-            // Over all 144 presets the render nulls at a median -123 dB re
-            // signal; the self-oscillating ones take a different noise path
-            // at the same level (Docs/decisions.md, 2026-10-30).
-            constexpr std::int64_t framesPerShotFactor = 4;
-            local.shotFactorFrame = interval.frame >= 0 ? interval.frame / framesPerShotFactor : -1;
-            local.shotFactorRefresh = interval.begin == 0.0
-                && interval.frame % framesPerShotFactor == 0;
-        }
-        else
-        {
-            local.shotFactorFrame = -1;
-            local.shotFactorRefresh = true;
+            local.shotNoiseOrigin = filter.state;
+            local.shotNoiseInput = .5 * (input + filter.inputHistory[0]);
+            local.shotNoiseOmega = local.trajectory.omegaStep[3];
+            local.shotNoiseFeedback = local.trajectory.feedback[3];
+            local.shotNoiseHeadroom = local.trajectory.headroom[3];
+            if (c.has(Context::ShotFrame))
+            {
+                constexpr std::int64_t framesPerShotFactor = 4;
+                local.shotFactorFrame = interval.frame >= 0 ? interval.frame / framesPerShotFactor : -1;
+                local.shotFactorRefresh = interval.begin == 0.0
+                    && interval.frame % framesPerShotFactor == 0;
+            }
+            else
+            {
+                local.shotFactorFrame = -1;
+                local.shotFactorRefresh = true;
+            }
         }
         std::array<double, 4> stageNoise {};
         for (std::size_t stage = 0; stage < (c.has(Context::Johnson) ? 4u : 1u); ++stage)
@@ -12748,13 +13183,501 @@ float YouKnowEngine::renderVoiceFilterIsland(Voice& voice,
         // circuit. Its existing 5.208ms follower gains 24/baseRate seconds of
         // transport delay; no duplicate coarse-grid VCF is invented for it.
         // Component/noise chronology stays at the reconstructed timestamp.
-        voice.energy += voiceIslandEnergyFollower_ * (std::abs(signal) - voice.energy);
+        voice.energy += voiceIslandEnergyFollower_ * (inlineAbs(signal) - voice.energy);
         return static_cast<float>(signal + outputNoise);
     };
     const float output = voice.filterIsland.process(frame.input, context,
         voiceVcaAntialiasKernel_, voice.vcaAntialias, circuit);
     return finiteValue(output) ? output : 0.0f;
 }
+
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
+void YouKnowEngine::restVoiceFilterIslandPair(
+    Voice& first, const VoiceFilterFrame& firstFrame,
+    Voice& second, const VoiceFilterFrame& secondFrame) noexcept
+{
+    const auto& parameters = activeParameters_;
+    const int factor = voiceVcaAntialiasKernel_.factor;
+    const bool johnson = parameters.enableCardJohnsonFloor;
+
+    const auto prepareRest = [&](Voice& voice, const VoiceFilterFrame& frame) noexcept -> float {
+        const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+        if (!voice.islandResting)
+        {
+            voice.filter.retime(1.0f, static_cast<float>(factor));
+            const float amount = parameters.enableVcfStageOffsets
+                               ? parameters.calibration : 0.0f;
+            const float resonanceAmount = parameters.enableResonanceOtaOffset
+                                        ? parameters.calibration : 0.0f;
+            const float resonanceOffsetScale =
+                parameters.useBa662AResonanceOffsetEstimate
+                    ? 0.000250f / 0.0015f : 1.0f;
+            voice.filter.resonanceOffsetVolts = card.resonanceOtaOffset
+                * VoicedResonanceCompatibilityProfile::loopDividerRatio
+                * resonanceAmount * resonanceOffsetScale;
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                voice.filter.offsetVoltage[stage] =
+                    card.vcfStageOffsets[stage] / stageAttenuation * amount;
+                voice.filter.gScale[stage] =
+                    1.0f + card.vcfStageGErrors[stage] * vcfStageCapacitorTolerance
+                               * amount;
+            }
+            voice.islandResting = true;
+        }
+        std::array<double, 4> stageNoise {};
+        float input = frame.input;
+        for (int phase = 0; phase < factor; ++phase)
+        {
+            for (std::size_t stage = 0; stage < (johnson ? 4u : 1u); ++stage)
+            {
+                voice.noiseState = xorshift32(voice.noiseState);
+                if (phase != 0) continue;
+                const double white = bipolarFromState(voice.noiseState) * noiseRateScale_;
+                if (johnson) stageNoise[stage] = white * filterNoiseVoltsDerived * card.johnsonTemperatureScale;
+                else input += static_cast<float>(white * filterNoiseVoltsVoiced);
+            }
+            if (parameters.enableOtaShotNoise)
+            {
+                for (int i = 0; i < 4; ++i) (void) voice.filterShotRandom.next();
+                (void) voice.vcaShotRandom.next();
+            }
+            voice.energy += voiceIslandEnergyFollower_ * (0.0f - voice.energy);
+        }
+        voice.filter.setStageNoise(stageNoise);
+        return input;
+    };
+
+    const float input0 = prepareRest(first, firstFrame);
+    const float input1 = prepareRest(second, secondFrame);
+    const auto* trajectory0 = firstFrame.hasTrajectory ? &firstFrame.trajectory : nullptr;
+    const auto* trajectory1 = secondFrame.hasTrajectory ? &secondFrame.trajectory : nullptr;
+    float filtered0 = 0.0f;
+    float filtered1 = 0.0f;
+    bool processed = false;
+#if !defined(YOUKNOW_WORK_AUDIT)
+    if (useCubicEarly_
+        && parameters.vcfTanhMode == VcfTanhMode::PolyZoned
+        && parameters.vcfSolverMode == VcfSolverMode::Rk4Single)
+    {
+        processed =
+            OtaCascade::tryProcessSettledRk4Pair(
+                first.filter, input0, firstFrame.omegaStep, first.feedback, firstFrame.headroom,
+                second.filter, input1, secondFrame.omegaStep, second.feedback, secondFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration,
+                filtered0, filtered1, trajectory0, trajectory1)
+            || OtaCascade::tryProcessSettledMersonPair(
+                first.filter, input0, firstFrame.omegaStep, first.feedback, firstFrame.headroom,
+                second.filter, input1, secondFrame.omegaStep, second.feedback, secondFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration,
+                filtered0, filtered1, trajectory0, trajectory1);
+    }
+#endif
+    if (!processed)
+    {
+        filtered0 = useCubicEarly_
+            ? first.filter.process<true>(input0, firstFrame.omegaStep, first.feedback, firstFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration, trajectory0,
+                parameters.vcfTanhMode, parameters.vcfSolverMode)
+            : first.filter.process<false>(input0, firstFrame.omegaStep, first.feedback, firstFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration, trajectory0,
+                parameters.vcfTanhMode, parameters.vcfSolverMode);
+        filtered1 = useCubicEarly_
+            ? second.filter.process<true>(input1, secondFrame.omegaStep, second.feedback, secondFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration, trajectory1,
+                parameters.vcfTanhMode, parameters.vcfSolverMode)
+            : second.filter.process<false>(input1, secondFrame.omegaStep, second.feedback, secondFrame.headroom,
+                parameters.enableVcfEarlyEffect, parameters.calibration, trajectory1,
+                parameters.vcfTanhMode, parameters.vcfSolverMode);
+    }
+
+    const auto finishRest = [&](Voice& voice, const VoiceFilterFrame& frame, float filtered) noexcept {
+        const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+        voice.vcaInputVolts = voice.vcaInputCoupling.process(
+            filtered, card.vcaInputCouplingG, 0.0f, 1.0f);
+        voice.islandLastInput = frame.input;
+        voice.islandPreviousOmega = frame.omegaStep;
+        voice.islandPreviousFeedback = voice.feedback;
+        voice.islandPreviousHeadroom = frame.headroom;
+        voice.islandBaseRate = oversampledRate_;
+    };
+    finishRest(first, firstFrame, filtered0);
+    finishRest(second, secondFrame, filtered1);
+}
+
+std::array<float, 2> YouKnowEngine::renderVoiceFilterIslandPair(
+    Voice& first, const VoiceFilterFrame& firstFrame,
+    Voice& second, const VoiceFilterFrame& secondFrame) noexcept
+{
+    using Context = VoiceFilterIslandContext;
+    using Island = VoiceRateIsland<Context>;
+    const auto& k = voiceVcaAntialiasKernel_;
+    const int factor = k.factor;
+    if (factor <= 1)
+        return { renderVoiceFilterIsland(first, firstFrame),
+                 renderVoiceFilterIsland(second, secondFrame) };
+
+    const double inverseFactor = 1.0 / factor;
+    const double localRate = oversampledRate_ * factor;
+    const Context context0 = prepareVoiceFilterIslandContext(first, firstFrame);
+    const Context context1 = prepareVoiceFilterIslandContext(second, secondFrame);
+
+    if (first.filterIsland.frames == 0)
+        first.vcaAntialias.gains.fill(1.0f);
+    if (second.filterIsland.frames == 0)
+        second.vcaAntialias.gains.fill(1.0f);
+
+    const int write0 = static_cast<int>(first.filterIsland.frames & (Island::ringSize - 1));
+    const int write1 = static_cast<int>(second.filterIsland.frames & (Island::ringSize - 1));
+    first.filterIsland.contexts[static_cast<std::size_t>(write0)] = context0;
+    second.filterIsland.contexts[static_cast<std::size_t>(write1)] = context1;
+
+    auto& aa0 = first.vcaAntialias;
+    auto& aa1 = second.vcaAntialias;
+    aa0.inputs[static_cast<std::size_t>(aa0.inputWrite)] = firstFrame.input;
+    aa0.inputs[static_cast<std::size_t>(aa0.inputWrite + VoiceVcaAntialias::inputRingSize)] = firstFrame.input;
+    aa0.gains[static_cast<std::size_t>(aa0.inputWrite)] = 1.0f;
+    aa1.inputs[static_cast<std::size_t>(aa1.inputWrite)] = secondFrame.input;
+    aa1.inputs[static_cast<std::size_t>(aa1.inputWrite + VoiceVcaAntialias::inputRingSize)] = secondFrame.input;
+    aa1.gains[static_cast<std::size_t>(aa1.inputWrite)] = 1.0f;
+
+    constexpr int lookBack = VoiceVcaAntialias::delaySamples / 2;
+    constexpr int inputMask = VoiceVcaAntialias::inputRingSize - 1;
+    const double* const recent0 = aa0.inputs.data() + aa0.inputWrite + VoiceVcaAntialias::inputRingSize;
+    const double* const recent1 = aa1.inputs.data() + aa1.inputWrite + VoiceVcaAntialias::inputRingSize;
+    const double g00 = aa0.gains[static_cast<std::size_t>((aa0.inputWrite - lookBack + VoiceVcaAntialias::inputRingSize) & inputMask)];
+    const double g01 = aa0.gains[static_cast<std::size_t>((aa0.inputWrite - lookBack + 1 + VoiceVcaAntialias::inputRingSize) & inputMask)];
+    const double g10 = aa1.gains[static_cast<std::size_t>((aa1.inputWrite - lookBack + VoiceVcaAntialias::inputRingSize) & inputMask)];
+    const double g11 = aa1.gains[static_cast<std::size_t>((aa1.inputWrite - lookBack + 1 + VoiceVcaAntialias::inputRingSize) & inputMask)];
+
+    std::array<double, VoiceVcaAntialias::maximumFactor> reconstructed0 {};
+    std::array<double, VoiceVcaAntialias::maximumFactor> reconstructed1 {};
+    const auto reconstruct = [&](auto phaseCount) noexcept {
+        constexpr int phases = decltype(phaseCount)::value;
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD)
+        std::array<std::array<Double2, 4>, phases> partial {};
+        for (int tap = 0; tap < VoiceVcaAntialias::delaySamples; tap += 4)
+            for (int lane = 0; lane < 4; ++lane)
+            {
+                const Double2 sample = double2Pack(
+                    recent0[-(tap + lane)], recent1[-(tap + lane)]);
+                for (int phase = 0; phase < phases; ++phase)
+                    partial[static_cast<std::size_t>(phase)][static_cast<std::size_t>(lane)]
+                        += double2Splat(k.interpolation[static_cast<std::size_t>(phase + 1)]
+                                            [static_cast<std::size_t>(tap + lane)]) * sample;
+            }
+        for (int phase = 0; phase < phases; ++phase)
+        {
+            const auto& sum = partial[static_cast<std::size_t>(phase)];
+            const Double2 total = (sum[0] + sum[1]) + (sum[2] + sum[3]);
+            reconstructed0[static_cast<std::size_t>(phase + 1)] = double2Low(total);
+            reconstructed1[static_cast<std::size_t>(phase + 1)] = double2High(total);
+        }
+#else
+        std::array<std::array<double, 4>, phases> partial0 {};
+        std::array<std::array<double, 4>, phases> partial1 {};
+        for (int tap = 0; tap < VoiceVcaAntialias::delaySamples; tap += 4)
+            for (int lane = 0; lane < 4; ++lane)
+            {
+                const double s0 = recent0[-(tap + lane)];
+                const double s1 = recent1[-(tap + lane)];
+                for (int phase = 0; phase < phases; ++phase)
+                {
+                    const double w = k.interpolation[static_cast<std::size_t>(phase + 1)]
+                                         [static_cast<std::size_t>(tap + lane)];
+                    partial0[static_cast<std::size_t>(phase)][static_cast<std::size_t>(lane)] += w * s0;
+                    partial1[static_cast<std::size_t>(phase)][static_cast<std::size_t>(lane)] += w * s1;
+                }
+            }
+        for (int phase = 0; phase < phases; ++phase)
+        {
+            const auto& sum0 = partial0[static_cast<std::size_t>(phase)];
+            const auto& sum1 = partial1[static_cast<std::size_t>(phase)];
+            reconstructed0[static_cast<std::size_t>(phase + 1)] = (sum0[0] + sum0[1]) + (sum0[2] + sum0[3]);
+            reconstructed1[static_cast<std::size_t>(phase + 1)] = (sum1[0] + sum1[1]) + (sum1[2] + sum1[3]);
+        }
+#endif
+    };
+    if (factor == 4)
+        reconstruct(std::integral_constant<int, 3>{});
+    else
+        reconstruct(std::integral_constant<int, 1>{});
+
+    VoiceFilterFrame local0;
+    VoiceFilterFrame local1;
+    local0.hasTrajectory = true;
+    local1.hasTrajectory = true;
+
+    const auto prepareInterval = [&](Voice& voice, float& input,
+                                     VoiceFilterFrame& local,
+                                     const Island::Interval& interval) noexcept {
+        const auto& c = interval.current;
+        auto& filter = voice.filter;
+        filter.gScale = c.gScale;
+        filter.offsetVoltage = c.offset;
+        filter.resonanceOffsetVolts = c.resonanceOffset;
+        filter.inputCompensationCoefficient = c.compensation;
+        filter.resonanceHeadroomFollowsStage = c.has(Context::FollowHeadroom);
+        const auto& nodes = voiceIslandNodes_[static_cast<std::size_t>(interval.phase)];
+        local.input = input;
+        for (std::size_t point = 0; point < 7; ++point)
+        {
+            const auto& node = nodes[point];
+            const auto sample = [&node](const std::array<float, 7>& values) noexcept {
+                return values[node.right - 1]
+                    + node.fraction * (values[node.right] - values[node.right - 1]);
+            };
+            local.trajectory.omegaStep[point] = sample(c.omega) * inverseFactor;
+            local.trajectory.feedback[point] = sample(c.feedback);
+            local.trajectory.headroom[point] = interval.previous.headroom
+                + node.position * (c.headroom - interval.previous.headroom);
+        }
+        local.omegaStep = static_cast<float>(local.trajectory.omegaStep.back());
+        local.headroom = static_cast<float>(local.trajectory.headroom.back());
+        if (c.has(Context::Shot) && c.character != 0)
+        {
+            local.shotNoiseOrigin = filter.state;
+            local.shotNoiseInput = .5 * (input + filter.inputHistory[0]);
+            local.shotNoiseOmega = local.trajectory.omegaStep[3];
+            local.shotNoiseFeedback = local.trajectory.feedback[3];
+            local.shotNoiseHeadroom = local.trajectory.headroom[3];
+            if (c.has(Context::ShotFrame))
+            {
+                constexpr std::int64_t framesPerShotFactor = 4;
+                local.shotFactorFrame = interval.frame >= 0 ? interval.frame / framesPerShotFactor : -1;
+                local.shotFactorRefresh = interval.begin == 0.0
+                    && interval.frame % framesPerShotFactor == 0;
+            }
+            else
+            {
+                local.shotFactorFrame = -1;
+                local.shotFactorRefresh = true;
+            }
+        }
+        std::array<double, 4> stageNoise {};
+        for (std::size_t stage = 0; stage < (c.has(Context::Johnson) ? 4u : 1u); ++stage)
+        {
+            voice.noiseState = xorshift32(voice.noiseState);
+            const double white = bipolarFromState(voice.noiseState) * voiceIslandNoiseRateScale_;
+            if (c.has(Context::Johnson)) stageNoise[stage] = white * filterNoiseVoltsDerived * c.johnsonScale;
+            else input += static_cast<float>(white * filterNoiseVoltsVoiced);
+        }
+        filter.setStageNoise(stageNoise);
+    };
+
+    const auto finishInterval = [&](Voice& voice, const VoiceFilterFrame& local,
+                                    float filtered, const Island::Interval& interval) noexcept -> float {
+        const auto& c = interval.current;
+        const float noisy = applyVoiceFilterShotNoise(voice, local, filtered, &c);
+        const float vcaInput = voice.vcaInputCoupling.process(noisy, c.couplingG, 0.0f, 1.0f);
+        voice.vcaInputVolts = vcaInput;
+        const float drive = vcaInput * c.inputScale;
+        float shaped = drive;
+        if (c.has(Context::Saturate))
+        {
+            if (!c.has(Context::EvidenceVca)) shaped = VoiceVcaSignalLaw::shape(drive);
+            else
+            {
+                const double normalized = drive / static_cast<double>(c.vcaHeadroom);
+                const double square = normalized * normalized;
+                shaped = static_cast<float>(c.vcaHeadroom * (square < 1
+                    ? normalized * vcfInnerTanhFactor(square) : OtaCascade::zonedHermiteTanh(normalized)));
+            }
+        }
+        const double gain = c.vcaControl.valid()
+            ? c.vcaControl.sample(c.gain, interval.end)
+            : interval.interpolate(interval.previous.gain, c.gain);
+        const float signal = static_cast<float>(shaped * gain * c.serviceGain * voltsToSample);
+        double outputNoise = 0;
+        if (c.has(Context::Shot))
+        {
+            const double normal = voice.vcaShotRandom.next();
+            if (c.character != 0 && gain > 0)
+            {
+                const double tail = c.peakTailAmps * gain;
+                const double pair = polyZonedTanhImpl(drive / static_cast<double>(c.vcaHeadroom));
+                const double psd = OtaShotNoise::currentPsd(tail, pair)
+                    + (c.has(Context::Mirror) ? Ba662Noise::outputMirrorCurrentPsd(tail, pair) : 0.0)
+                    + (c.has(Context::TailMirror) ? Ba662Noise::tailMirrorCurrentPsd(tail, pair, c.kelvin) : 0.0);
+                outputNoise = normal * c.character * VoiceVcaSignalLaw::loadOhms
+                    * voltsToSample * inlineSqrt(psd * localRate / 2);
+            }
+        }
+        voice.energy += voiceIslandEnergyFollower_ * (inlineAbs(signal) - voice.energy);
+        return static_cast<float>(signal + outputNoise);
+    };
+
+    float result0 = 0.0f;
+    float result1 = 0.0f;
+    for (int phase = 0; phase < factor; ++phase)
+    {
+        const double drive0 = phase == 0 ? static_cast<double>(recent0[-lookBack])
+                                         : reconstructed0[static_cast<std::size_t>(phase)];
+        const double drive1 = phase == 0 ? static_cast<double>(recent1[-lookBack])
+                                         : reconstructed1[static_cast<std::size_t>(phase)];
+        const double fraction = static_cast<double>(phase) * inverseFactor;
+        const double g0 = g00 + fraction * (g01 - g00);
+        const double g1 = g10 + fraction * (g11 - g10);
+
+        constexpr int delay = Island::lookBack;
+        const int next = phase == 0 ? 0 : 1;
+        const int index0 = (write0 - delay + next + Island::ringSize) & (Island::ringSize - 1);
+        const int prev0  = (index0 - 1 + Island::ringSize) & (Island::ringSize - 1);
+        const int index1 = (write1 - delay + next + Island::ringSize) & (Island::ringSize - 1);
+        const int prev1  = (index1 - 1 + Island::ringSize) & (Island::ringSize - 1);
+        const double begin = (phase == 0 ? factor - 1 : phase - 1) * inverseFactor;
+        const double end   = phase == 0 ? 1.0 : phase * inverseFactor;
+        const Island::Interval interval0 {
+            first.filterIsland.contexts[static_cast<std::size_t>(prev0)],
+            first.filterIsland.contexts[static_cast<std::size_t>(index0)],
+            begin, end, factor, first.filterIsland.frames - delay + next, phase };
+        const Island::Interval interval1 {
+            second.filterIsland.contexts[static_cast<std::size_t>(prev1)],
+            second.filterIsland.contexts[static_cast<std::size_t>(index1)],
+            begin, end, factor, second.filterIsland.frames - delay + next, phase };
+
+        const bool run0 = !(interval0.frame < 0 && !first.islandWarmStart);
+        const bool run1 = !(interval1.frame < 0 && !second.islandWarmStart);
+        float input0 = static_cast<float>(drive0);
+        float input1 = static_cast<float>(drive1);
+        if (run0)
+            prepareInterval(first, input0, local0, interval0);
+        if (run1)
+            prepareInterval(second, input1, local1, interval1);
+
+        float filtered0 = 0.0f;
+        float filtered1 = 0.0f;
+        bool pairSolved = false;
+#if !defined(YOUKNOW_WORK_AUDIT)
+        if (run0 && run1)
+        {
+            const auto& c0 = interval0.current;
+            const auto& c1 = interval1.current;
+            if (c0.has(Context::CubicEarly) && c1.has(Context::CubicEarly)
+                && c0.tanhMode == VcfTanhMode::PolyZoned
+                && c1.tanhMode == VcfTanhMode::PolyZoned
+                && c0.solverMode == VcfSolverMode::Rk4Single
+                && c1.solverMode == VcfSolverMode::Rk4Single
+                && c0.has(Context::Early) == c1.has(Context::Early)
+                && c0.character == c1.character)
+            {
+                const float fb0 = static_cast<float>(local0.trajectory.feedback.back());
+                const float fb1 = static_cast<float>(local1.trajectory.feedback.back());
+                pairSolved =
+                    OtaCascade::tryProcessSettledRk4Pair(
+                        first.filter, input0, local0.omegaStep, fb0, local0.headroom,
+                        second.filter, input1, local1.omegaStep, fb1, local1.headroom,
+                        c0.has(Context::Early), c0.character,
+                        filtered0, filtered1,
+                        &local0.trajectory, &local1.trajectory)
+                    || OtaCascade::tryProcessSettledMersonPair(
+                        first.filter, input0, local0.omegaStep, fb0, local0.headroom,
+                        second.filter, input1, local1.omegaStep, fb1, local1.headroom,
+                        c0.has(Context::Early), c0.character,
+                        filtered0, filtered1,
+                        &local0.trajectory, &local1.trajectory);
+            }
+        }
+#endif
+        if (!pairSolved)
+        {
+            if (run0)
+            {
+                const auto& c = interval0.current;
+                const float feedback = static_cast<float>(local0.trajectory.feedback.back());
+                filtered0 = c.has(Context::CubicEarly)
+                    ? first.filter.process<true>(input0, local0.omegaStep, feedback, local0.headroom,
+                        c.has(Context::Early), c.character, &local0.trajectory, c.tanhMode, c.solverMode)
+                    : first.filter.process<false>(input0, local0.omegaStep, feedback, local0.headroom,
+                        c.has(Context::Early), c.character, &local0.trajectory, c.tanhMode, c.solverMode);
+            }
+            if (run1)
+            {
+                const auto& c = interval1.current;
+                const float feedback = static_cast<float>(local1.trajectory.feedback.back());
+                filtered1 = c.has(Context::CubicEarly)
+                    ? second.filter.process<true>(input1, local1.omegaStep, feedback, local1.headroom,
+                        c.has(Context::Early), c.character, &local1.trajectory, c.tanhMode, c.solverMode)
+                    : second.filter.process<false>(input1, local1.omegaStep, feedback, local1.headroom,
+                        c.has(Context::Early), c.character, &local1.trajectory, c.tanhMode, c.solverMode);
+            }
+        }
+
+        const float shaped0 = run0 ? finishInterval(first, local0, filtered0, interval0) : 0.0f;
+        const float shaped1 = run1 ? finishInterval(second, local1, filtered1, interval1) : 0.0f;
+        const float produced0 = static_cast<float>(shaped0 * g0);
+        const float produced1 = static_cast<float>(shaped1 * g1);
+        aa0.outputs[static_cast<std::size_t>(aa0.outputWrite)] = produced0;
+        aa0.outputs[static_cast<std::size_t>(aa0.outputWrite + VoiceVcaAntialias::outputRingSize)] = produced0;
+        aa1.outputs[static_cast<std::size_t>(aa1.outputWrite)] = produced1;
+        aa1.outputs[static_cast<std::size_t>(aa1.outputWrite + VoiceVcaAntialias::outputRingSize)] = produced1;
+
+        if (phase == 0)
+        {
+            const int centre = (k.taps - 1) / 2;
+            const double* const recentOutput0 = aa0.outputs.data() + aa0.outputWrite + VoiceVcaAntialias::outputRingSize;
+            const double* const recentOutput1 = aa1.outputs.data() + aa1.outputWrite + VoiceVcaAntialias::outputRingSize;
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD)
+            std::array<Double2, 4> partial {};
+            const auto pairTerm = [&](int index) noexcept -> Double2 {
+                const auto& pair = k.pairs[static_cast<std::size_t>(index)];
+                const Double2 a = double2Pack(recentOutput0[-pair.tap], recentOutput1[-pair.tap]);
+                const Double2 b = double2Pack(recentOutput0[-pair.opposite], recentOutput1[-pair.opposite]);
+                return double2Splat(pair.weight) * (a + b);
+            };
+            int index = 0;
+            for (; index + 4 <= k.pairCount; index += 4)
+                for (int lane = 0; lane < 4; ++lane)
+                    partial[static_cast<std::size_t>(lane)] += pairTerm(index + lane);
+            for (; index < k.pairCount; ++index)
+                partial[0] += pairTerm(index);
+            const Double2 centreSample = double2Pack(recentOutput0[-centre], recentOutput1[-centre]);
+            const Double2 y = double2Splat(k.decimation[static_cast<std::size_t>(centre)]) * centreSample
+                + ((partial[0] + partial[1]) + (partial[2] + partial[3]));
+            result0 = static_cast<float>(double2Low(y));
+            result1 = static_cast<float>(double2High(y));
+#else
+            std::array<double, 4> partial0 {};
+            std::array<double, 4> partial1 {};
+            const auto pairTerm0 = [&](int index) noexcept {
+                const auto& pair = k.pairs[static_cast<std::size_t>(index)];
+                return pair.weight * (recentOutput0[-pair.tap] + recentOutput0[-pair.opposite]);
+            };
+            const auto pairTerm1 = [&](int index) noexcept {
+                const auto& pair = k.pairs[static_cast<std::size_t>(index)];
+                return pair.weight * (recentOutput1[-pair.tap] + recentOutput1[-pair.opposite]);
+            };
+            int index = 0;
+            for (; index + 4 <= k.pairCount; index += 4)
+                for (int lane = 0; lane < 4; ++lane)
+                {
+                    partial0[static_cast<std::size_t>(lane)] += pairTerm0(index + lane);
+                    partial1[static_cast<std::size_t>(lane)] += pairTerm1(index + lane);
+                }
+            for (; index < k.pairCount; ++index)
+            {
+                partial0[0] += pairTerm0(index);
+                partial1[0] += pairTerm1(index);
+            }
+            result0 = static_cast<float>(k.decimation[static_cast<std::size_t>(centre)] * recentOutput0[-centre]
+                + ((partial0[0] + partial0[1]) + (partial0[2] + partial0[3])));
+            result1 = static_cast<float>(k.decimation[static_cast<std::size_t>(centre)] * recentOutput1[-centre]
+                + ((partial1[0] + partial1[1]) + (partial1[2] + partial1[3])));
+#endif
+        }
+        aa0.outputWrite = (aa0.outputWrite + 1) & (VoiceVcaAntialias::outputRingSize - 1);
+        aa1.outputWrite = (aa1.outputWrite + 1) & (VoiceVcaAntialias::outputRingSize - 1);
+    }
+    aa0.inputWrite = (aa0.inputWrite + 1) & inputMask;
+    aa1.inputWrite = (aa1.inputWrite + 1) & inputMask;
+    ++first.filterIsland.frames;
+    ++second.filterIsland.frames;
+    return {
+        finiteValue(result0) ? result0 : 0.0f,
+        finiteValue(result1) ? result1 : 0.0f
+    };
+}
+#endif
 
 template <bool useCubicEarly>
 float YouKnowEngine::renderVoice(Voice& voice,
@@ -12776,22 +13699,7 @@ float YouKnowEngine::renderVoice(Voice& voice,
             restVoiceFilterIsland(voice, frame);
             return 0.0f;
         }
-        if (voice.islandResting)
-        {
-            // Resume the island: the running filter and C59 charges continue,
-            // and its numerical histories restart warm from the latest input,
-            // closed, before the new gain arrives.
-            voice.islandResting = false;
-            voice.filter.retime(static_cast<float>(voiceVcaAntialiasKernel_.factor), 1.0f);
-            resetVoiceFilterIsland(voice, true);
-            voice.islandLastInput = frame.input;
-            voice.vcaAntialias.inputs.fill(frame.input);
-            for (auto& context : voice.filterIsland.contexts)
-            {
-                context.gain = 0.0f;
-                context.vcaControl = {};
-            }
-        }
+        resumeVoiceFilterIslandIfResting(voice, frame.input);
         return renderVoiceFilterIsland(voice, frame);
     }
     const auto* trajectory = frame.hasTrajectory ? &frame.trajectory : nullptr;
@@ -12812,16 +13720,53 @@ std::array<float, 2> YouKnowEngine::renderVoicePair(
     Voice& first, Voice& second, const EngineParameters& parameters,
     float noiseSample) noexcept
 {
-    if (voiceFilterRateIslandEnabled())
-        return {renderVoice<true>(first, parameters, noiseSample),
-                renderVoice<true>(second, parameters, noiseSample)};
     auto firstFrame = prepareVoiceFilter(first, parameters, noiseSample);
     auto secondFrame = prepareVoiceFilter(second, parameters, noiseSample);
+    if (voiceFilterRateIslandEnabled())
+    {
+        const bool restFirst = firstFrame.needsFilter
+            && !first.active && circuitRateApplied_ == CircuitRate::Normal;
+        const bool restSecond = secondFrame.needsFilter
+            && !second.active && circuitRateApplied_ == CircuitRate::Normal;
+#if !defined(YOUKNOW_WORK_AUDIT)
+        if (restFirst && restSecond)
+        {
+            restVoiceFilterIslandPair(first, firstFrame, second, secondFrame);
+            return { 0.0f, 0.0f };
+        }
+        if (firstFrame.needsFilter && secondFrame.needsFilter
+            && !restFirst && !restSecond)
+        {
+            resumeVoiceFilterIslandIfResting(first, firstFrame.input);
+            resumeVoiceFilterIslandIfResting(second, secondFrame.input);
+            return renderVoiceFilterIslandPair(
+                first, firstFrame, second, secondFrame);
+        }
+#endif
+        const auto renderOne = [&](Voice& voice, const VoiceFilterFrame& frame,
+                                   bool rest) noexcept -> float {
+            if (!frame.needsFilter)
+                return 0.0f;
+            if (rest)
+            {
+                restVoiceFilterIsland(voice, frame);
+                return 0.0f;
+            }
+            resumeVoiceFilterIslandIfResting(voice, frame.input);
+            return renderVoiceFilterIsland(voice, frame);
+        };
+        return { renderOne(first, firstFrame, restFirst),
+                 renderOne(second, secondFrame, restSecond) };
+    }
     std::array<float, 2> filtered {};
     bool processed = false;
 #if !defined(YOUKNOW_WORK_AUDIT)
-    if (firstFrame.needsFilter && secondFrame.needsFilter
-        && !firstFrame.hasTrajectory && !secondFrame.hasTrajectory)
+    if (firstFrame.needsFilter && secondFrame.needsFilter)
+    {
+        const auto* trajectory0 =
+            firstFrame.hasTrajectory ? &firstFrame.trajectory : nullptr;
+        const auto* trajectory1 =
+            secondFrame.hasTrajectory ? &secondFrame.trajectory : nullptr;
         processed =
             OtaCascade::tryProcessSettledRk4Pair(
                 first.filter, firstFrame.input, firstFrame.omegaStep,
@@ -12829,14 +13774,15 @@ std::array<float, 2> YouKnowEngine::renderVoicePair(
                 second.filter, secondFrame.input, secondFrame.omegaStep,
                 second.feedback, secondFrame.headroom,
                 parameters.enableVcfEarlyEffect, parameters.calibration,
-                filtered[0], filtered[1])
+                filtered[0], filtered[1], trajectory0, trajectory1)
             || OtaCascade::tryProcessSettledMersonPair(
                 first.filter, firstFrame.input, firstFrame.omegaStep,
                 first.feedback, firstFrame.headroom,
                 second.filter, secondFrame.input, secondFrame.omegaStep,
                 second.feedback, secondFrame.headroom,
                 parameters.enableVcfEarlyEffect, parameters.calibration,
-                filtered[0], filtered[1]);
+                filtered[0], filtered[1], trajectory0, trajectory1);
+    }
 #endif
     if (!processed)
     {
@@ -12870,10 +13816,11 @@ std::array<float, 4> YouKnowEngine::renderVoiceQuad(
 {
     if (voiceFilterRateIslandEnabled())
     {
-        std::array<float, 4> output {};
-        for (std::size_t lane = 0; lane < voices.size(); ++lane)
-            output[lane] = renderVoice<true>(*voices[lane], parameters, noiseSample);
-        return output;
+        const auto firstPair = renderVoicePair(
+            *voices[0], *voices[1], parameters, noiseSample);
+        const auto secondPair = renderVoicePair(
+            *voices[2], *voices[3], parameters, noiseSample);
+        return { firstPair[0], firstPair[1], secondPair[0], secondPair[1] };
     }
     std::array<VoiceFilterFrame, 4> frames;
     for (std::size_t lane = 0; lane < voices.size(); ++lane)
@@ -12912,9 +13859,12 @@ std::array<float, 4> YouKnowEngine::renderVoiceQuad(
             const std::size_t secondLane = firstLane + 1u;
             bool pairProcessed = false;
             if (frames[firstLane].needsFilter
-                && frames[secondLane].needsFilter
-                && !frames[firstLane].hasTrajectory
-                && !frames[secondLane].hasTrajectory)
+                && frames[secondLane].needsFilter)
+            {
+                const auto* trajectory0 = frames[firstLane].hasTrajectory
+                    ? &frames[firstLane].trajectory : nullptr;
+                const auto* trajectory1 = frames[secondLane].hasTrajectory
+                    ? &frames[secondLane].trajectory : nullptr;
                 pairProcessed = OtaCascade::tryProcessSettledRk4Pair(
                     voices[firstLane]->filter, frames[firstLane].input,
                     frames[firstLane].omegaStep,
@@ -12924,7 +13874,8 @@ std::array<float, 4> YouKnowEngine::renderVoiceQuad(
                     voices[secondLane]->feedback,
                     frames[secondLane].headroom,
                     parameters.enableVcfEarlyEffect, parameters.calibration,
-                    filtered[firstLane], filtered[secondLane])
+                    filtered[firstLane], filtered[secondLane],
+                    trajectory0, trajectory1)
                     || OtaCascade::tryProcessSettledMersonPair(
                         voices[firstLane]->filter, frames[firstLane].input,
                         frames[firstLane].omegaStep,
@@ -12937,7 +13888,9 @@ std::array<float, 4> YouKnowEngine::renderVoiceQuad(
                         frames[secondLane].headroom,
                         parameters.enableVcfEarlyEffect,
                         parameters.calibration,
-                        filtered[firstLane], filtered[secondLane]);
+                        filtered[firstLane], filtered[secondLane],
+                        trajectory0, trajectory1);
+            }
             if (pairProcessed)
                 return;
             for (const std::size_t lane : { firstLane, secondLane })
@@ -14030,7 +14983,8 @@ void YouKnowEngine::process(float* left, float* right, int numSamples)
                                 || (coupledMixerEnabled_
                                     && cell.cardIndex < hardwareVoices);
                         };
-                        const bool nextStartsActiveQuad = !voice.active
+                        const bool nextStartsActiveQuad = !voiceFilterRateIslandEnabled()
+                            && !voice.active
                             && slot + 4 < maxVoices
                             && voices_[static_cast<std::size_t>(slot + 1)].active
                             && voices_[static_cast<std::size_t>(slot + 2)].active
@@ -14766,16 +15720,7 @@ void YouKnowEngine::initialiseFirmwareSerialReplay() noexcept
     firmwareSerialPitNeedsMsb_.fill(false);
     firmwareSerialHoldEvent_ = {};
     firmwareSerialLfoRateHeld_ = firmwareSerialLfoDelayHeld_ = false;
-    for (unsigned i = 0; i < 128; ++i)
-    {
-        firmwareSerialTables_.attack[i] = attackIncrementForByte(static_cast<std::uint8_t>(i));
-        firmwareSerialTables_.portamento[i] = portamentoIncrementForIndex(static_cast<std::uint8_t>(i));
-    }
-    for (int i = 0; i < 104; ++i)
-    {
-        firmwareSerialTables_.pitchCv[i] = derivedDcoCvAnchor(i);
-        firmwareSerialTables_.pitchDivider[i] = static_cast<std::uint16_t>(derivedDcoDividerAnchor(i));
-    }
+    firmwareSerialTables_ = firmwareControlTables();
     firmwareSerialParameterTables_.control = firmwareSerialTables_;
     firmwareSerialCircuitParameters_ = activeParameters_;
     if (originalPerformanceEnabled_ && firmwareSerialCircuitParameters_.chorus==ChorusMode::OneTwo)

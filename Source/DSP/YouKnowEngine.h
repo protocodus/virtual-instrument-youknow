@@ -37,11 +37,12 @@
 #include <cstddef>
 #include <cstdint>
 
-// The Jukebox embedded compiler defines host architecture macros but does
-// not provide the native SIMD intrinsics. Its target uses the scalar solver.
-#if !defined(YOUKNOW_EMBEDDED_TARGET) \
-    && ((defined(__aarch64__) && defined(__ARM_NEON)) \
-        || (defined(__x86_64__) && defined(__SSE2__)))
+// Portable Double2 vector types in YouKnowCompatibility.h work on native
+// ARM64, x86_64 and Reason Rack Extension phdsp64 (8-byte alignment cap).
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) \
+    || (!defined(YOUKNOW_EMBEDDED_TARGET) \
+        && ((defined(__aarch64__) && defined(__ARM_NEON)) \
+            || (defined(__x86_64__) && defined(__SSE2__))))
 #define YOUKNOW_HAS_VCF_PAIR_SIMD 1
 #endif
 
@@ -3215,7 +3216,9 @@ private:
             OtaCascade& second, float secondInput, float secondOmegaStep,
             float secondFeedback, float secondHeadroom,
             bool enableEarlyEffect, float calibration,
-            float& firstOutput, float& secondOutput) noexcept;
+            float& firstOutput, float& secondOutput,
+            const ControlTrajectory* firstTrajectory = nullptr,
+            const ControlTrajectory* secondTrajectory = nullptr) noexcept;
         // Keep the deeper Merson solve separate from the hot RK4 function.
         // It is tried only after that function rejects, and false likewise
         // leaves both cascades and output sentinels untouched.
@@ -3225,7 +3228,9 @@ private:
             OtaCascade& second, float secondInput, float secondOmegaStep,
             float secondFeedback, float secondHeadroom,
             bool enableEarlyEffect, float calibration,
-            float& firstOutput, float& secondOutput) noexcept;
+            float& firstOutput, float& secondOutput,
+            const ControlTrajectory* firstTrajectory = nullptr,
+            const ControlTrajectory* secondTrajectory = nullptr) noexcept;
         // Four settled Merson cards share one FP32 SIMD solve, bounded by the
         // 10 uV scalar-error regression. A rejected group leaves every
         // cascade and output sentinel unchanged.
@@ -4048,9 +4053,20 @@ private:
         Voice& voice, const VoiceFilterFrame& frame, float filtered,
         const VoiceFilterIslandContext* context = nullptr) noexcept;
     [[nodiscard]] bool voiceFilterRateIslandEnabled() const noexcept;
+    [[nodiscard]] VoiceFilterIslandContext prepareVoiceFilterIslandContext(
+        Voice& voice, const VoiceFilterFrame& frame) noexcept;
+    void resumeVoiceFilterIslandIfResting(Voice& voice, float input) noexcept;
     [[nodiscard]] float renderVoiceFilterIsland(Voice& voice, const VoiceFilterFrame& frame) noexcept;
     void resetVoiceFilterIsland(Voice& voice, bool warm) noexcept;
     void restVoiceFilterIsland(Voice& voice, const VoiceFilterFrame& frame) noexcept;
+#if defined(YOUKNOW_HAS_VCF_PAIR_SIMD)
+    [[nodiscard]] std::array<float, 2> renderVoiceFilterIslandPair(
+        Voice& first, const VoiceFilterFrame& firstFrame,
+        Voice& second, const VoiceFilterFrame& secondFrame) noexcept;
+    void restVoiceFilterIslandPair(
+        Voice& first, const VoiceFilterFrame& firstFrame,
+        Voice& second, const VoiceFilterFrame& secondFrame) noexcept;
+#endif
     [[nodiscard]] VoiceFilterFrame prepareVoiceFilter(
         Voice& voice, const EngineParameters& parameters,
         float noiseSample) noexcept;

@@ -206,7 +206,7 @@ private:
     void refreshNoiseScale() noexcept
     {
         noiseScale_ = coefficients_.noiseDensityPerRootKelvin
-                    * std::sqrt(0.5 * sampleRate_ * temperatureKelvin_) * noiseAmount_;
+                    * inlineSqrt(0.5 * sampleRate_ * temperatureKelvin_) * noiseAmount_;
     }
 
     void rebuild() noexcept
@@ -262,12 +262,12 @@ private:
         const double determinant = gaa * (gjj + load) - gaj * gaj;
         const double sum = gaa / couplingFarads + (gjj + load) / capacitance;
         const double product = determinant / (couplingFarads * capacitance);
-        const double high = 0.5 * (sum + std::sqrt(std::max(0.0, sum * sum - 4.0 * product)));
+        const double high = 0.5 * (sum + inlineSqrt(std::max(0.0, sum * sum - 4.0 * product)));
         const double low = product / high; // avoids subtracting nearly equal roots
-        const double noiseZero = std::sqrt(gaa * (gaa * gjj - gaj * gaj) / gjj)
+        const double noiseZero = inlineSqrt(gaa * (gaa * gjj - gaj * gaj) / gjj)
                                / couplingFarads;
         coefficients_ = { low / twoPi, high / twoPi, -gaj / (capacitance * high),
-                          noiseZero / low, std::sqrt(4.0 * boltzmann * gjj)
+                          noiseZero / low, inlineSqrt(4.0 * boltzmann * gjj)
                               / (capacitance * high) };
         lowG_ = std::tan(numbers::pi * coefficients_.lowPoleHz / sampleRate_);
         jackCoefficients_ = OutputJackLowPass::coefficients(coefficients_.highPoleHz, sampleRate_);

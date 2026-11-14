@@ -104,16 +104,43 @@ struct ChorusRateIsland
         // keeps a cold A/B's LFO/clock chronology aligned after its FIR delay.
         const bool ready = priming >= halfDelay;
         if (!ready) ++priming;
+        std::array<double, VoiceVcaAntialias::maximumFactor> drives {};
+        if (ready)
+        {
+            drives[0] = inputs[static_cast<std::size_t>(source)];
+            if (kernel.factor == 4)
+            {
+                double d1 = 0.0, d2 = 0.0, d3 = 0.0;
+                for (int tap = 0; tap < VoiceVcaAntialias::delaySamples; ++tap)
+                {
+                    const double x = recentInput[-tap];
+                    const auto t = static_cast<std::size_t>(tap);
+                    d1 += kernel.interpolation[1][t] * x;
+                    d2 += kernel.interpolation[2][t] * x;
+                    d3 += kernel.interpolation[3][t] * x;
+                }
+                drives[1] = d1;
+                drives[2] = d2;
+                drives[3] = d3;
+            }
+            else
+            {
+                for (int phase = 1; phase < kernel.factor; ++phase)
+                {
+                    double d = 0.0;
+                    for (int tap = 0; tap < VoiceVcaAntialias::delaySamples; ++tap)
+                        d += kernel.interpolation[static_cast<std::size_t>(phase)]
+                                                 [static_cast<std::size_t>(tap)]
+                            * recentInput[-tap];
+                    drives[static_cast<std::size_t>(phase)] = d;
+                }
+            }
+        }
         for (int phase=0; phase<kernel.factor; ++phase)
         {
-            double drive=0;
-            if (phase==0) drive=inputs[static_cast<std::size_t>(source)];
-            else for (int tap=0; tap<VoiceVcaAntialias::delaySamples; ++tap)
-                drive += kernel.interpolation[static_cast<std::size_t>(phase)]
-                                             [static_cast<std::size_t>(tap)]
-                    * recentInput[-tap];
             const auto result = ready
-                ? process(static_cast<float>(drive), delayed) : Result {};
+                ? process(static_cast<float>(drives[static_cast<std::size_t>(phase)]), delayed)
+                : Result {};
             const auto slot = static_cast<std::size_t>((outputWrite+phase)&om);
             outputs[0][slot] = outputs[0][slot+outputSize] = result.left;
             outputs[1][slot] = outputs[1][slot+outputSize] = result.right;
@@ -128,6 +155,21 @@ struct ChorusRateIsland
         const double* const recentOutput[2] {
             outputs[0].data()+outputWrite+outputSize,
             outputs[1].data()+outputWrite+outputSize };
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD)
+        Double2 sum = double2Splat(kernel.decimation[static_cast<std::size_t>(centre)])
+            * double2Pack(recentOutput[0][-centre], recentOutput[1][-centre]);
+        for (int i=0; i<kernel.pairCount; ++i)
+        {
+            const auto& pair=kernel.pairs[static_cast<std::size_t>(i)];
+            const Double2 a = double2Pack(recentOutput[0][-pair.tap],
+                                          recentOutput[1][-pair.tap]);
+            const Double2 b = double2Pack(recentOutput[0][-pair.opposite],
+                                          recentOutput[1][-pair.opposite]);
+            sum += double2Splat(pair.weight) * (a + b);
+        }
+        result.left=static_cast<float>(double2Low(sum));
+        result.right=static_cast<float>(double2High(sum));
+#else
         std::array<double,2> sum {
             kernel.decimation[static_cast<std::size_t>(centre)] * recentOutput[0][-centre],
             kernel.decimation[static_cast<std::size_t>(centre)] * recentOutput[1][-centre] };
@@ -141,6 +183,7 @@ struct ChorusRateIsland
         }
         result.left=static_cast<float>(sum[0]);
         result.right=static_cast<float>(sum[1]);
+#endif
         inputWrite=(inputWrite+1)&im;
         outputWrite=(outputWrite+kernel.factor)&om;
         return result;
@@ -159,8 +202,10 @@ struct ChorusRateIsland
                 c.continuousMuteLoading,c.clockSourceSpread,c.inverterSpread,
                 c.largeSignalWetSwitch,c.summerLegSpread,c.clockDependentHiss,
                 c.measuredModeHiss,c.clockFeedthrough);
+            const auto leftKey=bitCast<std::uint32_t>(result.left);
+            const auto rightKey=bitCast<std::uint32_t>(result.right);
             result.left=clip(result.left);
-            result.right=clip(result.right);
+            result.right=leftKey==rightKey ? result.left : clip(result.right);
             result.context={chorus.wetInputConductanceRatio(),chorus.isWetInputConnected()};
             return result;
         });

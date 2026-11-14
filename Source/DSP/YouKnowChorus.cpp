@@ -3368,18 +3368,21 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lineTimingClockSources_ = enableClockSourceSpread;
         lineTimingInverter_ = enableInverterSpread;
     }
-    const auto trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_ * lineTiming_.delayA,
-        sweep_ * lineTiming_.delayA * lineTiming_.sweepA, sampleRate_, 1.0);
-    const auto trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_ * lineTiming_.delayB,
-        sweep_ * lineTiming_.delayB * lineTiming_.sweepB, sampleRate_, -1.0);
-    const std::array<double, 2> clock {{
-        trajectoryA.intervalCycles * sampleRate_,
-        trajectoryB.intervalCycles * sampleRate_
-    }};
-    const double clockA = clocksStopped_ ? 0.0 : clock[0];
-    const double clockB = clocksStopped_ ? 0.0 : clock[1];
+    ClockTrajectory trajectoryA {};
+    ClockTrajectory trajectoryB {};
+    double clockA = 0.0;
+    double clockB = 0.0;
+    if (!clocksStopped_)
+    {
+        trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
+            centreDelay_ * lineTiming_.delayA,
+            sweep_ * lineTiming_.delayA * lineTiming_.sweepA, sampleRate_, 1.0);
+        trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
+            centreDelay_ * lineTiming_.delayB,
+            sweep_ * lineTiming_.delayB * lineTiming_.sweepB, sampleRate_, -1.0);
+        clockA = trajectoryA.intervalCycles * sampleRate_;
+        clockB = trajectoryB.intervalCycles * sampleRate_;
+    }
     if(enableCorrelatedNoise)
     {
         if (!bucketNoiseCoefficientsValid_
@@ -3398,10 +3401,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
             bucketNoiseTransferCorrelation_ = noiseTransferCorrelation;
             bucketNoiseCoefficientsValid_ = true;
         }
-        if(lineA_.bucketNoise.eta!=0.0)
+        if(!clocksStopped_ && lineA_.bucketNoise.eta!=0.0)
         {
-            ChorusBucketNoise::normalize(lineA_.bucketNoise,bucketNoiseCosineMoment(clock[0]));
-            ChorusBucketNoise::normalize(lineB_.bucketNoise,bucketNoiseCosineMoment(clock[1]));
+            ChorusBucketNoise::normalize(lineA_.bucketNoise,bucketNoiseCosineMoment(clockA));
+            ChorusBucketNoise::normalize(lineB_.bucketNoise,bucketNoiseCosineMoment(clockB));
         }
     }
     else
@@ -3428,7 +3431,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         ? 1.0f : measuredModeNoiseGain(runningMode_);
     const float lineNoiseScale = noiseScale * modeNoiseGain;
     float noiseA = lineNoiseScale, noiseB = lineNoiseScale;
-    if (enableClockDependentHiss && clockA > 0.0 && clockB > 0.0)
+    if (enableClockDependentHiss && lineNoiseScale != 0.0f
+        && clockA > 0.0 && clockB > 0.0
+        && std::isfinite(clockA) && std::isfinite(clockB))
     {
         const double reference = hissClockReference();
         noiseA *= static_cast<float>(reference * std::pow(clockA, -0.5 * hissClockExponent));
