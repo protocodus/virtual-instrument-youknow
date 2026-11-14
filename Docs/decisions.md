@@ -2160,6 +2160,66 @@ recorded.
   `balance` and `comb`.
 - A/B set for the owner (A = 1.4.6, B = 1.4.7), not committed.
 
+## 2026-11-14 — Coupled source-mixer upper resistance prior (OQ-15)
+
+The owner chose B by ear in a blind A/B comparison of the two positive
+source-resistance roots admitted by the coupled WAVE/SUB/D6/C56 mixer's settled
+50 % SUB calibration quadratic (`Source/DSP/YouKnowCoupledMixer.h`).
+
+- **Question (`OQ-15`).** Under the reconstructed 80017A hybrid input load
+  (4.7 kΩ ∥ 25.5 kΩ ≈ 3,968.54 Ω, pin-to-core gain 68 kΩ / 4.7 kΩ), the
+  measured 8.896 V SUB-only resistor/junction span (`YouKnowSubLevel.h`), and
+  the voiced full-SUB balance (0.738 oscillator drive, 0.857 pulse balance,
+  0.6 V diode drop, grounded Tr19 collector), the quadratic
+  `a · Rs² + b · Rs + constant = 0` has two positive roots that preserve the
+  identical isolated SUB-only endpoints and slider law while differing in how
+  strongly a conducting D6 loads a moving saw/pulse WAVE source.
+- **Candidates.**
+  - **A** (`1.4.8` product baseline, `CoupledSubMixer::SourcePrior::LowerRoot`):
+    `Rs = 4,978.4216 Ω`, `sourceScale = 0.0623`,
+    `diodeReferenceAmps = 139.8892 µA`.
+  - **B** (candidate, `CoupledSubMixer::SourcePrior::UpperRoot`):
+    `Rs = 95,657.8617 Ω`, `sourceScale = 0.6941`,
+    `diodeReferenceAmps = 81.0688 µA`.
+- **Listening protocol.** 48 kHz, 24-bit PCM stereo, 9.20 s (441,600 frames
+  after a 3.0 s cold preroll), `Original` timing, `CircuitRate::Max`
+  (`PolyZoned` / `Cubic` / `Rk4Single`), 8′ Saw + 58 % manual PWM Pulse + 90 %
+  Sub (`cutoff = 0.92`, `resonance = 0.12`, `envDepth = 0.18`, `HPF = 1`,
+  `Chorus = Off`): octave bass strokes (`C2`–`C3`–`G2`–`B♭2`–`C2`) followed by
+  a six-voice chord (`C2`–`C3`–`G3`–`C4`–`E4`–`B4`). Raw whole-file stereo RMS
+  read −29.1781 dBFS (A) and −30.4390 dBFS (B); whole-file stereo RMS was
+  matched at −29.1781 dBFS (+0.0000 dB on A, +1.2609 dB on B; matched peaks
+  −14.1716 / −14.2699 dBFS). The matched signed residual (`B − A`) read
+  −17.2210 dBc RMS (−17.5639 dBc peak). A/B listening files remain local
+  working artifacts and are not committed.
+- **Verdict, patch-wide effects, and limits.** After selecting B on the
+  mixed-oscillator A/B above, the owner reviewed its patch-wide circuit effects
+  and directed shipping B (`SourcePrior::UpperRoot`, `~95.66 kΩ`) on `main`
+  with recalibrated preset `Output Trim`s:
+  - On `Pulse`-only (`SUB = 0`) patches, during the open half-period of the
+    free-running `Tr19` `÷2` switch, negative `PULSE` swings below `−0.6 V`
+    forward-bias `D6` into the `0 V` `SUB = 0` rail against `Rs = 95.66 kΩ`.
+    That clamps negative excursions more strongly than `LowerRoot`, raises the
+    `f_0/2` sub-octave bleed on an isolated 50 % pulse from `−38.49 dBc` to
+    `−15.51 dBc`, and lowers isolated 50 % pulse RMS by `0.79 dB` relative to
+    saw (`−0.77 dB` against `#439522`'s isolator take, inside the MKS-7's
+    `0.79–0.83` nominal / `0.64–1.05` tolerance window).
+  - On `Saw` + partial-`SUB` patches, `Saw`'s unipolar `+6 V` mean elevates the
+    `WAVE` node when `Rs ≫ R_L`, back-biasing `D6` (`9.26 dB` stronger sub
+    suppression at `55 %` `SUB`) and lengthening `C56`'s sub-hertz time
+    constant (`10 µF · (Rs + R_L) ≈ 0.996 s`).
+  - Across the 144 bundled sounds, raw gated RMS shifted by `−4.43 dB` to
+    `+1.94 dB` (moving 32 slots outside `−36 ± 1 dB` under `1.4.8` trims);
+    all 144 digital `Output Trim`s (`Source/DSP/YouKnowPresets.cpp`) were
+    recalibrated to `−36 dBFS ± 1 dB` while preserving every 18-byte hardware
+    tone and analog `VR1` position.
+  `SourcePrior::LowerRoot` (`~4.98 kΩ`) remains available as an explicit
+  reference prior. Because this choice was made by ear between two
+  endpoint-compatible priors rather than from an MC5534A impedance or WAVE-node
+  measurement, it changes the active product selection without changing the
+  parameter's evidence class; mixed-source and WAVE-node captures remain open
+  (`OQ-15`).
+
 ## Pending
 
 - **Vref = 0.775 V (OQ-06).** Roland's era convention, recorded as the

@@ -191,19 +191,28 @@ int main()
     try
     {
         auto c = Mixer::evidenceCalibration();
-        require(c.valid(), "evidence calibration invalid");
+        const auto lower = Mixer::evidenceCalibration(Mixer::SourcePrior::LowerRoot);
+        require(c.valid() && lower.valid(), "evidence calibration invalid");
+        require(c.sourceOhms > 95000.0 && c.sourceOhms < 96000.0,
+                "default evidence calibration no longer selects upper source root");
+        require(lower.sourceOhms > 4900.0 && lower.sourceOhms < 5000.0,
+                "lower-root evidence calibration moved");
         auto invalid = c;
         invalid.diodeReferenceAmps = 0.0;
         require(!invalid.valid(), "soft diode accepted missing current reference");
-        require(std::abs(c.pinToCoreGain - 68000.0 / 4700.0) < 1.0e-14,
-                "physical hybrid input coordinate changed");
-        const double effective = c.sourceOhms * c.loadOhms / (c.sourceOhms + c.loadOhms);
-        require(std::abs(effective * c.diodeReferenceAmps * c.pinToCoreGain
-            - 2.0 * 7.57 * 0.738 * 0.4) < 1.0e-12,
-            "SUB endpoint prior not preserved");
-        require(std::abs(c.sourceScale * c.pinToCoreGain
-            * c.loadOhms / (c.sourceOhms + c.loadOhms) - 0.4) < 1.0e-14,
-            "independent source-coordinate mapping changed");
+        for (const auto& root : { c, lower })
+        {
+            require(std::abs(root.pinToCoreGain - 68000.0 / 4700.0) < 1.0e-14,
+                    "physical hybrid input coordinate changed");
+            const double effective = root.sourceOhms * root.loadOhms
+                / (root.sourceOhms + root.loadOhms);
+            require(std::abs(effective * root.diodeReferenceAmps * root.pinToCoreGain
+                - 2.0 * 7.57 * 0.738 * 0.4) < 1.0e-12,
+                "SUB endpoint prior not preserved");
+            require(std::abs(root.sourceScale * root.pinToCoreGain
+                * root.loadOhms / (root.sourceOhms + root.loadOhms) - 0.4) < 1.0e-14,
+                "independent source-coordinate mapping changed");
+        }
 
         double worstVolts = 0.0, worstAmps = 0.0;
         int cases = 0;

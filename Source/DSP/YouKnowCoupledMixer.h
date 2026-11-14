@@ -89,7 +89,13 @@ public:
         }
     };
 
-    // Evidence-constrained nominal candidate, NOT an installed MC5534A fit.
+    enum class SourcePrior
+    {
+        LowerRoot,
+        UpperRoot,
+    };
+
+    // Evidence-constrained nominal candidates, NOT an installed MC5534A fit.
     // Drawn external resistors and the reconstructed hybrid fix the branch,
     // load and pin-to-core gain. The SUB-only capture fixes the aggregate
     // S=8.896V resistor/junction law (YouKnowSubLevel.h). Its full-level
@@ -97,13 +103,15 @@ public:
     // Infer a SOURCE PRIOR that retains that endpoint rather than inventing
     // an internal resistor value. For a settled 50% sub with negligible
     // capacitor ripple, Re=Rs||Rl, Iref=S/[60k+(Rs+Re)/2] and Vpin_pp=Re*Iref.
-    // There are two positive solutions: ~4.978k and ~95.658k. Choosing the
-    // lower-resistance solution is explicit compatibility policy, not a
+    // There are two positive solutions: ~4.978k (LowerRoot) and ~95.658k
+    // (UpperRoot). On 2026-11-14 the owner chose UpperRoot by ear over the
+    // earlier LowerRoot default (Docs/decisions.md); neither root is a
     // measurement or proof of the custom IC's internal resistor inventory.
     // The nominal 0.6V forward reference and ideal grounded collector remain
     // stated junction/switch priors. Mixed-source and transient captures are
     // required to distinguish these coordinates and validate the candidate.
-    [[nodiscard]] static Calibration evidenceCalibration() noexcept
+    [[nodiscard]] static Calibration evidenceCalibration(
+        SourcePrior prior = SourcePrior::UpperRoot) noexcept
     {
         constexpr double load = 4700.0 * 25500.0 / (4700.0 + 25500.0);
         constexpr double gain = 68000.0 / 4700.0;
@@ -116,8 +124,10 @@ public:
         constexpr double a = 0.5 * pinSubPeakToPeak;
         constexpr double b = pinSubPeakToPeak * (branch + load) - seriesSpan * load;
         constexpr double constant = branch * pinSubPeakToPeak * load;
-        // Stable lower root of a*Rs^2+b*Rs+constant=0.
-        const double source = 2.0 * constant / (-b + inlineSqrt(b * b - 4.0 * a * constant));
+        const double radical = -b + inlineSqrt(b * b - 4.0 * a * constant);
+        const double source = (prior == SourcePrior::LowerRoot)
+            ? (2.0 * constant / radical)
+            : (radical / (2.0 * a));
         const double effective = source * load / (source + load);
         const double current = seriesSpan / (branch + 0.5 * (source + effective));
         const double sourceScale = 0.4 / (gain * load / (source + load));

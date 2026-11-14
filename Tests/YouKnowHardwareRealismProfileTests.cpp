@@ -79,6 +79,8 @@ void activeProductPromotion()
     require(applied.volume == 0.37f && applied.resonance == 0.52f,
             "active Engine setup rewrote stored panel controls");
     require(Probe::coupledMixer(*active)
+            && Probe::mixerCalibration(*active).sourceOhms
+                == CoupledSubMixer::evidenceCalibration(CoupledSubMixer::SourcePrior::UpperRoot).sourceOhms
             && Probe::chorusTransfer(*active) == ChorusBbdTransferProfile::ServicedBiasEstimate
             && Probe::chorusInsertion(*active) == ChorusBbdInsertionGainProfile::HoltersParkerJuno60Estimate
             && applied.chorusTimingProfile == ChorusTimingProfile::HardwareEvidence
@@ -183,7 +185,7 @@ void selections(const YouKnowEngine& engine)
     require(Probe::coupledMixer(engine), "combined profile did not configure the coupled WAVE/Sub network");
     const auto mixer = Probe::mixerCalibration(engine);
     require(mixer.valid() && mixer.diodeSlopeVolts > 0.0 && mixer.unipolarSawSource
-            && mixer.sourceOhms > 4000.0 && mixer.sourceOhms < 6000.0
+            && mixer.sourceOhms > 95000.0 && mixer.sourceOhms < 96000.0
             && mixer.pinToCoreGain > 14.0 && mixer.pinToCoreGain < 15.0,
             "combined profile lost the nonlinear diode/source/load prior");
     require(std::abs(engine.oscillatorLevelScale() - 0.738f) < 1e-7f

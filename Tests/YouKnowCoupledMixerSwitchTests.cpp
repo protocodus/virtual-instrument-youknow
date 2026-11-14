@@ -107,9 +107,9 @@ struct ContinuousReference
     }
 };
 
-std::vector<double> render(int rate, int frequency, bool mixed, bool corrected)
+std::vector<double> render(const Mixer::Calibration& c,
+    int rate, int frequency, bool mixed, bool corrected)
 {
-    const auto c = Mixer::evidenceCalibration();
     const auto coefficients = Mixer::prepareCoefficients(c, 1.0 / rate);
     const int repeat = rate / std::gcd(rate, frequency);
     std::vector<double> gate(static_cast<std::size_t>(repeat));
@@ -123,11 +123,17 @@ std::vector<double> render(int rate, int frequency, bool mixed, bool corrected)
         gate[static_cast<std::size_t>(sample)] = weight;
         source[static_cast<std::size_t>(sample)] = sourceAt(c, phase, mixed);
     }
+    // Settle C56 across >= 16 RC time constants (~0.09 s for LowerRoot,
+    // ~1.00 s for UpperRoot) so residual cold-step skirt is below -135 dBr.
+    const int settleSeconds = std::max(2, static_cast<int>(
+        std::ceil(16.0 * Mixer::couplingFarads * (c.sourceOhms + c.loadOhms))));
+    const int settleSamples = settleSeconds * rate;
     Mixer mixer;
+    mixer.prime(c, source[0], Mixer::railFullScaleVolts, 0.5);
     std::vector<double> output(static_cast<std::size_t>(rate));
-    for (int sample = -rate; sample < rate; ++sample)
+    for (int sample = -settleSamples; sample < rate; ++sample)
     {
-        const auto phase = static_cast<std::size_t>((sample + rate) % repeat);
+        const auto phase = static_cast<std::size_t>((sample + settleSamples) % repeat);
         const auto result = corrected
             ? mixer.processBandlimitedSwitch(c, coefficients, source[phase],
                 Mixer::railFullScaleVolts, gate[phase])
@@ -152,13 +158,14 @@ Complex projection(const std::vector<double>& samples, double frequency, int rat
     return result / static_cast<double>(samples.size());
 }
 
-void physicalReferenceAndAliases()
+void physicalReferenceAndAliases(Mixer::SourcePrior prior)
 {
+    const auto c = Mixer::evidenceCalibration(prior);
     for (int frequency : { 500, 1760, 3500 })
         for (bool mixed : { false, true })
         {
             auto reference = ContinuousReference {
-                Mixer::evidenceCalibration(), static_cast<double>(frequency), mixed, 8192
+                c, static_cast<double>(frequency), mixed, 8192
             };
             const auto fine = reference.spectrum();
             reference.steps = 4096;
@@ -173,8 +180,8 @@ void physicalReferenceAndAliases()
                 "continuous switch reference did not converge");
             for (int rate : { 48000, 96000 })
             {
-                const auto before = render(rate, frequency, mixed, false);
-                const auto after = render(rate, frequency, mixed, true);
+                const auto before = render(c, rate, frequency, mixed, false);
+                const auto after = render(c, rate, frequency, mixed, true);
                 double oldError = 0.0, newError = 0.0;
                 for (int h = 1; h <= harmonicCount && h * frequency < 20000; ++h)
                 {
@@ -185,9 +192,22 @@ void physicalReferenceAndAliases()
                 const double newDb = 10.0 * std::log10(newError / signal);
                 require(newError < 0.01 * oldError,
                     "physical switch harmonic error did not improve by 20 dB");
-                require(newDb < (mixed ? -55.0 : -85.0),
+                // At 3500 Hz / 48 kHz with a moving 7 kHz (2f) WAVE source,
+                // 7*f = 24.5 kHz sits above 24 kHz Nyquist, so the bandlimited
+                // gate omits h=7 and its 24.5 - 7.0 = 17.5 kHz (h=5) heterodyne
+                // product (-61.7 dBr on LowerRoot; -54.9 dBr on UpperRoot's
+                // stronger diode-loaded WAVE node, dropping below -105 dBr at
+                // 96 kHz once 24.5 kHz is inside Nyquist).
+                const double ceilingDb = (!mixed)
+                    ? -85.0
+                    : (frequency == 3500 && rate == 48000
+                        ? (prior == Mixer::SourcePrior::LowerRoot ? -55.0 : -54.5)
+                        : -85.0);
+                require(newDb < ceilingDb,
                     "switch reconstruction disagrees with physical C56 reference");
-                std::cout << "switch " << frequency << " Hz mixed=" << mixed
+                std::cout << "switch prior="
+                          << (prior == Mixer::SourcePrior::LowerRoot ? "lower " : "upper ")
+                          << frequency << " Hz mixed=" << mixed
                           << " rate=" << rate << " wanted error " << oldDb
                           << " -> " << newDb << " dBr\n";
 
@@ -253,7 +273,8 @@ int main()
     try
     {
         integerStatesAndLifecycle();
-        physicalReferenceAndAliases();
+        physicalReferenceAndAliases(Mixer::SourcePrior::LowerRoot);
+        physicalReferenceAndAliases(Mixer::SourcePrior::UpperRoot);
         std::cout << "Coupled mixer bandlimited switch tests passed\n";
         return 0;
     }

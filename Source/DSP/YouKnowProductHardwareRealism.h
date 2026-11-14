@@ -26,6 +26,8 @@ struct ProductHardwareRealismProfile
 
     [[nodiscard]] static bool tryConfigureBeforePrepare(YouKnowEngine& engine) noexcept
     {
+        // 2026-11-14: selects the owner-chosen upper positive source-resistance
+        // root (~95.66k, Docs/decisions.md) of the SUB-endpoint quadratic.
         const auto mixer = CoupledSubMixer::evidenceCalibration();
         if (!ProductFidelityProfile::tryConfigureBeforePrepare(engine, &mixer))
             return false;

@@ -398,7 +398,7 @@ constexpr std::array<float, presetCount> factoryVolume {{
 }};
 
 // Static product Output Trim measured with Tools/CalibratePresets.cpp on
-// 2026-10-15: identical full scores in BOTH Direct and Original playback,
+// 2026-11-14: identical full scores in BOTH Direct and Original playback,
 // 48 kHz/1x, Poly/Cubic/Normal and Aging 50%. The 17-preset smoke set also
 // covers 44.1/96 kHz. One gain per preset centres its raw RMS extrema across
 // these renders: -36 - (min + max)/2, rounded to 0.001 dB. The -1 dBFS peak
@@ -410,31 +410,31 @@ constexpr std::array<float, presetCount> factoryVolume {{
 // convention, not an estimate of hardware gain. Re-render --check in BOTH
 // modes after changing these tables; never infer a saved session's trim from
 // its program ID or rewrite it when changing playback mode.
-// The higher-rate VCF corrects the coarse-grid resonance in B15 and B42;
-// only these two digital trims are recalibrated below. The other 142 gains,
-// every analog Volume position and every tone byte remain unchanged.
+// Recalibrated across all 144 bundled sounds for the 1.4.9 coupled source-mixer
+// upper resistance prior (Rs = 95.66 kOhm); every analog Volume position and
+// every tone byte remain unchanged.
 constexpr std::array<float, presetCount> factoryOutputTrimDb {{
-    -2.148f, -7.409f, 0.387f, 5.630f, -2.233f, -6.361f, -5.962f, -3.185f,
-    -6.039f, -6.978f, -4.394f, -6.342f, -5.302f, -1.339f, 3.800f, -3.624f,
-    -3.945f, -7.649f, -3.591f, -6.832f, -7.930f, -6.767f, 4.562f, -5.937f,
-    -0.845f, 5.246f, -5.305f, -2.321f, 0.177f, -6.353f, -7.401f, -5.458f,
-    -5.830f, -6.806f, -6.501f, -2.126f, -7.048f, -7.535f, -8.488f, -2.437f,
-    -4.085f, 1.218f, -5.552f, -5.594f, -4.874f, -4.672f, -1.394f, -6.906f,
-    -4.319f, -0.383f, -3.084f, -3.604f, -4.369f, -7.850f, -4.591f, -7.665f,
-    -7.417f, -3.255f, -5.760f, 3.905f, -7.772f, 10.484f, -2.847f, 1.931f,
-    -7.471f, -4.825f, -6.970f, -7.926f, 3.066f, -4.540f, -3.346f, -5.752f,
-    -4.869f, 1.801f, -4.101f, 2.748f, -7.751f, -3.992f, 2.079f, -8.031f,
-    -5.312f, -5.712f, 10.311f, -7.600f, -7.784f, -0.010f, -6.564f, -5.920f,
-    -8.015f, 4.404f, -7.691f, -0.486f, -9.986f, -2.336f, -6.068f, -7.980f,
-    4.374f, -8.008f, -0.983f, -5.237f, -3.454f, -7.634f, -5.812f, -3.651f,
-    -1.452f, -1.367f, -6.082f, -6.165f, -6.610f, -2.452f, -4.714f, -6.670f,
-    -1.244f, -4.167f, -5.375f, 0.037f, -2.973f, -5.614f, 1.221f, -7.855f,
-    -7.712f, -4.923f, -7.511f, -6.261f, -5.528f, -1.249f, -7.078f, -6.651f,
+    -2.182f, -2.976f, 0.382f, 5.625f, -2.284f, -7.437f, -5.243f, -3.941f,
+    -6.607f, -8.412f, -5.119f, -7.181f, -5.551f, -1.214f, 4.540f, -3.093f,
+    -3.358f, -9.043f, 0.154f, -6.775f, -7.347f, -6.766f, 4.589f, -5.161f,
+    -0.219f, 5.240f, -5.032f, -2.331f, 0.987f, -6.865f, -5.594f, -6.433f,
+    -5.222f, -6.429f, -6.506f, -3.646f, -5.239f, -7.126f, -8.850f, -2.440f,
+    -5.055f, 1.304f, -6.229f, -5.562f, -4.959f, -4.673f, -1.379f, -8.497f,
+    -5.655f, -0.074f, -3.438f, -4.121f, -6.306f, -7.694f, -6.079f, -8.418f,
+    -7.412f, -3.257f, -5.770f, 3.888f, -7.781f, 10.482f, -3.765f, 1.921f,
+    -7.449f, -4.817f, -6.221f, -8.473f, 2.645f, -3.988f, -2.917f, -5.747f,
+    -4.007f, 2.539f, -3.012f, 3.414f, -5.545f, -3.559f, 2.563f, -7.942f,
+    -5.102f, -6.711f, 10.319f, -5.924f, -7.759f, 0.092f, -6.839f, -5.906f,
+    -7.950f, 4.396f, -5.577f, -0.417f, -9.911f, -1.685f, -5.453f, -8.418f,
+    4.552f, -7.981f, -0.987f, -5.177f, -3.466f, -6.588f, -5.770f, -3.659f,
+    -3.380f, -0.700f, -6.074f, -5.873f, -6.571f, -2.456f, -4.711f, -6.371f,
+    -1.251f, -4.221f, -5.376f, 0.032f, -2.978f, -5.846f, 1.584f, -7.206f,
+    -7.709f, -4.914f, -7.494f, -6.220f, -5.397f, -0.482f, -7.517f, -6.212f,
 }};
 
 constexpr std::array<float, productPresetCount> productOutputTrimDb {{
-    -0.469f, 9.109f, 1.416f, 4.613f, 0.168f, 8.397f, 2.975f, 0.683f,
-    -2.039f, -2.440f, 3.596f, -2.026f, -1.541f, 0.802f, -3.502f, -1.328f,
+    -1.797f, 7.456f, 1.417f, 4.636f, 0.754f, 9.427f, 6.241f, 1.352f,
+    -2.106f, -3.310f, 4.182f, -1.369f, -0.688f, 0.779f, -3.426f, -0.910f,
 }};
 
 struct BankStorage
