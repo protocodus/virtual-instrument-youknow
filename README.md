@@ -53,6 +53,19 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.8 — 2026-11-14 — Less CPU, the same sound
+
+- About 7–9 % less CPU on dry patches, 14 % less on six voices with the full
+  mixer and Chorus II, and 16 % less on sixteen voices at 48 kHz/1× (native
+  calling-thread timings; not a Reason-host measurement). Active voices pair
+  across their local oversampling islands and slewing controls in portable
+  8-byte-aligned `Double2` SIMD, polyphase upsamplers and symmetric FIR
+  decimators batch and fold tap reads, the chorus's 192 kHz clock-hiss law
+  replaces `libm` `pow` with a segmented IEEE-754 `Double2` kernel, and stereo
+  chorus and output stages step both channels together. Every validation render
+  is bit-identical to 1.4.7.
+  [Measurements](Docs/benchmarks/cpu-optimizations-2026-11-14.md).
+
 ### 1.4.7 — 2026-11-11 — The chorus sits in the middle
 
 - With the chorus on, the sound no longer leans left. The two delay lines
@@ -2198,11 +2211,11 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `1.4.7-build.1`. To identify a local build, pass
+Local builds default to `1.4.8-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses the workflow's `GITHUB_RUN_NUMBER`; the configured
-number is saved in the build directory. The current host version is `1.4.7`,
-and its signed-release tag would be `v1.4.7`. Archive names and the
+number is saved in the build directory. The current host version is `1.4.8`,
+and its signed-release tag would be `v1.4.8`. Archive names and the
 About box include the build number; macOS bundle and installer build metadata
 carry it too.
 
@@ -2238,7 +2251,7 @@ tree, a dated release-history entry and a matching `v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-1.4.7 development packages remain distinct from a signed production release.
+1.4.8 development packages remain distinct from a signed production release.
 
 ### Local listening renders
 
