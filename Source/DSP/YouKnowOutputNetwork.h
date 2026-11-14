@@ -131,6 +131,50 @@ public:
         double leftVolts, double rightVolts,
         double leftUnitNoise = 0.0, double rightUnitNoise = 0.0) noexcept
     {
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
+        const double in0 = finiteOrZero(leftVolts);
+        const double in1 = finiteOrZero(rightVolts);
+        const double un0 = finiteOrZero(leftUnitNoise);
+        const double un1 = finiteOrZero(rightUnitNoise);
+        const Double2 input = double2Pack(in0, in1);
+        const Double2 unitNoise = double2Pack(un0, un1);
+        const Double2 g = double2Splat(lowG_);
+        const Double2 denom = double2Splat(1.0 + lowG_);
+        const Double2 sLowPrev = double2Pack(channels_[0].signalLow, channels_[1].signalLow);
+        const Double2 signalV = (input - sLowPrev) * g / denom;
+        const Double2 signalLow = sLowPrev + signalV;
+        const Double2 sLowNext = signalLow + signalV;
+        const Double2 signal = (input - signalLow) * double2Splat(coefficients_.passbandGain);
+        const Double2 white = unitNoise * double2Splat(noiseScale_);
+        const Double2 nLowPrev = double2Pack(channels_[0].noiseLow, channels_[1].noiseLow);
+        const Double2 noiseV = (white - nLowPrev) * g / denom;
+        const Double2 noiseLow = nLowPrev + noiseV;
+        const Double2 nLowNext = noiseLow + noiseV;
+        const Double2 mixed = double2MulAdd(
+            signal + white, double2Splat(coefficients_.noiseLowGain - 1.0), noiseLow);
+        const Double2 jPrev = double2Pack(channels_[0].jackPreviousInput, channels_[1].jackPreviousInput);
+        const Double2 jDiffPrev = double2Pack(channels_[0].jackDifference, channels_[1].jackDifference);
+        const Double2 jDiffNext = double2MulSub(
+            double2Splat(jackCoefficients_.correction) * (mixed - jPrev),
+            double2Splat(jackCoefficients_.a1), jDiffPrev);
+        const Double2 output = mixed + jDiffNext;
+        double out0 = double2Low(output);
+        double out1 = double2High(output);
+        if (std::isfinite(out0) && std::isfinite(out1))
+        {
+            channels_[0].signalLow = double2Low(sLowNext);
+            channels_[1].signalLow = double2High(sLowNext);
+            channels_[0].noiseLow = double2Low(nLowNext);
+            channels_[1].noiseLow = double2High(nLowNext);
+            channels_[0].jackPreviousInput = double2Low(mixed);
+            channels_[1].jackPreviousInput = double2High(mixed);
+            channels_[0].jackDifference = double2Low(jDiffNext);
+            channels_[1].jackDifference = double2High(jDiffNext);
+            if (configuration_.mono)
+                out0 = out1 = 0.5 * (out0 + out1);
+            return { out0, out1 };
+        }
+#endif
         double left = step(channels_[0], finiteOrZero(leftVolts),
                            finiteOrZero(leftUnitNoise));
         double right = step(channels_[1], finiteOrZero(rightVolts),
@@ -206,7 +250,7 @@ private:
     void refreshNoiseScale() noexcept
     {
         noiseScale_ = coefficients_.noiseDensityPerRootKelvin
-                    * std::sqrt(0.5 * sampleRate_ * temperatureKelvin_) * noiseAmount_;
+                    * inlineSqrt(0.5 * sampleRate_ * temperatureKelvin_) * noiseAmount_;
     }
 
     void rebuild() noexcept
@@ -262,12 +306,12 @@ private:
         const double determinant = gaa * (gjj + load) - gaj * gaj;
         const double sum = gaa / couplingFarads + (gjj + load) / capacitance;
         const double product = determinant / (couplingFarads * capacitance);
-        const double high = 0.5 * (sum + std::sqrt(std::max(0.0, sum * sum - 4.0 * product)));
+        const double high = 0.5 * (sum + inlineSqrt(std::max(0.0, sum * sum - 4.0 * product)));
         const double low = product / high; // avoids subtracting nearly equal roots
-        const double noiseZero = std::sqrt(gaa * (gaa * gjj - gaj * gaj) / gjj)
+        const double noiseZero = inlineSqrt(gaa * (gaa * gjj - gaj * gaj) / gjj)
                                / couplingFarads;
         coefficients_ = { low / twoPi, high / twoPi, -gaj / (capacitance * high),
-                          noiseZero / low, std::sqrt(4.0 * boltzmann * gjj)
+                          noiseZero / low, inlineSqrt(4.0 * boltzmann * gjj)
                               / (capacitance * high) };
         lowG_ = std::tan(numbers::pi * coefficients_.lowPoleHz / sampleRate_);
         jackCoefficients_ = OutputJackLowPass::coefficients(coefficients_.highPoleHz, sampleRate_);

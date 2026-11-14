@@ -1,4 +1,5 @@
 #include "YouKnowChorus.h"
+#include "YouKnowCompatibility.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1119,6 +1120,41 @@ bool advanceExactSupport(
     const std::array<double, 4> samples {
         current, previous, previous2, previous3
     };
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
+    Double2 next01 = double2Splat(0.0);
+    Double2 next23 = double2Splat(0.0);
+    Double2 next45 = double2Splat(0.0);
+    for (std::size_t column = 0; column < 6; ++column)
+    {
+        const Double2 s = double2Splat(state[column]);
+        const double* col = transition.stateByColumn[column].data();
+        next01 = double2MulAdd(next01, double2Load(col), s);
+        next23 = double2MulAdd(next23, double2Load(col + 2), s);
+        next45 = double2MulAdd(next45, double2Load(col + 4), s);
+    }
+    if (heldForcing != nullptr)
+    {
+        const double* hf = heldForcing->data();
+        next01 += double2Load(hf);
+        next23 += double2Load(hf + 2);
+        next45 += double2Load(hf + 4);
+    }
+    else
+    {
+        for (std::size_t sample = 0; sample < 4; ++sample)
+        {
+            const Double2 s = double2Splat(samples[sample]);
+            const double* drv = transition.driveBySample[sample].data();
+            next01 = double2MulAdd(next01, double2Load(drv), s);
+            next23 = double2MulAdd(next23, double2Load(drv + 2), s);
+            next45 = double2MulAdd(next45, double2Load(drv + 4), s);
+        }
+    }
+    std::array<double, 6> next;
+    double2Store(next.data(), next01);
+    double2Store(next.data() + 2, next23);
+    double2Store(next.data() + 4, next45);
+#else
     std::array<double, 6> next {};
     for (std::size_t column = 0; column < 6; ++column)
         for (std::size_t row = 0; row < 6; ++row)
@@ -1134,9 +1170,10 @@ bool advanceExactSupport(
             for (std::size_t row = 0; row < 6; ++row)
                 next[row] += transition.driveBySample[sample][row]
                            * samples[sample];
+#endif
     for (double value : next)
     {
-        if (!(std::abs(value) <= maximumState))
+        if (!(inlineAbs(value) <= maximumState))
         {
             state.fill(0.0);
             return false;
@@ -1163,6 +1200,33 @@ bool followerResidualCurrent(
     const FollowerPair& thermalJunction, const FollowerPair& collectorScale,
     FollowerPair& current, FollowerPair& derivative) noexcept
 {
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
+    const double y0 = thermalJunction[0];
+    const double y1 = thermalJunction[1];
+    if (std::isfinite(y0) && std::isfinite(y1)
+        && inlineAbs(y0) <= 0.25 && inlineAbs(y1) <= 0.25)
+    {
+        const Double2::Lanes y = double2Pack(y0, y1).v;
+        const Double2::Lanes squared = y * y;
+        const Double2::Lanes remainder = squared * ((double2Splat(0.5).v + y * double2Splat(1.0 / 6.0).v)
+            + squared * ((double2Splat(1.0 / 24.0).v + y * double2Splat(1.0 / 120.0).v)
+            + squared * ((double2Splat(1.0 / 720.0).v + y * double2Splat(1.0 / 5040.0).v)
+            + squared * ((double2Splat(1.0 / 40320.0).v + y * double2Splat(1.0 / 362880.0).v)
+            + squared * ((double2Splat(1.0 / 3628800.0).v + y * double2Splat(1.0 / 39916800.0).v)
+            + squared * double2Splat(1.0 / 479001600.0).v)))));
+        const Double2::Lanes exponentialMinusOne = y + remainder;
+        const Double2::Lanes scale = double2Load(collectorScale.data()).v;
+        const Double2 cur { scale * remainder };
+        const Double2 der { scale * exponentialMinusOne };
+        if (std::isfinite(double2Low(cur)) && std::isfinite(double2Low(der))
+            && std::isfinite(double2High(cur)) && std::isfinite(double2High(der)))
+        {
+            double2Store(current.data(), cur);
+            double2Store(derivative.data(), der);
+            return true;
+        }
+    }
+#endif
     for (std::size_t port = 0; port < 2; ++port)
     {
         const double y = thermalJunction[port];
@@ -1172,7 +1236,7 @@ bool followerResidualCurrent(
             return false;
         double exponentialMinusOne;
         double remainder;
-        if (std::abs(y) <= 0.25)
+        if (inlineAbs(y) <= 0.25)
         {
             // Both Newton terms share exp(y)-1-y. Evaluate that residual
             // directly near the bias point, avoiding cancellation and a
@@ -1242,15 +1306,15 @@ bool solveFollowerJunctions(
         for (std::size_t port = 0; port < 2; ++port)
             error[port] = y[port] - base[port]
                 - coupling[port][0] * q[0] - coupling[port][1] * q[1];
-        return std::max(std::abs(error[0]), std::abs(error[1]));
+        return std::max(inlineAbs(error[0]), inlineAbs(error[1]));
     };
     FollowerPair derivative {}, error {};
     double norm = residual(junction, current, derivative, error);
     for (unsigned iteration = 0; iteration < iterationLimit; ++iteration)
     {
         maximumIterations = std::max(maximumIterations, iteration + 1);
-        if (norm <= tolerance * (1.0 + std::max(std::abs(junction[0]),
-                                                std::abs(junction[1]))))
+        if (norm <= tolerance * (1.0 + std::max(inlineAbs(junction[0]),
+                                                inlineAbs(junction[1]))))
             return true;
         const double a = 1.0 - coupling[0][0] * derivative[0];
         const double b = -coupling[0][1] * derivative[1];
@@ -1258,11 +1322,11 @@ bool solveFollowerJunctions(
         const double d = 1.0 - coupling[1][1] * derivative[1];
         const double determinant = a * d - b * c;
         if (!std::isfinite(norm) || !std::isfinite(determinant)
-            || std::abs(determinant) < 1.0e-18)
+            || inlineAbs(determinant) < 1.0e-18)
             return false;
         FollowerPair step {{ (d * error[0] - b * error[1]) / determinant,
                              (a * error[1] - c * error[0]) / determinant }};
-        const double largestStep = std::max(std::abs(step[0]), std::abs(step[1]));
+        const double largestStep = std::max(inlineAbs(step[0]), inlineAbs(step[1]));
         double damping = largestStep > 8.0 ? 8.0 / largestStep : 1.0;
         bool accepted = false;
         for (unsigned backtrack = 0; backtrack < backtrackLimit; ++backtrack)
@@ -1288,8 +1352,8 @@ bool solveFollowerJunctions(
             return false;
     }
     // The final permitted Newton update can itself reach tolerance.
-    return norm <= tolerance * (1.0 + std::max(std::abs(junction[0]),
-                                               std::abs(junction[1])));
+    return norm <= tolerance * (1.0 + std::max(inlineAbs(junction[0]),
+                                               inlineAbs(junction[1])));
 }
 
 bool advanceNonlinearSupport(
@@ -1335,6 +1399,39 @@ bool advanceNonlinearSupport(
     const bool cubic = ports.cubicResidual && historyMatches
         && history.currentHistoryDepth >= 3;
     auto base = state;
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
+    Double2 b01 = double2Load(base.data());
+    Double2 b23 = double2Load(base.data() + 2);
+    Double2 b45 = double2Load(base.data() + 4);
+    if (cubic)
+    {
+        const std::array<FollowerPair, 3> currents {{ oldCurrent,
+            history.previous2Current, history.previous3Current }};
+        for (std::size_t sample = 0; sample < 3; ++sample)
+            for (std::size_t port = 0; port < 2; ++port)
+            {
+                const Double2 c = double2Splat(currents[sample][port]);
+                const double* map = ports.cubicStateByCurrentSample[sample + 1][port].data();
+                b01 = double2MulAdd(b01, double2Load(map), c);
+                b23 = double2MulAdd(b23, double2Load(map + 2), c);
+                b45 = double2MulAdd(b45, double2Load(map + 4), c);
+            }
+    }
+    else
+    {
+        for (std::size_t port = 0; port < 2; ++port)
+        {
+            const Double2 c = double2Splat(oldCurrent[port]);
+            const double* map = ports.stateByPreviousCurrent[port].data();
+            b01 = double2MulAdd(b01, double2Load(map), c);
+            b23 = double2MulAdd(b23, double2Load(map + 2), c);
+            b45 = double2MulAdd(b45, double2Load(map + 4), c);
+        }
+    }
+    double2Store(base.data(), b01);
+    double2Store(base.data() + 2, b23);
+    double2Store(base.data() + 4, b45);
+#else
     if (cubic)
     {
         const std::array<FollowerPair, 3> currents {{ oldCurrent,
@@ -1349,6 +1446,7 @@ bool advanceNonlinearSupport(
         for (std::size_t port = 0; port < 2; ++port)
             for (std::size_t index = 0; index < 6; ++index)
                 base[index] += ports.stateByPreviousCurrent[port][index] * oldCurrent[port];
+#endif
     FollowerPair newCurrent {};
     if (!solveFollowerJunctions(ports, base, current,
             cubic ? ports.cubicEndpointJunctionByCurrent : ports.endpointJunctionByCurrent,
@@ -1358,14 +1456,32 @@ bool advanceNonlinearSupport(
         return finiteIntervalAccepted;
     }
     auto next = base;
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
+    Double2 n01 = double2Load(next.data());
+    Double2 n23 = double2Load(next.data() + 2);
+    Double2 n45 = double2Load(next.data() + 4);
+    for (std::size_t port = 0; port < 2; ++port)
+    {
+        const Double2 c = double2Splat(newCurrent[port]);
+        const double* map = (cubic ? ports.cubicStateByCurrentSample[0][port]
+                                   : ports.stateByCurrent[port]).data();
+        n01 = double2MulAdd(n01, double2Load(map), c);
+        n23 = double2MulAdd(n23, double2Load(map + 2), c);
+        n45 = double2MulAdd(n45, double2Load(map + 4), c);
+    }
+    double2Store(next.data(), n01);
+    double2Store(next.data() + 2, n23);
+    double2Store(next.data() + 4, n45);
+#else
     for (std::size_t port = 0; port < 2; ++port)
         for (std::size_t index = 0; index < 6; ++index)
             next[index] += (cubic ? ports.cubicStateByCurrentSample[0][port][index]
                                   : ports.stateByCurrent[port][index]) * newCurrent[port];
+#endif
     constexpr double maximumState =
         static_cast<double>(std::numeric_limits<float>::max()) / 16.0;
     for (double value : next)
-        if (!(std::abs(value) <= maximumState))
+        if (!(inlineAbs(value) <= maximumState))
         {
             fail();
             return finiteIntervalAccepted;
@@ -1407,6 +1523,111 @@ double triangle(double phase) noexcept
 {
     const double folded = phase < 0.5 ? phase : 1.0 - phase;
     return folded * 4.0 - 1.0;
+}
+
+std::array<double, 2> powMinusHalfHissExponentPair(
+    double clockA, double clockB) noexcept
+{
+    static_assert(Chorus::hissClockExponent == 1.44,
+                  "powMinusHalfHissExponentPair tables assume -0.5 * 1.44 = -0.72");
+    if (clockA >= 128.0 && clockA < 4194304.0
+        && clockB >= 128.0 && clockB < 4194304.0)
+    {
+        // Exact IEEE-754 decomposition x = 2^e * m (e in [7, 21], m in [1, 2))
+        // with 16 mantissa sub-intervals (|u| <= 1/33) and degree-9 Taylor
+        // expansion of (1 + u)^(-0.72): < 1e-15 relative error (~4 double ULPs),
+        // well below the float narrowing at the call site.
+        static constexpr std::array<double, 16> expTable {
+            3.03954671066339228e-02, 1.84530103348364144e-02,
+            1.12027753751236542e-02, 6.80117627575097319e-03,
+            4.12897672094289254e-03, 2.50669120617754608e-03,
+            1.52180581964941430e-03, 9.23884420630464737e-04,
+            5.60887868650896369e-04, 3.40513590417579543e-04,
+            2.06724929776007577e-04, 1.25502176105476954e-04,
+            7.61920501038581606e-05, 4.62559987338378767e-05,
+            2.80818985176048468e-05, 1.70484487620883182e-05
+        };
+        static constexpr std::array<double, 16> invCenters {
+            9.69696969696969724e-01, 9.14285714285714257e-01,
+            8.64864864864864913e-01, 8.20512820512820484e-01,
+            7.80487804878048808e-01, 7.44186046511627897e-01,
+            7.11111111111111138e-01, 6.80851063829787218e-01,
+            6.53061224489795866e-01, 6.27450980392156854e-01,
+            6.03773584905660354e-01, 5.81818181818181790e-01,
+            5.61403508771929793e-01, 5.42372881355932202e-01,
+            5.24590163934426257e-01, 5.07936507936507908e-01
+        };
+        static constexpr std::array<double, 16> powCenters {
+            9.78088038346010880e-01, 9.37516656598901599e-01,
+            9.00746831406578963e-01, 8.67244326412457966e-01,
+            8.36572544880542779e-01, 8.08370946762795306e-01,
+            7.82338988982572703e-01, 7.58223999445181707e-01,
+            7.35811899223962174e-01, 7.14920017954678300e-01,
+            6.95391468653322242e-01, 6.77090698835275284e-01,
+            6.59899939135900171e-01, 6.43716343961140525e-01,
+            6.28449670957686557e-01, 6.14020383817568627e-01
+        };
+        static constexpr std::array<double, 10> coeffs {
+            1.0,
+            -7.19999999999999973e-01,
+            6.19199999999999973e-01,
+            -5.61407999999999907e-01,
+            5.22109439999999925e-01,
+            -4.92871311359999897e-01,
+            4.69870650163199899e-01,
+            -4.51075824156671856e-01,
+            4.35288170311188327e-01,
+            -4.21745871679284734e-01
+        };
+
+        std::uint64_t bitsA = 0, bitsB = 0;
+        std::memcpy(&bitsA, &clockA, sizeof(bitsA));
+        std::memcpy(&bitsB, &clockB, sizeof(bitsB));
+        const std::size_t expIdxA =
+            static_cast<std::size_t>(((bitsA >> 52) & 0x7ffu) - 1030u);
+        const std::size_t expIdxB =
+            static_cast<std::size_t>(((bitsB >> 52) & 0x7ffu) - 1030u);
+        const std::size_t manIdxA =
+            static_cast<std::size_t>((bitsA >> 48) & 0xfu);
+        const std::size_t manIdxB =
+            static_cast<std::size_t>((bitsB >> 48) & 0xfu);
+
+        const std::uint64_t mBitsA =
+            (bitsA & 0x000fffffffffffffull) | 0x3ff0000000000000ull;
+        const std::uint64_t mBitsB =
+            (bitsB & 0x000fffffffffffffull) | 0x3ff0000000000000ull;
+        double mA = 1.0, mB = 1.0;
+        std::memcpy(&mA, &mBitsA, sizeof(mA));
+        std::memcpy(&mB, &mBitsB, sizeof(mB));
+
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
+        const Double2 m = double2Pack(mA, mB);
+        const Double2 invC = double2Pack(invCenters[manIdxA], invCenters[manIdxB]);
+        const Double2 scale = double2Pack(
+            expTable[expIdxA] * powCenters[manIdxA],
+            expTable[expIdxB] * powCenters[manIdxB]);
+        const Double2::Lanes uv = m.v * invC.v - double2Splat(1.0).v;
+        Double2::Lanes p = double2Splat(coeffs[9]).v;
+        for (int k = 8; k >= 0; --k)
+            p = p * uv + double2Splat(coeffs[static_cast<std::size_t>(k)]).v;
+        const Double2 out { scale.v * p };
+        return { double2Low(out), double2High(out) };
+#else
+        const double uA = mA * invCenters[manIdxA] - 1.0;
+        const double uB = mB * invCenters[manIdxB] - 1.0;
+        double pA = coeffs[9], pB = coeffs[9];
+        for (int k = 8; k >= 0; --k)
+        {
+            const double c = coeffs[static_cast<std::size_t>(k)];
+            pA = pA * uA + c;
+            pB = pB * uB + c;
+        }
+        return { expTable[expIdxA] * powCenters[manIdxA] * pA,
+                 expTable[expIdxB] * powCenters[manIdxB] * pB };
+#endif
+    }
+    return { std::pow(clockA, -0.5 * Chorus::hissClockExponent),
+             std::pow(clockB, -0.5 * Chorus::hissClockExponent) };
 }
 
 } // namespace
@@ -3369,18 +3590,21 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lineTimingClockSources_ = enableClockSourceSpread;
         lineTimingInverter_ = enableInverterSpread;
     }
-    const auto trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_ * lineTiming_.delayA,
-        sweep_ * lineTiming_.delayA * lineTiming_.sweepA, sampleRate_, 1.0);
-    const auto trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
-        centreDelay_ * lineTiming_.delayB,
-        sweep_ * lineTiming_.delayB * lineTiming_.sweepB, sampleRate_, -1.0);
-    const std::array<double, 2> clock {{
-        trajectoryA.intervalCycles * sampleRate_,
-        trajectoryB.intervalCycles * sampleRate_
-    }};
-    const double clockA = clocksStopped_ ? 0.0 : clock[0];
-    const double clockB = clocksStopped_ ? 0.0 : clock[1];
+    ClockTrajectory trajectoryA {};
+    ClockTrajectory trajectoryB {};
+    double clockA = 0.0;
+    double clockB = 0.0;
+    if (!clocksStopped_)
+    {
+        trajectoryA = ClockTrajectory::make(intervalStartPhase, rateHz_,
+            centreDelay_ * lineTiming_.delayA,
+            sweep_ * lineTiming_.delayA * lineTiming_.sweepA, sampleRate_, 1.0);
+        trajectoryB = ClockTrajectory::make(intervalStartPhase, rateHz_,
+            centreDelay_ * lineTiming_.delayB,
+            sweep_ * lineTiming_.delayB * lineTiming_.sweepB, sampleRate_, -1.0);
+        clockA = trajectoryA.intervalCycles * sampleRate_;
+        clockB = trajectoryB.intervalCycles * sampleRate_;
+    }
     if(enableCorrelatedNoise)
     {
         if (!bucketNoiseCoefficientsValid_
@@ -3399,10 +3623,10 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
             bucketNoiseTransferCorrelation_ = noiseTransferCorrelation;
             bucketNoiseCoefficientsValid_ = true;
         }
-        if(lineA_.bucketNoise.eta!=0.0)
+        if(!clocksStopped_ && lineA_.bucketNoise.eta!=0.0)
         {
-            ChorusBucketNoise::normalize(lineA_.bucketNoise,bucketNoiseCosineMoment(clock[0]));
-            ChorusBucketNoise::normalize(lineB_.bucketNoise,bucketNoiseCosineMoment(clock[1]));
+            ChorusBucketNoise::normalize(lineA_.bucketNoise,bucketNoiseCosineMoment(clockA));
+            ChorusBucketNoise::normalize(lineB_.bucketNoise,bucketNoiseCosineMoment(clockB));
         }
     }
     else
@@ -3429,11 +3653,14 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         ? 1.0f : measuredModeNoiseGain(runningMode_);
     const float lineNoiseScale = noiseScale * modeNoiseGain;
     float noiseA = lineNoiseScale, noiseB = lineNoiseScale;
-    if (enableClockDependentHiss && clockA > 0.0 && clockB > 0.0)
+    if (enableClockDependentHiss && lineNoiseScale != 0.0f
+        && clockA > 0.0 && clockB > 0.0
+        && std::isfinite(clockA) && std::isfinite(clockB))
     {
         const double reference = hissClockReference();
-        noiseA *= static_cast<float>(reference * std::pow(clockA, -0.5 * hissClockExponent));
-        noiseB *= static_cast<float>(reference * std::pow(clockB, -0.5 * hissClockExponent));
+        const auto clockPow = powMinusHalfHissExponentPair(clockA, clockB);
+        noiseA *= static_cast<float>(reference * clockPow[0]);
+        noiseB *= static_cast<float>(reference * clockPow[1]);
     }
     // One input support network for both wet branches; only the clock differs
     // between them. See `InputSupport` for why that is the model rather than

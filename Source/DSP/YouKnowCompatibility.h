@@ -35,6 +35,140 @@ namespace youknow
 #endif
 }
 
+[[nodiscard]] inline float inlineSqrt(float value) noexcept
+{
+#if defined(__clang__) && defined(__has_builtin)
+#if __has_builtin(__builtin_elementwise_sqrt)
+    return __builtin_elementwise_sqrt(value);
+#else
+    return __builtin_sqrtf(value);
+#endif
+#elif defined(__GNUC__)
+    return __builtin_sqrtf(value);
+#else
+    return std::sqrt(value);
+#endif
+}
+
+[[nodiscard]] inline double inlineAbs(double value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_fabs(value);
+#else
+    return std::abs(value);
+#endif
+}
+
+[[nodiscard]] inline float inlineAbs(float value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_fabsf(value);
+#else
+    return std::abs(value);
+#endif
+}
+
+[[nodiscard]] inline double inlineFloor(double value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_floor(value);
+#else
+    return std::floor(value);
+#endif
+}
+
+[[nodiscard]] inline float inlineFloor(float value) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_floorf(value);
+#else
+    return std::floor(value);
+#endif
+}
+
+[[nodiscard]] inline double inlineCopysign(double magnitude, double sign) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_copysign(magnitude, sign);
+#else
+    return std::copysign(magnitude, sign);
+#endif
+}
+
+[[nodiscard]] inline float inlineCopysign(float magnitude, float sign) noexcept
+{
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_copysignf(magnitude, sign);
+#else
+    return std::copysign(magnitude, sign);
+#endif
+}
+
+// Portable two-lane IEEE-754 double vector compatible with native ARM64,
+// x86_64 and Reason Rack Extension phdsp64/phdsp32 (__BIGGEST_ALIGNMENT__ == 8).
+// Wrap the vector in a packed struct aligned to 8 rather than a typedef: SDK
+// Clang 15.0.7 drops a typedef's lowered alignment across references/pointers
+// and emits aligned x86_64 SSE loads/stores (movapd) that fault on 8-aligned
+// heap members.
+#if defined(__clang__) || defined(__GNUC__)
+#define YOUKNOW_HAS_DOUBLE2_SIMD 1
+struct Double2
+{
+    typedef double Lanes __attribute__((__vector_size__(16)));
+    Lanes v;
+    [[nodiscard]] double operator[](int lane) const noexcept { return v[lane]; }
+    [[nodiscard]] Double2 operator+(Double2 o) const noexcept { return { v + o.v }; }
+    [[nodiscard]] Double2 operator-(Double2 o) const noexcept { return { v - o.v }; }
+    [[nodiscard]] Double2 operator*(Double2 o) const noexcept { return { v * o.v }; }
+    [[nodiscard]] Double2 operator/(Double2 o) const noexcept { return { v / o.v }; }
+    [[nodiscard]] Double2 operator-() const noexcept { return { -v }; }
+    Double2& operator+=(Double2 o) noexcept { v += o.v; return *this; }
+    Double2& operator-=(Double2 o) noexcept { v -= o.v; return *this; }
+    Double2& operator*=(Double2 o) noexcept { v *= o.v; return *this; }
+    Double2& operator/=(Double2 o) noexcept { v /= o.v; return *this; }
+} __attribute__((__packed__, __aligned__(8)));
+static_assert(sizeof(Double2) == 16 && alignof(Double2) == 8,
+              "unaligned 128-bit SIMD vector");
+[[nodiscard]] inline Double2 double2Pack(double low, double high) noexcept
+{
+    return Double2 { { low, high } };
+}
+[[nodiscard]] inline Double2 double2Splat(double value) noexcept
+{
+    return Double2 { { value, value } };
+}
+[[nodiscard]] inline Double2 double2Load(const double* ptr) noexcept
+{
+    Double2 out;
+    std::memcpy(&out, ptr, sizeof(out));
+    return out;
+}
+inline void double2Store(double* ptr, Double2 value) noexcept
+{
+    std::memcpy(ptr, &value, sizeof(value));
+}
+[[nodiscard]] inline double double2Low(Double2 value) noexcept
+{
+    return value.v[0];
+}
+[[nodiscard]] inline double double2High(Double2 value) noexcept
+{
+    return value.v[1];
+}
+// Keep multiply-add / multiply-subtract inside a single built-in vector
+// expression on .v so statement-local FP contraction (-ffp-contract=on on
+// native ARM64, -ffp-contract=off on phdsp64/SSE2) matches scalar double to
+// 0 ULP; C++ operator* + operator+ boundaries suppress contraction.
+[[nodiscard]] inline Double2 double2MulAdd(Double2 addend, Double2 a, Double2 b) noexcept
+{
+    return Double2 { addend.v + a.v * b.v };
+}
+[[nodiscard]] inline Double2 double2MulSub(Double2 minuend, Double2 a, Double2 b) noexcept
+{
+    return Double2 { minuend.v - a.v * b.v };
+}
+#endif
+
 // Shared DSP is also consumed by C++17 hosts. Keep C++20 clients' span API,
 // and supply only the dynamic view operations used by the firmware paths on
 // older toolchains. The view never owns or allocates its backing storage.

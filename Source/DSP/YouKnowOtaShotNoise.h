@@ -140,7 +140,7 @@ struct OtaShotNoise {
             const std::uint32_t word=bits();
             const std::size_t layer=word&127u;
             const double u=(static_cast<double>(word>>7)+.5)*(1.0/16777216.0)-1.0;
-            if(u<z.coreRatio[layer]&&u>-z.coreRatio[layer]) return u*z.edge[layer];
+            if(inlineAbs(u)<z.coreRatio[layer]) return u*z.edge[layer];
             return beyondCore(layer,u);
         }
     private:
@@ -396,9 +396,9 @@ struct OtaShotNoise {
             bool rebuild=!primed;
             for(std::size_t i=0;i<4&&!rebuild;++i) {
                 double difference=0;
-                for(std::size_t j=0;j<4;++j)difference+=std::abs(currentA[i][j]-a[i][j]);
+                for(std::size_t j=0;j<4;++j)difference+=inlineAbs(currentA[i][j]-a[i][j]);
                 rebuild=difference>jacobianTolerance
-                    ||std::abs(currentD[i]-d[i])>diffusionTolerance*std::max(currentD[i],d[i]);
+                    ||inlineAbs(currentD[i]-d[i])>diffusionTolerance*std::max(currentD[i],d[i]);
             }
             if(rebuild) {a=currentA;d=currentD;bool valid;
                 l=factor(cascadeCovariance(a,d),&valid);

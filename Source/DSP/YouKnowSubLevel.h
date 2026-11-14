@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include "YouKnowCompatibility.h"
 
 namespace youknow
 {
@@ -70,7 +71,7 @@ public:
         {
             const double delta = (y + std::log(y) - z) * y / (y + 1.0);
             y -= delta;
-            if (std::abs(delta) <= 1.0e-14 * y)
+            if (inlineAbs(delta) <= 1.0e-14 * y)
                 break;
         }
         return y * coefficients.slopeVolts / coefficients.resistanceOhms;

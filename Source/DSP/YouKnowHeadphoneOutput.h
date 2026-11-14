@@ -100,7 +100,7 @@ public:
             temperature_ = temperatureKelvin;
             noiseAmount_ = amount;
             noiseScale_ = coefficients_.noiseDensityPerRootKelvin
-                        * std::sqrt(0.5 * sampleRate_ * temperature_) * noiseAmount_;
+                        * inlineSqrt(0.5 * sampleRate_ * temperature_) * noiseAmount_;
             rebuildAmplifierNoise();
         }
         return true;
@@ -118,6 +118,93 @@ public:
         double leftOutputUnitNoise = 0.0, double rightOutputUnitNoise = 0.0,
         double leftIntrinsicUnitNoise = 0.0, double rightIntrinsicUnitNoise = 0.0) noexcept
     {
+#if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
+        const double in0 = std::isfinite(leftVolts) ? leftVolts : 0.0;
+        const double in1 = std::isfinite(rightVolts) ? rightVolts : 0.0;
+        const double un0 = std::isfinite(leftUnitNoise) ? leftUnitNoise : 0.0;
+        const double un1 = std::isfinite(rightUnitNoise) ? rightUnitNoise : 0.0;
+        const double oun0 = std::isfinite(leftOutputUnitNoise) ? leftOutputUnitNoise : 0.0;
+        const double oun1 = std::isfinite(rightOutputUnitNoise) ? rightOutputUnitNoise : 0.0;
+        const double iun0 = std::isfinite(leftIntrinsicUnitNoise) ? leftIntrinsicUnitNoise : 0.0;
+        const double iun1 = std::isfinite(rightIntrinsicUnitNoise) ? rightIntrinsicUnitNoise : 0.0;
+        const auto lowPass2 = [](Double2 x, Double2& s, Double2 g, Double2 denom) noexcept -> Double2 {
+            const Double2 delta = (x - s) * g / denom;
+            const Double2 out = s + delta;
+            s = out + delta;
+            return out;
+        };
+        const Double2 input = double2Pack(in0, in1);
+        const Double2 unitNoise = double2Pack(un0, un1);
+        const Double2 inG = double2Splat(inputG_);
+        const Double2 inDenom = double2Splat(1.0 + inputG_);
+        Double2 inputLow = double2Pack(channels_[0].inputLow, channels_[1].inputLow);
+        Double2 noiseLow = double2Pack(channels_[0].noiseLow, channels_[1].noiseLow);
+        Double2 ampNoiseLow = double2Pack(channels_[0].amplifierNoiseLow, channels_[1].amplifierNoiseLow);
+        Double2 headphoneLow = double2Pack(channels_[0].headphoneLow, channels_[1].headphoneLow);
+        const Double2 coupled = (input - lowPass2(input, inputLow, inG, inDenom))
+            * double2Splat(coefficients_.passbandGain);
+        const Double2 white = unitNoise * double2Splat(noiseScale_);
+        const Double2 noise = double2MulAdd(
+            white, double2Splat(coefficients_.noiseLowGain - 1.0),
+            lowPass2(white, noiseLow, inG, inDenom));
+        const Double2 deviceNoise = intrinsicNoise_
+            ? double2Pack(iun0, iun1) * double2Splat(intrinsicNoiseScale_)
+            : double2Splat(0.0);
+        const Double2 outDiv = double2Splat(outputDivider_);
+        Double2 mixed = double2MulAdd(coupled + noise, deviceNoise, outDiv);
+        const Double2 amplifierWhite = unitNoise * double2Splat(amplifierNoiseScale_);
+        const Double2 amplifierNoise = double2MulAdd(
+            amplifierWhite, double2Splat(amplifierNoiseLowGain_ - 1.0),
+            lowPass2(amplifierWhite, ampNoiseLow, inG, inDenom));
+        const Double2 idealAmplifier = coupled / outDiv + amplifierNoise + deviceNoise;
+        Double2 ampPrevNext = idealAmplifier;
+        Double2 ampDiffNext = double2Splat(0.0);
+        Double2 ampOutNext = idealAmplifier;
+        if (amplifierDynamics_)
+        {
+            const Double2 ampPrev = double2Pack(channels_[0].amplifierPreviousInput,
+                                                channels_[1].amplifierPreviousInput);
+            const Double2 ampDiff = double2Pack(channels_[0].amplifierDifference,
+                                                channels_[1].amplifierDifference);
+            ampDiffNext = double2MulSub(
+                double2Splat(amplifierPole_.correction) * (idealAmplifier - ampPrev),
+                double2Splat(amplifierPole_.a1), ampDiff);
+            const Double2 target = idealAmplifier + ampDiffNext;
+            const double maximumStep = amplifierSlewVoltsPerSecond / sampleRate_;
+            const Double2 ampOutPrev = double2Pack(channels_[0].amplifierOutput,
+                                                   channels_[1].amplifierOutput);
+            const Double2 stepDelta = target - ampOutPrev;
+            const Double2 clampedStep = double2Pack(
+                std::clamp(double2Low(stepDelta), -maximumStep, maximumStep),
+                std::clamp(double2High(stepDelta), -maximumStep, maximumStep));
+            ampOutNext = ampOutPrev + clampedStep;
+            mixed = double2MulAdd(
+                ampOutNext, double2Pack(oun0, oun1), double2Splat(outputNoiseScale_)) * outDiv;
+        }
+        const Double2 hpG = double2Splat(headphoneG_);
+        const Double2 hpDenom = double2Splat(1.0 + headphoneG_);
+        const Double2 output = mixed - lowPass2(mixed, headphoneLow, hpG, hpDenom);
+        const double out0 = double2Low(output);
+        const double out1 = double2High(output);
+        if (std::isfinite(out0) && std::isfinite(out1))
+        {
+            channels_[0].inputLow = double2Low(inputLow);
+            channels_[1].inputLow = double2High(inputLow);
+            channels_[0].headphoneLow = double2Low(headphoneLow);
+            channels_[1].headphoneLow = double2High(headphoneLow);
+            channels_[0].noiseLow = double2Low(noiseLow);
+            channels_[1].noiseLow = double2High(noiseLow);
+            channels_[0].amplifierNoiseLow = double2Low(ampNoiseLow);
+            channels_[1].amplifierNoiseLow = double2High(ampNoiseLow);
+            channels_[0].amplifierPreviousInput = double2Low(ampPrevNext);
+            channels_[1].amplifierPreviousInput = double2High(ampPrevNext);
+            channels_[0].amplifierDifference = double2Low(ampDiffNext);
+            channels_[1].amplifierDifference = double2High(ampDiffNext);
+            channels_[0].amplifierOutput = double2Low(ampOutNext);
+            channels_[1].amplifierOutput = double2High(ampOutNext);
+            return { out0, out1 };
+        }
+#endif
         return { step(channels_[0], leftVolts, leftUnitNoise,leftOutputUnitNoise,leftIntrinsicUnitNoise),
                  step(channels_[1], rightVolts, rightUnitNoise,rightOutputUnitNoise,rightIntrinsicUnitNoise) };
     }
@@ -197,21 +284,21 @@ private:
         const double noiseHf = amplifierGain*amplifierGain*zhf+feedbackResistance+220.0;
         coefficients_ = {inputPole,headphonePole,
             lower/(upper+lower)*(100000.0/101000.0)*amplifierGain*outputDivider,
-            std::sqrt(noiseDc/noiseHf),
-            std::sqrt(4*1.380649e-23*noiseHf)*outputDivider};
+            inlineSqrt(noiseDc/noiseHf),
+            inlineSqrt(4*1.380649e-23*noiseHf)*outputDivider};
         inputG_ = std::tan(numbers::pi*inputPole/sampleRate_);
         headphoneG_ = std::tan(numbers::pi*headphonePole/sampleRate_);
-        amplifierNoiseLowGain_ = std::sqrt((noiseDc-220)/(noiseHf-220));
+        amplifierNoiseLowGain_ = inlineSqrt((noiseDc-220)/(noiseHf-220));
         noiseScale_ = coefficients_.noiseDensityPerRootKelvin
-                    * std::sqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
+                    * inlineSqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
         rebuildAmplifierNoise();
     }
     void rebuildAmplifierNoise() noexcept
     {
-        const double scale = std::sqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
-        outputNoiseScale_ = std::sqrt(4*1.380649e-23*220)*scale;
+        const double scale = inlineSqrt(0.5*sampleRate_*temperature_)*noiseAmount_;
+        outputNoiseScale_ = inlineSqrt(4*1.380649e-23*220)*scale;
         const double total = coefficients_.noiseDensityPerRootKelvin/outputDivider_;
-        amplifierNoiseScale_ = std::sqrt(std::max(0.0,total*total-4*1.380649e-23*220))*scale;
+        amplifierNoiseScale_ = inlineSqrt(std::max(0.0,total*total-4*1.380649e-23*220))*scale;
         // Device density stays at its measured25C coordinate, unlike Johnson
         // noise. Zero-K suppression is only an exact-silence diagnostic policy.
         intrinsicNoiseScale_ = temperature_>0
