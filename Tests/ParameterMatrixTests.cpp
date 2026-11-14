@@ -111,10 +111,19 @@ public:
         // end of every sweep, with no key down (the processor reports an
         // infinite tail for it). On the loudest programs that idles above
         // the -60 dBFS floor (139: -52 dBFS), so silence there means the
-        // idle output of an instrument set the same way and never played;
-        // 6 dB allows for noise peaking higher in another window.
+        // idle output of an instrument set the same way and never played.
+        // That peak is the clock's thump, not hiss: Chorus Noise from zero
+        // to full moves it by a few tenths of a dB, and the release window,
+        // which a thump lands in, peaks within 0.05 dB of it. The held
+        // window falls between two thumps (about -75 dBFS there), so held
+        // notes that dropped out read far below the thump, while chords
+        // quiet by design sit a few dB above it: B31 Brass at Decay 0 and
+        // A54 Funky II keep the VCF nearly shut (Freq 0 and 5, the envelope
+        // at its 40 % and 31 % sustain, VCA in Gate), 5.5 dB (1.4.9) and
+        // 4.7 dB (1.4.8) above it. 3 dB clears the thump and passes them;
+        // the 6 dB this used before failed both.
         if (c.values[chorusOne] >= 0.5f || c.values[chorusTwo] >= 0.5f || c.values[legacyChorus] > 0.0f)
-            limits.silenceFloor = std::max (limits.silenceFloor, 2.0f * idlePeak (c));
+            limits.silenceFloor = std::max (limits.silenceFloor, 1.4125f * idlePeak (c));
         return limits;
     }
 
