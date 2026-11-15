@@ -19,14 +19,18 @@
 //       the audio tier: renders every demo twice and fails unless the
 //       second render is bit-identical
 //   Render<Name>PresetDemos --cpu [--repeats N] [--json FILE] [--note TEXT] <midi-dir>
-//       the perf tier (U7): times every demo on one thread, after an untimed
-//       warm-up render, with denormals flushed as a plug-in's callback does;
-//       reports the realtime factor (DSP seconds per audio second, median of
-//       the repeats) and the worst block as a share of its period, and fails
-//       when a repeat differs or a median exceeds Instrument::cpuBudget.
+//       the perf tier (U7, U12): times every demo, and the stress phrase
+//       through each demo's preset, on one thread, after an untimed warm-up
+//       render, with denormals flushed as a plug-in's callback does; reports
+//       the realtime factor (DSP seconds per audio second, median of the
+//       repeats) and the worst block: each block's fastest repeat, so the
+//       same work timed several times sheds the machine's interruptions, and
+//       of those the slowest, as a share of the block's period. Fails when a
+//       repeat differs or a median exceeds Instrument::cpuBudget; a worst
+//       block above Instrument::cpuCeiling is a WARN line and never fails.
 //       Only voice->Midi() and voice->Render() are timed. A Debug or
-//       sanitized build reports but never fails on time. FILE gets the
-//       figures as JSON; TEXT (a commit, a machine) is copied into it.
+//       sanitized build reports but never fails or warns on time. FILE gets
+//       the figures as JSON; TEXT (a commit, a machine) is copied into it.
 //
 // The .mid files are the curated demo list (G3): each names a factory preset
 // by program number and slug, there are at most kMaxDemos of them, and a bank
@@ -84,6 +88,44 @@ public:
     virtual void Render(float* left, float* right, int frames) = 0;
 };
 
+struct MidiEvent {
+    double seconds;
+    std::uint8_t bytes[3];
+    int size;
+};
+
+// U12: the portfolio's CPU target, the share of one core the worst
+// kBlockFrames block of any demo or stress render should take on the CI
+// runner at the default settings. Above it --cpu warns; it never fails
+// (owner, 2026-11-10: "cpu gate = warning only, do not block anything").
+constexpr double kCpuTarget = 0.10;
+
+// The default stress phrase (U12): an eight-note chord over C3-C6 at full
+// velocity under the sustain pedal, each note struck again 50 ms apart, a
+// second chord a tone higher on top, so sixteen voices ring at once, then the
+// pedal and every key up. A product whose instrument plays from something
+// else (a bellows, a string per channel) writes its own.
+inline std::vector<MidiEvent> StressPhrase() {
+    std::vector<MidiEvent> events;
+    const auto add = [&](double seconds, int status, int data1, int data2) {
+        events.push_back({ seconds, { static_cast<std::uint8_t>(status), static_cast<std::uint8_t>(data1),
+                                      static_cast<std::uint8_t>(data2) }, 3 });
+    };
+    add(0.0, 0xB0, 64, 127);
+    for (int k = 0; k < 8; ++k) add(0.0, 0x90, 48 + (36 * k + 3) / 7, 127);
+    for (int k = 0; k < 8; ++k) {
+        add(1.5 + 0.05 * k, 0x80, 48 + (36 * k + 3) / 7, 0);
+        add(1.5 + 0.05 * k, 0x90, 48 + (36 * k + 3) / 7, 110);
+    }
+    for (int k = 0; k < 8; ++k) add(2.5, 0x90, 50 + (36 * k + 3) / 7, 120);
+    add(4.0, 0xB0, 64, 0);
+    for (int k = 0; k < 8; ++k) {
+        add(4.0, 0x80, 48 + (36 * k + 3) / 7, 0);
+        add(4.0, 0x80, 50 + (36 * k + 3) / 7, 0);
+    }
+    return events;
+}
+
 struct Instrument {
     std::string name;                  // product name, for messages
     std::vector<std::string> presets;  // factory presets in program order
@@ -95,12 +137,10 @@ struct Instrument {
     // may take on one thread. Set it from a measurement on the CI runner and
     // say which beside it; 0 reports without a budget.
     double cpuBudget = 0.0;
-};
-
-struct MidiEvent {
-    double seconds;
-    std::uint8_t bytes[3];
-    int size;
+    // The worst-block share above which --cpu warns (U12).
+    double cpuCeiling = kCpuTarget;
+    // Played through each demo's preset by --cpu, after a 2 s tail.
+    std::vector<MidiEvent> stress = StressPhrase();
 };
 
 namespace detail {
@@ -241,7 +281,7 @@ namespace detail {
 // Time spent in the voice's Midi() and Render() calls while rendering a demo.
 struct Timing {
     double seconds = 0.0;
-    double worstBlock = 0.0; // the slowest kBlockFrames block, in seconds
+    std::vector<double> blocks; // each kBlockFrames block's, in seconds
 };
 
 struct Demo {
@@ -251,13 +291,10 @@ struct Demo {
     std::uint64_t hash = 1469598103934665603ull; // FNV-1a over the float bits
 };
 
-inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::size_t preset,
-                   Timing* timing = nullptr) {
+// Renders `events` through `preset` for `end` seconds.
+inline Demo Play(const Instrument& instrument, std::size_t preset, const std::vector<MidiEvent>& events, double end,
+                 Timing* timing) {
     Demo demo;
-    demo.stem = Stem(instrument, preset);
-    const auto events = ReadMidi(midiDir / (demo.stem + ".mid"));
-    if (events.empty()) throw std::runtime_error(demo.stem + ".mid: no MIDI channel events");
-    const double end = std::min(kMaxSeconds, events.back().seconds + kTailSeconds);
     const auto frames = static_cast<std::size_t>(std::llround(end * kSampleRate));
     demo.left.assign(frames, 0.0f);
     demo.right.assign(frames, 0.0f);
@@ -281,9 +318,33 @@ inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::s
         if (timing) {
             const std::chrono::duration<double> spent = std::chrono::steady_clock::now() - blockStart;
             timing->seconds += spent.count();
-            timing->worstBlock = std::max(timing->worstBlock, spent.count());
+            timing->blocks.push_back(spent.count());
         }
     }
+    return demo;
+}
+
+inline void Measure(Demo& demo) {
+    for (std::size_t i = 0; i < demo.left.size(); ++i) {
+        for (const float sample : { demo.left[i], demo.right[i] }) {
+            if (!std::isfinite(sample)) demo.peak = INFINITY;
+            else demo.peak = std::max(demo.peak, std::fabs(sample));
+            std::uint32_t bits;
+            std::memcpy(&bits, &sample, sizeof bits);
+            for (int b = 0; b < 4; ++b) demo.hash = (demo.hash ^ ((bits >> (8 * b)) & 0xFF)) * 1099511628211ull;
+        }
+    }
+}
+
+inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::size_t preset,
+                   Timing* timing = nullptr) {
+    const std::string stem = Stem(instrument, preset);
+    const auto events = ReadMidi(midiDir / (stem + ".mid"));
+    if (events.empty()) throw std::runtime_error(stem + ".mid: no MIDI channel events");
+    const double end = std::min(kMaxSeconds, events.back().seconds + kTailSeconds);
+    Demo demo = Play(instrument, preset, events, end, timing);
+    demo.stem = stem;
+    const std::size_t frames = demo.left.size();
 
     if (end < events.back().seconds + kTailSeconds) {
         const auto fade = std::min(frames, static_cast<std::size_t>(kFadeSeconds * kSampleRate));
@@ -293,15 +354,17 @@ inline Demo Render(const Instrument& instrument, const fs::path& midiDir, std::s
             demo.right[frames - 1 - i] *= gain;
         }
     }
-    for (std::size_t i = 0; i < frames; ++i) {
-        for (const float sample : { demo.left[i], demo.right[i] }) {
-            if (!std::isfinite(sample)) demo.peak = INFINITY;
-            else demo.peak = std::max(demo.peak, std::fabs(sample));
-            std::uint32_t bits;
-            std::memcpy(&bits, &sample, sizeof bits);
-            for (int b = 0; b < 4; ++b) demo.hash = (demo.hash ^ ((bits >> (8 * b)) & 0xFF)) * 1099511628211ull;
-        }
-    }
+    Measure(demo);
+    return demo;
+}
+
+// The stress phrase through `preset`, for --cpu only: no WAV, no length rule.
+inline Demo Stress(const Instrument& instrument, std::size_t preset, Timing* timing = nullptr) {
+    auto events = instrument.stress;
+    std::stable_sort(events.begin(), events.end(), [](const MidiEvent& a, const MidiEvent& b) { return a.seconds < b.seconds; });
+    Demo demo = Play(instrument, preset, events, (events.empty() ? 0.0 : events.back().seconds) + 2.0, timing);
+    demo.stem = Stem(instrument, preset) + " stress";
+    Measure(demo);
     return demo;
 }
 
@@ -562,65 +625,105 @@ inline double Median(std::vector<double> values) {
     return values.size() % 2 ? values[middle] : 0.5 * (values[middle - 1] + values[middle]);
 }
 
+// One demo or stress render, timed `repeats` times after an untimed warm-up.
+struct CpuRow {
+    std::string stem, error;
+    double seconds = 0.0, factor = 0.0, worst = 0.0, worstAt = 0.0;
+    std::vector<double> factors;
+};
+
+inline CpuRow TimeRender(const std::function<Demo(Timing*)>& render, int repeats, bool demo,
+                         const Instrument& instrument) {
+    CpuRow row;
+    try {
+        // Untimed: warms the caches, the allocator and any lazily built tables.
+        const Demo warm = render(nullptr);
+        row.stem = warm.stem;
+        row.seconds = Seconds(warm);
+        if (demo) {
+            if (const char* problem = Problem(instrument, warm)) row.error = problem;
+        } else if (!std::isfinite(warm.peak)) {
+            row.error = "non-finite samples";
+        }
+        std::vector<double> fastest;
+        for (int k = 0; k < repeats && row.error.empty(); ++k) {
+            Timing timing;
+            const Demo again = render(&timing);
+            if (again.hash != warm.hash) row.error = "a repeat differs";
+            row.factors.push_back(timing.seconds / row.seconds);
+            if (fastest.empty()) fastest = timing.blocks;
+            for (std::size_t b = 0; b < fastest.size() && b < timing.blocks.size(); ++b)
+                fastest[b] = std::min(fastest[b], timing.blocks[b]);
+        }
+        const double period = kBlockFrames / kSampleRate;
+        for (std::size_t b = 0; b < fastest.size(); ++b)
+            if (fastest[b] / period > row.worst) {
+                row.worst = fastest[b] / period;
+                row.worstAt = static_cast<double>(b) * period;
+            }
+    } catch (const std::exception& e) {
+        row.error = e.what();
+    }
+    row.factor = Median(row.factors);
+    return row;
+}
+
 inline int Cpu(const Instrument& instrument, const fs::path& midiDir, int repeats, const fs::path& json,
                const std::string& note) {
     const auto presets = Sources(instrument, midiDir);
     if (presets.empty()) return 1;
-    const bool gated = instrument.cpuBudget > 0.0 && TimingIsMeaningful();
+    const bool gated = TimingIsMeaningful();
     const double period = kBlockFrames / kSampleRate;
     const FlushDenormals flush;
     int failures = 0;
     std::string rows;
-    for (const std::size_t preset : presets) {
-        const std::string stem = Stem(instrument, preset);
-        std::string error;
-        double seconds = 0.0;
-        std::vector<double> factors, worst;
-        try {
-            // Untimed: warms the caches, the allocator and any lazily built tables.
-            const Demo warm = Render(instrument, midiDir, preset);
-            seconds = Seconds(warm);
-            if (const char* problem = Problem(instrument, warm)) error = problem;
-            for (int k = 0; k < repeats && error.empty(); ++k) {
-                Timing timing;
-                const Demo demo = Render(instrument, midiDir, preset, &timing);
-                if (demo.hash != warm.hash) error = "a repeat differs";
-                factors.push_back(timing.seconds / seconds);
-                worst.push_back(timing.worstBlock / period);
-            }
-        } catch (const std::exception& e) {
-            error = e.what();
-        }
-        const double factor = Median(factors), block = Median(worst);
-        if (error.empty() && gated && factor > instrument.cpuBudget) {
-            char text[96];
+    const auto report = [&](CpuRow row, std::size_t preset, bool demo) {
+        if (row.stem.empty()) row.stem = Stem(instrument, preset) + (demo ? "" : " stress");
+        char text[128];
+        if (row.error.empty() && gated && demo && instrument.cpuBudget > 0.0 && row.factor > instrument.cpuBudget) {
             std::snprintf(text, sizeof text, "above the %.4gx budget", instrument.cpuBudget);
-            error = text;
+            row.error = text;
         }
-        std::printf("%s %s: %.4fx realtime (median of %zu), worst block %.0f %% of %.2f ms%s%s\n",
-                    error.empty() ? "PASS" : "FAIL", stem.c_str(), factor, factors.size(), 100.0 * block,
-                    1000.0 * period, error.empty() ? "" : ": ", error.c_str());
-        failures += !error.empty();
+        std::string remark = row.error;
+        if (remark.empty() && gated && row.worst > instrument.cpuCeiling) {
+            std::snprintf(text, sizeof text, "worst block above the %.0f %% ceiling", 100.0 * instrument.cpuCeiling);
+            remark = text;
+        }
+        std::printf("%s %s: %.4fx realtime (median of %zu), worst block %.1f %% of %.2f ms at %.2f s%s%s\n",
+                    !row.error.empty() ? "FAIL" : remark.empty() ? "PASS" : "WARN", row.stem.c_str(), row.factor,
+                    row.factors.size(), 100.0 * row.worst, 1000.0 * period, row.worstAt, remark.empty() ? "" : ": ",
+                    remark.c_str());
+        failures += !row.error.empty();
 
-        char numbers[160];
-        std::snprintf(numbers, sizeof numbers, ", \"seconds\": %.9g, \"realtime_factor\": %.9g, "
-                      "\"worst_block_share\": %.9g, \"realtime_factors\": [", seconds, factor, block);
+        char numbers[256];
+        std::snprintf(numbers, sizeof numbers, ", \"stress\": %s, \"seconds\": %.9g, \"realtime_factor\": %.9g, "
+                      "\"worst_block_share\": %.9g, \"worst_block_seconds\": %.9g, \"realtime_factors\": [",
+                      demo ? "false" : "true", row.seconds, row.factor, row.worst, row.worstAt);
         rows += std::string(rows.empty() ? "" : ",") + "\n    {\"number\": " + std::to_string(preset + 1)
-            + ", \"preset\": " + JsonString(instrument.presets[preset]) + ", \"file\": " + JsonString(stem + ".wav")
-            + numbers;
-        for (std::size_t k = 0; k < factors.size(); ++k) {
+            + ", \"preset\": " + JsonString(instrument.presets[preset])
+            + ", \"file\": " + JsonString(demo ? Stem(instrument, preset) + ".wav" : "") + numbers;
+        for (std::size_t k = 0; k < row.factors.size(); ++k) {
             char value[32];
-            std::snprintf(value, sizeof value, "%s%.9g", k ? ", " : "", factors[k]);
+            std::snprintf(value, sizeof value, "%s%.9g", k ? ", " : "", row.factors[k]);
             rows += value;
         }
-        rows += "], \"error\": " + JsonString(error) + "}";
+        rows += "], \"error\": " + JsonString(row.error) + "}";
+    };
+    for (const std::size_t preset : presets) {
+        report(TimeRender([&](Timing* t) { return Render(instrument, midiDir, preset, t); }, repeats, true, instrument),
+               preset, true);
+        if (!instrument.stress.empty())
+            report(TimeRender([&](Timing* t) { return Stress(instrument, preset, t); }, repeats, false, instrument),
+                   preset, false);
     }
-    if (instrument.cpuBudget > 0.0 && !gated)
-        std::printf("NOTE: a Debug or sanitized build; the %.4gx budget was not checked\n", instrument.cpuBudget);
+    if (!gated)
+        std::printf("NOTE: a Debug or sanitized build; the budget and the %.0f %% ceiling were not checked\n",
+                    100.0 * instrument.cpuCeiling);
 
     if (!json.empty()) {
-        char budget[32];
+        char budget[32], ceiling[32];
         std::snprintf(budget, sizeof budget, "%.9g", instrument.cpuBudget);
+        std::snprintf(ceiling, sizeof ceiling, "%.9g", instrument.cpuCeiling);
         std::ofstream file(json, std::ios::binary);
         file << "{\n  \"instrument\": " << JsonString(instrument.name) << ",\n  \"note\": " << JsonString(note)
              << ",\n  \"compiler\": " << JsonString(Compiler())
@@ -628,8 +731,8 @@ inline int Cpu(const Instrument& instrument, const fs::path& midiDir, int repeat
              << ",\n  \"system\": " << JsonString(System()) << ",\n  \"cpu_model\": " << JsonString(CpuModel())
              << ",\n  \"hardware_threads\": " << std::thread::hardware_concurrency()
              << ",\n  \"sample_rate\": " << static_cast<int>(kSampleRate) << ",\n  \"block_frames\": " << kBlockFrames
-             << ",\n  \"repeats\": " << repeats << ",\n  \"cpu_budget\": " << budget << ",\n  \"demos\": [" << rows
-             << "\n  ]\n}\n";
+             << ",\n  \"repeats\": " << repeats << ",\n  \"cpu_budget\": " << budget
+             << ",\n  \"cpu_ceiling\": " << ceiling << ",\n  \"demos\": [" << rows << "\n  ]\n}\n";
         if (!file) throw std::runtime_error(json.string() + ": cannot write");
     }
     return failures == 0 ? 0 : 1;
