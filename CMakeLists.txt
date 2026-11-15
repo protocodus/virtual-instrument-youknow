@@ -1593,6 +1593,26 @@ if(BUILD_TESTING)
             COMMAND YouKnowParameterMatrixTests --jobs 4 --rotation --shard 0/256)
         set_tests_properties(YouKnow.ParameterMatrix PROPERTIES TIMEOUT 600)
 
+        # U11: every parameter, the host's and the editor's, reaches held and
+        # new notes after long play (the shared matrix's --reach; its tier is
+        # unit, from the default rule below). The whole test, 72 changes of a
+        # 13 s phrase, takes 9 min on 4 threads of an M-series Mac
+        # (2026-11-15), and the ASan + UBSan build runs this processor 35 to
+        # 65 times slower (PluginProcessor and ParameterMatrix in ci.yml run
+        # 43650304346 against macOS CI and that Mac): many hours, past the
+        # sanitizers job's whole budget. As the matrix runs one shard there,
+        # that build runs the parameters whose index modulo 24 is 0 (Volume,
+        # VCA Level, VCF Solver; 79 s on the Mac), the same processor paths
+        # under the sanitizers; every other build runs them all.
+        if(YOUKNOW_SANITIZER_BUILD OR YOUKNOW_SANITIZED_CONFIGS)
+            add_test(NAME YouKnow.ParameterReach
+                COMMAND YouKnowParameterMatrixTests --reach --jobs 4 --reach-shard 0/24)
+        else()
+            add_test(NAME YouKnow.ParameterReach
+                COMMAND YouKnowParameterMatrixTests --reach --jobs 4)
+        endif()
+        set_tests_properties(YouKnow.ParameterReach PROPERTIES TIMEOUT 3600)
+
         if(YOUKNOW_BUILD_CLAP)
             find_package(Threads REQUIRED)
             add_executable(YouKnowCLAPBundleSmokeTests
