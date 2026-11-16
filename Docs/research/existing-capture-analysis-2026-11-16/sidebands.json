@@ -1,0 +1,333 @@
+{
+ "protocol": "sidebands",
+ "demod_rate": 4000,
+ "segment_frames": 1152,
+ "ripple_prediction_cents": 0.003,
+ "ripple_prediction_sideband_dbc_at_1khz": -102.8,
+ "hardware": {
+  "source": "vcf_fullsweep_bip.aif",
+  "sha256": "27ab9ed0ce7c88c03eaf775216366abadc64df390b9107a54cc3ac35367956be",
+  "rate": 192000,
+  "bands": {
+   "above 6 kHz": {
+    "windows": 30,
+    "f0_median_hz": 7374,
+    "fm_cents": {
+     "60 Hz": {
+      "hz": 58.53,
+      "peak": 0.0,
+      "floor": 0.24593284189961828,
+      "over_floor_db": -2.0,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 121.0,
+      "peak": 0.20068078573078918,
+      "floor": 0.24827660377962738,
+      "over_floor_db": 2.2,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 180.49,
+      "peak": 0.0,
+      "floor": 0.11706584795370123,
+      "over_floor_db": -1.5,
+      "detected": false
+     },
+     "pass": {
+      "hz": 231.42,
+      "peak": 0.2002489131470398,
+      "floor": 0.08113483708334474,
+      "over_floor_db": 8.5,
+      "detected": true
+     },
+     "pass x2": {
+      "hz": 464.02,
+      "peak": 0.12191494141208946,
+      "floor": 0.025219256458663037,
+      "over_floor_db": 13.9,
+      "detected": true
+     }
+    },
+    "am_depth": {
+     "60 Hz": {
+      "hz": 58.46,
+      "peak": 0.0,
+      "floor": 0.0005407089259430722,
+      "over_floor_db": -1.4,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 120.94,
+      "peak": 0.0004503800491085235,
+      "floor": 0.0005442436988998312,
+      "over_floor_db": 2.3,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 179.93,
+      "peak": 0.0,
+      "floor": 0.00024868252847112793,
+      "over_floor_db": -1.7,
+      "detected": false
+     },
+     "pass": {
+      "hz": 229.06,
+      "peak": 0.00011087601437030943,
+      "floor": 0.00019631814548422546,
+      "over_floor_db": 1.2,
+      "detected": false
+     },
+     "pass x2": {
+      "hz": 464.49,
+      "peak": 0.0,
+      "floor": 5.579257584809907e-05,
+      "over_floor_db": -0.1,
+      "detected": false
+     }
+    }
+   },
+   "2-6 kHz": {
+    "windows": 87,
+    "f0_median_hz": 3445,
+    "fm_cents": {
+     "60 Hz": {
+      "hz": 57.95,
+      "peak": 0.0,
+      "floor": 0.22844428689242152,
+      "over_floor_db": -1.6,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 120.5,
+      "peak": 0.0,
+      "floor": 0.10200307624780354,
+      "over_floor_db": -1.4,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 177.74,
+      "peak": 0.0,
+      "floor": 0.038469697249550905,
+      "over_floor_db": -3.3,
+      "detected": false
+     },
+     "pass": {
+      "hz": 231.94,
+      "peak": 0.19274450678860364,
+      "floor": 0.02784897109768566,
+      "over_floor_db": 16.9,
+      "detected": true
+     },
+     "pass x2": {
+      "hz": 464.02,
+      "peak": 0.12648428508482454,
+      "floor": 0.017216068129559472,
+      "over_floor_db": 17.4,
+      "detected": true
+     }
+    },
+    "am_depth": {
+     "60 Hz": {
+      "hz": 57.86,
+      "peak": 0.0,
+      "floor": 0.00048762622451716615,
+      "over_floor_db": -1.6,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 147.27,
+      "peak": 0.0,
+      "floor": 0.0001939190116174168,
+      "over_floor_db": -3.3,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 178.36,
+      "peak": 0.0,
+      "floor": 6.84956066769462e-05,
+      "over_floor_db": -1.5,
+      "detected": false
+     },
+     "pass": {
+      "hz": 232.09,
+      "peak": 3.261422943051497e-05,
+      "floor": 5.993701087592358e-05,
+      "over_floor_db": 1.1,
+      "detected": false
+     },
+     "pass x2": {
+      "hz": 479.69,
+      "peak": 0.0,
+      "floor": 3.745669576333849e-05,
+      "over_floor_db": -0.5,
+      "detected": false
+     }
+    }
+   }
+  }
+ },
+ "model": {
+  "source": "fullsweep-1.4.9-character1.wav",
+  "sha256": "702d80069ed18a552fcdb057de7c198d596bccbf5b6b65dfb339bcd06b5cb151",
+  "rate": 192000,
+  "bands": {
+   "above 6 kHz": {
+    "windows": 30,
+    "f0_median_hz": 7289,
+    "fm_cents": {
+     "60 Hz": {
+      "hz": 49.73,
+      "peak": 0.0039913403578976285,
+      "floor": 0.008087621994440236,
+      "over_floor_db": 0.9,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 119.95,
+      "peak": 0.0,
+      "floor": 0.006956711051579428,
+      "over_floor_db": -1.9,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 177.37,
+      "peak": 0.0,
+      "floor": 0.005792581998453263,
+      "over_floor_db": -1.4,
+      "detected": false
+     },
+     "pass": {
+      "hz": 240.4,
+      "peak": 0.0,
+      "floor": 0.005013810809531,
+      "over_floor_db": -0.8,
+      "detected": false
+     },
+     "pass x2": {
+      "hz": 484.32,
+      "peak": 0.0,
+      "floor": 0.0037516295543384786,
+      "over_floor_db": -0.9,
+      "detected": false
+     }
+    },
+    "am_depth": {
+     "60 Hz": {
+      "hz": 63.7,
+      "peak": 0.0,
+      "floor": 1.593521113036665e-05,
+      "over_floor_db": -1.5,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 109.55,
+      "peak": 0.0,
+      "floor": 1.623341115678169e-05,
+      "over_floor_db": -1.7,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 178.75,
+      "peak": 0.0,
+      "floor": 1.565723083127878e-05,
+      "over_floor_db": -1.1,
+      "detected": false
+     },
+     "pass": {
+      "hz": 239.78,
+      "peak": 0.0,
+      "floor": 1.4384733559815247e-05,
+      "over_floor_db": -0.5,
+      "detected": false
+     },
+     "pass x2": {
+      "hz": 464.02,
+      "peak": 0.0,
+      "floor": 1.2105696126384245e-05,
+      "over_floor_db": -1.7,
+      "detected": false
+     }
+    }
+   },
+   "2-6 kHz": {
+    "windows": 90,
+    "f0_median_hz": 3422,
+    "fm_cents": {
+     "60 Hz": {
+      "hz": 62.34,
+      "peak": 0.0,
+      "floor": 0.008884329736033026,
+      "over_floor_db": -0.4,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 120.44,
+      "peak": 0.0,
+      "floor": 0.007179507475224603,
+      "over_floor_db": -0.8,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 124.39,
+      "peak": 0.0,
+      "floor": 0.0056418569082447795,
+      "over_floor_db": -1.9,
+      "detected": false
+     },
+     "pass": {
+      "hz": 228.23,
+      "peak": 0.0,
+      "floor": 0.005028450579362782,
+      "over_floor_db": -1.4,
+      "detected": false
+     },
+     "pass x2": {
+      "hz": 469.46,
+      "peak": 0.0,
+      "floor": 0.0033600173669043956,
+      "over_floor_db": -1.4,
+      "detected": false
+     }
+    },
+    "am_depth": {
+     "60 Hz": {
+      "hz": 72.08,
+      "peak": 0.0,
+      "floor": 1.88450559319478e-05,
+      "over_floor_db": -1.4,
+      "detected": false
+     },
+     "120 Hz": {
+      "hz": 119.21,
+      "peak": 0.0,
+      "floor": 1.7011398999500374e-05,
+      "over_floor_db": -1.9,
+      "detected": false
+     },
+     "180 Hz": {
+      "hz": 179.57,
+      "peak": 0.0,
+      "floor": 1.5356776943889287e-05,
+      "over_floor_db": -1.5,
+      "detected": false
+     },
+     "pass": {
+      "hz": 224.94,
+      "peak": 0.0,
+      "floor": 1.4365749375462637e-05,
+      "over_floor_db": -2.0,
+      "detected": false
+     },
+     "pass x2": {
+      "hz": 460.96,
+      "peak": 0.0,
+      "floor": 1.0244401706090908e-05,
+      "over_floor_db": -1.6,
+      "detected": false
+     }
+    }
+   }
+  }
+ }
+}

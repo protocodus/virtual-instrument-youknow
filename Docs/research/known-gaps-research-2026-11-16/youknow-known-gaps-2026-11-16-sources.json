@@ -1,0 +1,1357 @@
+[
+  {
+    "url": "https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf",
+    "variants": [
+      "https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf"
+    ],
+    "found_by": [
+      "claude",
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://amptone.pl/templates/images/files/4686/1710237661-2sk30a-toshiba-6465.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.analoguerenaissance.com/AR80017A/",
+    "variants": [
+      "https://www.analoguerenaissance.com/AR80017A/",
+      "http://www.analoguerenaissance.com/AR80017A/"
+    ],
+    "found_by": [
+      "codex",
+      "gemini"
+    ],
+    "link": {
+      "status": null,
+      "final_url": "https://www.analoguerenaissance.com/AR80017A/",
+      "error": "curl: (60) SSL certificate problem: self signed certificate"
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20261019084704/http://www.analoguerenaissance.com/AR80017A/",
+      "timestamp": "20261019084704"
+    }
+  },
+  {
+    "url": "http://www.analoguerenaissance.com/D5534A/",
+    "variants": [
+      "http://www.analoguerenaissance.com/D5534A/"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "http://www.analoguerenaissance.com/D5534A/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20261019212118/http://www.analoguerenaissance.com/D5534A/",
+      "timestamp": "20261019212118"
+    }
+  },
+  {
+    "url": "http://www.analoguerenaissance.com/D80017/",
+    "variants": [
+      "http://www.analoguerenaissance.com/D80017/"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "http://www.analoguerenaissance.com/D80017/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260114082131/https://www.analoguerenaissance.com/D80017/",
+      "timestamp": "20260114082131"
+    }
+  },
+  {
+    "url": "http://www.analoguerenaissance.com/D80017A/",
+    "variants": [
+      "http://www.analoguerenaissance.com/D80017A/"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "http://www.analoguerenaissance.com/D80017A/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260106001951/http://www.analoguerenaissance.com/D80017A/",
+      "timestamp": "20260106001951"
+    }
+  },
+  {
+    "url": "https://archive.org/stream/synthmanual-roland-juno-106-service-notes/rolandjuno-106servicenotes_djvu.txt",
+    "variants": [
+      "https://archive.org/stream/synthmanual-roland-juno-106-service-notes/rolandjuno-106servicenotes_djvu.txt"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://archive.org/stream/synthmanual-roland-juno-106-service-notes/rolandjuno-106servicenotes_djvu.txt",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://atosynth.blogspot.com/2017/10/juno-filter-analysis.html",
+    "variants": [
+      "https://atosynth.blogspot.com/2017/10/juno-filter-analysis.html"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://atosynth.blogspot.com/2017/10/juno-filter-analysis.html",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20251122085555/https://atosynth.blogspot.com/2017/10/juno-filter-analysis.html",
+      "timestamp": "20251122085555"
+    }
+  },
+  {
+    "url": "https://betrusted.io/avalanche-noise",
+    "variants": [
+      "https://betrusted.io/avalanche-noise"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://betrusted.io/avalanche-noise",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260901192916/https://betrusted.io/avalanche-noise",
+      "timestamp": "20260901192916"
+    }
+  },
+  {
+    "url": "https://blog.thea.codes/the-design-of-the-juno-dco/",
+    "variants": [
+      "https://blog.thea.codes/the-design-of-the-juno-dco/"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://blog.thea.codes/the-design-of-the-juno-dco/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260824233735/https://blog.thea.codes/the-design-of-the-juno-dco/",
+      "timestamp": "20260824233735"
+    }
+  },
+  {
+    "url": "https://dafx.de/paper-archive/2019/DAFx2019_paper_4.pdf",
+    "variants": [
+      "https://dafx.de/paper-archive/2019/DAFx2019_paper_4.pdf"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://dafx.de/paper-archive/2019/DAFx2019_paper_4.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20240331161113/https://dafx.de/paper-archive/2019/DAFx2019_paper_4.pdf",
+      "timestamp": "20240331161113"
+    }
+  },
+  {
+    "url": "https://dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_39.pdf",
+    "variants": [
+      "https://dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_39.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_39.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20240416094028/https://www.dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_39.pdf",
+      "timestamp": "20240416094028"
+    }
+  },
+  {
+    "url": "https://dafx.de/paper-archive/2024/papers/DAFx24_paper_33.pdf",
+    "variants": [
+      "https://dafx.de/paper-archive/2024/papers/DAFx24_paper_33.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://dafx.de/paper-archive/2024/papers/DAFx24_paper_33.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://dafx.de/paper-archive/details/lp5GcJOo79OBkfcMfN3N_g",
+    "variants": [
+      "https://dafx.de/paper-archive/details/lp5GcJOo79OBkfcMfN3N_g"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://dafx.de/paper-archive/details/lp5GcJOo79OBkfcMfN3N_g",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250618121126/https://dafx.de/paper-archive/details/lp5GcJOo79OBkfcMfN3N_g",
+      "timestamp": "20250618121126"
+    }
+  },
+  {
+    "url": "https://dafx.de/paper-archive/details/vhT2Sz-JpSJ4Br8g236cRg",
+    "variants": [
+      "https://dafx.de/paper-archive/details/vhT2Sz-JpSJ4Br8g236cRg"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://dafx.de/paper-archive/details/vhT2Sz-JpSJ4Br8g236cRg",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250210234405/https://dafx.de/paper-archive/details/vhT2Sz-JpSJ4Br8g236cRg",
+      "timestamp": "20250210234405"
+    }
+  },
+  {
+    "url": "https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_29.pdf",
+    "variants": [
+      "https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_29.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_29.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20251009235813/https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_29.pdf",
+      "timestamp": "20251009235813"
+    }
+  },
+  {
+    "url": "https://dangelo.audio/bbd-blep/",
+    "variants": [
+      "https://dangelo.audio/bbd-blep/"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 404,
+      "final_url": "https://dangelo.audio/bbd-blep/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://doi.org/10.1109/T-ED.1975.18256",
+    "variants": [
+      "https://doi.org/10.1109/T-ED.1975.18256"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 202,
+      "final_url": "https://ieeexplore.ieee.org/document/1478091/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://el34world.com/charts/Schematics/files/Roland/Roland_mks30.pdf",
+    "variants": [
+      "https://el34world.com/charts/Schematics/files/Roland/Roland_mks30.pdf"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://el34world.com/charts/Schematics/files/Roland/Roland_mks30.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250128102914/https://el34world.com/charts/Schematics/files/Roland/Roland_mks30.pdf",
+      "timestamp": "20250128102914"
+    }
+  },
+  {
+    "url": "https://ele.kyocera.com/sites/default/files/assets/static/discontinued/kbr_2003_e.pdf",
+    "variants": [
+      "https://ele.kyocera.com/sites/default/files/assets/static/discontinued/kbr_2003_e.pdf"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://ele.kyocera.com/sites/default/files/assets/static/discontinued/kbr_2003_e.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20221203100623/https://ele.kyocera.com/sites/default/files/assets/static/discontinued/kbr_2003_e.pdf",
+      "timestamp": "20221203100623"
+    }
+  },
+  {
+    "url": "https://electricdruid.net/roland-juno-dcos",
+    "variants": [
+      "https://electricdruid.net/roland-juno-dcos"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://electricdruid.net/roland-juno-dcos/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20261020230121/https://electricdruid.net/roland-juno-dcos/",
+      "timestamp": "20261020230121"
+    }
+  },
+  {
+    "url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/23",
+    "variants": [
+      "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/23"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/23",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/24",
+    "variants": [
+      "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/24"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/24",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/44",
+    "variants": [
+      "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/44"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/44",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/55",
+    "variants": [
+      "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/55"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://github.com/kayrockscreenprinting/ultramaster_kr106/issues/55",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://github.com/mamedev/mame/blob/master/src/mame/roland/juno106.cpp",
+    "variants": [
+      "https://github.com/mamedev/mame/blob/master/src/mame/roland/juno106.cpp"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://github.com/mamedev/mame/blob/master/src/mame/roland/juno106.cpp",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://github.com/pendragon-andyh/Juno60/blob/master/Chorus/README.md",
+    "variants": [
+      "https://github.com/pendragon-andyh/Juno60/blob/master/Chorus/README.md"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://github.com/pendragon-andyh/Juno60/blob/master/Chorus/README.md",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260603124638/https://github.com/pendragon-andyh/Juno60/blob/master/Chorus/README.md",
+      "timestamp": "20260603124638"
+    }
+  },
+  {
+    "url": "https://kayrock.org/kr106/guide.html",
+    "variants": [
+      "https://kayrock.org/kr106/guide.html"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://kayrock.org/kr106/guide.html",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260512000202/https://kayrock.org/kr106/guide.html",
+      "timestamp": "20260512000202"
+    }
+  },
+  {
+    "url": "https://kayrock.org/kr106/osc_test.mid",
+    "variants": [
+      "https://kayrock.org/kr106/osc_test.mid"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://kayrock.org/kr106/osc_test.mid",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://kayrock.org/kr106/vcf_fullsweep.mid",
+    "variants": [
+      "https://kayrock.org/kr106/vcf_fullsweep.mid"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://kayrock.org/kr106/vcf_fullsweep.mid",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://kyocera-avx.com/docs/techinfo/CR-TechPaper.pdf",
+    "variants": [
+      "https://kyocera-avx.com/docs/techinfo/CR-TechPaper.pdf"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://kyocera-avx.com/docs/techinfo/CR-TechPaper.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://lewisfrancis.com/nwio/osc_test_bip.aif",
+    "variants": [
+      "https://lewisfrancis.com/nwio/osc_test_bip.aif"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.lewisfrancis.com/nwio/osc_test_bip.aif",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://maciekpolak.substack.com/p/welcome-to-the-analogiapl-substack-b6b",
+    "variants": [
+      "https://maciekpolak.substack.com/p/welcome-to-the-analogiapl-substack-b6b"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://maciekpolak.substack.com/p/welcome-to-the-analogiapl-substack-b6b",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://manuals.plus/m/11071bf39c022bd3655b437c3be4f5bcffb8387af8df8c4ec49ce5b82e7eadc1",
+    "variants": [
+      "https://manuals.plus/m/11071bf39c022bd3655b437c3be4f5bcffb8387af8df8c4ec49ce5b82e7eadc1"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 403,
+      "final_url": "https://manuals.plus/m/11071bf39c022bd3655b437c3be4f5bcffb8387af8df8c4ec49ce5b82e7eadc1",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://media.digikey.com/PDF/Data%20Sheets/Toshiba%20PDFs/2SA1015.pdf",
+    "variants": [
+      "https://media.digikey.com/PDF/Data%20Sheets/Toshiba%20PDFs/2SA1015.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://media.digikey.com/PDF/Data%20Sheets/Toshiba%20PDFs/2SA1015.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://midi-hardware.com/index.php?product=80017&section=prod_info",
+    "variants": [
+      "https://midi-hardware.com/index.php?product=80017&section=prod_info"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://midi-hardware.com/index.php?product=80017&section=prod_info",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/2531/Ceramic%20Resonator%20(CERALOCK)%20Application%20Manual.pdf",
+    "variants": [
+      "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/2531/Ceramic%20Resonator%20(CERALOCK)%20Application%20Manual.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/2531/Ceramic%20Resonator%20(CERALOCK)%20Application%20Manual.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20251025043124/https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/2531/Ceramic%20Resonator%20%28CERALOCK%29%20Application%20Manual.pdf",
+      "timestamp": "20251025043124"
+    }
+  },
+  {
+    "url": "https://patents.google.com/patent/US4853884",
+    "variants": [
+      "https://patents.google.com/patent/US4853884"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://patents.google.com/patent/US4853884",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250819193745/https://patents.google.com/patent/US4853884",
+      "timestamp": "20250819193745"
+    }
+  },
+  {
+    "url": "https://plasmamusic.com/supernova-power-supply-for-the-roland-juno-106",
+    "variants": [
+      "https://plasmamusic.com/supernova-power-supply-for-the-roland-juno-106"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://plasmamusic.com/supernova-power-supply-for-the-roland-juno-106",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260514135528/https://plasmamusic.com/supernova-power-supply-for-the-roland-juno-106",
+      "timestamp": "20260514135528"
+    }
+  },
+  {
+    "url": "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/bc15caee5843ab238a25d0969e68d57db2b1615f/Source/DSP/KR106AnalogNoise.h",
+    "variants": [
+      "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/bc15caee5843ab238a25d0969e68d57db2b1615f/Source/DSP/KR106AnalogNoise.h"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/bc15caee5843ab238a25d0969e68d57db2b1615f/Source/DSP/KR106AnalogNoise.h",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/main/Source/DSP/KR106AnalogNoise.h",
+    "variants": [
+      "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/main/Source/DSP/KR106AnalogNoise.h"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/main/Source/DSP/KR106AnalogNoise.h",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/main/docs/DSP_ARCHITECTURE.md",
+    "variants": [
+      "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/main/docs/DSP_ARCHITECTURE.md"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://raw.githubusercontent.com/kayrockscreenprinting/ultramaster_kr106/main/docs/DSP_ARCHITECTURE.md",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://retronik.silicium.org/DOCUMENTS/Audiovideo/Akai/Akai-GX-747-DBX-Service-Manual.pdf",
+    "variants": [
+      "https://retronik.silicium.org/DOCUMENTS/Audiovideo/Akai/Akai-GX-747-DBX-Service-Manual.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://retronik.silicium.org/DOCUMENTS/Audiovideo/Akai/Akai-GX-747-DBX-Service-Manual.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://search.isc.ac/Inventory/49/1051125.htm",
+    "variants": [
+      "https://search.isc.ac/Inventory/49/1051125.htm"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://search.isc.ac/Inventory/49/1051125.htm",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://sequence15.blogspot.com/2008/02/analyzing-juno-106-dco-circuit.html",
+    "variants": [
+      "https://sequence15.blogspot.com/2008/02/analyzing-juno-106-dco-circuit.html"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://sequence15.blogspot.com/2008/02/analyzing-juno-106-dco-circuit.html",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260529000359/http://sequence15.blogspot.com/2008/02/analyzing-juno-106-dco-circuit.html",
+      "timestamp": "20260529000359"
+    }
+  },
+  {
+    "url": "https://sinneb.github.io/p299/",
+    "variants": [
+      "https://sinneb.github.io/p299/"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://sinneb.github.io/p299/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20210509141713/https://sinneb.github.io/p299/",
+      "timestamp": "20210509141713"
+    }
+  },
+  {
+    "url": "https://synthcube.com/open-music-labs-ba662-ota-clone/",
+    "variants": [
+      "https://synthcube.com/open-music-labs-ba662-ota-clone/"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://synthcube.com/open-music-labs-ba662-ota-clone/",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260616023011/https://synthcube.com/open-music-labs-ba662-ota-clone/",
+      "timestamp": "20260616023011"
+    }
+  },
+  {
+    "url": "https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP",
+    "variants": [
+      "https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 403,
+      "final_url": "https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20240730160134/https://toshiba.semicon-storage.com/info/TC4052BP_datasheet_en_20160115.pdf?did=18603&prodName=TC4052BP",
+      "timestamp": "20240730160134"
+    }
+  },
+  {
+    "url": "https://u-he.com/downloads/manuals/plugins/diva/Diva-user-guide.pdf",
+    "variants": [
+      "https://u-he.com/downloads/manuals/plugins/diva/Diva-user-guide.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://u-he.com/downloads/manuals/plugins/diva/Diva-user-guide.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250523121031/https://u-he.com/downloads/manuals/plugins/diva/Diva-user-guide.pdf",
+      "timestamp": "20250523121031"
+    }
+  },
+  {
+    "url": "https://vtda.org/pubs/BSTJ/vol53-1974/articles/bstj53-7-1211.pdf",
+    "variants": [
+      "https://vtda.org/pubs/BSTJ/vol53-1974/articles/bstj53-7-1211.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://vtda.org/pubs/BSTJ/vol53-1974/articles/bstj53-7-1211.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250613001513/http://vtda.org/pubs/BSTJ/vol53-1974/articles/bstj53-7-1211.pdf",
+      "timestamp": "20250613001513"
+    }
+  },
+  {
+    "url": "https://www.alpesmachines.net/index.php/analogue-chorus/one-o-six-chorus/one-o-six-kit-assembly",
+    "variants": [
+      "https://www.alpesmachines.net/index.php/analogue-chorus/one-o-six-chorus/one-o-six-kit-assembly"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.alpesmachines.net/index.php/analogue-chorus/one-o-six-chorus/one-o-six-kit-assembly",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260515140834/https://www.alpesmachines.net/index.php/analogue-chorus/one-o-six-chorus/one-o-six-kit-assembly",
+      "timestamp": "20260515140834"
+    }
+  },
+  {
+    "url": "https://www.analog.com/en/resources/analog-dialogue/articles/ask-the-applications-engineer-26.html",
+    "variants": [
+      "https://www.analog.com/en/resources/analog-dialogue/articles/ask-the-applications-engineer-26.html"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": null,
+      "final_url": "https://www.analog.com/en/resources/analog-dialogue/articles/ask-the-applications-engineer-26.html",
+      "error": "curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR (err 2)"
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20251018065442/https://www.analog.com/en/resources/analog-dialogue/articles/ask-the-applications-engineer-26.html",
+      "timestamp": "20251018065442"
+    }
+  },
+  {
+    "url": "https://www.analog.com/media/en/analog-dialogue/volume-31/number-3/articles/volume31-number3.pdf",
+    "variants": [
+      "https://www.analog.com/media/en/analog-dialogue/volume-31/number-3/articles/volume31-number3.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": null,
+      "final_url": "https://www.analog.com/media/en/analog-dialogue/volume-31/number-3/articles/volume31-number3.pdf",
+      "error": "curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR (err 2)"
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250830061016/https://www.analog.com/media/en/analog-dialogue/volume-31/number-3/articles/volume31-number3.pdf",
+      "timestamp": "20250830061016"
+    }
+  },
+  {
+    "url": "https://www.bitsavers.org/components/mitsubishi/_dataBooks/1984_Mitsubishi_General_Purpose_ICs.pdf",
+    "variants": [
+      "https://www.bitsavers.org/components/mitsubishi/_dataBooks/1984_Mitsubishi_General_Purpose_ICs.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.bitsavers.org/components/mitsubishi/_dataBooks/1984_Mitsubishi_General_Purpose_ICs.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20240528124229/http://bitsavers.org/components/mitsubishi/_dataBooks/1984_Mitsubishi_General_Purpose_ICs.pdf",
+      "timestamp": "20240528124229"
+    }
+  },
+  {
+    "url": "https://www.dafx.de/paper-archive/2010/papers/pdf/P_11.pdf",
+    "variants": [
+      "https://www.dafx.de/paper-archive/2010/papers/pdf/P_11.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 404,
+      "final_url": "https://www.dafx.de/paper-archive/2010/papers/pdf/P_11.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.dafx.de/paper-archive/2016/dafxpapers/18-DAFx-16_paper_33-PN.pdf",
+    "variants": [
+      "https://www.dafx.de/paper-archive/2016/dafxpapers/18-DAFx-16_paper_33-PN.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.dafx.de/paper-archive/2016/dafxpapers/18-DAFx-16_paper_33-PN.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260130090613/https://www.dafx.de/paper-archive/2016/dafxpapers/18-DAFx-16_paper_33-PN.pdf",
+      "timestamp": "20260130090613"
+    }
+  },
+  {
+    "url": "https://www.dafx.de/paper-archive/2018/DAFx2018_paper_30.pdf",
+    "variants": [
+      "https://www.dafx.de/paper-archive/2018/DAFx2018_paper_30.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 404,
+      "final_url": "https://www.dafx.de/paper-archive/2018/DAFx2018_paper_30.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.dafx.de/paper-archive/2022/papers/dafx22_paper_6.pdf",
+    "variants": [
+      "https://www.dafx.de/paper-archive/2022/papers/dafx22_paper_6.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 404,
+      "final_url": "https://www.dafx.de/paper-archive/2022/papers/dafx22_paper_6.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf",
+    "variants": [
+      "https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250822161317/https://experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf",
+      "timestamp": "20250822161317"
+    }
+  },
+  {
+    "url": "https://www.hsu-hh.de/ant/en/team/martin-holters/dafx2018-bbd",
+    "variants": [
+      "https://www.hsu-hh.de/ant/en/team/martin-holters/dafx2018-bbd"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.hsu-hh.de/ant/en/team/martin-holters/dafx2018-bbd",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260212131108/https://www.hsu-hh.de/ant/en/team/martin-holters/dafx2018-bbd",
+      "timestamp": "20260212131108"
+    }
+  },
+  {
+    "url": "https://www.hsu-hh.de/ant/wp-content/uploads/sites/699/2018/09/Holters-Parker-2018-A-Combined-Model-for-a-Bucket-Brigade-Device-and-its-Input-and-Output-Filters.pdf",
+    "variants": [
+      "https://www.hsu-hh.de/ant/wp-content/uploads/sites/699/2018/09/Holters-Parker-2018-A-Combined-Model-for-a-Bucket-Brigade-Device-and-its-Input-and-Output-Filters.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.hsu-hh.de/ant/wp-content/uploads/sites/699/2018/09/Holters-Parker-2018-A-Combined-Model-for-a-Bucket-Brigade-Device-and-its-Input-and-Output-Filters.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250617133808/https://www.hsu-hh.de/ant/wp-content/uploads/sites/699/2018/09/Holters-Parker-2018-A-Combined-Model-for-a-Bucket-Brigade-Device-and-its-Input-and-Output-Filters.pdf",
+      "timestamp": "20250617133808"
+    }
+  },
+  {
+    "url": "https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf",
+    "variants": [
+      "https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.ka-electronics.com/images/pdf/Panasonic_BBD.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf",
+    "variants": [
+      "https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.kiwitechnics.com/downloads/Kiwi-106/KiwiTechnics_Kiwi106_Manual_v206.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf",
+    "variants": [
+      "https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.kiwitechnics.com/downloads/Kiwi-106/Roland%20Juno-106%20Service%20Manual.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.lewisfrancis.com/nwio/vcf_fullsweep_bip.aif",
+    "variants": [
+      "https://www.lewisfrancis.com/nwio/vcf_fullsweep_bip.aif"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.lewisfrancis.com/nwio/vcf_fullsweep_bip.aif",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.manualslib.com/manual/3342573/Roland-Mks-30.html",
+    "variants": [
+      "https://www.manualslib.com/manual/3342573/Roland-Mks-30.html"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 403,
+      "final_url": "https://www.manualslib.com/manual/3342573/Roland-Mks-30.html",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20251031151858/https://www.manualslib.com/manual/3342573/Roland-Mks-30.html",
+      "timestamp": "20251031151858"
+    }
+  },
+  {
+    "url": "https://www.manualslib.com/manual/3497592/Roland-Jx-3p.html",
+    "variants": [
+      "https://www.manualslib.com/manual/3497592/Roland-Jx-3p.html"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 403,
+      "final_url": "https://www.manualslib.com/manual/3497592/Roland-Jx-3p.html",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20251103095812/https://www.manualslib.com/manual/3497592/Roland-Jx-3p.html",
+      "timestamp": "20251103095812"
+    }
+  },
+  {
+    "url": "https://www.pilianidis.gr/images/sync_products/03-M5230L/03-m5230l.pdf",
+    "variants": [
+      "https://www.pilianidis.gr/images/sync_products/03-M5230L/03-m5230l.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.pilianidis.gr/images/sync_products/03-M5230L/03-m5230l.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.retroamplis.com/WebRoot/StoreES2/Shops/62070367/MediaGallery/Datasheets/2SK30A_-_TGS.pdf",
+    "variants": [
+      "https://www.retroamplis.com/WebRoot/StoreES2/Shops/62070367/MediaGallery/Datasheets/2SK30A_-_TGS.pdf"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.retroamplis.com/WebRoot/StoreES2/Shops/62070367/MediaGallery/Datasheets/2SK30A_-_TGS.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.rolandcloud.com/getmedia/3d48e0af-afa3-4368-a68b-6d297cab4625/JUNO-106-Manual-E.pdf?ext=.pdf",
+    "variants": [
+      "https://www.rolandcloud.com/getmedia/3d48e0af-afa3-4368-a68b-6d297cab4625/JUNO-106-Manual-E.pdf?ext=.pdf"
+    ],
+    "found_by": [
+      "claude"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.rolandcloud.com/getmedia/3d48e0af-afa3-4368-a68b-6d297cab4625/JUNO-106-Manual-E.pdf?ext=.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  },
+  {
+    "url": "https://www.softube.com/eu/plug-ins/model-84-polyphonic-synthesizer",
+    "variants": [
+      "https://www.softube.com/eu/plug-ins/model-84-polyphonic-synthesizer"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 404,
+      "final_url": "https://www.softube.com/eu/plug-ins/model-84-polyphonic-synthesizer",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20260925040503/https://www.softube.com/eu/plug-ins/model-84-polyphonic-synthesizer",
+      "timestamp": "20260925040503"
+    }
+  },
+  {
+    "url": "https://www.sounddoctorin.com/synthtec/roland/juno106.htm",
+    "variants": [
+      "https://www.sounddoctorin.com/synthtec/roland/juno106.htm"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.sounddoctorin.com/synthtec/roland/juno106.htm",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20251017090820/https://www.sounddoctorin.com/synthtec/roland/juno106.htm",
+      "timestamp": "20251017090820"
+    }
+  },
+  {
+    "url": "https://www.soundsemiconductor.com/downloads/AN701.pdf",
+    "variants": [
+      "https://www.soundsemiconductor.com/downloads/AN701.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.soundsemiconductor.com/downloads/AN701.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20261021101524/https://www.soundsemiconductor.com/downloads/AN701.pdf",
+      "timestamp": "20261021101524"
+    }
+  },
+  {
+    "url": "https://www.synfo.nl/servicemanuals/Roland/JUNO-6_SERVICE_NOTES.pdf",
+    "variants": [
+      "https://www.synfo.nl/servicemanuals/Roland/JUNO-6_SERVICE_NOTES.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.synfo.nl/servicemanuals/Roland/JUNO-6_SERVICE_NOTES.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250814033319/https://www.synfo.nl/servicemanuals/Roland/JUNO-6_SERVICE_NOTES.pdf",
+      "timestamp": "20250814033319"
+    }
+  },
+  {
+    "url": "https://www.synthmania.com/juno-106.htm",
+    "variants": [
+      "https://www.synthmania.com/juno-106.htm"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.synthmania.com/juno-106.htm",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20250818100621/https://synthmania.com/juno-106.htm",
+      "timestamp": "20250818100621"
+    }
+  },
+  {
+    "url": "https://www.ti.com/lit/ds/symlink/tl064.pdf",
+    "variants": [
+      "https://www.ti.com/lit/ds/symlink/tl064.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.ti.com/lit/ds/symlink/tl064.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20241026105233/https://www.ti.com/lit/ds/symlink/tl064.pdf",
+      "timestamp": "20241026105233"
+    }
+  },
+  {
+    "url": "https://www.ti.com/lit/ds/symlink/tl082.pdf",
+    "variants": [
+      "https://www.ti.com/lit/ds/symlink/tl082.pdf"
+    ],
+    "found_by": [
+      "gemini"
+    ],
+    "link": {
+      "status": 200,
+      "final_url": "https://www.ti.com/lit/ds/symlink/tl082.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": "http://web.archive.org/web/20261115024603/https://www.ti.com/lit/ds/symlink/tl082.pdf",
+      "timestamp": "20261115024603"
+    }
+  },
+  {
+    "url": "https://www.tme.com/Document/45d943f10ed9aea181b6891d1cca0ac1/2SK30A.pdf",
+    "variants": [
+      "https://www.tme.com/Document/45d943f10ed9aea181b6891d1cca0ac1/2SK30A.pdf"
+    ],
+    "found_by": [
+      "codex"
+    ],
+    "link": {
+      "status": 403,
+      "final_url": "https://www.tme.com/Document/45d943f10ed9aea181b6891d1cca0ac1/2SK30A.pdf",
+      "error": null
+    },
+    "archive": {
+      "snapshot": null
+    }
+  }
+]

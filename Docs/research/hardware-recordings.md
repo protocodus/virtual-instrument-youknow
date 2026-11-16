@@ -42,6 +42,31 @@ workspace already retains these calibration materials. This resonance scan is
 distinct from the separate oscillator/self-oscillation isolator used in the f5
 balance correction; see RESONANCE.md for that earlier comparison's scope.
 
+## Oscillator and noise sweep of the same unit
+
+Checked 2026-11-16, after the known-gaps research
+([combined report](known-gaps-research-2026-11-16/youknow-known-gaps-2026-11-16-combined.md),
+section 4) found this take uncited here. It is the same serviced unit, #439522
+with Borish replacement cards, as the resonance recording above.
+
+- Recording: https://lewisfrancis.com/nwio/osc_test_bip.aif, SHA-256
+  `b0309cd365e3025fce993d409be05b3d39cbc51daac114dbfe0428d33e39093f`, 24-bit
+  stereo AIFF at 96 kHz, 96.27 s
+- Matching MIDI: https://kayrock.org/kr106/osc_test.mid, SHA-256
+  `051ea38ee992b7fe49b8356be9395830706e7c81099d7ab4653ca0b470ad2d43`
+
+It sits beside the unit's other takes on the same two hosts, under the same
+`_bip` naming, and the repository already uses it under these hashes:
+[`Tools/AnalyzeHardwareNoise.py`](../../Tools/AnalyzeHardwareNoise.py) reads
+its NOISE sweep, [`Tools/AnalyzeSubMixerCalibration.py`](../../Tools/AnalyzeSubMixerCalibration.py)
+fits the SUB diode law to its SUB sweep, and
+[`Tools/AnalyzeExistingCaptures.py`](../../Tools/AnalyzeExistingCaptures.py)
+`noise` measures its NOISE windows' amplitude distribution. The upload comment
+in the KR-106 issue tracker was not re-read on 2026-11-16 (GitHub refused this
+session), so its attribution rests on the shared host, naming and unit, as for
+the unit's other takes cited from issue #44. Its first saw note is absent and
+unused.
+
 ## Original and replacement cards in one listening comparison
 
 Maciek Polak / analogia.pl, published 2026-06-06:

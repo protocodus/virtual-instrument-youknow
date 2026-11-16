@@ -1,0 +1,86 @@
+{
+ "schema": 1,
+ "date": "2026-11-16",
+ "renderer": {
+  "target": "YouKnowRenderCalibrationEvents",
+  "commit": "6b92c51",
+  "version": "1.4.9",
+  "build": "Release, GCC 13.3.0, -O3 -DNDEBUG",
+  "sha256": "9ba8146987e8b8d205e3aef62c25446aee5c24d2d88c4855a4cdc13f00cafb65"
+ },
+ "analyzer": {
+  "path": "Tools/AnalyzeExistingCaptures.py",
+  "python": "3.13",
+  "numpy": "2.5.3",
+  "scipy": "1.18.1",
+  "soundfile": "0.14.0"
+ },
+ "captures": {
+  "vcf_fullsweep_bip.aif": "27ab9ed0ce7c88c03eaf775216366abadc64df390b9107a54cc3ac35367956be",
+  "vcf_fullsweep.mid": "2d5eb741e0cd3012474cde56ba8aba3a4a18a2b432b71f0084efd02fe1fa6a2f",
+  "osc_test_bip.aif": "b0309cd365e3025fce993d409be05b3d39cbc51daac114dbfe0428d33e39093f",
+  "osc_test.mid": "051ea38ee992b7fe49b8356be9395830706e7c81099d7ab4653ca0b470ad2d43",
+  "osc_calibrate_new_bip.aif": "35323722f018730113c7c5acdeeb785a58052148e31a632fb05ea4462525aabf",
+  "osc_calibrate_new.mid": "48311413d82d4289b3c961575666739f4581b73baadaa8cbee65156dad29afad",
+  "106_calibration.zip": "fe3fb80dd84841db0c9b8372765e6ee811d61a77cf9377c0d90c6cfd1a8e5af0",
+  "bank captures": "Tools/AnalyzeChorusBankEvidence.py BANKS"
+ },
+ "renders": {
+  "fullsweep (sidebands.json model)": {
+   "arguments": "EVENTS OUT 1 product 1 nominal fixed-service serviced439522 192000 4 rotary6",
+   "sha256": "702d80069ed18a552fcdb057de7c198d596bccbf5b6b65dfb339bcd06b5cb151"
+  },
+  "osc_test (noise.json)": {
+   "arguments": "EVENTS OUT 1 product",
+   "sha256": "2c4eee08fa7f38bfbc14c01bbe33cd4a915fb666e48d934ed994e6149a63c4fc"
+  },
+  "isolators (noise.json)": {
+   "arguments": "EVENTS OUT 1 product",
+   "sha256": "3e697e2c5cff3cfc867a48e06a0a14c74756b53579021982dd6388a089e2056d"
+  },
+  "banks for hum.json": {
+   "arguments": "EVENTS OUT 1 product",
+   "sha256": {
+    "A1x": "8c795face5be681a128854c0ae26848486f68de71d57468272bae4c8cb1f8da7",
+    "A2x": "4aafc8e217d525b6e56c136666498b32cdf0bdcbb51aeab832ed9ce769e3fadb",
+    "A3x": "c099d9f323cebe5fb4488138dcfdaa7a9f93014faf005d60db75231c68a9db7b",
+    "A4x": "4cdb04ede25a4c1ac840b934f15719ba1a23a30cd11bbe93ab298e116111b6f8",
+    "A5x": "18f794e26bcf54bb60cccc3cb68893f061a40a2e92d3b7557ff2053253bfab63",
+    "A6x": "eb467e50761373402a3f82365ded3bc6188f0cca21231eec5208b93c276fe755",
+    "A7x": "ecbbaf78d41b12c5d332110a4a7aef98cdd119b0cefeab9433c087ee3b78ce59",
+    "A8x": "77edddb83b1acaa23201975dbe962e56eb8cde266512eb85402c439d52b24d0b",
+    "B1x": "7c59ba79e88c814eb8897c278106f7726624e145fb54f63215495d8945038545",
+    "B2x": "86a32e56b1fab1d427977128feb58f8578931e92cc495a2aa3d4ae6c69070097",
+    "B3x": "746f79b9a06ff7efccec82acc7ff88494cf63fe029e40547d74f83eb5a404421",
+    "B4x": "6fe215f30f67e6745a99860900d21dc37c980af6da6a6cc5561a0df861e820e9",
+    "B5x": "7ac1f8411f359f9794093624e875591f6f5603f8ab65feb76d7ab71affb7f1cb",
+    "B6x": "9dfa8735bc36dd02b68073efad3fc888a921f155805519dab3458d5811663740",
+    "B7x": "099d7a91b2d3b257190ebdddf19a0770bfded403ea29859012e70a2107552015",
+    "B8x": "465c0114252e5fe532d1c11d8079b7e7237a48a2f7d94a7a8126f84a27e195c6"
+   }
+  },
+  "banks for pitch.json": {
+   "arguments": "EVENTS OUT 1 product 1 nominal fixed-service serviced439522 48000 1 normal 8000000 fixed-clock settled",
+   "sha256": {
+    "A1x": "c2303ae5630308397e4222d04a01f9e958d09151bc1b8e4f30aa83a54340c01a",
+    "A2x": "de001615bc9524fda6bfb465651ae718869f9405622abfc75a8b04c843f3a4af",
+    "A3x": "45a235893bca8ffdc3fae4091e9a27b6d9169d42b019d9abb9ad7dc5b2396009",
+    "A4x": "5df86c931a28d247dc08876f2c01b260e0aff607fba697a20595c2ee57b0af24",
+    "A5x": "4f75e5227b95d3f17e5a72ebbe4964d9b48d76c7481fc63291b67e4be9d2d96c",
+    "A6x": "3395adc55439c9d33bdae2aa822490dcd0b42e498819e1be6ebaa1726e3abafd",
+    "A7x": "5bbe060fbb6c29fce784c3d66281aa92854410154f8fdea825d98f15b9bd3fc0",
+    "A8x": "fbcad50c3b531fb46159b2a3bf41e77649f10e40d2d072156852f299e8606de0",
+    "B1x": "76432fee009ad4542b80709acfbf918530a616cb5ae7a906661e0d82dbe6b9d0",
+    "B2x": "42dca1cb3784a0b4de8948718a8a75a56640345129658458207d11be7c58d552",
+    "B3x": "4ccdc4262272af317878d4562fc6427bfd6af4d8b63a479a925b8fdc170bf41b",
+    "B4x": "d9a64e0aecb5b33b1cb98998a3050de6ab9ddb7ffa34e151737f878544218828",
+    "B5x": "f66d3a9b9b23add52c1ac4f3560c7d8a5b140ad626b04a03f94d6ebb8e520bfb",
+    "B6x": "5a7071a2fec751e8c5918e714beaa6c62a1220a3e36c146a94588b362ae9aa0e",
+    "B7x": "affb5806a3d9b04f3ed7b65528c7fb5b450ef8518d680a2a46616428e94cb339",
+    "B8x": "9f6d8f21f1c4cc158cfd28378c87a171ecd621ed102c05455d7fc6ddb17641e5"
+   }
+  }
+ },
+ "events": "Tools/AnalyzeHardwareCalibration.py export_events from each take's MIDI",
+ "note": "Renders and captures are not committed; the hashes identify them."
+}
