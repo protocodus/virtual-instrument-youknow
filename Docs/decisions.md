@@ -5,6 +5,27 @@ engineering choices are identified as such; neither turns an assumed parameter
 into a measured value. Remaining calibration limits stay under
 [known gaps](../README.md#known-gaps).
 
+## 2026-11-16 — Low session rates run on a full grid (1.4.10)
+
+The owner chose B by ear and asked that it ship. A was the shipping engine,
+1.4.9 at `6b92c51`; B was 1.4.10, where the product profile runs the shared
+circuits on the first oversampling rung reaching 44.1 kHz, so a 22.05 kHz
+session runs at 2x with Quality 1x selected. Both letters rendered at a
+22.05 kHz host rate as a freshly loaded plug-in plays (measured-chart
+converter timing, Quality 1x, Circuit Rate Max, the default VCF solver,
+64-frame blocks, velocity 100): factory A15 Moving Strings and A51 Lead I.
+Each set was matched on whole-file RMS (B trimmed +0.011 dB and +0.003 dB),
+then given one common gain to a −3 dBFS peak. The files are working
+artifacts and are not committed.
+
+A measurement already favoured B before the listening: against the same
+engine at Quality 4x, B is within 0.06 dB in every band to 11.025 kHz, while
+A is 4.6 dB (strings) and 5.3 dB (lead) low between 10 and 11.025 kHz. The
+choice by ear licenses shipping the product floor and its cost, about a
+44.1 kHz session's CPU at 22.05 kHz. It changes nothing at 44.1 kHz and
+above, which render bit for bit as 1.4.9, and the raw engine keeps the
+requested factor.
+
 ## 2026-10-05 — Select all five hardware-realism candidates
 
 The owner accepted B by ear and requested that it become the product default
