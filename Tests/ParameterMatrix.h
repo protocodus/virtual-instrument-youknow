@@ -885,7 +885,18 @@ inline std::string Check(const std::function<std::unique_ptr<Device>()>& make, c
             if (k > 0 && !rule.history.empty()) {
                 const Audio& value = k == 1 ? *unchanged : atTarget;
                 const Levels v = analyse(value, at);
-                if (!Audible(Distance(w, v, w, v), DifferenceDb(without, at, value, at, kProbeSeconds))) {
+                bool settled = !Audible(Distance(w, v, w, v), DifferenceDb(without, at, value, at, kProbeSeconds));
+                // Free-running oscillators the excursion left in other phases
+                // differ from the value's run frame by frame but not in the
+                // spectrum averaged over the probe (YouKnow's DCOs after a
+                // Pitch Bend excursion: 1.21 dB framewise, 2026-11-15), as in
+                // the towards-T check below.
+                if (!settled) {
+                    const Levels wa = Analyse(without, at, kProbeSeconds, true);
+                    const Levels va = Analyse(value, at, kProbeSeconds, true);
+                    settled = Distance(wa, va, wa, va) < kAudibleDb;
+                }
+                if (settled) {
                     std::snprintf(text, sizeof text, "; probe %d already sounds as change %d leaves it: ", k + 1, k + 1);
                     report += text + rule.history;
                     continue;
