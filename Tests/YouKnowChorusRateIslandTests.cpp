@@ -121,13 +121,30 @@ void directQualitySelectorLatency(){
  }
 }
 void ratesAndLifecycle(){
- // Low-host fallback must preserve the previous IC6 reconstruction rate.
+ // A caller that prepared only host x {1,2,4} falls back to the legacy path
+ // where a grid is missing, preserving the previous IC6 reconstruction rate.
  for(const auto& row:std::array<std::array<double,4>,7>{{
      {{8000,1,4,4}},{{16000,2,4,1}},{{32000,2,4,1}},
      {{32000,4,2,1}},{{44100,1,4,4}},{{44100,2,2,2}},{{44100,4,1,1}}}}){
   const double parent=row[0]*row[1];
   require(VoiceVcaAntialias::factorForRate(parent)==int(row[2]),"low-host IC6 test coordinate");
   require(ChorusRateIsland::factorForRate(parent,int(row[1]))==int(row[3]),"low-host island reduced existing IC6 rate");
+ }
+ // The product's grids start at its minimum running factor, so every global
+ // factor it can run finds the island's grid prepared, under Max and Normal.
+ for(double host:{8000.,11025.,16000.,22050.,32000.,44100.,48000.,96000.}){
+  const int floor=YouKnowEngine::minimumRunningFactorFor(host);
+  require((host*floor>=YouKnowEngine::minimumInternalRate||floor==YouKnowEngine::maximumOversampleFactor)
+          &&(floor==1||host*floor/2<YouKnowEngine::minimumInternalRate),"minimum running factor is not the first rung at the floor");
+  for(int global=floor;global<=YouKnowEngine::maximumOversampleFactor;global*=2)
+   for(bool halved:{false,true})
+    require(ChorusRateIsland::factorForRate(host*global,global,halved,floor)==VoiceVcaAntialias::factorForRate(host*global,halved),"engine chorus island fell back to the legacy path");
+ }
+ {
+  // The floor is the product's choice; the raw engine runs the requested factor.
+  auto raw=std::make_unique<YouKnowEngine>();raw->prepare(22050,64,1);
+  require(raw->getOversamplingFactor()==1,"raw engine took the product's internal-rate floor");
+  require(!raw->configureMinimumInternalRate(true),"internal-rate floor accepted after prepare");
  }
  for(double rate:{8000.,16000.,24000.,32000.,44100.,48000.,96000.,192000.}){
   auto e=prepared(rate,1,true),legacy=prepared(rate,1,false);
@@ -139,7 +156,8 @@ void ratesAndLifecycle(){
    guardAllocation=true;(void)YouKnowTestAccess::rebuild(*e,factor);guardAllocation=false;
    near(YouKnowTestAccess::phase(*e),phase,0,"quality rebuild reset physical LFO phase");
    const double parent=rate*e->getOversamplingFactor();
-   near(YouKnowTestAccess::chorusRate(*e),parent*ChorusRateIsland::factorForRate(parent,e->getOversamplingFactor()),0,"chorus local rate incorrect");
+   require(e->getOversamplingFactor()>=YouKnowEngine::minimumRunningFactorFor(rate),"low host ran under the internal-rate floor");
+   near(YouKnowTestAccess::chorusRate(*e),parent*VoiceVcaAntialias::factorForRate(parent),0,"chorus local rate incorrect");
    require(YouKnowTestAccess::builds(*e)==builds,"quality rebuild constructed uncached support");
    const int cursor=YouKnowTestAccess::cursor(*e);const auto clocks=YouKnowTestAccess::clocks(*e);
    (void)e->setOversamplingFactor(factor);

@@ -29,25 +29,29 @@ struct ChorusRateIsland
     static constexpr int inputSize = VoiceVcaAntialias::inputRingSize;
     static constexpr int outputSize = VoiceVcaAntialias::outputRingSize;
     [[nodiscard]] static int factorForRate(double parentRate, int globalFactor,
-                                           bool halved = false) noexcept
+                                           bool halved = false, int minimumFactor = 1) noexcept
     {
-        // Reuse the engine's existing prepared 1/2/4 host-rate grids.
-        // Ordinary hosts reach 176.4/192 kHz. If an unusually low host needs
-        // an unprepared grid, keep the complete legacy chorus/IC6 path:
-        // reducing the shared factor would also reduce IC6's existing AA.
-        // This avoids two extra 57 KiB support caches per Rack instance.
-        // The halved (CircuitRate::Normal) law lands on the next prepared grid
-        // down, so it never needs a support cache Max does not already have.
+        // Reuse the chorus support grids prepared off the audio thread at
+        // host x {f, 2f, 4f}, f the engine's minimum running factor
+        // (Chorus::prepareSupportRates), so no grid is ever solved in a
+        // callback. A global factor g >= f leaves 4f/g of them. Under the
+        // product's internal-rate floor f puts the host at 44.1 kHz or more
+        // (or 4x), which is all the voice FIR law needs, so the product never
+        // falls back. The raw engine (f = 1) keeps the complete legacy
+        // chorus/IC6 path where a low host's grid is missing: reducing the
+        // shared factor would also reduce IC6's existing AA. The halved
+        // (CircuitRate::Normal) law lands on the next prepared grid down, so
+        // it never needs a support cache Max lacks.
         const int needed=VoiceVcaAntialias::factorForRate(parentRate,halved);
-        const int available=std::max(1,4/std::max(1,globalFactor));
+        const int available=std::max(1,4*std::max(1,minimumFactor)/std::max(1,globalFactor));
         return needed<=available ? needed : 1;
     }
     [[nodiscard]] static Kernel prepare(double parentRate, int globalFactor,
-                                        bool halved = false) noexcept
+                                        bool halved = false, int minimumFactor = 1) noexcept
     {
         // The qualified FIR depends only on its integer factor; these rates
         // select the same normalized prototype without changing its cutoff.
-        const int factor=factorForRate(parentRate,globalFactor,halved);
+        const int factor=factorForRate(parentRate,globalFactor,halved,minimumFactor);
         return VoiceVcaAntialias::prepare(factor==4?48000.0:factor==2?96000.0:192000.0);
     }
     struct Controls

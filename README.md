@@ -53,6 +53,20 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.10 — 2026-11-16 — Low session rates run on a full grid
+
+- A session below 44.1 kHz (16, 22.05, 24 or 32 kHz, say) now runs the
+  oscillators, VCF, chorus and other shared circuits on the first
+  oversampling rung that reaches 44.1 kHz and decimates to its own rate: a
+  22.05 kHz session runs at 2x with 1x selected, which costs about what a
+  44.1 kHz session does (twice its 1.4.9 cost), and a 16 kHz one at 4x. The
+  chorus support grids are prepared from that rung when the session starts,
+  so no Quality or Circuit Rate choice there falls back to the older chorus
+  path. At 44.1 kHz and above, and so in every Reason session, the sound is
+  bit for bit 1.4.9's.
+  Known gaps now publishes the Normal and Max accuracy envelope against the
+  4x grid. [Research](Docs/research/known-gaps-research-2026-11-16/youknow-known-gaps-2026-11-16-combined.md).
+
 ### 1.4.9 — 2026-11-14 — Stronger sub-to-wave mixer loading
 
 - The coupled WAVE/Tr19/D6/C56 mixer now uses the upper positive
@@ -1863,14 +1877,30 @@ Deliberate, each with its reason recorded:
 - **Numerical accuracy is still rate-dependent.** The selected local VCF and
   chorus stages remove the former ordinary-rate open-filter cap and coarse
   chorus-support errors without changing the latency report. Global Quality
-  still affects oscillator reconstruction and other shared circuits. At
-  unusually low host rates, the bounded available grids retain limitations;
-  chorus settings that cannot reuse an existing support cache keep the older
-  path and its full output-clip antialias factor. Raw diagnostic fixtures
-  retain their original numerical limits. `CircuitRate::Normal` trades part
-  of that margin for cost: at 44.1/48 kHz its local stages run at half the
-  reference rate, so its open-filter pole cap and nonlinear-product band sit
-  an octave lower than Max's.
+  still affects oscillator reconstruction and other shared circuits. Below
+  44.1 kHz the product runs them on the first rung that reaches 44.1 kHz (a
+  22.05 kHz session at 2x with 1x selected), or at 4x where none does (8 kHz
+  at 32 kHz), and prepares the chorus support grids from that rung when the
+  session starts, so no chorus setting falls back to the older path. Raw
+  diagnostic fixtures retain their original numerical limits, including the
+  requested factor at low host rates and, where a chorus grid is missing,
+  the older path and its full output-clip antialias factor. `CircuitRate::Normal`
+  trades part of the margin for cost: at 44.1/48 kHz its local stages run at
+  half the reference rate, so its open-filter pole cap and nonlinear-product
+  band sit an octave lower than Max's. Against Max at 4x, the deepest grid
+  and the one to choose for an offline bounce, the band levels of a six-note
+  chorus II chord and a resonant saw differ by at most (`YouKnow.CircuitRate`
+  holds each to 1.5 times its figure plus 0.1 dB):
+
+  | Host, setting | 20 Hz–8 kHz | 8–14 kHz | 14–20 kHz |
+  | --- | --- | --- | --- |
+  | 44.1 kHz, Max 1x (default) | 0.04 dB | 0.10 dB | 0.41 dB lower |
+  | 44.1 kHz, Normal 1x | 0.03 dB | 0.20 dB | 0.59 dB higher |
+  | 48 kHz, Max 1x | 0.02 dB | 0.04 dB | 0.16 dB lower |
+  | 48 kHz, Normal 1x | 0.02 dB | 0.13 dB | 0.24 dB higher |
+  | 22.05 kHz, Max 1x (runs at 2x) | 0.07 dB | 0.16 dB to 10.1 kHz | — |
+  | 22.05 kHz, Normal 1x | 0.06 dB | 0.13 dB to 10.1 kHz | — |
+
 - **Selected estimates remain estimates.** The accepted five-mechanism
   product profile uses a recording-derived effective Mode-I chorus fit,
   schematic-ratio Mode-II timing, the named Tr20 component prior, nominal
@@ -2252,11 +2282,11 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `1.4.9-build.1`. To identify a local build, pass
+Local builds default to `1.4.10-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses the workflow's `GITHUB_RUN_NUMBER`; the configured
-number is saved in the build directory. The current host version is `1.4.9`,
-and its signed-release tag would be `v1.4.9`. Archive names and the
+number is saved in the build directory. The current host version is `1.4.10`,
+and its signed-release tag would be `v1.4.10`. Archive names and the
 About box include the build number; macOS bundle and installer build metadata
 carry it too.
 
@@ -2292,7 +2322,7 @@ tree, a dated release-history entry and a matching `v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-1.4.9 development packages remain distinct from a signed production release.
+1.4.10 development packages remain distinct from a signed production release.
 
 ### Local listening renders
 

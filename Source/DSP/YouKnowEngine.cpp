@@ -6713,7 +6713,7 @@ void YouKnowEngine::prepare(double sampleRate, int /*maxBlockSize*/,
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
     oversamplingRequested_ = sanitiseOversampleFactor(requestedFactor);
     oversamplingApplied_ = oversamplingRequested_;
-    chorus_.prepareSupportRates(sampleRate_);
+    chorus_.prepareSupportRates(sampleRate_, minimumRunningFactor());
     activeConverterTimingProfile_ = converterTimingProfile_;
     // Immutable B-2 regions use the exact model laws. Warm them for every
     // prepared engine: selectConverterTimingProfile() can enter serial replay
@@ -6924,7 +6924,7 @@ void YouKnowEngine::updateProcessingRate(bool preserveFreeRunningState) noexcept
         }
     }
     chorusRateIslandKernel_ = ChorusRateIsland::prepare(oversampledRate_,oversampling_,
-        circuitRateApplied_ == CircuitRate::Normal);
+        circuitRateApplied_ == CircuitRate::Normal, minimumRunningFactor());
     outputSummerAntialiasKernel_ = VoiceVcaAntialias::prepare(oversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
@@ -6993,7 +6993,8 @@ int YouKnowEngine::effectiveOversampleFactor(int requestedFactor) const noexcept
     else
         ceilingFactor = maximumOversampleFactor;
 
-    int result = std::min(sanitiseOversampleFactor(requestedFactor), ceilingFactor);
+    int result = std::max(std::min(sanitiseOversampleFactor(requestedFactor), ceilingFactor),
+                          minimumRunningFactor());
     // The serial-program permissive CFG audit bounds DAC-enable gaps at216
     // ordinary /395 restarted states (Tools/AuditFirmwareControlTrace.py).
     // This32k floor makes each interval<=125states, hence at most one enable.
@@ -7265,7 +7266,7 @@ double YouKnowEngine::runningLatencySamples(int factor,
         && VoiceVcaAntialias::factorForRate(sampleRate_ * factor) > 1)
         || (activeParameters_.enableChorusRateIsland
             && ChorusRateIsland::factorForRate(sampleRate_ * factor,factor,
-                   rate == CircuitRate::Normal) > 1))
+                   rate == CircuitRate::Normal, minimumRunningFactor()) > 1))
         ? static_cast<double>(VoiceVcaAntialias::delaySamples) / factor : 0.0;
     return totalLatencySamples(factor) + extra + summer;
 }
@@ -7281,7 +7282,8 @@ double YouKnowEngine::maximumLatencySamples() const noexcept
     // Max has a voice FIR wherever Normal does, so its figure covers both
     // voice circuit rates and the report never depends on that selection.
     double result = 0;
-    for (int factor : {1, 2, 4})
+    for (int factor = minimumRunningFactor(); factor <= maximumOversampleFactor;
+         factor *= 2)
         result = std::max(result, runningLatencySamples(factor, CircuitRate::Max));
     return result;
 }
@@ -7702,6 +7704,14 @@ double YouKnowEngine::moduleInputCouplingResistanceOhms() const noexcept
     return moduleInputCouplingResistanceOverrideOhms_ > 0.0
         ? moduleInputCouplingResistanceOverrideOhms_
         : static_cast<double>(moduleCouplingResistanceOhms);
+}
+
+bool YouKnowEngine::configureMinimumInternalRate(bool enabled) noexcept
+{
+    if (prepared_)
+        return false;
+    minimumInternalRate_ = enabled;
+    return true;
 }
 
 bool YouKnowEngine::configureServiceDerivedVcaCoupling(bool enabled) noexcept

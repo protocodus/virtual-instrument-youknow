@@ -388,7 +388,9 @@ void couplingDecayAndProfile()
             product->setParameters(parameters);
             raw->setParameters(parameters);
             product->prepare(rate, 128, factor);
-            raw->prepare(rate, 128, factor);
+            // The product's internal-rate floor runs 8 kHz at 4x; the raw
+            // reference takes the same grid so both capacitors see one step.
+            raw->prepare(rate, 128, product->getOversamplingFactor());
             require(!product->configureServiceDerivedVcaCoupling(false),
                     "prepared circuit configuration was mutable");
             const double resistance = inferredResistance(*product, 0);

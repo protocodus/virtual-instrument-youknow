@@ -91,6 +91,9 @@ struct ProductFidelityProfile
     {
         if (! engine.configureHighPassSwitch (highPassSwitchOhms)
             || ! engine.configureDcoTemperatureProxy (true, 25.0)
+            // A 16-32 kHz session runs on the grid a 44.1 kHz one gets
+            // (2026-11-16 known-gaps research, README Known gaps).
+            || ! engine.configureMinimumInternalRate (true)
             // C59's unity-passband load follows the same fixed service input
             // trim as the BA662 signal law (nominal 120.192k at 25 C).
             || ! engine.configureServiceDerivedVcaCoupling (true)

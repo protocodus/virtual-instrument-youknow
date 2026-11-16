@@ -829,13 +829,40 @@ public:
     // applied factor is that request capped so the internal rate never has to
     // run further above the bandlimiting target than it needs to (see
     // updateProcessingRate), which is why a 192 kHz host already runs at 1x
-    // with the highest setting selected.
+    // with the highest setting selected, and in the product raised to the
+    // internal-rate floor below, which is why a 22.05 kHz host runs at 2x
+    // with 1x selected.
     static constexpr int minimumOversampleFactor = 1;
     static constexpr int maximumOversampleFactor = 4;
     // The host rates prepare() will run at. Anything outside this is clamped
     // into it rather than reaching the internal grid; see prepare().
     static constexpr double minimumSupportedSampleRate = 8000.0;
     static constexpr double maximumSupportedSampleRate = 768000.0;
+    // The lowest internal grid the product runs the shared circuits on. A
+    // host below it still oversamples, to the first rung that reaches
+    // 44.1 kHz, so a 16, 22.05 or 32 kHz session plays the oscillators, VCF
+    // and chorus on the grid an ordinary host gets and decimates to its own
+    // rate. 4x is the deepest rung, so 8 kHz stops short at 32 kHz.
+    // ProductFidelityProfile selects it (configureMinimumInternalRate); the
+    // raw engine runs the requested factor, the coarse grids (8 kHz at 1x)
+    // its endpoint fixtures qualify.
+    static constexpr double minimumInternalRate = 44100.0;
+    [[nodiscard]] static int minimumRunningFactorFor(double hostRate) noexcept
+    {
+        int factor = minimumOversampleFactor;
+        while (factor < maximumOversampleFactor && hostRate * factor < minimumInternalRate)
+            factor *= 2;
+        return factor;
+    }
+    // Before prepare(): raise every applied factor to minimumRunningFactorFor
+    // the host, and prepare the chorus support grids from that rung. Retained
+    // across reset/prepare.
+    [[nodiscard]] bool configureMinimumInternalRate(bool enabled) noexcept;
+    [[nodiscard]] int minimumRunningFactor() const noexcept
+    {
+        return minimumInternalRate_ ? minimumRunningFactorFor(sampleRate_)
+                                    : minimumOversampleFactor;
+    }
     // The three rungs the panel offers, in increasing cost.
     static constexpr std::array<int, 3> oversampleFactors {
         minimumOversampleFactor, 2, maximumOversampleFactor };
@@ -903,7 +930,8 @@ public:
             && voiceCircuitFactorFor(processingRate, rate)
                    == voiceVcaAntialiasKernel_.factor
             && ChorusRateIsland::factorForRate(processingRate, factor,
-                   rate == CircuitRate::Normal) == chorusRateIslandKernel_.factor;
+                   rate == CircuitRate::Normal, minimumRunningFactor())
+                   == chorusRateIslandKernel_.factor;
     }
     void reset();
     // A host's transport stop is not a power cycle. `reset()` above is the
@@ -4624,6 +4652,7 @@ private:
     // override. Keeping this separate also detects incompatible calibration.
     double moduleInputCouplingResistanceOverrideOhms_ { 0.0 };
     bool serviceDerivedVcaCoupling_ { false };
+    bool minimumInternalRate_ { false };
     float oscillatorLevelScale_ { 1.0f };
     float pulseLevelScale_ { 1.0f };
 

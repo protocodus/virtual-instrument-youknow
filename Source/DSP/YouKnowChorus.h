@@ -338,8 +338,9 @@ public:
     // preserving and reseeding them is a separate, still-unqualified policy.
     // The engine calls this from prepareToPlay so a later quality change only
     // selects fixed coefficients on the audio thread instead of solving matrix
-    // exponentials there.
-    void prepareSupportRates(double hostSampleRate) noexcept;
+    // exponentials there. The grids are host x {1, 2, 4} x `minimumFactor`,
+    // the lowest factor the engine runs this host at.
+    void prepareSupportRates(double hostSampleRate, int minimumFactor = 1) noexcept;
     // Configure before the first prepare(). Live changes would reinterpret
     // capacitor coordinates, so they are rejected, including after reset().
     [[nodiscard]] bool configureSupportProfile(ChorusSupportProfile) noexcept;

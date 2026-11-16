@@ -14,6 +14,7 @@
 #include <bit>
 #include <cmath>
 #include <complex>
+#include <string>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -380,6 +381,106 @@ void normalStaysCloseToMax()
     std::cout << "circuit rate Normal: level and band levels close to Max\n";
 }
 
+struct EnvelopeCase
+{
+    const char* name;
+    EngineParameters parameters;
+    std::vector<int> notes;
+};
+
+std::vector<EnvelopeCase> envelopeCases()
+{
+    auto chord = productParameters();
+    chord.sawEnabled = true; chord.pulseEnabled = true; chord.pwmDepth = .35f;
+    chord.pwmSource = PwmSource::Manual; chord.subLevel = .3f;
+    chord.cutoff = .96f; chord.resonance = .35f; chord.envDepth = 0; chord.keyFollow = 0;
+    chord.attack = 0; chord.decay = .6f; chord.sustain = .9f; chord.release = .35f;
+    chord.chorus = ChorusMode::Two;
+    auto resonant = productParameters();
+    resonant.sawEnabled = true; resonant.pulseEnabled = false; resonant.subLevel = 0;
+    resonant.cutoff = .9f; resonant.resonance = .8f; resonant.envDepth = 0; resonant.keyFollow = .5f;
+    resonant.attack = 0; resonant.decay = 1; resonant.sustain = 1; resonant.release = .3f;
+    resonant.chorus = ChorusMode::Off;
+    return { { "bright chord, chorus II", chord, { 48, 55, 60, 64, 67, 72 } },
+             { "resonant saw near the pole cap", resonant, { 45 } } };
+}
+
+// The envelope's bands: decades and the upper octaves, cut at 0.46 of the
+// host rate so a 22.05 kHz host's last band ends below its Nyquist.
+std::vector<std::pair<double, double>> envelopeBands(double rate)
+{
+    std::vector<std::pair<double, double>> bands;
+    const double top = .46 * rate;
+    for (const auto& [lo, hi] : std::vector<std::pair<double, double>> {
+             {20, 200}, {200, 2000}, {2000, 8000}, {8000, 14000}, {14000, 20000}})
+        if (lo < top)
+            bands.emplace_back(lo, std::min(hi, top));
+    return bands;
+}
+
+void accuracyEnvelope()
+{
+    // The published accuracy envelope (README, Known gaps). How far the
+    // default (Max at Quality 1x) and Normal at 1x sit from the deepest grid
+    // the engine offers, Max at Quality 4x: the shared circuits at four times
+    // the host and each local island on its own 176.4/192 kHz grid, the
+    // setting an offline bounce chooses. The chord drives oscillator
+    // reconstruction and the chorus island; the resonant saw puts the VCF
+    // island near its pole cap. Each figure is a band level of the mono sum
+    // over 32768 frames from 0.6 s, after the attack, against the reference's. 22.05 kHz is the
+    // internal-rate floor's case: its 1x runs at 2x (44.1 kHz).
+    // The table is the measured 2026-11-16 deltas, in dB, rounded to 0.01
+    // (chord, then resonant saw; bands as envelopeBands, 22.05 kHz has four),
+    // and the README quotes them. Each bound is 1.5 times its figure plus
+    // 0.1 dB: a pole cap, an island on the wrong grid or a lost floor moves a
+    // band by whole decibels.
+    struct Measured { double rate; const char* config; double deltas[2][5]; };
+    const Measured measured[] {
+        { 44100, "Max 1x",    { { 0, 0, -.03, -.04, -.07 }, { 0, 0, -.04, -.10, -.41 } } },
+        { 44100, "Normal 1x", { { 0, 0, .01, .20, .59 },    { 0, 0, -.03, -.03, -.14 } } },
+        { 48000, "Max 1x",    { { 0, -.02, 0, .01, -.09 },  { 0, 0, -.02, -.04, -.16 } } },
+        { 48000, "Normal 1x", { { 0, -.02, .02, .13, .24 }, { 0, 0, -.02, .01, .07 } } },
+        { 22050, "Max 1x",    { { 0, 0, -.01, -.07 },       { 0, 0, -.07, -.16 } } },
+        { 22050, "Normal 1x", { { 0, 0, .03, .10 },         { 0, 0, -.06, -.13 } } },
+    };
+    const auto cases = envelopeCases();
+    bool within = true;
+    for (const auto& row : measured)
+    {
+        const double rate = row.rate;
+        const bool normal = std::string(row.config) == "Normal 1x";
+        const int first = static_cast<int>(rate * .6), count = 32768;
+        const int frames = first + count + static_cast<int>(rate / 10);
+        for (std::size_t c = 0; c < cases.size(); ++c)
+        {
+            std::vector<Event> events;
+            for (int note : cases[c].notes) events.push_back({ static_cast<int>(rate / 100), note, true });
+            auto reference = productEngine(rate, 64, cases[c].parameters, CircuitRate::Max, 4);
+            auto candidate = productEngine(rate, 64, cases[c].parameters,
+                                           normal ? CircuitRate::Normal : CircuitRate::Max, 1);
+            require(reference->getOversamplingFactor() == 4, "the envelope reference is not the 4x grid");
+            require(candidate->getOversamplingFactor()
+                        == YouKnowEngine::minimumRunningFactorFor(rate),
+                    "the envelope's 1x is not the host's lowest running grid");
+            const auto x = render(*reference, frames, events, { 64 });
+            const auto y = render(*candidate, frames, events, { 64 });
+            const auto bands = envelopeBands(rate);
+            for (std::size_t b = 0; b < bands.size(); ++b)
+            {
+                const auto [lo, hi] = bands[b];
+                const double delta = db(bandPower(y, rate, first, count, lo, hi)
+                                        / bandPower(x, rate, first, count, lo, hi));
+                std::cout << "  envelope " << rate << " Hz, " << row.config << " - Max 4x, "
+                          << cases[c].name << ", " << lo << "-" << hi << " Hz: " << delta << " dB\n";
+                if (!(std::abs(delta) < 1.5 * std::abs(row.deltas[c][b]) + .1))
+                    within = false;
+            }
+        }
+    }
+    require(within, "a band left the published accuracy envelope");
+    std::cout << "circuit rate accuracy envelope: Max and Normal 1x within bounds of the 4x reference\n";
+}
+
 void idleCardsRestTrackedAndWake()
 {
     // Self-oscillation exposes the filter state a resting card hands to its
@@ -469,6 +570,7 @@ int main()
         maxIsDefaultAndIdentity();
         liveChangeWaitsForIdle();
         normalStaysCloseToMax();
+        accuracyEnvelope();
         idleCardsRestTrackedAndWake();
         restIsPartitionIndependent();
     }

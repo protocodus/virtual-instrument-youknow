@@ -2834,10 +2834,11 @@ bool Chorus::configureBbdInsertionGainProfile(ChorusBbdInsertionGainProfile prof
     return true;
 }
 
-void Chorus::prepareSupportRates(double hostSampleRate) noexcept
+void Chorus::prepareSupportRates(double hostSampleRate, int minimumFactor) noexcept
 {
     constexpr std::array<int, 3> factors { 1, 2, 4 };
-    const double base = std::clamp(hostSampleRate, 8000.0, 768000.0);
+    const double base = std::clamp(hostSampleRate, 8000.0, 768000.0)
+        * static_cast<double> (std::max(1, minimumFactor));
     for (std::size_t index = 0; index < factors.size(); ++index)
     {
         const auto rate = static_cast<float> (
