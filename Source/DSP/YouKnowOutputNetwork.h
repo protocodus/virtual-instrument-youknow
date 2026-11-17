@@ -7,6 +7,7 @@
 #include <cmath>
 #include <complex>
 #include "YouKnowCompatibility.h"
+#include "YouKnowFinite.h"
 
 namespace youknow
 {
@@ -75,7 +76,7 @@ public:
     // numerical domains, not component tolerances or receiver measurements.
     [[nodiscard]] bool prepare(double sampleRate, Configuration configuration) noexcept
     {
-        if (!std::isfinite(sampleRate) || sampleRate < 8000.0 || sampleRate > 768000.0
+        if (!finiteValue(sampleRate) || sampleRate < 8000.0 || sampleRate > 768000.0
             || !valid(configuration))
             return false;
         sampleRate_ = sampleRate;
@@ -97,7 +98,7 @@ public:
 
     [[nodiscard]] bool setVolume(double position) noexcept
     {
-        if (!std::isfinite(position)) return false;
+        if (!finiteValue(position)) return false;
         position = std::clamp(position, 0.0, 1.0);
         if (position != volume_)
         {
@@ -112,8 +113,8 @@ public:
     // filter history. Unit noise inputs to process() have variance one.
     [[nodiscard]] bool setNoise(double temperatureKelvin, double amount) noexcept
     {
-        if (!std::isfinite(temperatureKelvin) || temperatureKelvin < 0.0
-            || temperatureKelvin > 1000.0 || !std::isfinite(amount)
+        if (!finiteValue(temperatureKelvin) || temperatureKelvin < 0.0
+            || temperatureKelvin > 1000.0 || !finiteValue(amount)
             || amount < 0.0 || amount > 16.0)
             return false;
         if (temperatureKelvin != temperatureKelvin_ || amount != noiseAmount_)
@@ -160,7 +161,7 @@ public:
         const Double2 output = mixed + jDiffNext;
         double out0 = double2Low(output);
         double out1 = double2High(output);
-        if (std::isfinite(out0) && std::isfinite(out1))
+        if (finiteValue(out0) && finiteValue(out1))
         {
             channels_[0].signalLow = double2Low(sLowNext);
             channels_[1].signalLow = double2High(sLowNext);
@@ -235,16 +236,16 @@ private:
     {
         return (c.selector == Selector::High || c.selector == Selector::Medium
                     || c.selector == Selector::Low)
-            && std::isfinite(c.loadOhms)
+            && finiteValue(c.loadOhms)
             && (c.loadOhms == 0.0 || (c.loadOhms >= 1.0 && c.loadOhms <= 1e12))
-            && std::isfinite(c.externalCapacitanceFarads)
+            && finiteValue(c.externalCapacitanceFarads)
             && c.externalCapacitanceFarads >= 0.0
             && c.externalCapacitanceFarads <= 100e-9;
     }
 
     static double finiteOrZero(double value) noexcept
     {
-        return std::isfinite(value) ? value : 0.0;
+        return finiteValue(value) ? value : 0.0;
     }
 
     void refreshNoiseScale() noexcept
@@ -335,7 +336,7 @@ private:
                             - jackCoefficients_.a1 * state.jackDifference;
         state.jackPreviousInput = mixed;
         const double output = mixed + state.jackDifference;
-        if (!std::isfinite(output)) { state = {}; return 0.0; }
+        if (!finiteValue(output)) { state = {}; return 0.0; }
         return output;
     }
 };

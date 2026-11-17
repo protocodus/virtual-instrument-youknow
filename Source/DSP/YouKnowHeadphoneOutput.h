@@ -8,6 +8,7 @@
 #include <complex>
 #include <limits>
 #include "YouKnowCompatibility.h"
+#include "YouKnowFinite.h"
 
 namespace youknow
 {
@@ -68,7 +69,7 @@ public:
     // a headphone measurement; product choices declare32/80/300/600 ohm.
     [[nodiscard]] bool prepare(double sampleRate, double loadOhms = 32.0) noexcept
     {
-        if (!std::isfinite(sampleRate) || sampleRate < 8000 || sampleRate > 768000
+        if (!finiteValue(sampleRate) || sampleRate < 8000 || sampleRate > 768000
             || !validLoad(loadOhms)) return false;
         sampleRate_ = sampleRate;
         loadOhms_ = loadOhms;
@@ -85,15 +86,15 @@ public:
     }
     [[nodiscard]] bool setVolume(double position) noexcept
     {
-        if (!std::isfinite(position)) return false;
+        if (!finiteValue(position)) return false;
         position = std::clamp(position, 0.0, 1.0);
         if (position != volume_) { volume_ = position; rebuild(); }
         return true;
     }
     [[nodiscard]] bool setNoise(double temperatureKelvin, double amount) noexcept
     {
-        if (!std::isfinite(temperatureKelvin) || temperatureKelvin < 0
-            || temperatureKelvin > 1000 || !std::isfinite(amount)
+        if (!finiteValue(temperatureKelvin) || temperatureKelvin < 0
+            || temperatureKelvin > 1000 || !finiteValue(amount)
             || amount < 0 || amount > 16) return false;
         if (temperatureKelvin != temperature_ || amount != noiseAmount_)
         {
@@ -119,14 +120,14 @@ public:
         double leftIntrinsicUnitNoise = 0.0, double rightIntrinsicUnitNoise = 0.0) noexcept
     {
 #if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
-        const double in0 = std::isfinite(leftVolts) ? leftVolts : 0.0;
-        const double in1 = std::isfinite(rightVolts) ? rightVolts : 0.0;
-        const double un0 = std::isfinite(leftUnitNoise) ? leftUnitNoise : 0.0;
-        const double un1 = std::isfinite(rightUnitNoise) ? rightUnitNoise : 0.0;
-        const double oun0 = std::isfinite(leftOutputUnitNoise) ? leftOutputUnitNoise : 0.0;
-        const double oun1 = std::isfinite(rightOutputUnitNoise) ? rightOutputUnitNoise : 0.0;
-        const double iun0 = std::isfinite(leftIntrinsicUnitNoise) ? leftIntrinsicUnitNoise : 0.0;
-        const double iun1 = std::isfinite(rightIntrinsicUnitNoise) ? rightIntrinsicUnitNoise : 0.0;
+        const double in0 = finiteValue(leftVolts) ? leftVolts : 0.0;
+        const double in1 = finiteValue(rightVolts) ? rightVolts : 0.0;
+        const double un0 = finiteValue(leftUnitNoise) ? leftUnitNoise : 0.0;
+        const double un1 = finiteValue(rightUnitNoise) ? rightUnitNoise : 0.0;
+        const double oun0 = finiteValue(leftOutputUnitNoise) ? leftOutputUnitNoise : 0.0;
+        const double oun1 = finiteValue(rightOutputUnitNoise) ? rightOutputUnitNoise : 0.0;
+        const double iun0 = finiteValue(leftIntrinsicUnitNoise) ? leftIntrinsicUnitNoise : 0.0;
+        const double iun1 = finiteValue(rightIntrinsicUnitNoise) ? rightIntrinsicUnitNoise : 0.0;
         const auto lowPass2 = [](Double2 x, Double2& s, Double2 g, Double2 denom) noexcept -> Double2 {
             const Double2 delta = (x - s) * g / denom;
             const Double2 out = s + delta;
@@ -186,7 +187,7 @@ public:
         const Double2 output = mixed - lowPass2(mixed, headphoneLow, hpG, hpDenom);
         const double out0 = double2Low(output);
         const double out1 = double2High(output);
-        if (std::isfinite(out0) && std::isfinite(out1))
+        if (finiteValue(out0) && finiteValue(out1))
         {
             channels_[0].inputLow = double2Low(inputLow);
             channels_[1].inputLow = double2High(inputLow);
@@ -259,7 +260,7 @@ private:
     double outputDivider_ {}, amplifierNoiseLowGain_ {}, amplifierNoiseScale_ {}, outputNoiseScale_ {};
     double intrinsicNoiseScale_ {}, intrinsicNoiseRateScale_ {};
     static bool validLoad(double load) noexcept
-    { return std::isfinite(load) && load >= 1 && load <= 1e9; }
+    { return finiteValue(load) && load >= 1 && load <= 1e9; }
     static double parallel(double a, double b) noexcept { return a*b/(a+b); }
     static double lowPass(double input, double& state, double g) noexcept
     {
@@ -306,10 +307,10 @@ private:
     }
     double step(Channel& state, double input, double unitNoise,double outputUnitNoise,double intrinsicUnitNoise) noexcept
     {
-        if (!std::isfinite(input)) input = 0;
-        if (!std::isfinite(unitNoise)) unitNoise = 0;
-        if (!std::isfinite(outputUnitNoise)) outputUnitNoise = 0;
-        if (!std::isfinite(intrinsicUnitNoise)) intrinsicUnitNoise = 0;
+        if (!finiteValue(input)) input = 0;
+        if (!finiteValue(unitNoise)) unitNoise = 0;
+        if (!finiteValue(outputUnitNoise)) outputUnitNoise = 0;
+        if (!finiteValue(intrinsicUnitNoise)) intrinsicUnitNoise = 0;
         const double coupled = (input-lowPass(input,state.inputLow,inputG_))
                              * coefficients_.passbandGain;
         const double white = unitNoise*noiseScale_;
@@ -347,7 +348,7 @@ private:
             state.amplifierOutput = idealAmplifier;
         }
         const double output = mixed-lowPass(mixed,state.headphoneLow,headphoneG_);
-        if (!std::isfinite(output)) { state = {}; return 0; }
+        if (!finiteValue(output)) { state = {}; return 0; }
         return output;
     }
 };

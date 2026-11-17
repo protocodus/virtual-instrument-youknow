@@ -1,5 +1,6 @@
 #pragma once
 
+#include "YouKnowFinite.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -22,9 +23,9 @@ struct DcoResetCircuit
         {
             // Numerical comparison domain, NOT manufacturer limits or a
             // proposed typical population. All three inputs are required.
-            return std::isfinite(gateSeconds) && gateSeconds >= 1e-9 && gateSeconds <= 1e-3
-                && std::isfinite(dischargeOhms) && dischargeOhms >= 1.0 && dischargeOhms <= 1e7
-                && std::isfinite(clampVolts) && clampVolts >= 0.0 && clampVolts <= 15.0;
+            return finiteValue(gateSeconds) && gateSeconds >= 1e-9 && gateSeconds <= 1e-3
+                && finiteValue(dischargeOhms) && dischargeOhms >= 1.0 && dischargeOhms <= 1e7
+                && finiteValue(clampVolts) && clampVolts >= 0.0 && clampVolts <= 15.0;
         }
     };
 

@@ -53,6 +53,19 @@ see [local listening renders](#local-listening-renders).
 
 ## Version history
 
+### 1.4.11 — 2026-11-17 — Less CPU in Reason, the same sound
+
+- About 36 % less CPU in the Rack Extension, with every render bit-identical
+  to 1.4.10: the median over all 100 factory patches, measured on the SDK's
+  own Deployment build on an Apple-silicon Mac (not in Reason). Reason's
+  toolchain compiles with `-fno-builtin`, which turned each 16-byte `Double2`
+  load and store, added in 1.4.8, into a call to the SDK C library's
+  byte-by-byte `memcpy`; finite checks and some absolute values were calls
+  too. They now compile to plain vector moves and bit tests, and the VCA
+  charge solve and the paired OTA solve drop some setup work. Native plug-in
+  builds render the same samples; their compilers already inlined most of
+  this. [Measurements](Docs/benchmarks/cpu-rack-toolchain-2026-11-17.md).
+
 ### 1.4.10 — 2026-11-16 — Low session rates run on a full grid
 
 - A session below 44.1 kHz (16, 22.05, 24 or 32 kHz, say) now runs the
@@ -2282,11 +2295,11 @@ void state-restore API has no result for the wrapper to forward. Native
 Windows/Linux CI, actual DAW sessions, and signed installer installation and
 upgrade checks still need to pass for the release candidate being sold.
 
-Local builds default to `1.4.10-build.1`. To identify a local build, pass
+Local builds default to `1.4.11-build.1`. To identify a local build, pass
 `-DYOUKNOW_BUILD_NUMBER=42` (or a two-part number such as `42.2`) when configuring
 CMake. CI automatically uses the workflow's `GITHUB_RUN_NUMBER`; the configured
-number is saved in the build directory. The current host version is `1.4.10`,
-and its signed-release tag would be `v1.4.10`. Archive names and the
+number is saved in the build directory. The current host version is `1.4.11`,
+and its signed-release tag would be `v1.4.11`. Archive names and the
 About box include the build number; macOS bundle and installer build metadata
 carry it too.
 
@@ -2322,7 +2335,7 @@ tree, a dated release-history entry and a matching `v<version>` tag
 at HEAD. It validates prerequisites before a fresh universal build, then
 signs, notarizes and staples the installer. The installer includes the MIT
 license and dependency notices and requires macOS 11 or later. Version
-1.4.10 development packages remain distinct from a signed production release.
+1.4.11 development packages remain distinct from a signed production release.
 
 ### Local listening renders
 

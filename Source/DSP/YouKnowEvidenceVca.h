@@ -143,6 +143,9 @@ public:
     struct CurrentCache
     {
         double celsius {}, span {}, first {}, difference {};
+        // The cell's left edge as a double: the same value as the cell
+        // number sampleCached computes, read from here on a hit.
+        double cellPosition {};
         std::size_t index {};
         bool valid {};
         // advance() is a pure function of its inputs and the circuit. When an
@@ -311,7 +314,8 @@ private:
         }
         return std::exp(logarithm);
     }
-    [[nodiscard]] double sampleCached(double charge, double celsius, CurrentCache& cache) const noexcept
+    [[nodiscard]] YOUKNOW_VCA_ALWAYS_INLINE double sampleCached(double charge, double celsius,
+                                                                CurrentCache& cache) const noexcept
     {
         constexpr double inverseChargeSpan = 1.0 / (maximumCharge - minimumCharge);
         const double normalized = (charge - minimumCharge) * inverseChargeSpan;
@@ -326,7 +330,9 @@ private:
         // only the two knots of the current cell, preserving all 8192 cells,
         // every RK4 evaluation and the exact temperature. This reassociation
         // changes double rounding only; no control is quantized or held.
-        return cache.first + (position - cell) * cache.difference;
+        // The fraction reads the cached cell edge, so on the RK stages' serial
+        // chain the int round trip above only feeds the (predicted) check.
+        return cache.first + (position - cache.cellPosition) * cache.difference;
     }
     void refreshCache(std::size_t index, double celsius, CurrentCache& cache) const noexcept
     {
@@ -346,6 +352,7 @@ private:
         const double first = knot(index);
         cache.celsius = celsius; cache.span = span_; cache.first = first;
         cache.difference = knot(index+1)-first; cache.index = index; cache.valid = true;
+        cache.cellPosition = static_cast<double>(index);
     }
     [[nodiscard]] double sample(double coordinate, double celsius, bool capacitor) const noexcept
     {

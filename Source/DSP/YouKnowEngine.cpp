@@ -4493,15 +4493,18 @@ bool YouKnowEngine::OtaCascade::tryProcessSettledRk4Pair(
         bool constantTrajectoryFeedback {};
         bool constantTrajectoryHeadroom {};
         Tableau tableau { Tableau::MersonHalf };
-        std::array<double, 5> drive {};
-        std::array<double, 7> omegaAt {};
-        std::array<double, 7> feedbackAt {};
-        std::array<double, 7> headroomAt {};
-        std::array<double, 7> inverseHeadroomAt {};
-        std::array<double, 7> loopHeadroomAt {};
-        std::array<double, 7> inverseLoopHeadroomAt {};
-        std::array<std::array<double, 4>, 7> stageOmegaAt {};
-        std::array<std::array<double, 4>, 7> stageOffset {};
+        // Left uninitialised: the solve reads only the tableau's nodes, and
+        // checkLane and buildLaneNodes write each of those first. Zeroing
+        // both lanes was a 1.6 KB memset on every pair step.
+        std::array<double, 5> drive;
+        std::array<double, 7> omegaAt;
+        std::array<double, 7> feedbackAt;
+        std::array<double, 7> headroomAt;
+        std::array<double, 7> inverseHeadroomAt;
+        std::array<double, 7> loopHeadroomAt;
+        std::array<double, 7> inverseLoopHeadroomAt;
+        std::array<std::array<double, 4>, 7> stageOmegaAt;
+        std::array<std::array<double, 4>, 7> stageOffset;
     };
 
     const auto allSameBits = [](const std::array<double, 7>& values) noexcept {

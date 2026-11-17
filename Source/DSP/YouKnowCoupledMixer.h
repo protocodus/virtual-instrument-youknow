@@ -6,6 +6,7 @@
 #include "YouKnowCompatibility.h"
 
 #include "YouKnowSubLevel.h"
+#include "YouKnowFinite.h"
 
 namespace youknow
 {
@@ -70,7 +71,7 @@ public:
                 diodeSlopeVolts, diodeReferenceAmps, pinToCoreGain,
                 oscillatorDriveScale, pulseSourceScale };
             for (const auto value : values)
-                if (!std::isfinite(value))
+                if (!finiteValue(value))
                     return false;
             // Numerical-domain guards, not claimed installed-part tolerances.
             return sourceOhms >= 1.0 && sourceOhms <= 1.0e9

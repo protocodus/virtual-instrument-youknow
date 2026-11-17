@@ -213,7 +213,7 @@ struct OtaShotNoise {
     // Jacobian/diffusion during a nonlinear interval is an explicit local
     // linearization approximation. The normal filter retains its own solver.
     [[nodiscard]] static Matrix covariance(Matrix a,Vector intervalDiffusion) noexcept {
-        double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=std::abs(x);norm=std::max(norm,sum);}
+        double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=inlineAbs(x);norm=std::max(norm,sum);}
         int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
         const double scale=covarianceScales[static_cast<std::size_t>(squares)];
         for(auto&row:a)for(double&x:row)x*=scale;
@@ -262,7 +262,7 @@ struct OtaShotNoise {
         double norm=0;
         for(std::size_t i=0;i<4;++i) {
             diagonal[i]=a[i][i];neighbour[i]=a[i][(i+3)&3];
-            norm=std::max(norm,std::abs(diagonal[i])+std::abs(neighbour[i]));
+            norm=std::max(norm,inlineAbs(diagonal[i])+inlineAbs(neighbour[i]));
         }
         int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
         const double scale=covarianceScales[static_cast<std::size_t>(squares)];
@@ -307,7 +307,7 @@ struct OtaShotNoise {
     }
     // Positive quadrature of the same four-stage ring (not an arbitrary J).
     [[nodiscard]] static Matrix positiveCovariance(Matrix a,Vector d) noexcept {
-        double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=std::abs(x);norm=std::max(norm,sum);}
+        double norm=0;for(const auto&row:a){double sum=0;for(double x:row)sum+=inlineAbs(x);norm=std::max(norm,sum);}
         int squares=0;while(norm>.25&&squares<12){norm*=.5;++squares;}
         const double scale=covarianceScales[static_cast<std::size_t>(squares)];
         for(auto&row:a)for(double&x:row)x*=scale;
@@ -367,7 +367,7 @@ struct OtaShotNoise {
             for(std::size_t k=0;k<j;++k)value-=l[i][k]*l[j][k];
             // Only roundoff-scale negative pivots may be floored. Cache
             // retries a non-roundoff failure through positive quadrature.
-            if(i==j&&value < -256*std::numeric_limits<double>::epsilon()*std::abs(q[i][i])) {
+            if(i==j&&value < -256*std::numeric_limits<double>::epsilon()*inlineAbs(q[i][i])) {
                 if(valid)*valid=false;
                 return {};
             }

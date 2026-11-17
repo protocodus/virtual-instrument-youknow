@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include "YouKnowCompatibility.h"
+#include "YouKnowFinite.h"
 
 namespace youknow
 {
@@ -39,7 +40,7 @@ struct ChorusMuteDrive
 
     [[nodiscard]] static double baseCurrent(double holdVolts) noexcept
     {
-        if (!std::isfinite(holdVolts)) return 0.0;
+        if (!finiteValue(holdVolts)) return 0.0;
         return std::max((holdVolts - emitterVolts - junctionVolts) / baseSeriesOhms
                         - junctionVolts / baseBleedOhms, 0.0);
     }
@@ -89,7 +90,7 @@ struct ChorusMuteDrive
     [[nodiscard]] static double channelOutputVolts(double sourceVolts,
                                                    double gateDrive) noexcept
     {
-        if (!std::isfinite(sourceVolts) || !std::isfinite(gateDrive))
+        if (!finiteValue(sourceVolts) || !finiteValue(gateDrive))
             return 0.0;
         const double k = idssAmps / (cutoffVolts * cutoffVolts);
         const double pinch = -cutoffVolts;

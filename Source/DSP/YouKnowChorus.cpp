@@ -1,5 +1,6 @@
 #include "YouKnowChorus.h"
 #include "YouKnowCompatibility.h"
+#include "YouKnowFinite.h"
 
 #include <algorithm>
 #include <cmath>
@@ -348,7 +349,7 @@ bool matrixSolve(FixedMatrix<Size> left, FixedMatrix<Size> right,
                 bestMagnitude = magnitude;
             }
         }
-        if (!(bestMagnitude > 1.0e-30) || !std::isfinite(bestMagnitude))
+        if (!(bestMagnitude > 1.0e-30) || !finiteValue(bestMagnitude))
             return false;
         if (best != pivot)
         {
@@ -1203,7 +1204,7 @@ bool followerResidualCurrent(
 #if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
     const double y0 = thermalJunction[0];
     const double y1 = thermalJunction[1];
-    if (std::isfinite(y0) && std::isfinite(y1)
+    if (finiteValue(y0) && finiteValue(y1)
         && inlineAbs(y0) <= 0.25 && inlineAbs(y1) <= 0.25)
     {
         const Double2::Lanes y = double2Pack(y0, y1).v;
@@ -1218,8 +1219,8 @@ bool followerResidualCurrent(
         const Double2::Lanes scale = double2Load(collectorScale.data()).v;
         const Double2 cur { scale * remainder };
         const Double2 der { scale * exponentialMinusOne };
-        if (std::isfinite(double2Low(cur)) && std::isfinite(double2Low(der))
-            && std::isfinite(double2High(cur)) && std::isfinite(double2High(der)))
+        if (finiteValue(double2Low(cur)) && finiteValue(double2Low(der))
+            && finiteValue(double2High(cur)) && finiteValue(double2High(der)))
         {
             double2Store(current.data(), cur);
             double2Store(derivative.data(), der);
@@ -1232,7 +1233,7 @@ bool followerResidualCurrent(
         const double y = thermalJunction[port];
         // Evaluation guard, not a physical junction clamp. Rejected Newton
         // trials are shortened, and failure falls back to the linear interval.
-        if (!std::isfinite(y) || y > 80.0)
+        if (!finiteValue(y) || y > 80.0)
             return false;
         double exponentialMinusOne;
         double remainder;
@@ -1261,7 +1262,7 @@ bool followerResidualCurrent(
         const double scale = collectorScale[port];
         current[port] = scale * remainder;
         derivative[port] = scale * exponentialMinusOne;
-        if (!std::isfinite(current[port]) || !std::isfinite(derivative[port]))
+        if (!finiteValue(current[port]) || !finiteValue(derivative[port]))
             return false;
     }
     return true;
@@ -1321,7 +1322,7 @@ bool solveFollowerJunctions(
         const double c = -coupling[1][0] * derivative[0];
         const double d = 1.0 - coupling[1][1] * derivative[1];
         const double determinant = a * d - b * c;
-        if (!std::isfinite(norm) || !std::isfinite(determinant)
+        if (!finiteValue(norm) || !finiteValue(determinant)
             || inlineAbs(determinant) < 1.0e-18)
             return false;
         FollowerPair step {{ (d * error[0] - b * error[1]) / determinant,
@@ -1580,9 +1581,8 @@ std::array<double, 2> powMinusHalfHissExponentPair(
             -4.21745871679284734e-01
         };
 
-        std::uint64_t bitsA = 0, bitsB = 0;
-        std::memcpy(&bitsA, &clockA, sizeof(bitsA));
-        std::memcpy(&bitsB, &clockB, sizeof(bitsB));
+        const auto bitsA = bitCast<std::uint64_t>(clockA);
+        const auto bitsB = bitCast<std::uint64_t>(clockB);
         const std::size_t expIdxA =
             static_cast<std::size_t>(((bitsA >> 52) & 0x7ffu) - 1030u);
         const std::size_t expIdxB =
@@ -1596,9 +1596,8 @@ std::array<double, 2> powMinusHalfHissExponentPair(
             (bitsA & 0x000fffffffffffffull) | 0x3ff0000000000000ull;
         const std::uint64_t mBitsB =
             (bitsB & 0x000fffffffffffffull) | 0x3ff0000000000000ull;
-        double mA = 1.0, mB = 1.0;
-        std::memcpy(&mA, &mBitsA, sizeof(mA));
-        std::memcpy(&mB, &mBitsB, sizeof(mB));
+        const double mA = bitCast<double>(mBitsA);
+        const double mB = bitCast<double>(mBitsB);
 
 #if defined(YOUKNOW_HAS_DOUBLE2_SIMD) && !defined(YOUKNOW_WORK_AUDIT)
         const Double2 m = double2Pack(mA, mB);
@@ -1800,7 +1799,7 @@ Chorus::ModeSettings Chorus::settingsFor(
 
 float Chorus::bbdTransfer(float input) noexcept
 {
-    if (!std::isfinite(input))
+    if (!finiteValue(input))
         return 0.0f;
 
     // Interpolate in double precision through the range reached by ordinary
@@ -1827,7 +1826,7 @@ float Chorus::bbdTransfer(float input) noexcept
 
 float Chorus::bbdServicedBiasTransfer(float input) noexcept
 {
-    if (!std::isfinite(input))
+    if (!finiteValue(input))
         return 0.0f;
     const double normalised = std::abs(static_cast<double>(input))
                             / static_cast<double>(bbdSaturationLevel);
@@ -1864,9 +1863,9 @@ float Chorus::interpolateBbdInput(float current, float previous,
                                   float previous2, float previous3,
                                   double ageInSamples) noexcept
 {
-    if (!std::isfinite(current) || !std::isfinite(previous)
-        || !std::isfinite(previous2) || !std::isfinite(previous3)
-        || !std::isfinite(ageInSamples))
+    if (!finiteValue(current) || !finiteValue(previous)
+        || !finiteValue(previous2) || !finiteValue(previous3)
+        || !finiteValue(ageInSamples))
         return 0.0f;
 
     const double age = std::clamp(ageInSamples, 0.0, 1.0);
@@ -1879,7 +1878,7 @@ float Chorus::interpolateBbdInput(float current, float previous,
                               + l1 * static_cast<double>(previous)
                               + l2 * static_cast<double>(previous2)
                               + l3 * static_cast<double>(previous3);
-    if (!std::isfinite(interpolated))
+    if (!finiteValue(interpolated))
         return 0.0f;
 
     constexpr double maximum =
@@ -2190,7 +2189,7 @@ std::array<double, 6> Chorus::SupportChain::HeldOutputMap::valueAt(
 
 double Chorus::InputCaptureInterval::valueAt(double fraction) const noexcept
 {
-    if (!enabled || !std::isfinite(fraction))
+    if (!enabled || !finiteValue(fraction))
         return 0.0;
     if (fraction <= 0.0)
         return initialOutput;
@@ -2202,7 +2201,7 @@ double Chorus::InputCaptureInterval::valueAt(double fraction) const noexcept
     double result = outputByPower.back();
     for (int power = degree - 1; power >= 0; --power)
         result = result * fraction + outputByPower[static_cast<std::size_t>(power)];
-    return std::isfinite(result) ? result : 0.0;
+    return finiteValue(result) ? result : 0.0;
 }
 
 void Chorus::InputSupport::reset() noexcept
@@ -2230,7 +2229,7 @@ float Chorus::advanceInputSupport(float input, bool prepareCapture) noexcept
     // outside every circuit or engine fixture; treat anything beyond it as a
     // corrupt sample instead of turning it into a long full-scale BBD burst.
     constexpr float maximumSupportInput = 64.0f;
-    const float supportInput = std::isfinite(input)
+    const float supportInput = finiteValue(input)
             && std::abs(input) <= maximumSupportInput
         ? input : 0.0f;
     auto& capture = inputSupport_.captureInterval;
@@ -2397,7 +2396,7 @@ Chorus::ClockTrajectory Chorus::ClockTrajectory::make(
     result.cuspSample = rate > 0.0
         ? ((phase < 0.5 ? 0.5 : 1.0) - phase) * sampleRate / rate
         : std::numeric_limits<double>::infinity();
-    result.cuspDelay = std::isfinite(result.cuspSample)
+    result.cuspDelay = finiteValue(result.cuspSample)
         ? result.initialDelay + result.delaySlope * result.cuspSample : result.initialDelay;
     // Only the current sample and its two-sample predictor need this boundary.
     // Avoid a full-flank logarithm in the overwhelmingly common no-cusp case.
@@ -2532,7 +2531,7 @@ double Chorus::Line::deterministicBlepCorrection(
                     * Chorus::bbdPolyBlepResidual(event.ageInSamples);
     }
 
-    if (!(clockIncrement > 0.0) || !std::isfinite(clockIncrement))
+    if (!(clockIncrement > 0.0) || !finiteValue(clockIncrement))
         return correction;
 
     // Buckets that will emerge during the residual's two-sample lookahead are
@@ -2767,7 +2766,7 @@ float Chorus::Line::process(
     // that residual-current interpolation an exact nonlinear solution.
     // Held jumps leave current continuous but can kink its derivative, so
     // the cubic residual need not retain its smooth-input convergence order.
-    const double exactOutput = std::isfinite(reconstructedHold)
+    const double exactOutput = finiteValue(reconstructedHold)
         ? static_cast<double>(reconstructedHold) : 0.0;
 #if defined(YOUKNOW_WORK_AUDIT)
     YOUKNOW_COUNT_DOMAIN_WORK(bbdExactOutputSupportAdvances, 1);
@@ -2930,7 +2929,7 @@ const NoiseMomentTable& noiseMomentsFor(ChorusSupportProfile profile) noexcept
 }
 double Chorus::bucketNoiseCosineMoment(double clockHz) const noexcept
 {
-    if(noiseCosineMoments_==nullptr||!std::isfinite(clockHz))return 0.0;
+    if(noiseCosineMoments_==nullptr||!finiteValue(clockHz))return 0.0;
     const double index=(std::clamp(clockHz,10000.0,200000.0)-10000.0)
                        *noiseMomentIntervals/190000.0;
     const auto i=std::min(static_cast<std::size_t>(index),noiseMomentIntervals-1);
@@ -3656,7 +3655,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     float noiseA = lineNoiseScale, noiseB = lineNoiseScale;
     if (enableClockDependentHiss && lineNoiseScale != 0.0f
         && clockA > 0.0 && clockB > 0.0
-        && std::isfinite(clockA) && std::isfinite(clockB))
+        && finiteValue(clockA) && finiteValue(clockB))
     {
         const double reference = hissClockReference();
         const auto clockPow = powMinusHalfHissExponentPair(clockA, clockB);

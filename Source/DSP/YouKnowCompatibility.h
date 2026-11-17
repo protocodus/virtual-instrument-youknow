@@ -137,15 +137,19 @@ static_assert(sizeof(Double2) == 16 && alignof(Double2) == 8,
 {
     return Double2 { { value, value } };
 }
+// __builtin_memcpy, not std::memcpy: the Rack toolchain compiles with
+// -fno-builtin, which turns std::memcpy into a real call into the C library
+// for every load and store. The builtin stays a fixed 16-byte copy, lowered to
+// one unaligned vector move. The bytes are the same.
 [[nodiscard]] inline Double2 double2Load(const double* ptr) noexcept
 {
     Double2 out;
-    std::memcpy(&out, ptr, sizeof(out));
+    __builtin_memcpy(&out, ptr, sizeof(out));
     return out;
 }
 inline void double2Store(double* ptr, Double2 value) noexcept
 {
-    std::memcpy(ptr, &value, sizeof(value));
+    __builtin_memcpy(ptr, &value, sizeof(value));
 }
 [[nodiscard]] inline double double2Low(Double2 value) noexcept
 {
@@ -238,7 +242,12 @@ To bitCast(const From& value) noexcept
     static_assert(sizeof(To) == sizeof(From));
     static_assert(std::is_trivially_copyable_v<To> && std::is_trivially_copyable_v<From>);
     To result;
+    // As in double2Load: under -fno-builtin std::memcpy is a library call.
+#if defined(__clang__) || defined(__GNUC__)
+    __builtin_memcpy(&result, &value, sizeof(result));
+#else
     std::memcpy(&result, &value, sizeof(result));
+#endif
     return result;
 }
 #endif

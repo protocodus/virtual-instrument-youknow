@@ -1,5 +1,6 @@
 #pragma once
 
+#include "YouKnowFinite.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -24,7 +25,7 @@ struct Csa8MtzTemperatureProxy
 
     [[nodiscard]] static bool supports(double celsius) noexcept
     {
-        return std::isfinite(celsius)
+        return finiteValue(celsius)
             && celsius >= minimumCelsius && celsius <= maximumCelsius;
     }
 
@@ -33,7 +34,7 @@ struct Csa8MtzTemperatureProxy
         // Stay within the catalogue's temperature-stability specification
         // domain. The drawing extends beyond it; no extrapolation is used.
         const double temperature = std::clamp(
-            std::isfinite(celsius) ? celsius : 25.0,
+            finiteValue(celsius) ? celsius : 25.0,
             minimumCelsius, maximumCelsius);
         struct Point { double celsius, percent; };
         static constexpr std::array<Point, 7> points {{

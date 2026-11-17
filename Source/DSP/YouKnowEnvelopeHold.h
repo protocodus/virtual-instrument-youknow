@@ -1,5 +1,6 @@
 #pragma once
 
+#include "YouKnowFinite.h"
 #include <algorithm>
 #include <cmath>
 
@@ -34,11 +35,11 @@ public:
         {
             // Engineering limits keep explicit pathological configurations
             // finite; these are NOT component tolerances or suggested values.
-            return std::isfinite(onResistanceOhms)
+            return finiteValue(onResistanceOhms)
                 && onResistanceOhms >= 1.0 && onResistanceOhms <= 1.0e9
-                && std::isfinite(inputBiasAmps) && std::abs(inputBiasAmps) <= 1.0e-6
-                && std::isfinite(offLeakageAmps) && std::abs(offLeakageAmps) <= 1.0e-6
-                && std::isfinite(turnOffChargeCoulombs)
+                && finiteValue(inputBiasAmps) && std::abs(inputBiasAmps) <= 1.0e-6
+                && finiteValue(offLeakageAmps) && std::abs(offLeakageAmps) <= 1.0e-6
+                && finiteValue(turnOffChargeCoulombs)
                 && std::abs(turnOffChargeCoulombs) <= 1.0e-9;
         }
     };

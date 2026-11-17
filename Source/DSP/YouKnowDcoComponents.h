@@ -1,5 +1,6 @@
 #pragma once
 
+#include "YouKnowFinite.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -29,7 +30,7 @@ struct DcoComponentTolerance
 
     [[nodiscard]] static double bounded(float draw) noexcept
     {
-        return std::isfinite(draw) ? std::clamp(static_cast<double>(draw), -1.0, 1.0) : 0.0;
+        return finiteValue(draw) ? std::clamp(static_cast<double>(draw), -1.0, 1.0) : 0.0;
     }
 
     [[nodiscard]] double capacitance(float character) const noexcept
@@ -42,7 +43,7 @@ struct DcoComponentTolerance
     {
         // The existing Character 1..2 product extension exaggerates component
         // errors beyond their manufacturing classes. It is not a hardware bound.
-        return std::isfinite(character)
+        return finiteValue(character)
             ? std::clamp(static_cast<double>(character), 0.0, 2.0) : 0.0;
     }
 

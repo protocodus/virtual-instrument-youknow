@@ -1,5 +1,6 @@
 #pragma once
 
+#include "YouKnowFinite.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -96,7 +97,7 @@ public:
         }
         else
             output = step(input, ordinary_[mode], clip);
-        if (!std::isfinite(output)) { reset(); return 0; }
+        if (!finiteValue(output)) { reset(); return 0; }
         return output;
     }
 
