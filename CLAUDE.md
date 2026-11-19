@@ -103,10 +103,10 @@ settles it, quote the number.
 
 - **A is always the shipping engine**, unchanged. B, C, … Z are the candidates.
   So "A against B" is always "what it does now against what it would do".
-- **Letters only in the filenames.** `A.wav`, `B.wav`, … carry no hint of the
-  mechanism, so the listener is not primed by the label. Write the key down at
-  the same time, in a separate `key.md` the user can read after deciding, and
-  say in the handover that the key exists and is unread-by-design.
+- **Letters in the filenames, the legend in the handover.** `A.wav`, `B.wav`,
+  … keep the names short. The tests are not blind (owner, 2026-11-19): say
+  what each letter is in the message that delivers the set, and write the
+  same legend to a `key.md` beside the files.
 - **Change one thing.** Identical MIDI, seed, sample rate, block size, length
   and controls across every letter; only the mechanism under test differs.
 - **Level-match, and say how.** Match on whole-file RMS unless level is itself
